@@ -319,7 +319,7 @@ export default function JobsPage() {
           <div className="flex items-center justify-between mb-4">
             <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
             <div className="flex items-center gap-2">
-              <div className="flex items-center bg-stone-100 rounded-lg p-0.5">
+              <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
                 {[
                   { id: "list", icon: List },
                   { id: "kanban", icon: LayoutGrid },
@@ -330,7 +330,7 @@ export default function JobsPage() {
                     key={id}
                     onClick={() => setViewMode(id)}
                     className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${
-                      viewMode === id ? "bg-white shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"
+                      viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"
                     }`}
                   >
                     <Icon className="h-3.5 w-3.5" />
@@ -438,13 +438,13 @@ function JobDetailDrawer({
       <div className="p-6 space-y-6 flex-1 overflow-auto">
         {/* Status & Progress */}
         <div className="grid grid-cols-2 gap-3">
-          <div className="p-3 rounded-xl bg-stone-50">
+          <div className="p-3 rounded-xl bg-surface-hover">
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Status</label>
             <div className="mt-1.5">
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
             </div>
           </div>
-          <div className="p-3 rounded-xl bg-stone-50">
+          <div className="p-3 rounded-xl bg-surface-hover">
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Progress</label>
             <div className="mt-1.5">
               <div className="flex items-center gap-2">
@@ -461,7 +461,7 @@ function JobDetailDrawer({
           <div>
             <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
             <div className="flex items-center gap-3 mt-2">
-              <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center">
+              <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center">
                 <Building2 className="h-5 w-5 text-blue-600" />
               </div>
               <div>
@@ -482,7 +482,7 @@ function JobDetailDrawer({
 
         {/* Partner & Owner */}
         <div className="grid grid-cols-2 gap-3">
-          <div className="p-3 rounded-xl bg-stone-50">
+          <div className="p-3 rounded-xl bg-surface-hover">
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner</label>
             {job.partner_name ? (
               <div className="flex items-center gap-2 mt-2">
@@ -496,7 +496,7 @@ function JobDetailDrawer({
               <p className="text-sm text-text-tertiary italic mt-2">Unassigned</p>
             )}
           </div>
-          <div className="p-3 rounded-xl bg-stone-50">
+          <div className="p-3 rounded-xl bg-surface-hover">
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Owner</label>
             {job.owner_name ? (
               <div className="flex items-center gap-2 mt-2">
@@ -513,7 +513,7 @@ function JobDetailDrawer({
         </div>
 
         {/* Financial Breakdown */}
-        <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-stone-100">
+        <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light">
           <div className="flex items-center gap-2 mb-3">
             <DollarSign className="h-4 w-4 text-text-tertiary" />
             <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial Breakdown</label>
@@ -531,7 +531,7 @@ function JobDetailDrawer({
               <span className="text-sm text-text-secondary">Materials Cost</span>
               <span className="text-sm font-medium text-red-600">-{formatCurrency(job.materials_cost)}</span>
             </div>
-            <div className="border-t border-stone-200 pt-2 mt-2">
+            <div className="border-t border-border pt-2 mt-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-text-primary">Profit</span>
                 <span className={`text-lg font-bold ${profit >= 0 ? "text-emerald-600" : "text-red-600"}`}>
@@ -576,7 +576,7 @@ function JobDetailDrawer({
         </div>
 
         {/* Actions */}
-        <div className="flex gap-2 pt-4 border-t border-stone-100">
+        <div className="flex gap-2 pt-4 border-t border-border-light">
           {statusActions.map((action) => (
             <Button
               key={action.status}
@@ -728,10 +728,10 @@ function CreateJobModal({
 
 function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "default" }) {
   const colors = {
-    success: "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200",
-    danger: "text-red-700 bg-red-50 hover:bg-red-100 border-red-200",
-    warning: "text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200",
-    default: "text-stone-700 bg-stone-50 hover:bg-stone-100 border-stone-200",
+    success: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 border-emerald-200",
+    danger: "text-red-700 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 border-red-200",
+    warning: "text-amber-700 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 border-amber-200",
+    default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (
     <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>

@@ -326,7 +326,7 @@ function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => vo
     success: "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200",
     danger: "text-red-700 bg-red-50 hover:bg-red-100 border-red-200",
     warning: "text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200",
-    default: "text-stone-700 bg-stone-50 hover:bg-stone-100 border-stone-200",
+    default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (
     <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>

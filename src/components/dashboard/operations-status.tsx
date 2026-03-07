@@ -99,8 +99,8 @@ export function OperationsStatus() {
           <div className="space-y-4">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="animate-pulse space-y-2">
-                <div className="h-4 bg-stone-100 rounded w-48" />
-                <div className="h-2 bg-stone-100 rounded w-full" />
+                <div className="h-4 bg-surface-tertiary rounded w-48" />
+                <div className="h-2 bg-surface-tertiary rounded w-full" />
               </div>
             ))}
           </div>

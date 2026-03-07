@@ -100,7 +100,7 @@ export function PipelineSummary() {
           <motion.div
             key={stage.stage}
             variants={staggerItem}
-            className="flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-stone-50/60 transition-colors cursor-pointer"
+            className="flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-surface-hover/60 transition-colors cursor-pointer"
           >
             <div className="flex items-center gap-2.5">
               <div className={`h-2 w-2 rounded-full ${stage.color}`} />

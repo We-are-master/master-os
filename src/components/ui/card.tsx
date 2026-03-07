@@ -18,10 +18,10 @@ const paddingStyles = {
 };
 
 const variantStyles = {
-  default: "bg-white border border-border-light shadow-soft",
-  glass: "bg-white/70 glass border border-white/20 shadow-soft",
-  outlined: "bg-white border border-border shadow-none",
-  elevated: "bg-white border border-border-light shadow-card",
+  default: "bg-card border border-card-border shadow-soft",
+  glass: "bg-card/70 glass border border-card-border/40 shadow-soft",
+  outlined: "bg-card border border-border shadow-none",
+  elevated: "bg-card border border-card-border shadow-card",
 };
 
 export const Card = forwardRef<HTMLDivElement, CardProps>(

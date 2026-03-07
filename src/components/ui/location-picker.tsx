@@ -145,8 +145,8 @@ export function LocationPicker({
 
   if (!MAPBOX_TOKEN) {
     return (
-      <div className={`rounded-xl border border-stone-200 bg-stone-50 p-4 text-center ${className}`}>
-        <MapPin className="h-6 w-6 text-stone-300 mx-auto mb-2" />
+      <div className={`rounded-xl border border-border bg-surface-hover p-4 text-center ${className}`}>
+        <MapPin className="h-6 w-6 text-text-tertiary mx-auto mb-2" />
         <p className="text-xs text-text-tertiary">Mapbox token not configured</p>
         <p className="text-[10px] text-text-tertiary mt-0.5">Add NEXT_PUBLIC_MAPBOX_TOKEN to .env.local</p>
       </div>
@@ -159,18 +159,18 @@ export function LocationPicker({
       {!readOnly && (
         <div className="relative">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary" />
             <input
               type="text"
               value={query}
               onChange={(e) => handleInputChange(e.target.value)}
               onFocus={() => { if (results.length) setShowResults(true); }}
               placeholder={placeholder}
-              className="w-full h-10 bg-white border border-stone-200 rounded-xl px-4 pl-10 pr-10 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-stone-300 transition-all"
+              className="w-full h-10 bg-card border border-border rounded-xl px-4 pl-10 pr-10 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all"
             />
-            {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400 animate-spin" />}
+            {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary animate-spin" />}
             {!searching && query && (
-              <button onClick={handleClear} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 transition-colors">
+              <button onClick={handleClear} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary transition-colors">
                 <X className="h-4 w-4" />
               </button>
             )}
@@ -178,12 +178,12 @@ export function LocationPicker({
 
           {/* Results dropdown */}
           {showResults && results.length > 0 && (
-            <div className="absolute z-50 mt-1 w-full bg-white rounded-xl border border-stone-200 shadow-lg overflow-hidden">
+            <div className="absolute z-50 mt-1 w-full bg-card rounded-xl border border-border shadow-lg overflow-hidden">
               {results.map((r, i) => (
                 <button
                   key={i}
                   onClick={() => handleSelectResult(r)}
-                  className="w-full px-4 py-2.5 text-left text-sm hover:bg-stone-50 transition-colors flex items-start gap-2.5 border-b border-stone-50 last:border-0"
+                  className="w-full px-4 py-2.5 text-left text-sm hover:bg-surface-hover transition-colors flex items-start gap-2.5 border-b border-border-light last:border-0"
                 >
                   <MapPin className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
                   <span className="text-text-primary line-clamp-2">{r.place_name}</span>
@@ -197,7 +197,7 @@ export function LocationPicker({
       {/* Map */}
       <div
         ref={mapContainer}
-        className="rounded-xl border border-stone-200 overflow-hidden"
+        className="rounded-xl border border-border overflow-hidden"
         style={{ height: mapHeight }}
       />
 
@@ -230,7 +230,7 @@ export function LocationMiniMap({ address, className }: { address: string; class
   }, [address]);
 
   if (loading) {
-    return <div className={`animate-pulse h-32 bg-stone-100 rounded-xl ${className}`} />;
+    return <div className={`animate-pulse h-32 bg-surface-tertiary rounded-xl ${className}`} />;
   }
 
   if (!coords || !MAPBOX_TOKEN) return null;

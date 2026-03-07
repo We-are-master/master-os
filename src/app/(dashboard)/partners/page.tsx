@@ -33,18 +33,18 @@ import { useProfile } from "@/hooks/use-profile";
 import type { ListParams } from "@/services/base";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
-  active: { label: "Active", variant: "success", color: "bg-emerald-500" },
-  on_break: { label: "On Break", variant: "warning", color: "bg-amber-500" },
+  active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
+  on_break: { label: "On Break", variant: "warning", color: "bg-amber-50 dark:bg-amber-950/300" },
   inactive: { label: "Inactive", variant: "default", color: "bg-stone-400" },
-  onboarding: { label: "Onboarding", variant: "info", color: "bg-blue-500" },
+  onboarding: { label: "Onboarding", variant: "info", color: "bg-blue-50 dark:bg-blue-950/300" },
 };
 
 const tradeColors: Record<string, string> = {
-  HVAC: "bg-blue-50 text-blue-700 ring-blue-200/50",
-  Electrical: "bg-purple-50 text-purple-700 ring-purple-200/50",
-  Plumbing: "bg-teal-50 text-teal-700 ring-teal-200/50",
-  Painting: "bg-amber-50 text-amber-700 ring-amber-200/50",
-  Carpentry: "bg-emerald-50 text-emerald-700 ring-emerald-200/50",
+  HVAC: "bg-blue-50 dark:bg-blue-950/30 text-blue-700 ring-blue-200/50",
+  Electrical: "bg-purple-50 dark:bg-purple-950/30 text-purple-700 ring-purple-200/50",
+  Plumbing: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 ring-teal-200/50",
+  Painting: "bg-amber-50 dark:bg-amber-950/30 text-amber-700 ring-amber-200/50",
+  Carpentry: "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 ring-emerald-200/50",
 };
 
 const TRADES = ["HVAC", "Electrical", "Plumbing", "Painting", "Carpentry"];
@@ -233,7 +233,7 @@ export default function PartnersPage() {
     {
       key: "trade", label: "Trade",
       render: (item) => (
-        <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[item.trade] || "bg-stone-100 text-stone-700"}`}>
+        <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[item.trade] || "bg-surface-tertiary text-text-primary"}`}>
           {item.trade}
         </span>
       ),
@@ -269,11 +269,11 @@ export default function PartnersPage() {
     },
     {
       key: "actions", label: "", width: "40px",
-      render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" />,
+      render: () => <ArrowRight className="h-4 w-4 text-text-tertiary hover:text-primary transition-colors" />,
     },
   ];
 
-  const selectClasses = "h-9 px-3 rounded-lg border border-stone-200 text-sm text-text-secondary bg-white focus:outline-none focus:ring-2 focus:ring-primary/15";
+  const selectClasses = "h-9 px-3 rounded-lg border border-border text-sm text-text-secondary bg-card focus:outline-none focus:ring-2 focus:ring-primary/15";
 
   return (
     <PageTransition>
@@ -327,7 +327,7 @@ export default function PartnersPage() {
                 <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
                 <BulkActionBtn label="Deactivate" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
                 <BulkActionBtn label="On Break" onClick={() => handleBulkStatusChange("on_break")} variant="warning" />
-                <div className="h-4 w-px bg-stone-200" />
+                <div className="h-4 w-px bg-border" />
                 <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
                 <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
               </>
@@ -378,7 +378,7 @@ export default function PartnersPage() {
             </div>
           </div>
         </div>
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-stone-100">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border-light">
           <Button variant="outline" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
           <Button size="sm" onClick={handleCreate} disabled={submitting}>{submitting ? "Creating…" : "Create Partner"}</Button>
         </div>
@@ -393,10 +393,10 @@ function BulkActionBtn({ label, onClick, variant }: {
   variant: "success" | "danger" | "warning" | "default";
 }) {
   const colors = {
-    success: "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200",
-    danger: "text-red-700 bg-red-50 hover:bg-red-100 border-red-200",
-    warning: "text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200",
-    default: "text-stone-700 bg-stone-50 hover:bg-stone-100 border-stone-200",
+    success: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 border-emerald-200",
+    danger: "text-red-700 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 border-red-200",
+    warning: "text-amber-700 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 border-amber-200",
+    default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (
     <button
@@ -569,7 +569,7 @@ function PartnerDetailDrawer({
 
   return (
     <Drawer open={!!partner} onClose={onClose} title={partner.company_name} subtitle={partner.trade + " — " + partner.location} width="w-[580px]">
-      <div className="px-6 pt-3 pb-0 border-b border-stone-100">
+      <div className="px-6 pt-3 pb-0 border-b border-border-light">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} />
       </div>
 
@@ -587,7 +587,7 @@ function PartnerDetailDrawer({
                 <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
                 <div className="flex items-center gap-2 mt-1">
                   <Badge variant={config.variant} dot size="md">{config.label}</Badge>
-                  <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[partner.trade] || "bg-stone-100 text-stone-700"}`}>{partner.trade}</span>
+                  <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[partner.trade] || "bg-surface-tertiary text-text-primary"}`}>{partner.trade}</span>
                 </div>
               </div>
             </div>
@@ -600,17 +600,17 @@ function PartnerDetailDrawer({
             </div>
 
             <div className="grid grid-cols-3 gap-3">
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total Jobs</p>
                 <p className="text-xl font-bold text-text-primary mt-1">{loadingJobs ? "..." : realJobsCount}</p>
                 <p className="text-[10px] text-text-tertiary">{completedJobs} completed, {activeJobs} active</p>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total Earned</p>
                 <p className="text-xl font-bold text-text-primary mt-1">{loadingJobs ? "..." : formatCurrency(realEarnings)}</p>
                 <p className="text-[10px] text-text-tertiary">from partner cost</p>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Value</p>
                 <p className="text-xl font-bold text-text-primary mt-1">{loadingJobs ? "..." : formatCurrency(totalJobValue)}</p>
                 <p className="text-[10px] text-text-tertiary">total client value</p>
@@ -618,7 +618,7 @@ function PartnerDetailDrawer({
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
                 <div className="flex items-center gap-1.5 mt-1">
                   <Star className="h-4 w-4 text-amber-400 fill-amber-400" />
@@ -626,7 +626,7 @@ function PartnerDetailDrawer({
                   <span className="text-xs text-text-tertiary">/5.0</span>
                 </div>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Compliance</p>
                 <div className="mt-1">
                   <span className="text-xl font-bold text-text-primary">{partner.compliance_score}%</span>
@@ -635,7 +635,7 @@ function PartnerDetailDrawer({
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-stone-100">
+            <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-semibold text-text-primary">Verification Status</p>
@@ -647,7 +647,7 @@ function PartnerDetailDrawer({
               </div>
             </div>
 
-            <div className="flex gap-2 pt-4 border-t border-stone-100">
+            <div className="flex gap-2 pt-4 border-t border-border-light">
               {statusActions.map((action) => (
                 <Button key={action.status} variant={action.primary ? "primary" : "outline"} className="flex-1" size="sm" icon={<action.icon className="h-3.5 w-3.5" />} onClick={() => onStatusChange(partner, action.status)}>
                   {action.label}
@@ -669,13 +669,13 @@ function PartnerDetailDrawer({
 
             {loadingJobs && (
               <div className="space-y-3">
-                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="animate-pulse h-20 bg-stone-50 rounded-xl" />)}
+                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="animate-pulse h-20 bg-surface-hover rounded-xl" />)}
               </div>
             )}
 
             {!loadingJobs && partnerJobs.length === 0 && (
               <div className="py-12 text-center">
-                <Briefcase className="h-8 w-8 text-stone-300 mx-auto mb-2" />
+                <Briefcase className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
                 <p className="text-sm text-text-tertiary">No jobs found for this partner</p>
               </div>
             )}
@@ -684,7 +684,7 @@ function PartnerDetailDrawer({
               const jConfig = jobStatusConfig[job.status] || { label: job.status, variant: "default" as const };
               const profit = Number(job.client_price) - Number(job.partner_cost) - Number(job.materials_cost);
               return (
-                <motion.div key={job.id} variants={staggerItem} className="p-4 rounded-xl border border-stone-100 hover:border-stone-200 transition-colors">
+                <motion.div key={job.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -729,15 +729,15 @@ function PartnerDetailDrawer({
         {tab === "financial" && (
           <div className="p-6 space-y-4">
             <div className="grid grid-cols-3 gap-3">
-              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-100">
+              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100">
                 <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide">Total Paid</p>
                 <p className="text-lg font-bold text-emerald-700 mt-1">{formatCurrency(totalPaidOut)}</p>
               </div>
-              <div className="p-3 rounded-xl bg-amber-50 border border-amber-100">
+              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-100">
                 <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Pending</p>
                 <p className="text-lg font-bold text-amber-700 mt-1">{formatCurrency(pendingPayout)}</p>
               </div>
-              <div className="p-3 rounded-xl bg-blue-50 border border-blue-100">
+              <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-100">
                 <p className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide">Earned (Jobs)</p>
                 <p className="text-lg font-bold text-blue-700 mt-1">{formatCurrency(realEarnings)}</p>
               </div>
@@ -747,19 +747,19 @@ function PartnerDetailDrawer({
 
             {loadingFinance && (
               <div className="space-y-3">
-                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-stone-50 rounded-xl" />)}
+                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}
               </div>
             )}
 
             {!loadingFinance && selfBills.length === 0 && (
               <div className="py-10 text-center">
-                <DollarSign className="h-8 w-8 text-stone-300 mx-auto mb-2" />
+                <DollarSign className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
                 <p className="text-sm text-text-tertiary">No self-bills found</p>
               </div>
             )}
 
             {!loadingFinance && selfBills.map((sb) => (
-              <motion.div key={sb.id} variants={staggerItem} className="p-4 rounded-xl border border-stone-100 hover:border-stone-200 transition-colors">
+              <motion.div key={sb.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-bold text-text-primary">{sb.reference}</p>
@@ -799,10 +799,10 @@ function PartnerDetailDrawer({
               <p className="text-sm font-semibold text-text-primary">{documents.length} Documents</p>
               <AddDocumentButton onAdd={handleAddDocument} />
             </div>
-            {loadingDocs && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-stone-50 rounded-xl" />)}</div>}
+            {loadingDocs && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}</div>}
             {!loadingDocs && documents.length === 0 && (
               <div className="py-12 text-center">
-                <FileText className="h-8 w-8 text-stone-300 mx-auto mb-2" />
+                <FileText className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
                 <p className="text-sm text-text-tertiary">No documents uploaded yet</p>
                 <p className="text-xs text-text-tertiary mt-1">Add insurance, certifications, licenses and more</p>
               </div>
@@ -813,9 +813,9 @@ function PartnerDetailDrawer({
               const Icon = typeConfig.icon;
               const isExpired = doc.expires_at && new Date(doc.expires_at) < new Date();
               return (
-                <motion.div key={doc.id} variants={staggerItem} className="p-4 rounded-xl border border-stone-100 hover:border-stone-200 transition-colors">
+                <motion.div key={doc.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
                   <div className="flex items-start gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-stone-100 flex items-center justify-center shrink-0"><Icon className="h-5 w-5 text-stone-500" /></div>
+                    <div className="h-10 w-10 rounded-xl bg-surface-tertiary flex items-center justify-center shrink-0"><Icon className="h-5 w-5 text-text-secondary" /></div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-semibold text-text-primary truncate">{doc.name}</p>
@@ -828,11 +828,11 @@ function PartnerDetailDrawer({
                     <div className="flex items-center gap-1 shrink-0">
                       {doc.status === "pending" && (
                         <>
-                          <button onClick={() => handleDocStatusChange(doc.id, "approved")} className="h-7 w-7 rounded-lg flex items-center justify-center text-emerald-600 hover:bg-emerald-50 transition-colors" title="Approve"><CheckCircle2 className="h-4 w-4" /></button>
-                          <button onClick={() => handleDocStatusChange(doc.id, "rejected")} className="h-7 w-7 rounded-lg flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors" title="Reject"><XCircle className="h-4 w-4" /></button>
+                          <button onClick={() => handleDocStatusChange(doc.id, "approved")} className="h-7 w-7 rounded-lg flex items-center justify-center text-emerald-600 hover:bg-emerald-50 dark:bg-emerald-950/30 transition-colors" title="Approve"><CheckCircle2 className="h-4 w-4" /></button>
+                          <button onClick={() => handleDocStatusChange(doc.id, "rejected")} className="h-7 w-7 rounded-lg flex items-center justify-center text-red-500 hover:bg-red-50 dark:bg-red-950/30 transition-colors" title="Reject"><XCircle className="h-4 w-4" /></button>
                         </>
                       )}
-                      <button onClick={() => handleDeleteDoc(doc.id)} className="h-7 w-7 rounded-lg flex items-center justify-center text-stone-400 hover:bg-stone-100 hover:text-red-500 transition-colors" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => handleDeleteDoc(doc.id)} className="h-7 w-7 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-red-500 transition-colors" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>
                   </div>
                 </motion.div>
@@ -846,19 +846,19 @@ function PartnerDetailDrawer({
           <div className="p-6 space-y-4">
             <div className="flex gap-2">
               <input value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="Add a note about this partner..."
-                className="flex-1 h-9 px-3 rounded-lg border border-stone-200 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-stone-300 transition-all"
+                className="flex-1 h-9 px-3 rounded-lg border border-border text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all"
                 onKeyDown={(e) => { if (e.key === "Enter" && newNote.trim()) handleAddNote(); }} />
               <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={handleAddNote} disabled={!newNote.trim()}>Add</Button>
             </div>
-            {loadingNotes && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-12 bg-stone-50 rounded-xl" />)}</div>}
+            {loadingNotes && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-12 bg-surface-hover rounded-xl" />)}</div>}
             {!loadingNotes && notes.length === 0 && (
               <div className="py-12 text-center">
-                <MessageSquare className="h-8 w-8 text-stone-300 mx-auto mb-2" />
+                <MessageSquare className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
                 <p className="text-sm text-text-tertiary">No notes yet</p>
               </div>
             )}
             {!loadingNotes && notes.map((note) => (
-              <motion.div key={note.id} variants={staggerItem} className="p-3 rounded-xl bg-stone-50">
+              <motion.div key={note.id} variants={staggerItem} className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-sm text-text-primary">{note.content}</p>
                 <div className="flex items-center gap-2 mt-2 text-[11px] text-text-tertiary">
                   {note.author_name && <span className="font-medium">{note.author_name}</span>}
@@ -898,7 +898,7 @@ function AddDocumentButton({ onAdd }: { onAdd: (type: string, name: string) => v
       <select
         value={docType}
         onChange={(e) => setDocType(e.target.value)}
-        className="h-8 px-2 text-xs rounded-lg border border-stone-200 bg-white focus:outline-none"
+        className="h-8 px-2 text-xs rounded-lg border border-border bg-card focus:outline-none"
       >
         {Object.entries(docTypeLabels).map(([key, { label }]) => (
           <option key={key} value={key}>{label}</option>
@@ -908,14 +908,14 @@ function AddDocumentButton({ onAdd }: { onAdd: (type: string, name: string) => v
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Document name"
-        className="h-8 px-2 text-xs rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-primary/15 w-36"
+        className="h-8 px-2 text-xs rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/15 w-36"
         onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); }}
         autoFocus
       />
       <button onClick={handleAdd} className="h-8 w-8 rounded-lg bg-primary text-white flex items-center justify-center hover:bg-primary-hover transition-colors">
         <CheckCircle2 className="h-3.5 w-3.5" />
       </button>
-      <button onClick={() => setOpen(false)} className="h-8 w-8 rounded-lg text-stone-400 hover:bg-stone-100 flex items-center justify-center transition-colors">
+      <button onClick={() => setOpen(false)} className="h-8 w-8 rounded-lg text-text-tertiary hover:bg-surface-tertiary flex items-center justify-center transition-colors">
         <XCircle className="h-3.5 w-3.5" />
       </button>
     </div>

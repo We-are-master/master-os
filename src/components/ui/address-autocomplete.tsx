@@ -129,7 +129,7 @@ export function AddressAutocomplete({
           onChange={(e) => handleChange(e.target.value)}
           onFocus={() => { if (results.length > 0) setOpen(true); }}
           placeholder={placeholder}
-          className="w-full h-10 rounded-xl border border-stone-200 bg-white pl-9 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+          className="w-full h-10 rounded-xl border border-border bg-card pl-9 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
         />
         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-text-tertiary" />}
@@ -142,12 +142,12 @@ export function AddressAutocomplete({
       </div>
 
       {open && results.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full bg-white rounded-xl border border-stone-200 shadow-lg overflow-hidden">
+        <div className="absolute z-50 mt-1 w-full bg-card rounded-xl border border-border shadow-lg overflow-hidden">
           {results.map((feature, i) => (
             <button
               key={i}
               onClick={() => handleSelect(feature)}
-              className="w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-stone-50 transition-colors text-left"
+              className="w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-surface-hover transition-colors text-left"
             >
               <MapPin className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
               <div className="min-w-0">
@@ -156,7 +156,7 @@ export function AddressAutocomplete({
               </div>
             </button>
           ))}
-          <div className="px-3 py-1.5 border-t border-stone-100 bg-stone-50/60">
+          <div className="px-3 py-1.5 border-t border-border-light bg-surface-hover/60">
             <p className="text-[9px] text-text-tertiary text-center">Powered by Mapbox</p>
           </div>
         </div>

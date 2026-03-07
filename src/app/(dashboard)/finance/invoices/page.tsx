@@ -234,7 +234,7 @@ export default function InvoicesPage() {
             <Badge variant={sConf.variant} dot>{sConf.label}</Badge>
             {hasLink && (
               <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                stripePd ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"
+                stripePd ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700" : "bg-blue-50 dark:bg-blue-950/30 text-blue-700"
               }`}>
                 <CreditCard className="h-2.5 w-2.5" />
                 {stripePd ? "Stripe Paid" : "Stripe"}
@@ -435,7 +435,7 @@ function InvoiceDetailDrawer({
 
   return (
     <Drawer open={!!invoice} onClose={onClose} title={invoice.reference} subtitle={invoice.client_name} width="w-[580px]">
-      <div className="px-6 pt-3 pb-0 border-b border-stone-100">
+      <div className="px-6 pt-3 pb-0 border-b border-border-light">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} />
       </div>
 
@@ -445,22 +445,22 @@ function InvoiceDetailDrawer({
           <div className="p-6 space-y-5">
             {/* Status Banner */}
             <div className={`p-4 rounded-xl border ${
-              invoice.status === "paid" ? "bg-emerald-50 border-emerald-200" :
-              invoice.status === "overdue" || isOverdue ? "bg-red-50 border-red-200" :
-              invoice.status === "cancelled" ? "bg-stone-50 border-stone-200" :
-              "bg-amber-50 border-amber-200"
+              invoice.status === "paid" ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200" :
+              invoice.status === "overdue" || isOverdue ? "bg-red-50 dark:bg-red-950/30 border-red-200" :
+              invoice.status === "cancelled" ? "bg-surface-hover border-border" :
+              "bg-amber-50 dark:bg-amber-950/30 border-amber-200"
             }`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${
                     invoice.status === "paid" ? "bg-emerald-100" :
                     invoice.status === "overdue" || isOverdue ? "bg-red-100" :
-                    invoice.status === "cancelled" ? "bg-stone-100" :
+                    invoice.status === "cancelled" ? "bg-surface-tertiary" :
                     "bg-amber-100"
                   }`}>
                     {invoice.status === "paid" ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> :
                      invoice.status === "overdue" || isOverdue ? <AlertTriangle className="h-5 w-5 text-red-600" /> :
-                     invoice.status === "cancelled" ? <XCircle className="h-5 w-5 text-stone-500" /> :
+                     invoice.status === "cancelled" ? <XCircle className="h-5 w-5 text-text-secondary" /> :
                      <Clock className="h-5 w-5 text-amber-600" />}
                   </div>
                   <div>
@@ -488,7 +488,7 @@ function InvoiceDetailDrawer({
             </div>
 
             {/* Financial Breakdown */}
-            <div className="p-4 rounded-xl bg-stone-50 space-y-3">
+            <div className="p-4 rounded-xl bg-surface-hover space-y-3">
               <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Financial Summary</p>
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
@@ -497,7 +497,7 @@ function InvoiceDetailDrawer({
                 </div>
                 {linkedJob && (
                   <>
-                    <div className="h-px bg-stone-200" />
+                    <div className="h-px bg-border" />
                     <div className="flex justify-between text-sm">
                       <span className="text-text-secondary">Client Price (Job)</span>
                       <span className="font-medium text-text-primary">{formatCurrency(linkedJob.client_price)}</span>
@@ -510,7 +510,7 @@ function InvoiceDetailDrawer({
                       <span className="text-text-secondary">Materials</span>
                       <span className="font-medium text-red-500">-{formatCurrency(linkedJob.materials_cost)}</span>
                     </div>
-                    <div className="h-px bg-stone-200" />
+                    <div className="h-px bg-border" />
                     <div className="flex justify-between text-sm">
                       <span className="font-semibold text-text-primary">Gross Margin</span>
                       <span className={`font-bold ${linkedJob.margin_percent >= 0 ? "text-emerald-600" : "text-red-500"}`}>
@@ -539,7 +539,7 @@ function InvoiceDetailDrawer({
             </div>
 
             {/* Actions */}
-            <div className="flex flex-wrap gap-2 pt-4 border-t border-stone-100">
+            <div className="flex flex-wrap gap-2 pt-4 border-t border-border-light">
               {invoice.status === "pending" && (
                 <>
                   <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark as Paid</Button>
@@ -569,22 +569,22 @@ function InvoiceDetailDrawer({
           <div className="p-6 space-y-5">
             {/* Stripe Status Header */}
             <div className={`p-4 rounded-xl border ${
-              stripePaid ? "bg-emerald-50 border-emerald-200" :
-              stripeState.paymentStatus === "failed" ? "bg-red-50 border-red-200" :
-              stripeState.paymentStatus === "expired" ? "bg-stone-50 border-stone-200" :
-              hasStripeLink ? "bg-blue-50 border-blue-200" :
-              "bg-stone-50 border-stone-100"
+              stripePaid ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200" :
+              stripeState.paymentStatus === "failed" ? "bg-red-50 dark:bg-red-950/30 border-red-200" :
+              stripeState.paymentStatus === "expired" ? "bg-surface-hover border-border" :
+              hasStripeLink ? "bg-blue-50 dark:bg-blue-950/30 border-blue-200" :
+              "bg-surface-hover border-border-light"
             }`}>
               <div className="flex items-center gap-3">
                 <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${
                   stripePaid ? "bg-emerald-100" :
                   stripeState.paymentStatus === "failed" ? "bg-red-100" :
-                  hasStripeLink ? "bg-blue-100" : "bg-stone-100"
+                  hasStripeLink ? "bg-blue-100" : "bg-surface-tertiary"
                 }`}>
                   <CreditCard className={`h-5 w-5 ${
                     stripePaid ? "text-emerald-600" :
                     stripeState.paymentStatus === "failed" ? "text-red-600" :
-                    hasStripeLink ? "text-blue-600" : "text-stone-400"
+                    hasStripeLink ? "text-blue-600" : "text-text-tertiary"
                   }`} />
                 </div>
                 <div className="flex-1">
@@ -615,12 +615,12 @@ function InvoiceDetailDrawer({
 
             {/* Invoice Summary */}
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invoice</p>
                 <p className="text-sm font-bold text-text-primary mt-0.5">{invoice.reference}</p>
                 <p className="text-xs text-text-tertiary">{invoice.client_name}</p>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Amount</p>
                 <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(invoice.amount)}</p>
               </div>
@@ -630,14 +630,14 @@ function InvoiceDetailDrawer({
             {hasStripeLink && (
               <div className="space-y-3">
                 <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Payment Link</p>
-                <div className="p-3 rounded-xl border border-stone-100 bg-white">
+                <div className="p-3 rounded-xl border border-border-light bg-card">
                   <div className="flex items-center gap-2">
                     <div className="flex-1 min-w-0">
                       <p className="text-xs text-text-tertiary truncate font-mono">{stripeState.linkUrl}</p>
                     </div>
                     <button
                       onClick={handleCopyLink}
-                      className="shrink-0 h-8 px-3 rounded-lg text-xs font-medium border border-stone-200 text-text-secondary hover:bg-stone-50 transition-colors flex items-center gap-1.5"
+                      className="shrink-0 h-8 px-3 rounded-lg text-xs font-medium border border-border text-text-secondary hover:bg-surface-hover transition-colors flex items-center gap-1.5"
                     >
                       {linkCopied ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <CreditCard className="h-3.5 w-3.5" />}
                       {linkCopied ? "Copied!" : "Copy Link"}
@@ -649,7 +649,7 @@ function InvoiceDetailDrawer({
                     href={stripeState.linkUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex-1 h-9 rounded-lg text-xs font-medium border border-stone-200 text-text-secondary hover:bg-stone-50 transition-colors flex items-center justify-center gap-1.5"
+                    className="flex-1 h-9 rounded-lg text-xs font-medium border border-border text-text-secondary hover:bg-surface-hover transition-colors flex items-center justify-center gap-1.5"
                   >
                     <ArrowRight className="h-3.5 w-3.5" />
                     Open Link
@@ -703,7 +703,7 @@ function InvoiceDetailDrawer({
             )}
 
             {/* Generate / Actions */}
-            <div className="pt-4 border-t border-stone-100 space-y-3">
+            <div className="pt-4 border-t border-border-light space-y-3">
               {!hasStripeLink && invoice.status !== "paid" && invoice.status !== "cancelled" && (
                 <Button
                   className="w-full"
@@ -740,13 +740,13 @@ function InvoiceDetailDrawer({
           <div className="p-6 space-y-5">
             {loadingJob && (
               <div className="space-y-3">
-                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-stone-50 rounded-xl" />)}
+                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}
               </div>
             )}
 
             {!loadingJob && !linkedJob && !invoice.job_reference && (
               <div className="py-16 text-center">
-                <Briefcase className="h-10 w-10 text-stone-300 mx-auto mb-3" />
+                <Briefcase className="h-10 w-10 text-text-tertiary mx-auto mb-3" />
                 <p className="text-sm font-medium text-text-secondary">No linked job</p>
                 <p className="text-xs text-text-tertiary mt-1">This invoice doesn&apos;t have a job reference attached</p>
               </div>
@@ -754,7 +754,7 @@ function InvoiceDetailDrawer({
 
             {!loadingJob && !linkedJob && invoice.job_reference && (
               <div className="py-16 text-center">
-                <Briefcase className="h-10 w-10 text-stone-300 mx-auto mb-3" />
+                <Briefcase className="h-10 w-10 text-text-tertiary mx-auto mb-3" />
                 <p className="text-sm font-medium text-text-secondary">Job not found</p>
                 <p className="text-xs text-text-tertiary mt-1">Reference &quot;{invoice.job_reference}&quot; could not be matched to a job</p>
               </div>
@@ -763,7 +763,7 @@ function InvoiceDetailDrawer({
             {!loadingJob && linkedJob && (
               <>
                 {/* Job Header */}
-                <div className="p-4 rounded-xl border border-stone-100">
+                <div className="p-4 rounded-xl border border-border-light">
                   <div className="flex items-center justify-between mb-3">
                     <div>
                       <div className="flex items-center gap-2">
@@ -802,22 +802,22 @@ function InvoiceDetailDrawer({
                 </div>
 
                 {/* Job Financials */}
-                <div className="p-4 rounded-xl bg-stone-50 space-y-3">
+                <div className="p-4 rounded-xl bg-surface-hover space-y-3">
                   <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Job Financial Breakdown</p>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="p-3 rounded-xl bg-white border border-stone-100">
+                    <div className="p-3 rounded-xl bg-card border border-border-light">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase">Client Price</p>
                       <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJob.client_price)}</p>
                     </div>
-                    <div className="p-3 rounded-xl bg-white border border-stone-100">
+                    <div className="p-3 rounded-xl bg-card border border-border-light">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase">Partner Cost</p>
                       <p className="text-lg font-bold text-emerald-600 mt-0.5">{formatCurrency(linkedJob.partner_cost)}</p>
                     </div>
-                    <div className="p-3 rounded-xl bg-white border border-stone-100">
+                    <div className="p-3 rounded-xl bg-card border border-border-light">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase">Materials</p>
                       <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJob.materials_cost)}</p>
                     </div>
-                    <div className="p-3 rounded-xl bg-white border border-stone-100">
+                    <div className="p-3 rounded-xl bg-card border border-border-light">
                       <p className="text-[10px] font-semibold text-emerald-700 uppercase">Gross Margin</p>
                       <p className={`text-lg font-bold mt-0.5 ${linkedJob.margin_percent >= 0 ? "text-emerald-600" : "text-red-500"}`}>
                         {linkedJob.margin_percent.toFixed(1)}%
@@ -827,14 +827,14 @@ function InvoiceDetailDrawer({
                 </div>
 
                 {/* Invoiced vs Job Value comparison */}
-                <div className="p-4 rounded-xl border border-stone-100">
+                <div className="p-4 rounded-xl border border-border-light">
                   <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-3">Invoice vs Job Value</p>
                   <div className="flex items-center gap-4">
                     <div className="flex-1">
                       <p className="text-xs text-text-tertiary">Invoiced</p>
                       <p className="text-lg font-bold text-text-primary">{formatCurrency(invoice.amount)}</p>
                     </div>
-                    <ArrowRight className="h-4 w-4 text-stone-300" />
+                    <ArrowRight className="h-4 w-4 text-text-tertiary" />
                     <div className="flex-1">
                       <p className="text-xs text-text-tertiary">Client Price</p>
                       <p className="text-lg font-bold text-text-primary">{formatCurrency(linkedJob.client_price)}</p>
@@ -862,13 +862,13 @@ function InvoiceDetailDrawer({
 
             {loadingRelated && (
               <div className="space-y-3">
-                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-14 bg-stone-50 rounded-xl" />)}
+                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-14 bg-surface-hover rounded-xl" />)}
               </div>
             )}
 
             {!loadingRelated && relatedInvoices.length === 0 && (
               <div className="py-12 text-center">
-                <FileText className="h-8 w-8 text-stone-300 mx-auto mb-2" />
+                <FileText className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
                 <p className="text-sm text-text-tertiary">No other invoices for this client</p>
               </div>
             )}
@@ -881,13 +881,13 @@ function InvoiceDetailDrawer({
                     <motion.div
                       key={inv.id}
                       variants={staggerItem}
-                      className="p-3 rounded-xl border border-stone-100 hover:border-stone-200 transition-colors cursor-pointer"
+                      className="p-3 rounded-xl border border-border-light hover:border-border transition-colors cursor-pointer"
                       onClick={() => setTab("details")}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 rounded-lg bg-stone-50 flex items-center justify-center">
-                            <Receipt className="h-4 w-4 text-stone-400" />
+                          <div className="h-8 w-8 rounded-lg bg-surface-hover flex items-center justify-center">
+                            <Receipt className="h-4 w-4 text-text-tertiary" />
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
@@ -904,7 +904,7 @@ function InvoiceDetailDrawer({
                 })}
 
                 {/* Client Summary */}
-                <div className="mt-4 p-4 rounded-xl bg-stone-50">
+                <div className="mt-4 p-4 rounded-xl bg-surface-hover">
                   <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client Summary</p>
                   <div className="grid grid-cols-3 gap-3">
                     <div>
@@ -962,12 +962,12 @@ function TimelineStep({ done, active, label, date, danger }: { done: boolean; ac
     <div className="flex items-start gap-3 pb-4 last:pb-0">
       <div className="flex flex-col items-center">
         <div className={`h-3 w-3 rounded-full border-2 ${
-          done ? "bg-emerald-500 border-emerald-500" :
-          danger ? "bg-red-500 border-red-500" :
+          done ? "bg-emerald-50 dark:bg-emerald-950/300 border-emerald-500" :
+          danger ? "bg-red-50 dark:bg-red-950/300 border-red-500" :
           active ? "bg-amber-400 border-amber-400" :
-          "bg-white border-stone-300"
+          "bg-card border-border"
         }`} />
-        <div className="w-0.5 h-6 bg-stone-200 last:hidden" />
+        <div className="w-0.5 h-6 bg-border last:hidden" />
       </div>
       <div className="-mt-0.5">
         <p className={`text-sm font-medium ${danger ? "text-red-600" : done ? "text-text-primary" : "text-text-tertiary"}`}>{label}</p>
@@ -1050,10 +1050,10 @@ function CreateInvoiceModal({
 
 function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "default" }) {
   const colors = {
-    success: "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200",
-    danger: "text-red-700 bg-red-50 hover:bg-red-100 border-red-200",
-    warning: "text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200",
-    default: "text-stone-700 bg-stone-50 hover:bg-stone-100 border-stone-200",
+    success: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 border-emerald-200",
+    danger: "text-red-700 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 border-red-200",
+    warning: "text-amber-700 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 border-amber-200",
+    default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (
     <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>

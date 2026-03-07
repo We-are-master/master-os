@@ -40,8 +40,8 @@ const entityColors: Record<string, string> = {
   partner: "bg-purple-50 text-purple-600",
   invoice: "bg-amber-50 text-amber-600",
   account: "bg-teal-50 text-teal-600",
-  self_bill: "bg-stone-100 text-stone-600",
-  system: "bg-stone-100 text-stone-600",
+  self_bill: "bg-surface-tertiary text-text-secondary",
+  system: "bg-surface-tertiary text-text-secondary",
 };
 
 const actionLabels: Record<string, string> = {
@@ -156,7 +156,7 @@ export function ActivityFeed() {
 
       {loading && (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-5 w-5 animate-spin text-stone-400" />
+          <Loader2 className="h-5 w-5 animate-spin text-text-tertiary" />
         </div>
       )}
 
@@ -187,7 +187,7 @@ export function ActivityFeed() {
                 whileHover={{ backgroundColor: "rgba(0,0,0,0.015)" }}
                 className="flex items-start gap-3 px-3 py-3 rounded-lg cursor-pointer transition-colors"
               >
-                <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${entityColors[log.entity_type] ?? "bg-stone-100 text-stone-600"}`}>
+                <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${entityColors[log.entity_type] ?? "bg-surface-tertiary text-text-secondary"}`}>
                   <Icon className="h-4 w-4" />
                 </div>
                 <div className="flex-1 min-w-0">
