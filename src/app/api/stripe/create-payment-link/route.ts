@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stripe } from "@/lib/stripe";
+import { requireStripe } from "@/lib/stripe";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseAdmin = createClient(
@@ -9,6 +9,7 @@ const supabaseAdmin = createClient(
 
 export async function POST(req: NextRequest) {
   try {
+    const stripe = requireStripe();
     const { invoiceId, amount, clientName, reference, customerEmail } = await req.json();
 
     if (!invoiceId || !amount || !clientName || !reference) {
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("Stripe error:", err);
     const message = err instanceof Error ? err.message : "Failed to create payment link";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = message.includes("not configured") ? 503 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

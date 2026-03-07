@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { stripe } from "@/lib/stripe";
+import { requireStripe } from "@/lib/stripe";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseAdmin = createClient(
@@ -17,9 +17,14 @@ export async function POST(req: NextRequest) {
 
   let event;
   try {
+    const stripe = requireStripe();
     event = stripe.webhooks.constructEvent(body, signature, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error("Webhook signature verification failed:", err);
+    const message = err instanceof Error ? err.message : "";
+    if (message.includes("not configured")) {
+      return NextResponse.json({ error: message }, { status: 503 });
+    }
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
