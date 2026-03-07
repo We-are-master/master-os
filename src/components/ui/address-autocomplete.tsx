@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { MapPin, Loader2, X } from "lucide-react";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
@@ -64,20 +65,32 @@ export function AddressAutocomplete({
   const [results, setResults] = useState<GeoFeature[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setQuery(value); }, [value]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node & { closest?: (s: string) => Element | null };
+      if (containerRef.current?.contains(target)) return;
+      if (target.closest?.("[data-address-dropdown]")) return;
+      setOpen(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (open && results.length > 0 && inputRef.current) {
+      const rect = inputRef.current.getBoundingClientRect();
+      setDropdownRect({ top: rect.bottom, left: rect.left, width: rect.width });
+    } else {
+      setDropdownRect(null);
+    }
+  }, [open, results.length]);
 
   const search = useCallback(async (q: string) => {
     if (!MAPBOX_TOKEN || q.length < 3) { setResults([]); return; }
@@ -124,6 +137,7 @@ export function AddressAutocomplete({
       <div className="relative">
         <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary pointer-events-none" />
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={(e) => handleChange(e.target.value)}
@@ -141,26 +155,34 @@ export function AddressAutocomplete({
         </div>
       </div>
 
-      {open && results.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full bg-card rounded-xl border border-border shadow-lg overflow-hidden">
-          {results.map((feature, i) => (
-            <button
-              key={i}
-              onClick={() => handleSelect(feature)}
-              className="w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-surface-hover transition-colors text-left"
-            >
-              <MapPin className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
-              <div className="min-w-0">
-                <p className="text-sm text-text-primary truncate">{feature.text}{feature.address ? `, ${feature.address}` : ""}</p>
-                <p className="text-[11px] text-text-tertiary truncate">{feature.place_name}</p>
-              </div>
-            </button>
-          ))}
-          <div className="px-3 py-1.5 border-t border-border-light bg-surface-hover/60">
-            <p className="text-[9px] text-text-tertiary text-center">Powered by Mapbox</p>
-          </div>
-        </div>
-      )}
+      {open && results.length > 0 && dropdownRect && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            data-address-dropdown
+            className="fixed z-[9999] mt-1 bg-card rounded-xl border border-border shadow-lg overflow-hidden max-h-60 overflow-y-auto"
+            style={{ top: dropdownRect.top + 4, left: dropdownRect.left, width: dropdownRect.width }}
+          >
+            {results.map((feature, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => handleSelect(feature)}
+                className="w-full flex items-start gap-2.5 px-3 py-2.5 hover:bg-surface-hover transition-colors text-left"
+              >
+                <MapPin className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm text-text-primary truncate">{feature.text}{feature.address ? `, ${feature.address}` : ""}</p>
+                  <p className="text-[11px] text-text-tertiary truncate">{feature.place_name}</p>
+                </div>
+              </button>
+            ))}
+            <div className="px-3 py-1.5 border-t border-border-light bg-surface-hover/60 sticky bottom-0">
+              <p className="text-[9px] text-text-tertiary text-center">Powered by Mapbox</p>
+            </div>
+          </div>,
+          document.body
+        )
+      }
     </div>
   );
 }

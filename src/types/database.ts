@@ -66,6 +66,7 @@ export interface Job {
   property_address: string;
   partner_id?: string;
   partner_name?: string;
+  quote_id?: string;
   owner_id?: string;
   owner_name?: string;
   status: JobStatus;

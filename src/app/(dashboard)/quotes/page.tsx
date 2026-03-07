@@ -12,6 +12,8 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
 import { Input, SearchInput } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
@@ -20,13 +22,18 @@ import {
   Sparkles, FileText, BarChart3, Clock, ArrowRight,
   Send, CheckCircle2, RotateCcw, XCircle,
   User, Mail, DollarSign, Bot, Building2,
-  FileDown, Loader2, Eye, Trash2,
+  FileDown, Loader2, Eye, Trash2, Briefcase,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Quote } from "@/types/database";
+import type { Quote, Partner, Job } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote } from "@/services/quotes";
+import { createJob, getJobByQuoteId } from "@/services/jobs";
+import { listPartners } from "@/services/partners";
+import { getRequest } from "@/services/requests";
 import { getStatusCounts, getAggregates, getSupabase } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -71,6 +78,7 @@ const statusConfig: Record<string, { variant: "default" | "primary" | "success" 
 };
 
 export default function QuotesPage() {
+  const router = useRouter();
   const {
     data, loading, page, totalPages, totalItems,
     setPage, search, setSearch, status, setStatus, refresh,
@@ -83,6 +91,7 @@ export default function QuotesPage() {
   const [viewMode, setViewMode] = useState("list");
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
+  const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
 
   const loadCounts = useCallback(async () => {
     try {
@@ -155,28 +164,83 @@ export default function QuotesPage() {
     }
   };
 
-  const handleStatusChange = useCallback(async (quote: Quote, newStatus: Quote["status"]) => {
-    try {
-      const updated = await updateQuote(quote.id, { status: newStatus });
-      await logAudit({
-        entityType: "quote",
-        entityId: quote.id,
-        entityRef: quote.reference,
-        action: "status_changed",
-        fieldName: "status",
-        oldValue: quote.status,
-        newValue: newStatus,
-        userId: profile?.id,
-        userName: profile?.full_name,
-      });
-      setSelectedQuote(updated);
-      toast.success(`Quote moved to ${statusLabels[newStatus]}`);
-      refresh();
-      loadCounts();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update quote");
-    }
-  }, [refresh, loadCounts, profile?.id, profile?.full_name]);
+  const handleConfirmCreateJob = useCallback(
+    async (formData: { title: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number }) => {
+      if (!quoteToConvert) return;
+      try {
+        const margin =
+          formData.client_price > 0
+            ? Math.round(((formData.client_price - formData.partner_cost - formData.materials_cost) / formData.client_price) * 1000) / 10
+            : 0;
+        const job = await createJob({
+          title: formData.title,
+          client_name: formData.client_name,
+          property_address: formData.property_address,
+          partner_id: formData.partner_id,
+          partner_name: formData.partner_name,
+          quote_id: quoteToConvert.id,
+          status: "pending_schedule",
+          progress: 0,
+          current_phase: 0,
+          total_phases: 1,
+          client_price: formData.client_price,
+          partner_cost: formData.partner_cost,
+          materials_cost: formData.materials_cost,
+          margin_percent: margin,
+          owner_id: profile?.id,
+          owner_name: profile?.full_name,
+        });
+        await logAudit({
+          entityType: "job",
+          entityId: job.id,
+          entityRef: job.reference,
+          action: "created",
+          metadata: { from_quote: quoteToConvert.reference },
+          userId: profile?.id,
+          userName: profile?.full_name,
+        });
+        setQuoteToConvert(null);
+        setSelectedQuote(null);
+        toast.success(`Job ${job.reference} created. You can now schedule it.`);
+        refresh();
+        loadCounts();
+        router.push(`/jobs?jobId=${job.id}`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to create job");
+      }
+    },
+    [quoteToConvert, refresh, loadCounts, profile?.id, profile?.full_name, router]
+  );
+
+  const handleStatusChange = useCallback(
+    async (quote: Quote, newStatus: Quote["status"] | "create_job") => {
+      if (newStatus === "create_job") {
+        setQuoteToConvert(quote);
+        return;
+      }
+      try {
+        const updated = await updateQuote(quote.id, { status: newStatus });
+        await logAudit({
+          entityType: "quote",
+          entityId: quote.id,
+          entityRef: quote.reference,
+          action: "status_changed",
+          fieldName: "status",
+          oldValue: quote.status,
+          newValue: newStatus,
+          userId: profile?.id,
+          userName: profile?.full_name,
+        });
+        setSelectedQuote(updated);
+        toast.success(`Quote moved to ${statusLabels[newStatus]}`);
+        refresh();
+        loadCounts();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to update quote");
+      }
+    },
+    [refresh, loadCounts, profile?.id, profile?.full_name]
+  );
 
   const handleExport = useCallback(() => {
     const csv = ["Reference,Title,Client,Status,Value,Owner"]
@@ -330,6 +394,12 @@ export default function QuotesPage() {
         onStatusChange={handleStatusChange}
       />
 
+      <CreateJobFromQuoteModal
+        quote={quoteToConvert}
+        onClose={() => setQuoteToConvert(null)}
+        onSubmit={handleConfirmCreateJob}
+      />
+
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Quote" subtitle="Create a new quote for a client" size="lg">
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
@@ -344,13 +414,14 @@ function QuoteDetailDrawer({
 }: {
   quote: Quote | null;
   onClose: () => void;
-  onStatusChange: (quote: Quote, status: Quote["status"]) => void;
+  onStatusChange: (quote: Quote, status: Quote["status"] | "create_job") => void;
 }) {
   const [tab, setTab] = useState("details");
   const [sendState, setSendState] = useState<"idle" | "generating" | "sending" | "sent" | "error">("idle");
   const [sendEmail, setSendEmail] = useState("");
   const [sendNotes, setSendNotes] = useState("");
   const [lineItems, setLineItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([]);
+  const [convertedJob, setConvertedJob] = useState<Job | null>(null);
 
   useEffect(() => {
     if (quote) {
@@ -360,6 +431,14 @@ function QuoteDetailDrawer({
       setLineItems([{ description: quote.title ?? "", quantity: "1", unitPrice: String(quote.total_value ?? 0) }]);
     }
   }, [quote]);
+
+  useEffect(() => {
+    if (quote?.id && quote?.status === "approved") {
+      getJobByQuoteId(quote.id).then(setConvertedJob);
+    } else {
+      setConvertedJob(null);
+    }
+  }, [quote?.id, quote?.status]);
 
   if (!quote) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
@@ -511,6 +590,24 @@ function QuoteDetailDrawer({
             <p className="text-[11px] text-text-tertiary">bids received</p>
           </div>
         </div>
+
+        {/* Converted to Job */}
+        {convertedJob && (
+          <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+            <div className="flex items-center gap-2 mb-2">
+              <Briefcase className="h-4 w-4 text-emerald-600" />
+              <label className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Converted to Job</label>
+            </div>
+            <p className="text-sm text-text-secondary mb-2">This quote was converted into the following job:</p>
+            <Link
+              href={`/jobs?jobId=${convertedJob.id}`}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-card border border-border hover:border-primary/50 hover:bg-primary/5 transition-colors text-sm font-semibold text-primary"
+            >
+              <Briefcase className="h-4 w-4" />
+              {convertedJob.reference} — {convertedJob.title}
+            </Link>
+          </div>
+        )}
 
         {/* AI Confidence */}
         {quote.ai_confidence != null && (
@@ -721,6 +818,7 @@ function getQuoteActions(currentStatus: string) {
       ];
     case "approved":
       return [
+        { label: "Create Job", status: "create_job" as Quote["status"], icon: Briefcase, primary: true },
         { label: "Reopen", status: "draft" as Quote["status"], icon: RotateCcw, primary: false },
       ];
     case "expired":
@@ -730,6 +828,127 @@ function getQuoteActions(currentStatus: string) {
     default:
       return [];
   }
+}
+
+function CreateJobFromQuoteModal({
+  quote,
+  onClose,
+  onSubmit,
+}: {
+  quote: Quote | null;
+  onClose: () => void;
+  onSubmit: (data: { title: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number }) => void;
+}) {
+  const [form, setForm] = useState({
+    title: "",
+    client_name: "",
+    property_address: "",
+    partner_id: "",
+    client_price: "",
+    partner_cost: "",
+    materials_cost: "",
+  });
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!quote) return;
+    setForm({
+      title: quote.title ?? "",
+      client_name: quote.client_name ?? "",
+      property_address: "",
+      partner_id: "",
+      client_price: String(quote.total_value ?? 0),
+      partner_cost: "0",
+      materials_cost: "0",
+    });
+    listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
+    if (quote.request_id) {
+      getRequest(quote.request_id).then((req) => {
+        if (req?.property_address) setForm((p) => ({ ...p, property_address: req.property_address }));
+      });
+    }
+  }, [quote]);
+
+  const update = (field: string, value: string) => setForm((p) => ({ ...p, [field]: value }));
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.title?.trim() || !form.client_name?.trim()) {
+      toast.error("Title and client name are required");
+      return;
+    }
+    if (!form.property_address?.trim()) {
+      toast.error("Property address is required before creating the job");
+      return;
+    }
+    const selectedPartner = partners.find((p) => p.id === form.partner_id);
+    setLoading(true);
+    onSubmit({
+      title: form.title.trim(),
+      client_name: form.client_name.trim(),
+      property_address: form.property_address.trim(),
+      partner_id: form.partner_id || undefined,
+      partner_name: selectedPartner ? selectedPartner.company_name || selectedPartner.contact_name : undefined,
+      client_price: Number(form.client_price) || 0,
+      partner_cost: Number(form.partner_cost) || 0,
+      materials_cost: Number(form.materials_cost) || 0,
+    });
+    setLoading(false);
+  };
+
+  if (!quote) return null;
+
+  const partnerOptions = [{ value: "", label: "No partner" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name || p.email }))];
+
+  return (
+    <Modal open={!!quote} onClose={onClose} title="Create Job from Quote" subtitle={`${quote.reference} — fill address and assign partner before converting`} size="lg">
+      <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Job Title *</label>
+            <Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="e.g. HVAC Installation" required />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Client Name *</label>
+            <Input value={form.client_name} onChange={(e) => update("client_name", e.target.value)} placeholder="Client name" required />
+          </div>
+        </div>
+        <AddressAutocomplete
+          label="Property Address *"
+          value={form.property_address}
+          onSelect={(parts) => update("property_address", parts.full_address)}
+          placeholder="Start typing address or postcode..."
+        />
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner</label>
+          <Select
+            options={partnerOptions}
+            value={form.partner_id}
+            onChange={(e) => update("partner_id", e.target.value)}
+          />
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label>
+            <Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} placeholder="0.00" min={0} step="0.01" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label>
+            <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} placeholder="0.00" min={0} step="0.01" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label>
+            <Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} placeholder="0.00" min={0} step="0.01" />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button type="submit" disabled={loading}>Create Job</Button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
 function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>) => void; onCancel: () => void }) {
