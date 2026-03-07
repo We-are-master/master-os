@@ -124,6 +124,8 @@ function JobsPageContent() {
           partner_cost: partnerCost,
           materials_cost: materialsCost,
           margin_percent: margin,
+          scheduled_date: formData.scheduled_date,
+          scheduled_start_at: formData.scheduled_start_at,
         });
         await logAudit({
           entityType: "job",
@@ -168,6 +170,19 @@ function JobsPageContent() {
       }
     },
     [refresh, loadCounts, profile?.id, profile?.full_name]
+  );
+
+  const handleScheduleUpdate = useCallback(
+    async (jobId: string, updates: { scheduled_start_at?: string; scheduled_date?: string }) => {
+      try {
+        const updated = await updateJob(jobId, updates);
+        setSelectedJob(updated);
+        toast.success("Schedule updated");
+      } catch {
+        toast.error("Failed to update schedule");
+      }
+    },
+    []
   );
 
   const handleProgressUpdate = useCallback(
@@ -264,6 +279,25 @@ function JobsPageContent() {
           </div>
         ) : (
           <span className="text-xs text-text-tertiary italic">No owner</span>
+        ),
+    },
+    {
+      key: "scheduled",
+      label: "Scheduled",
+      render: (item) =>
+        item.scheduled_start_at ? (
+          <div>
+            <p className="text-xs font-medium text-text-primary">
+              {new Date(item.scheduled_start_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+            </p>
+            <p className="text-[11px] text-text-tertiary">
+              {new Date(item.scheduled_start_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+            </p>
+          </div>
+        ) : item.scheduled_date ? (
+          <p className="text-xs text-text-primary">{new Date(item.scheduled_date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</p>
+        ) : (
+          <span className="text-xs text-text-tertiary italic">—</span>
         ),
     },
     {
@@ -388,6 +422,7 @@ function JobsPageContent() {
         onClose={() => setSelectedJob(null)}
         onStatusChange={handleStatusChange}
         onProgressUpdate={handleProgressUpdate}
+        onScheduleUpdate={handleScheduleUpdate}
       />
 
       <CreateJobModal
@@ -412,13 +447,38 @@ function JobDetailDrawer({
   onClose,
   onStatusChange,
   onProgressUpdate,
+  onScheduleUpdate,
 }: {
   job: Job | null;
   onClose: () => void;
   onStatusChange: (job: Job, status: Job["status"]) => void;
   onProgressUpdate: (job: Job, phase: number) => void;
+  onScheduleUpdate: (jobId: string, updates: { scheduled_start_at?: string; scheduled_date?: string }) => void;
 }) {
   const [tab, setTab] = useState("details");
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
+
+  useEffect(() => {
+    if (job?.scheduled_start_at) {
+      const d = new Date(job.scheduled_start_at);
+      setScheduleDate(d.toISOString().slice(0, 10));
+      setScheduleTime(d.toTimeString().slice(0, 5));
+    } else if (job?.scheduled_date) {
+      setScheduleDate(job.scheduled_date);
+      setScheduleTime("");
+    } else {
+      setScheduleDate("");
+      setScheduleTime("");
+    }
+  }, [job?.id, job?.scheduled_start_at, job?.scheduled_date]);
+
+  const handleScheduleChange = (date: string, time: string) => {
+    if (!job) return;
+    const scheduled_date = date || undefined;
+    const scheduled_start_at = date && time ? `${date}T${time}:00` : date ? `${date}T09:00:00` : undefined;
+    onScheduleUpdate(job.id, { scheduled_start_at: scheduled_start_at ?? undefined, scheduled_date });
+  };
 
   useEffect(() => {
     setTab("details");
@@ -527,6 +587,53 @@ function JobDetailDrawer({
             ) : (
               <p className="text-sm text-text-tertiary italic mt-2">No owner</p>
             )}
+          </div>
+        </div>
+
+        {/* Scheduled date & time */}
+        <div className="p-3 rounded-xl bg-surface-hover">
+          <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scheduled</label>
+          {job.scheduled_start_at ? (
+            <p className="text-sm font-semibold text-text-primary mt-1.5">
+              {new Date(job.scheduled_start_at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+              {" · "}
+              {new Date(job.scheduled_start_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+            </p>
+          ) : job.scheduled_date ? (
+            <p className="text-sm font-semibold text-text-primary mt-1.5">
+              {new Date(job.scheduled_date).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+              <span className="text-text-tertiary font-normal"> (no time set)</span>
+            </p>
+          ) : (
+            <p className="text-sm text-text-tertiary italic mt-1.5">Not scheduled</p>
+          )}
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            <div>
+              <label className="block text-[10px] text-text-tertiary mb-0.5">Date</label>
+              <Input
+                type="date"
+                value={scheduleDate}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setScheduleDate(v);
+                  handleScheduleChange(v, scheduleTime);
+                }}
+                className="text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-text-tertiary mb-0.5">Time</label>
+              <Input
+                type="time"
+                value={scheduleTime}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setScheduleTime(v);
+                  handleScheduleChange(scheduleDate, v);
+                }}
+                className="text-xs"
+              />
+            </div>
           </div>
         </div>
 
@@ -668,6 +775,8 @@ function CreateJobModal({
     partner_cost: "",
     materials_cost: "",
     total_phases: "3",
+    scheduled_date: "",
+    scheduled_time: "",
   });
 
   const update = (field: string, value: string) =>
@@ -679,6 +788,13 @@ function CreateJobModal({
       toast.error("Please fill in all required fields");
       return;
     }
+    const scheduled_date = form.scheduled_date || undefined;
+    const scheduled_start_at =
+      form.scheduled_date && form.scheduled_time
+        ? `${form.scheduled_date}T${form.scheduled_time}:00`
+        : form.scheduled_date
+          ? `${form.scheduled_date}T09:00:00`
+          : undefined;
     onCreate({
       title: form.title,
       client_name: form.client_name,
@@ -688,8 +804,10 @@ function CreateJobModal({
       partner_cost: form.partner_cost ? Number(form.partner_cost) : 0,
       materials_cost: form.materials_cost ? Number(form.materials_cost) : 0,
       total_phases: form.total_phases ? Number(form.total_phases) : 3,
+      scheduled_date,
+      scheduled_start_at,
     });
-    setForm({ title: "", client_name: "", property_address: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", total_phases: "3" });
+    setForm({ title: "", client_name: "", property_address: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", total_phases: "3", scheduled_date: "", scheduled_time: "" });
   };
 
   return (
@@ -711,6 +829,16 @@ function CreateJobModal({
           onSelect={(parts) => update("property_address", parts.full_address)}
           placeholder="Start typing address or postcode..."
         />
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label>
+            <Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Time</label>
+            <Input type="time" value={form.scheduled_time} onChange={(e) => update("scheduled_time", e.target.value)} />
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Name</label>
