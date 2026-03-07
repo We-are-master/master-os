@@ -2,14 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireStripe } from "@/lib/stripe";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SERVICE_ROLE_KEY!,
-);
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SERVICE_ROLE_KEY!,
+  );
+}
 
 export async function POST(req: NextRequest) {
   try {
     const stripe = requireStripe();
+    const supabaseAdmin = getSupabaseAdmin();
     const { invoiceId, paymentLinkId } = await req.json();
 
     if (!invoiceId || !paymentLinkId) {
