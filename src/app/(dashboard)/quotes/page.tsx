@@ -165,7 +165,7 @@ export default function QuotesPage() {
   };
 
   const handleConfirmCreateJob = useCallback(
-    async (formData: { title: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number }) => {
+    async (formData: { title: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string }) => {
       if (!quoteToConvert) return;
       try {
         const margin =
@@ -187,6 +187,8 @@ export default function QuotesPage() {
           partner_cost: formData.partner_cost,
           materials_cost: formData.materials_cost,
           margin_percent: margin,
+          scheduled_date: formData.scheduled_date,
+          scheduled_start_at: formData.scheduled_start_at,
           owner_id: profile?.id,
           owner_name: profile?.full_name,
         });
@@ -837,7 +839,7 @@ function CreateJobFromQuoteModal({
 }: {
   quote: Quote | null;
   onClose: () => void;
-  onSubmit: (data: { title: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number }) => void;
+  onSubmit: (data: { title: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string }) => void;
 }) {
   const [form, setForm] = useState({
     title: "",
@@ -847,6 +849,8 @@ function CreateJobFromQuoteModal({
     client_price: "",
     partner_cost: "",
     materials_cost: "",
+    scheduled_date: "",
+    scheduled_time: "",
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [loading, setLoading] = useState(false);
@@ -861,6 +865,8 @@ function CreateJobFromQuoteModal({
       client_price: String(quote.total_value ?? 0),
       partner_cost: "0",
       materials_cost: "0",
+      scheduled_date: "",
+      scheduled_time: "",
     });
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
     if (quote.request_id) {
@@ -884,6 +890,13 @@ function CreateJobFromQuoteModal({
     }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     setLoading(true);
+    const scheduled_date = form.scheduled_date || undefined;
+    const scheduled_start_at =
+      form.scheduled_date && form.scheduled_time
+        ? `${form.scheduled_date}T${form.scheduled_time}:00`
+        : form.scheduled_date
+          ? `${form.scheduled_date}T09:00:00`
+          : undefined;
     onSubmit({
       title: form.title.trim(),
       client_name: form.client_name.trim(),
@@ -893,6 +906,8 @@ function CreateJobFromQuoteModal({
       client_price: Number(form.client_price) || 0,
       partner_cost: Number(form.partner_cost) || 0,
       materials_cost: Number(form.materials_cost) || 0,
+      scheduled_date,
+      scheduled_start_at,
     });
     setLoading(false);
   };
@@ -920,6 +935,16 @@ function CreateJobFromQuoteModal({
           onSelect={(parts) => update("property_address", parts.full_address)}
           placeholder="Start typing address or postcode..."
         />
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label>
+            <Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Time</label>
+            <Input type="time" value={form.scheduled_time} onChange={(e) => update("scheduled_time", e.target.value)} />
+          </div>
+        </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner</label>
           <Select

@@ -78,6 +78,7 @@ export interface Job {
   materials_cost: number;
   margin_percent: number;
   scheduled_date?: string;
+  scheduled_start_at?: string;
   completed_date?: string;
   created_at: string;
   updated_at: string;
