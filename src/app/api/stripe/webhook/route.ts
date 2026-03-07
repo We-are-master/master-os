@@ -1,16 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireStripe } from "@/lib/stripe";
-import { createClient } from "@supabase/supabase-js";
-
-function getSupabaseAdmin() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SERVICE_ROLE_KEY!,
-  );
-}
+import { createServiceClient } from "@/lib/supabase/service";
 
 export async function POST(req: NextRequest) {
-  const supabaseAdmin = getSupabaseAdmin();
+  const supabaseAdmin = createServiceClient();
   const body = await req.text();
   const signature = req.headers.get("stripe-signature");
 
