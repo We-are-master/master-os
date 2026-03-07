@@ -1,0 +1,298 @@
+"use client";
+
+import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
+import { staggerContainer, tableRowVariant } from "@/lib/motion";
+import { ChevronLeft, ChevronRight, Minus } from "lucide-react";
+
+export interface Column<T> {
+  key: string;
+  label: string;
+  width?: string;
+  sortable?: boolean;
+  align?: "left" | "center" | "right";
+  render?: (item: T, index: number) => React.ReactNode;
+}
+
+interface DataTableProps<T> {
+  columns: Column<T>[];
+  data: T[];
+  onRowClick?: (item: T) => void;
+  selectedId?: string;
+  getRowId?: (item: T) => string;
+  emptyMessage?: string;
+  emptyIcon?: React.ReactNode;
+  loading?: boolean;
+  page?: number;
+  totalPages?: number;
+  totalItems?: number;
+  onPageChange?: (page: number) => void;
+  className?: string;
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onSelectionChange?: (ids: Set<string>) => void;
+  bulkActions?: React.ReactNode;
+}
+
+function Checkbox({ checked, indeterminate, onChange, className }: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onChange(); }}
+      className={cn(
+        "h-4.5 w-4.5 rounded-md border-2 flex items-center justify-center transition-all shrink-0",
+        checked || indeterminate
+          ? "bg-primary border-primary text-white"
+          : "border-stone-300 hover:border-stone-400 bg-white",
+        className
+      )}
+      style={{ height: 18, width: 18 }}
+    >
+      {checked && (
+        <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none">
+          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+      {indeterminate && !checked && (
+        <Minus className="h-3 w-3" />
+      )}
+    </button>
+  );
+}
+
+export function DataTable<T>({
+  columns,
+  data,
+  onRowClick,
+  selectedId,
+  getRowId,
+  emptyMessage = "No data found",
+  loading = false,
+  page = 1,
+  totalPages,
+  totalItems,
+  onPageChange,
+  className,
+  selectable = false,
+  selectedIds,
+  onSelectionChange,
+  bulkActions,
+}: DataTableProps<T>) {
+  const allIds = data.map((item, i) => getRowId?.(item) ?? String(i));
+  const allSelected = selectable && allIds.length > 0 && allIds.every((id) => selectedIds?.has(id));
+  const someSelected = selectable && allIds.some((id) => selectedIds?.has(id));
+  const selectionCount = selectedIds?.size ?? 0;
+
+  const toggleAll = () => {
+    if (!onSelectionChange) return;
+    if (allSelected) {
+      onSelectionChange(new Set());
+    } else {
+      onSelectionChange(new Set(allIds));
+    }
+  };
+
+  const toggleOne = (id: string) => {
+    if (!onSelectionChange || !selectedIds) return;
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onSelectionChange(next);
+  };
+
+  return (
+    <div className={cn("bg-white rounded-xl border border-border-light shadow-soft overflow-hidden relative", className)}>
+      {/* Bulk Action Bar */}
+      <AnimatePresence>
+        {selectable && selectionCount > 0 && bulkActions && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+            className="sticky top-0 z-10 flex items-center gap-3 px-5 py-2.5 bg-primary/[0.04] border-b border-primary/10"
+          >
+            <div className="flex items-center gap-2">
+              <Checkbox
+                checked={allSelected}
+                indeterminate={someSelected && !allSelected}
+                onChange={toggleAll}
+              />
+              <span className="text-sm font-medium text-primary">
+                {selectionCount} selected
+              </span>
+            </div>
+            <div className="h-4 w-px bg-stone-200" />
+            <div className="flex items-center gap-1.5">
+              {bulkActions}
+            </div>
+            <button
+              onClick={() => onSelectionChange?.(new Set())}
+              className="ml-auto text-xs font-medium text-text-tertiary hover:text-text-secondary transition-colors"
+            >
+              Clear selection
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-stone-100">
+              {selectable && (
+                <th className="w-12 px-4 py-3">
+                  <Checkbox
+                    checked={allSelected}
+                    indeterminate={someSelected && !allSelected}
+                    onChange={toggleAll}
+                  />
+                </th>
+              )}
+              {columns.map((col) => (
+                <th
+                  key={col.key}
+                  style={{ width: col.width }}
+                  className={cn(
+                    "px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary",
+                    col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"
+                  )}
+                >
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <AnimatePresence mode="wait">
+            {loading ? (
+              <tbody>
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="border-b border-stone-50">
+                    {selectable && (
+                      <td className="px-4 py-4">
+                        <div className="h-4 w-4 bg-stone-100 rounded animate-shimmer" />
+                      </td>
+                    )}
+                    {columns.map((col) => (
+                      <td key={col.key} className="px-5 py-4">
+                        <div className="h-4 bg-stone-100 rounded animate-shimmer" style={{ width: `${60 + Math.random() * 30}%` }} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            ) : data.length === 0 ? (
+              <tbody>
+                <tr>
+                  <td colSpan={columns.length + (selectable ? 1 : 0)} className="px-5 py-16 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="h-12 w-12 rounded-xl bg-stone-100 flex items-center justify-center">
+                        <svg className="h-6 w-6 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                        </svg>
+                      </div>
+                      <p className="text-sm font-medium text-text-secondary">{emptyMessage}</p>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            ) : (
+              <motion.tbody
+                variants={staggerContainer}
+                initial="hidden"
+                animate="visible"
+              >
+                {data.map((item, index) => {
+                  const id = getRowId?.(item) ?? String(index);
+                  const isRowSelected = selectedId === id;
+                  const isChecked = selectedIds?.has(id) ?? false;
+
+                  return (
+                    <motion.tr
+                      key={id}
+                      variants={tableRowVariant}
+                      onClick={() => onRowClick?.(item)}
+                      className={cn(
+                        "border-b border-stone-50 transition-colors duration-150",
+                        onRowClick && "cursor-pointer",
+                        isChecked
+                          ? "bg-primary/[0.04]"
+                          : isRowSelected
+                            ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
+                            : "hover:bg-stone-50/60 border-l-[3px] border-l-transparent"
+                      )}
+                    >
+                      {selectable && (
+                        <td className="w-12 px-4 py-3.5">
+                          <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
+                        </td>
+                      )}
+                      {columns.map((col) => (
+                        <td
+                          key={col.key}
+                          className={cn(
+                            "px-5 py-3.5 text-sm",
+                            col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"
+                          )}
+                        >
+                          {col.render
+                            ? col.render(item, index)
+                            : String((item as Record<string, unknown>)[col.key] ?? "")}
+                        </td>
+                      ))}
+                    </motion.tr>
+                  );
+                })}
+              </motion.tbody>
+            )}
+          </AnimatePresence>
+        </table>
+      </div>
+
+      {totalPages && totalPages > 1 && (
+        <div className="flex items-center justify-between px-5 py-3 border-t border-stone-100">
+          <p className="text-xs text-text-tertiary">
+            Showing {(page - 1) * 10 + 1}-{Math.min(page * 10, totalItems ?? 0)} of {totalItems}
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => onPageChange?.(page - 1)}
+              disabled={page <= 1}
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-500 hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            {Array.from({ length: Math.min(totalPages, 5) }).map((_, i) => {
+              const pageNum = i + 1;
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => onPageChange?.(pageNum)}
+                  className={cn(
+                    "h-8 w-8 rounded-lg text-xs font-medium transition-colors",
+                    page === pageNum
+                      ? "bg-primary text-white"
+                      : "text-stone-600 hover:bg-stone-100"
+                  )}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => onPageChange?.(page + 1)}
+              disabled={page >= totalPages}
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-500 hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

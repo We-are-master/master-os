@@ -1,0 +1,253 @@
+"use client";
+
+import { useEffect, useRef, useState, useCallback } from "react";
+import mapboxgl from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
+import { MapPin, Search, X, Loader2 } from "lucide-react";
+
+const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
+
+interface LocationResult {
+  address: string;
+  lng: number;
+  lat: number;
+}
+
+interface LocationPickerProps {
+  value?: string;
+  onChange: (result: LocationResult) => void;
+  placeholder?: string;
+  className?: string;
+  /** Height for the map container. Default: 220px */
+  mapHeight?: string;
+  /** Show as read-only mini map (no search) */
+  readOnly?: boolean;
+  /** Initial center [lng, lat] */
+  center?: [number, number];
+}
+
+export function LocationPicker({
+  value = "",
+  onChange,
+  placeholder = "Search for an address...",
+  className = "",
+  mapHeight = "220px",
+  readOnly = false,
+  center,
+}: LocationPickerProps) {
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<mapboxgl.Map | null>(null);
+  const markerRef = useRef<mapboxgl.Marker | null>(null);
+  const [query, setQuery] = useState(value);
+  const [results, setResults] = useState<Array<{ place_name: string; center: [number, number] }>>([]);
+  const [searching, setSearching] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => {
+    if (!mapContainer.current || !MAPBOX_TOKEN) return;
+
+    mapboxgl.accessToken = MAPBOX_TOKEN;
+    const defaultCenter = center ?? [-73.9857, 40.7484]; // NYC default
+
+    const map = new mapboxgl.Map({
+      container: mapContainer.current,
+      style: "mapbox://styles/mapbox/light-v11",
+      center: defaultCenter,
+      zoom: center ? 14 : 11,
+      interactive: !readOnly,
+    });
+
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+
+    if (center) {
+      markerRef.current = new mapboxgl.Marker({ color: "#ef4444" })
+        .setLngLat(center)
+        .addTo(map);
+    }
+
+    if (!readOnly) {
+      map.on("click", (e) => {
+        const { lng, lat } = e.lngLat;
+        placeMarker(map, [lng, lat]);
+        reverseGeocode(lng, lat);
+      });
+    }
+
+    mapRef.current = map;
+
+    return () => { map.remove(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly]);
+
+  const placeMarker = (map: mapboxgl.Map, lngLat: [number, number]) => {
+    if (markerRef.current) markerRef.current.remove();
+    markerRef.current = new mapboxgl.Marker({ color: "#ef4444" })
+      .setLngLat(lngLat)
+      .addTo(map);
+    map.flyTo({ center: lngLat, zoom: 15, duration: 800 });
+  };
+
+  const reverseGeocode = async (lng: number, lat: number) => {
+    if (!MAPBOX_TOKEN) return;
+    try {
+      const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&limit=1`);
+      const data = await res.json();
+      const place = data.features?.[0];
+      if (place) {
+        const addr = place.place_name;
+        setQuery(addr);
+        onChange({ address: addr, lng, lat });
+      }
+    } catch { /* silent */ }
+  };
+
+  const handleSearch = useCallback(async (q: string) => {
+    if (!q.trim() || !MAPBOX_TOKEN) { setResults([]); return; }
+    setSearching(true);
+    try {
+      const res = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&limit=5&types=address,place,neighborhood,locality`
+      );
+      const data = await res.json();
+      setResults(data.features?.map((f: { place_name: string; center: [number, number] }) => ({
+        place_name: f.place_name,
+        center: f.center,
+      })) ?? []);
+      setShowResults(true);
+    } catch { setResults([]); }
+    finally { setSearching(false); }
+  }, []);
+
+  const handleInputChange = (val: string) => {
+    setQuery(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => handleSearch(val), 350);
+  };
+
+  const handleSelectResult = (result: { place_name: string; center: [number, number] }) => {
+    setQuery(result.place_name);
+    setShowResults(false);
+    setResults([]);
+    if (mapRef.current) {
+      placeMarker(mapRef.current, result.center);
+    }
+    onChange({ address: result.place_name, lng: result.center[0], lat: result.center[1] });
+  };
+
+  const handleClear = () => {
+    setQuery("");
+    setResults([]);
+    setShowResults(false);
+    if (markerRef.current) markerRef.current.remove();
+    onChange({ address: "", lng: 0, lat: 0 });
+  };
+
+  if (!MAPBOX_TOKEN) {
+    return (
+      <div className={`rounded-xl border border-stone-200 bg-stone-50 p-4 text-center ${className}`}>
+        <MapPin className="h-6 w-6 text-stone-300 mx-auto mb-2" />
+        <p className="text-xs text-text-tertiary">Mapbox token not configured</p>
+        <p className="text-[10px] text-text-tertiary mt-0.5">Add NEXT_PUBLIC_MAPBOX_TOKEN to .env.local</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`space-y-2 ${className}`}>
+      {/* Search input */}
+      {!readOnly && (
+        <div className="relative">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => handleInputChange(e.target.value)}
+              onFocus={() => { if (results.length) setShowResults(true); }}
+              placeholder={placeholder}
+              className="w-full h-10 bg-white border border-stone-200 rounded-xl px-4 pl-10 pr-10 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-stone-300 transition-all"
+            />
+            {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400 animate-spin" />}
+            {!searching && query && (
+              <button onClick={handleClear} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Results dropdown */}
+          {showResults && results.length > 0 && (
+            <div className="absolute z-50 mt-1 w-full bg-white rounded-xl border border-stone-200 shadow-lg overflow-hidden">
+              {results.map((r, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleSelectResult(r)}
+                  className="w-full px-4 py-2.5 text-left text-sm hover:bg-stone-50 transition-colors flex items-start gap-2.5 border-b border-stone-50 last:border-0"
+                >
+                  <MapPin className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                  <span className="text-text-primary line-clamp-2">{r.place_name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Map */}
+      <div
+        ref={mapContainer}
+        className="rounded-xl border border-stone-200 overflow-hidden"
+        style={{ height: mapHeight }}
+      />
+
+      {/* Selected address display */}
+      {query && !readOnly && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-100">
+          <MapPin className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+          <p className="text-xs text-emerald-700 truncate">{query}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Small static map for read-only location display in drawers */
+export function LocationMiniMap({ address, className }: { address: string; className?: string }) {
+  const [coords, setCoords] = useState<[number, number] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!address || !MAPBOX_TOKEN) { setLoading(false); return; }
+    fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${MAPBOX_TOKEN}&limit=1`)
+      .then((r) => r.json())
+      .then((data) => {
+        const feat = data.features?.[0];
+        if (feat) setCoords(feat.center as [number, number]);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [address]);
+
+  if (loading) {
+    return <div className={`animate-pulse h-32 bg-stone-100 rounded-xl ${className}`} />;
+  }
+
+  if (!coords || !MAPBOX_TOKEN) return null;
+
+  return (
+    <div className={className}>
+      <LocationPicker
+        readOnly
+        center={coords}
+        value={address}
+        onChange={() => {}}
+        mapHeight="160px"
+      />
+      <div className="flex items-center gap-2 mt-1.5">
+        <MapPin className="h-3 w-3 text-red-400 shrink-0" />
+        <p className="text-xs text-text-tertiary truncate">{address}</p>
+      </div>
+    </div>
+  );
+}
