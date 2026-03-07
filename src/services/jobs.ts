@@ -19,6 +19,19 @@ export async function getJob(id: string): Promise<Job | null> {
   return data as Job;
 }
 
+export async function getJobByQuoteId(quoteId: string): Promise<Job | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("*")
+    .eq("quote_id", quoteId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  return data as Job | null;
+}
+
 export async function createJob(
   input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Job> {

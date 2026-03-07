@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,7 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listJobs, createJob, updateJob } from "@/services/jobs";
+import { listJobs, createJob, updateJob, getJob } from "@/services/jobs";
 import { getSupabase, getStatusCounts } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import type { Job } from "@/types/database";
@@ -44,7 +45,8 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   cancelled: { label: "Cancelled", variant: "default" },
 };
 
-export default function JobsPage() {
+function JobsPageContent() {
+  const searchParams = useSearchParams();
   const {
     data,
     loading,
@@ -65,6 +67,14 @@ export default function JobsPage() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
+
+  const jobIdFromUrl = searchParams.get("jobId");
+  useEffect(() => {
+    if (!jobIdFromUrl) return;
+    getJob(jobIdFromUrl).then((job) => {
+      if (job) setSelectedJob(job);
+    });
+  }, [jobIdFromUrl]);
 
   const loadCounts = useCallback(async () => {
     try {
@@ -386,6 +396,14 @@ export default function JobsPage() {
         onCreate={handleCreate}
       />
     </PageTransition>
+  );
+}
+
+export default function JobsPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-tertiary">Loading...</div>}>
+      <JobsPageContent />
+    </Suspense>
   );
 }
 
