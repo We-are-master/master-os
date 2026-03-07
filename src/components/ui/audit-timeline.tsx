@@ -17,7 +17,7 @@ const actionConfig: Record<string, { icon: typeof Plus; color: string; label: st
   phase_advanced: { icon: ChevronUp, color: "bg-purple-100 text-purple-600", label: "Phase Advanced" },
   assigned: { icon: User, color: "bg-indigo-100 text-indigo-600", label: "Assigned" },
   deleted: { icon: AlertCircle, color: "bg-red-100 text-red-600", label: "Deleted" },
-  note: { icon: FileText, color: "bg-stone-100 text-stone-600", label: "Note Added" },
+  note: { icon: FileText, color: "bg-surface-tertiary text-text-secondary", label: "Note Added" },
   document_added: { icon: FileText, color: "bg-teal-100 text-teal-600", label: "Document Added" },
   payment: { icon: CreditCard, color: "bg-emerald-100 text-emerald-600", label: "Payment" },
   bulk_update: { icon: Users, color: "bg-orange-100 text-orange-600", label: "Bulk Update" },
@@ -105,10 +105,10 @@ export function AuditTimeline({ entityType, entityId, className = "" }: AuditTim
       <div className={`space-y-4 ${className}`}>
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="flex gap-3">
-            <div className="animate-pulse h-8 w-8 bg-stone-100 rounded-lg shrink-0" />
+            <div className="animate-pulse h-8 w-8 bg-surface-tertiary rounded-lg shrink-0" />
             <div className="flex-1 space-y-1.5">
-              <div className="animate-pulse h-3 w-32 bg-stone-100 rounded" />
-              <div className="animate-pulse h-2.5 w-48 bg-stone-50 rounded" />
+              <div className="animate-pulse h-3 w-32 bg-surface-tertiary rounded" />
+              <div className="animate-pulse h-2.5 w-48 bg-surface-hover rounded" />
             </div>
           </div>
         ))}
@@ -146,7 +146,7 @@ export function AuditTimeline({ entityType, entityId, className = "" }: AuditTim
                     <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${config.color}`}>
                       <Icon className="h-3.5 w-3.5" />
                     </div>
-                    {!isLast && <div className="w-0.5 flex-1 bg-stone-100 my-1" />}
+                    {!isLast && <div className="w-0.5 flex-1 bg-surface-tertiary my-1" />}
                   </div>
 
                   {/* Content */}
@@ -165,7 +165,7 @@ export function AuditTimeline({ entityType, entityId, className = "" }: AuditTim
 
                     {/* Field change detail */}
                     {log.field_name && log.action !== "created" && (
-                      <div className="mt-2 p-2 rounded-lg bg-stone-50 border border-stone-100">
+                      <div className="mt-2 p-2 rounded-lg bg-surface-hover border border-border-light">
                         <div className="flex items-center gap-2 text-xs">
                           <span className="text-text-tertiary font-medium">{formatFieldName(log.field_name)}</span>
                           {log.old_value && (
@@ -182,8 +182,8 @@ export function AuditTimeline({ entityType, entityId, className = "" }: AuditTim
                     {/* User attribution */}
                     {log.user_name && (
                       <div className="flex items-center gap-1.5 mt-1.5">
-                        <div className="h-4 w-4 rounded-full bg-stone-200 flex items-center justify-center">
-                          <User className="h-2.5 w-2.5 text-stone-500" />
+                        <div className="h-4 w-4 rounded-full bg-border flex items-center justify-center">
+                          <User className="h-2.5 w-2.5 text-text-secondary" />
                         </div>
                         <span className="text-[10px] text-text-tertiary">{log.user_name}</span>
                       </div>

@@ -209,7 +209,7 @@ export default function ClientsPage() {
     },
     {
       key: "actions", label: "", width: "40px",
-      render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" />,
+      render: () => <ArrowRight className="h-4 w-4 text-text-tertiary hover:text-primary transition-colors" />,
     },
   ];
 
@@ -349,7 +349,7 @@ function ClientDetailDrawer({
   return (
     <Drawer open={!!client} onClose={onClose} title={client.full_name} subtitle={typeCfg.label + (client.city ? ` — ${client.city}` : "")} width="w-[540px]">
       <div className="flex flex-col h-full">
-        <div className="px-6 pt-2 border-b border-stone-100">
+        <div className="px-6 pt-2 border-b border-border-light">
           <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} />
         </div>
 
@@ -366,7 +366,7 @@ function ClientDetailDrawer({
                   </div>
                   <div className="flex items-center gap-2 mt-1">
                     <Badge variant={cfg.variant} dot={cfg.dot} size="sm">{client.status}</Badge>
-                    <Badge size="sm" className="bg-stone-100 text-stone-700">{typeCfg.label}</Badge>
+                    <Badge size="sm" className="bg-surface-tertiary text-text-primary">{typeCfg.label}</Badge>
                   </div>
                 </div>
               </div>
@@ -397,15 +397,15 @@ function ClientDetailDrawer({
 
               {/* KPI Cards */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="p-3 rounded-xl bg-emerald-50/60 border border-emerald-100">
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30/60 border border-emerald-100">
                   <p className="text-[10px] font-semibold text-emerald-700 uppercase">Total Spent</p>
                   <p className="text-lg font-bold text-emerald-700 mt-1">{formatCurrency(client.total_spent)}</p>
                 </div>
-                <div className="p-3 rounded-xl bg-blue-50/60 border border-blue-100">
+                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30/60 border border-blue-100">
                   <p className="text-[10px] font-semibold text-blue-700 uppercase">Jobs</p>
                   <p className="text-lg font-bold text-blue-700 mt-1">{client.jobs_count}</p>
                 </div>
-                <div className="p-3 rounded-xl bg-purple-50/60 border border-purple-100">
+                <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-950/30/60 border border-purple-100">
                   <p className="text-[10px] font-semibold text-purple-700 uppercase">Quotes</p>
                   <p className="text-lg font-bold text-purple-700 mt-1">{quotes.length}</p>
                 </div>
@@ -426,7 +426,7 @@ function ClientDetailDrawer({
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Tags</p>
                   <div className="flex flex-wrap gap-1.5">
                     {client.tags.map((tag) => (
-                      <span key={tag} className="px-2 py-0.5 rounded-md bg-stone-100 text-xs font-medium text-stone-600">{tag}</span>
+                      <span key={tag} className="px-2 py-0.5 rounded-md bg-surface-tertiary text-xs font-medium text-text-secondary">{tag}</span>
                     ))}
                   </div>
                 </div>
@@ -434,7 +434,7 @@ function ClientDetailDrawer({
 
               {/* Notes */}
               {client.notes && (
-                <div className="p-3 rounded-xl bg-amber-50/60 border-l-3 border-amber-400">
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30/60 border-l-3 border-amber-400">
                   <p className="text-[10px] font-semibold text-amber-700 uppercase mb-1">Notes</p>
                   <p className="text-sm text-text-secondary">{client.notes}</p>
                 </div>
@@ -451,7 +451,7 @@ function ClientDetailDrawer({
             <div className="p-6 space-y-5">
               {loadingHistory ? (
                 <div className="flex items-center justify-center py-12">
-                  <Loader2 className="h-5 w-5 animate-spin text-stone-400" />
+                  <Loader2 className="h-5 w-5 animate-spin text-text-tertiary" />
                 </div>
               ) : (
                 <>
@@ -463,9 +463,9 @@ function ClientDetailDrawer({
                       </p>
                       <div className="space-y-1.5">
                         {jobs.map((job) => (
-                          <motion.div key={job.id} variants={staggerItem} className="flex items-center justify-between p-3 rounded-xl bg-stone-50 hover:bg-stone-100 transition-colors">
+                          <motion.div key={job.id} variants={staggerItem} className="flex items-center justify-between p-3 rounded-xl bg-surface-hover hover:bg-surface-tertiary transition-colors">
                             <div className="flex items-center gap-3">
-                              <div className="h-8 w-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                              <div className="h-8 w-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 flex items-center justify-center">
                                 <Briefcase className="h-4 w-4 text-emerald-600" />
                               </div>
                               <div>
@@ -493,9 +493,9 @@ function ClientDetailDrawer({
                       </p>
                       <div className="space-y-1.5">
                         {quotes.map((q) => (
-                          <motion.div key={q.id} variants={staggerItem} className="flex items-center justify-between p-3 rounded-xl bg-stone-50 hover:bg-stone-100 transition-colors">
+                          <motion.div key={q.id} variants={staggerItem} className="flex items-center justify-between p-3 rounded-xl bg-surface-hover hover:bg-surface-tertiary transition-colors">
                             <div className="flex items-center gap-3">
-                              <div className="h-8 w-8 rounded-lg bg-blue-50 flex items-center justify-center">
+                              <div className="h-8 w-8 rounded-lg bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center">
                                 <FileText className="h-4 w-4 text-blue-600" />
                               </div>
                               <div>
@@ -523,7 +523,7 @@ function ClientDetailDrawer({
                       </p>
                       <div className="space-y-1.5">
                         {requests.map((r) => (
-                          <motion.div key={r.id} variants={staggerItem} className="flex items-center justify-between p-3 rounded-xl bg-stone-50 hover:bg-stone-100 transition-colors">
+                          <motion.div key={r.id} variants={staggerItem} className="flex items-center justify-between p-3 rounded-xl bg-surface-hover hover:bg-surface-tertiary transition-colors">
                             <div className="flex items-center gap-3">
                               <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
                                 <FileText className="h-4 w-4 text-primary" />
@@ -547,7 +547,7 @@ function ClientDetailDrawer({
 
                   {jobs.length === 0 && quotes.length === 0 && requests.length === 0 && (
                     <div className="text-center py-12">
-                      <Clock className="h-8 w-8 text-stone-300 mx-auto mb-2" />
+                      <Clock className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
                       <p className="text-sm text-text-tertiary">No service history yet</p>
                       <p className="text-xs text-text-tertiary mt-1">Jobs, quotes and requests will appear here</p>
                     </div>
@@ -675,7 +675,7 @@ function EditClientForm({
         <textarea
           value={form.notes}
           onChange={(e) => update("notes", e.target.value)}
-          className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none h-20"
+          className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none h-20"
           placeholder="Internal notes about this client..."
         />
       </div>
@@ -769,7 +769,7 @@ function CreateClientForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Client
         <textarea
           value={form.notes}
           onChange={(e) => update("notes", e.target.value)}
-          className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none h-20"
+          className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none h-20"
           placeholder="Any additional notes..."
         />
       </div>
@@ -784,10 +784,10 @@ function CreateClientForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Client
 /* ============ BULK BUTTON ============ */
 function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "default" }) {
   const colors = {
-    success: "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200",
-    danger: "text-red-700 bg-red-50 hover:bg-red-100 border-red-200",
-    warning: "text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200",
-    default: "text-stone-700 bg-stone-50 hover:bg-stone-100 border-stone-200",
+    success: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 border-emerald-200",
+    danger: "text-red-700 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 border-red-200",
+    warning: "text-amber-700 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 border-amber-200",
+    default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (
     <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>

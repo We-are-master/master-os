@@ -6,13 +6,13 @@ import { motion } from "framer-motion";
 type BadgeVariant = "default" | "primary" | "success" | "warning" | "danger" | "info" | "outline";
 
 const variantStyles: Record<BadgeVariant, string> = {
-  default: "bg-stone-100 text-stone-700 ring-stone-200/50",
-  primary: "bg-primary-light text-primary ring-primary/10",
-  success: "bg-emerald-50 text-emerald-700 ring-emerald-200/50",
-  warning: "bg-amber-50 text-amber-700 ring-amber-200/50",
-  danger: "bg-red-50 text-red-700 ring-red-200/50",
-  info: "bg-blue-50 text-blue-700 ring-blue-200/50",
-  outline: "bg-transparent text-stone-600 ring-stone-300",
+  default: "bg-[var(--badge-muted)] text-text-secondary ring-border/50",
+  primary: "bg-primary-light text-primary ring-primary/10 dark:bg-primary/15",
+  success: "bg-success-light text-emerald-700 ring-emerald-200/50 dark:text-emerald-400",
+  warning: "bg-warning-light text-amber-700 ring-amber-200/50 dark:text-amber-400",
+  danger: "bg-danger-light text-red-700 ring-red-200/50 dark:text-red-400",
+  info: "bg-info-light text-blue-700 ring-blue-200/50 dark:text-blue-400",
+  outline: "bg-transparent text-text-secondary ring-border",
 };
 
 interface BadgeProps {

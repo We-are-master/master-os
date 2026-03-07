@@ -116,9 +116,9 @@ export default function CorporatePipelinePage() {
           <div className="flex gap-4">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="w-72 shrink-0 space-y-2">
-                <div className="animate-pulse h-5 w-24 bg-stone-100 rounded" />
-                <div className="animate-pulse h-36 bg-stone-50 rounded-xl" />
-                <div className="animate-pulse h-36 bg-stone-50 rounded-xl" />
+                <div className="animate-pulse h-5 w-24 bg-surface-tertiary rounded" />
+                <div className="animate-pulse h-36 bg-surface-hover rounded-xl" />
+                <div className="animate-pulse h-36 bg-surface-hover rounded-xl" />
               </div>
             ))}
           </div>
@@ -145,10 +145,10 @@ function DealCard({ item }: { item: PipelineDeal }) {
   return (
     <Card hover padding="sm" className="group">
       <div className="flex items-center justify-between mb-2">
-        <Badge size="sm" className={categoryColors[item.category] || "bg-stone-100 text-stone-700"}>
+        <Badge size="sm" className={categoryColors[item.category] || "bg-surface-tertiary text-text-primary"}>
           {item.category}
         </Badge>
-        <button className="h-5 w-5 rounded flex items-center justify-center text-stone-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-stone-600">
+        <button className="h-5 w-5 rounded flex items-center justify-center text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity hover:text-text-secondary">
           <MoreHorizontal className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -158,7 +158,7 @@ function DealCard({ item }: { item: PipelineDeal }) {
         {item.monthly_volume && <span>Vol: {formatCurrency(item.monthly_volume)}/mo</span>}
         {item.properties && <span>{item.properties} properties</span>}
       </div>
-      <div className="flex items-center justify-between pt-2 border-t border-stone-100">
+      <div className="flex items-center justify-between pt-2 border-t border-border-light">
         <div className="flex items-center gap-1.5">
           <Avatar name={item.owner_name} size="xs" />
           <span className="text-[11px] text-text-tertiary">{item.owner_name}</span>
@@ -205,7 +205,7 @@ function DealDetailDrawer({
 
   return (
     <Drawer open={!!deal} onClose={onClose} title={deal.account_name} subtitle={deal.category + " — " + formatCurrency(deal.value)} width="w-[540px]">
-      <div className="px-6 pt-3 pb-0 border-b border-stone-100">
+      <div className="px-6 pt-3 pb-0 border-b border-border-light">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} />
       </div>
 
@@ -214,13 +214,13 @@ function DealDetailDrawer({
           <div className="p-6 space-y-5">
             {/* Header */}
             <div className="flex items-center gap-4">
-              <div className="h-14 w-14 rounded-2xl bg-stone-100 flex items-center justify-center">
-                <Building2 className="h-7 w-7 text-stone-400" />
+              <div className="h-14 w-14 rounded-2xl bg-surface-tertiary flex items-center justify-center">
+                <Building2 className="h-7 w-7 text-text-tertiary" />
               </div>
               <div className="flex-1">
                 <h3 className="text-lg font-bold text-text-primary">{deal.account_name}</h3>
                 <div className="flex items-center gap-2 mt-1">
-                  <Badge size="sm" className={categoryColors[deal.category] || "bg-stone-100 text-stone-700"}>{deal.category}</Badge>
+                  <Badge size="sm" className={categoryColors[deal.category] || "bg-surface-tertiary text-text-primary"}>{deal.category}</Badge>
                   <Badge variant="info" size="sm" dot>{stage.title}</Badge>
                 </div>
               </div>
@@ -238,7 +238,7 @@ function DealDetailDrawer({
 
             {/* Info Grid */}
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <div className="flex items-center gap-2">
                   <User className="h-3.5 w-3.5 text-text-tertiary" />
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase">Owner</p>
@@ -248,14 +248,14 @@ function DealDetailDrawer({
                   <p className="text-sm font-medium text-text-primary">{deal.owner_name}</p>
                 </div>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <div className="flex items-center gap-2">
                   <Calendar className="h-3.5 w-3.5 text-text-tertiary" />
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase">Created</p>
                 </div>
                 <p className="text-sm font-medium text-text-primary mt-2">{formatDate(deal.created_at)}</p>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <div className="flex items-center gap-2">
                   <Clock className="h-3.5 w-3.5 text-text-tertiary" />
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase">Last Activity</p>
@@ -263,7 +263,7 @@ function DealDetailDrawer({
                 <p className="text-sm font-medium text-text-primary mt-2">{deal.last_activity}</p>
               </div>
               {deal.properties && (
-                <div className="p-3 rounded-xl bg-stone-50">
+                <div className="p-3 rounded-xl bg-surface-hover">
                   <div className="flex items-center gap-2">
                     <Briefcase className="h-3.5 w-3.5 text-text-tertiary" />
                     <p className="text-[10px] font-semibold text-text-tertiary uppercase">Properties</p>
@@ -278,9 +278,9 @@ function DealDetailDrawer({
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Related Accounts</p>
                 {relatedAccounts.map((acc) => (
-                  <motion.div key={acc.id} variants={staggerItem} className="p-3 rounded-xl border border-stone-100 flex items-center justify-between">
+                  <motion.div key={acc.id} variants={staggerItem} className="p-3 rounded-xl border border-border-light flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Building2 className="h-4 w-4 text-stone-400" />
+                      <Building2 className="h-4 w-4 text-text-tertiary" />
                       <div>
                         <p className="text-sm font-medium text-text-primary">{acc.company_name}</p>
                         <p className="text-[10px] text-text-tertiary capitalize">{acc.status}</p>
@@ -293,7 +293,7 @@ function DealDetailDrawer({
             )}
 
             {/* Stage Actions */}
-            <div className="flex gap-2 pt-4 border-t border-stone-100">
+            <div className="flex gap-2 pt-4 border-t border-border-light">
               {nextStage && (
                 <Button size="sm" icon={<ArrowRight className="h-3.5 w-3.5" />} className="flex-1" onClick={() => onStageChange(deal, nextStage)}>
                   Move to {stageConfig[nextStage].title}
@@ -328,13 +328,13 @@ function DealDetailDrawer({
                     className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${
                       isCurrent ? "bg-primary/5 border border-primary/20 ring-1 ring-primary/10" :
                       isPast ? "bg-emerald-50/50 border border-emerald-100" :
-                      "bg-stone-50 border border-transparent hover:border-stone-200"
+                      "bg-surface-hover border border-transparent hover:border-border"
                     }`}
                   >
                     <div className={`h-7 w-7 rounded-lg flex items-center justify-center text-xs font-bold ${
                       isCurrent ? "bg-primary text-white" :
                       isPast ? "bg-emerald-500 text-white" :
-                      "bg-stone-200 text-stone-500"
+                      "bg-border text-text-secondary"
                     }`}>
                       {isPast ? <CheckCircle2 className="h-3.5 w-3.5" /> : idx + 1}
                     </div>

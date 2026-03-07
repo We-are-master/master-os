@@ -151,7 +151,7 @@ function FinancialSnapshot() {
           {items.map((item) => (
             <div
               key={item.label}
-              className="p-3 rounded-xl bg-stone-50/60 hover:bg-stone-100/60 transition-colors cursor-pointer"
+              className="p-3 rounded-xl bg-surface-hover/60 hover:bg-surface-tertiary/60 transition-colors cursor-pointer"
             >
               <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide mb-1">
                 {item.label}

@@ -42,13 +42,13 @@ const priorityConfig: Record<string, { label: string; variant: "default" | "prim
 };
 
 const serviceColors: Record<string, string> = {
-  "HVAC Installation": "bg-blue-50 text-blue-700 ring-blue-200/50",
-  "HVAC Maintenance": "bg-blue-50 text-blue-700 ring-blue-200/50",
-  Electrical: "bg-purple-50 text-purple-700 ring-purple-200/50",
-  Plumbing: "bg-teal-50 text-teal-700 ring-teal-200/50",
-  Painting: "bg-amber-50 text-amber-700 ring-amber-200/50",
-  Carpentry: "bg-emerald-50 text-emerald-700 ring-emerald-200/50",
-  "General Maintenance": "bg-stone-100 text-stone-700 ring-stone-200/50",
+  "HVAC Installation": "bg-blue-50 dark:bg-blue-950/30 text-blue-700 ring-blue-200/50",
+  "HVAC Maintenance": "bg-blue-50 dark:bg-blue-950/30 text-blue-700 ring-blue-200/50",
+  Electrical: "bg-purple-50 dark:bg-purple-950/30 text-purple-700 ring-purple-200/50",
+  Plumbing: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 ring-teal-200/50",
+  Painting: "bg-amber-50 dark:bg-amber-950/30 text-amber-700 ring-amber-200/50",
+  Carpentry: "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 ring-emerald-200/50",
+  "General Maintenance": "bg-surface-tertiary text-text-primary ring-border/50",
 };
 
 export default function RequestsPage() {
@@ -225,7 +225,7 @@ export default function RequestsPage() {
     {
       key: "service_type", label: "Service",
       render: (item) => (
-        <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${serviceColors[item.service_type] || "bg-stone-100 text-stone-700 ring-stone-200/50"}`}>
+        <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${serviceColors[item.service_type] || "bg-surface-tertiary text-text-primary ring-border/50"}`}>
           {item.service_type}
         </span>
       ),
@@ -335,7 +335,7 @@ export default function RequestsPage() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-stone-50">
+                <div className="p-3 rounded-xl bg-surface-hover">
                   <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Status</label>
                   <div className="mt-1">
                     <Badge variant={statusConfig[selectedRequest.status].variant} dot size="md">
@@ -343,7 +343,7 @@ export default function RequestsPage() {
                     </Badge>
                   </div>
                 </div>
-                <div className="p-3 rounded-xl bg-stone-50">
+                <div className="p-3 rounded-xl bg-surface-hover">
                   <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Priority</label>
                   <div className="mt-1">
                     <Badge variant={priorityConfig[selectedRequest.priority].variant} size="md">
@@ -353,7 +353,7 @@ export default function RequestsPage() {
                 </div>
               </div>
               {selectedRequest.owner_name && (
-                <div className="p-3 rounded-xl bg-stone-50">
+                <div className="p-3 rounded-xl bg-surface-hover">
                   <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Owner (Commission)</label>
                   <div className="flex items-center gap-2.5 mt-2">
                     <Avatar name={selectedRequest.owner_name} size="sm" />
@@ -392,7 +392,7 @@ export default function RequestsPage() {
                 </div>
               )}
             </div>
-            <div className="flex gap-2 pt-4 border-t border-stone-100">
+            <div className="flex gap-2 pt-4 border-t border-border-light">
               <Button
                 variant="primary"
                 className="flex-1"
@@ -517,7 +517,7 @@ function CreateRequestModal({
             onChange={(e) => update("description", e.target.value)}
             rows={3}
             placeholder="Describe the service needed..."
-            className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-stone-300 transition-all resize-none"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none"
           />
         </div>
         <div className="flex justify-end gap-2 pt-2">
@@ -531,10 +531,10 @@ function CreateRequestModal({
 
 function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "default" }) {
   const colors = {
-    success: "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200",
-    danger: "text-red-700 bg-red-50 hover:bg-red-100 border-red-200",
-    warning: "text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200",
-    default: "text-stone-700 bg-stone-50 hover:bg-stone-100 border-stone-200",
+    success: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 border-emerald-200",
+    danger: "text-red-700 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 border-red-200",
+    warning: "text-amber-700 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 border-amber-200",
+    default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (
     <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>

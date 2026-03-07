@@ -42,20 +42,20 @@ export function Drawer({
             animate="visible"
             exit="exit"
             className={cn(
-              "fixed right-0 top-0 bottom-0 bg-white border-l border-stone-200 shadow-modal z-50 flex flex-col",
+              "fixed right-0 top-0 bottom-0 bg-surface border-l border-border shadow-modal z-50 flex flex-col",
               width,
               className
             )}
           >
             {title && (
-              <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border-light">
                 <div>
                   <h3 className="text-base font-semibold text-text-primary">{title}</h3>
                   {subtitle && <p className="text-xs text-text-tertiary mt-0.5">{subtitle}</p>}
                 </div>
                 <button
                   onClick={onClose}
-                  className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-400 hover:bg-stone-100 hover:text-stone-600 transition-colors"
+                  className="h-8 w-8 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary transition-colors"
                 >
                   <X className="h-4 w-4" />
                 </button>

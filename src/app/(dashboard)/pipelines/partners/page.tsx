@@ -83,7 +83,7 @@ function ApplicantCard({ item }: { item: Applicant }) {
   return (
     <Card hover padding="sm" className="group">
       <div className="flex items-start justify-between mb-2">
-        <Badge size="sm" className={tradeColors[item.trade] || "bg-stone-100 text-stone-700"}>
+        <Badge size="sm" className={tradeColors[item.trade] || "bg-surface-tertiary text-text-primary"}>
           {item.trade}
         </Badge>
         <span className="text-[11px] text-text-tertiary">{item.date}</span>
@@ -105,7 +105,7 @@ function ApplicantCard({ item }: { item: Applicant }) {
             <span className="text-[10px] text-text-tertiary">Modules</span>
             <span className="text-[10px] font-semibold text-text-primary">{item.progress}%</span>
           </div>
-          <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
+          <div className="h-1.5 bg-surface-tertiary rounded-full overflow-hidden">
             <div className="h-full bg-primary rounded-full" style={{ width: `${item.progress}%` }} />
           </div>
         </div>
@@ -168,7 +168,7 @@ export default function PartnerPipelinePage() {
               <div>
                 <h3 className="text-lg font-bold text-text-primary">{selectedApplicant.name}</h3>
                 <div className="flex items-center gap-2 mt-1">
-                  <Badge size="sm" className={tradeColors[selectedApplicant.trade] || "bg-stone-100 text-stone-700"}>{selectedApplicant.trade}</Badge>
+                  <Badge size="sm" className={tradeColors[selectedApplicant.trade] || "bg-surface-tertiary text-text-primary"}>{selectedApplicant.trade}</Badge>
                   <Badge variant="info" size="sm" dot>{partnerStageConfig[currentStage]?.title ?? currentStage}</Badge>
                 </div>
               </div>
@@ -186,12 +186,12 @@ export default function PartnerPipelinePage() {
             )}
 
             {selectedApplicant.progress !== undefined && (
-              <div className="p-4 rounded-xl bg-stone-50">
+              <div className="p-4 rounded-xl bg-surface-hover">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs font-semibold text-text-tertiary uppercase">Training Progress</p>
                   <p className="text-sm font-bold text-text-primary">{selectedApplicant.progress}%</p>
                 </div>
-                <div className="h-2 bg-stone-200 rounded-full overflow-hidden">
+                <div className="h-2 bg-border rounded-full overflow-hidden">
                   <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${selectedApplicant.progress}%` }} />
                 </div>
               </div>
@@ -206,12 +206,12 @@ export default function PartnerPipelinePage() {
                 return (
                   <div key={s} className={`flex items-center gap-3 p-2.5 rounded-xl ${
                     isCurrent ? "bg-primary/5 border border-primary/20" :
-                    isPast ? "bg-emerald-50/50" : "bg-stone-50"
+                    isPast ? "bg-emerald-50/50" : "bg-surface-hover"
                   }`}>
                     <div className={`h-6 w-6 rounded-lg flex items-center justify-center text-[10px] font-bold ${
                       isCurrent ? "bg-primary text-white" :
                       isPast ? "bg-emerald-500 text-white" :
-                      "bg-stone-200 text-stone-500"
+                      "bg-border text-text-secondary"
                     }`}>
                       {isPast ? <CheckCircle2 className="h-3 w-3" /> : idx + 1}
                     </div>

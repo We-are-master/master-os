@@ -44,7 +44,7 @@ function QuoteStatusProgress({ status }: { status: string }) {
     <div className="space-y-1">
       <div className="flex items-center gap-1 w-32">
         {statusSteps.map((_, i) => (
-          <div key={i} className={`h-1.5 flex-1 rounded-full transition-colors ${i <= currentStep ? "bg-primary" : "bg-stone-200"}`} />
+          <div key={i} className={`h-1.5 flex-1 rounded-full transition-colors ${i <= currentStep ? "bg-primary" : "bg-border"}`} />
         ))}
       </div>
       <p className="text-[11px] text-text-tertiary">{statusLabels[status] ?? status}</p>
@@ -285,9 +285,9 @@ export default function QuotesPage() {
           <div className="flex items-center justify-between mb-4">
             <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
             <div className="flex items-center gap-2">
-              <div className="flex items-center bg-stone-100 rounded-lg p-0.5">
+              <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
                 {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: Map }].map(({ id, icon: Icon }) => (
-                  <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-white shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}>
+                  <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}>
                     <Icon className="h-3.5 w-3.5" />
                   </button>
                 ))}
@@ -440,12 +440,12 @@ function QuoteDetailDrawer({
         {tab === "details" && (
       <div className="p-6 space-y-6">
         {/* Status Pipeline */}
-        <div className="p-4 rounded-xl bg-stone-50">
+        <div className="p-4 rounded-xl bg-surface-hover">
           <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-3 block">Quote Pipeline</label>
           <div className="flex items-center gap-1">
             {statusSteps.map((step, i) => (
               <div key={step} className="flex-1">
-                <div className={`h-2 rounded-full ${i <= currentStep && currentStep !== -1 ? "bg-primary" : "bg-stone-200"}`} />
+                <div className={`h-2 rounded-full ${i <= currentStep && currentStep !== -1 ? "bg-primary" : "bg-border"}`} />
                 <p className={`text-[10px] mt-1 text-center ${i === currentStep ? "font-bold text-primary" : "text-text-tertiary"}`}>
                   {step}
                 </p>
@@ -456,7 +456,7 @@ function QuoteDetailDrawer({
 
         {/* Status & Value */}
         <div className="grid grid-cols-2 gap-3">
-          <div className="p-3 rounded-xl bg-stone-50">
+          <div className="p-3 rounded-xl bg-surface-hover">
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Status</label>
             <div className="mt-1.5">
               <Badge variant={config.variant} dot={config.dot} size="md">
@@ -464,7 +464,7 @@ function QuoteDetailDrawer({
               </Badge>
             </div>
           </div>
-          <div className="p-3 rounded-xl bg-stone-50">
+          <div className="p-3 rounded-xl bg-surface-hover">
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total Value</label>
             <p className="text-xl font-bold text-text-primary mt-1">{formatCurrency(quote.total_value)}</p>
           </div>
@@ -474,7 +474,7 @@ function QuoteDetailDrawer({
         <div>
           <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
           <div className="flex items-center gap-3 mt-2">
-            <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center">
+            <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center">
               <Building2 className="h-5 w-5 text-blue-600" />
             </div>
             <div>
@@ -491,7 +491,7 @@ function QuoteDetailDrawer({
 
         {/* Owner */}
         <div className="grid grid-cols-2 gap-3">
-          <div className="p-3 rounded-xl bg-stone-50">
+          <div className="p-3 rounded-xl bg-surface-hover">
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Quote Owner</label>
             {quote.owner_name ? (
               <div className="flex items-center gap-2 mt-2">
@@ -505,7 +505,7 @@ function QuoteDetailDrawer({
               <p className="text-sm text-text-tertiary italic mt-2">No owner</p>
             )}
           </div>
-          <div className="p-3 rounded-xl bg-stone-50">
+          <div className="p-3 rounded-xl bg-surface-hover">
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner Quotes</label>
             <p className="text-xl font-bold text-text-primary mt-1">{quote.partner_quotes_count}</p>
             <p className="text-[11px] text-text-tertiary">bids received</p>
@@ -550,7 +550,7 @@ function QuoteDetailDrawer({
         </div>
 
         {/* Actions */}
-        <div className="flex gap-2 pt-4 border-t border-stone-100">
+        <div className="flex gap-2 pt-4 border-t border-border-light">
           {actions.map((action) => (
             <Button
               key={action.status}
@@ -598,7 +598,7 @@ function QuoteDetailDrawer({
               </div>
               <div className="space-y-2">
                 {lineItems.map((item, idx) => (
-                  <div key={idx} className="flex gap-2 items-start p-3 bg-stone-50 rounded-xl">
+                  <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
                     <div className="flex-1">
                       <Input
                         placeholder="Description"
@@ -628,7 +628,7 @@ function QuoteDetailDrawer({
                         {formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}
                       </span>
                       {lineItems.length > 1 && (
-                        <button onClick={() => removeLineItem(idx)} className="text-stone-400 hover:text-red-500 transition-colors">
+                        <button onClick={() => removeLineItem(idx)} className="text-text-tertiary hover:text-red-500 transition-colors">
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       )}
@@ -636,7 +636,7 @@ function QuoteDetailDrawer({
                   </div>
                 ))}
               </div>
-              <div className="flex justify-end mt-2 pt-2 border-t border-stone-100">
+              <div className="flex justify-end mt-2 pt-2 border-t border-border-light">
                 <span className="text-sm font-bold text-text-primary">
                   Total: {formatCurrency(lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0))}
                 </span>
@@ -656,19 +656,19 @@ function QuoteDetailDrawer({
                 value={sendNotes}
                 onChange={(e) => setSendNotes(e.target.value)}
                 placeholder="Additional notes to include in the PDF..."
-                className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none h-20"
+                className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none h-20"
               />
             </div>
 
             {/* Send Status */}
             {sendState === "sent" && (
-              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center gap-2">
+              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                 <p className="text-sm font-medium text-emerald-700">Quote sent successfully to {sendEmail}</p>
               </div>
             )}
             {sendState === "error" && (
-              <div className="p-3 rounded-xl bg-red-50 border border-red-100 flex items-center gap-2">
+              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-100 flex items-center gap-2">
                 <XCircle className="h-4 w-4 text-red-600" />
                 <p className="text-sm font-medium text-red-700">Failed to send. Check your Resend configuration.</p>
               </div>
@@ -771,10 +771,10 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
 
 function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "default" }) {
   const colors = {
-    success: "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200",
-    danger: "text-red-700 bg-red-50 hover:bg-red-100 border-red-200",
-    warning: "text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200",
-    default: "text-stone-700 bg-stone-50 hover:bg-stone-100 border-stone-200",
+    success: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 border-emerald-200",
+    danger: "text-red-700 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 border-red-200",
+    warning: "text-amber-700 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 border-amber-200",
+    default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (
     <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>

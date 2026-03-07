@@ -101,7 +101,7 @@ export function KpiCard({
             </div>
           )}
         </div>
-        <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-stone-50/50 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-surface-hover/50 pointer-events-none" />
       </Card>
     </motion.div>
   );

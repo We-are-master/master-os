@@ -48,19 +48,19 @@ export function Modal({
             animate="visible"
             exit="exit"
             className={cn(
-              "relative w-full bg-white rounded-2xl shadow-modal border border-stone-100 overflow-hidden",
+              "relative w-full bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden",
               sizeStyles[size],
               className
             )}
           >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border-light">
               <div>
                 <h2 className="text-base font-semibold text-text-primary">{title}</h2>
                 {subtitle && <p className="text-xs text-text-tertiary mt-0.5">{subtitle}</p>}
               </div>
               <button
                 onClick={onClose}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-400 hover:bg-stone-100 hover:text-stone-600 transition-colors"
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>

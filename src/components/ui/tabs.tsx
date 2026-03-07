@@ -20,7 +20,7 @@ interface TabsProps {
 export function Tabs({ tabs, activeTab, onChange, variant = "default", className }: TabsProps) {
   if (variant === "pills") {
     return (
-      <div className={cn("flex items-center gap-1.5 p-1 bg-stone-100 rounded-xl", className)}>
+      <div className={cn("flex items-center gap-1.5 p-1 bg-surface-tertiary rounded-xl", className)}>
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -33,7 +33,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
             {activeTab === tab.id && (
               <motion.div
                 layoutId="pill-tab"
-                className="absolute inset-0 bg-white rounded-lg shadow-sm"
+                className="absolute inset-0 bg-card rounded-lg shadow-sm"
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
               />
             )}
@@ -42,7 +42,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
               {tab.count !== undefined && (
                 <span className={cn(
                   "text-[10px] font-bold px-1.5 py-0.5 rounded-md",
-                  activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-stone-200/60 text-text-tertiary"
+                  activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-surface-secondary text-text-tertiary"
                 )}>
                   {tab.count}
                 </span>
@@ -55,7 +55,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
   }
 
   return (
-    <div className={cn("flex items-center gap-0 border-b border-stone-200", className)}>
+    <div className={cn("flex items-center gap-0 border-b border-border", className)}>
       {tabs.map((tab) => (
         <button
           key={tab.id}
@@ -70,7 +70,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
             {tab.count !== undefined && (
               <span className={cn(
                 "text-[10px] font-bold px-1.5 py-0.5 rounded-md",
-                activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-stone-100 text-text-tertiary"
+                activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-surface-tertiary text-text-tertiary"
               )}>
                 {tab.count}
               </span>

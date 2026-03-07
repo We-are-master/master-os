@@ -145,7 +145,7 @@ export function PriorityTasks() {
         {loading && (
           <div className="space-y-2 px-3 py-2">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="animate-pulse h-14 bg-stone-50 rounded-lg" />
+              <div key={i} className="animate-pulse h-14 bg-surface-hover rounded-lg" />
             ))}
           </div>
         )}
@@ -161,7 +161,7 @@ export function PriorityTasks() {
               <Link href={task.href}>
                 <motion.div
                   whileHover={{ x: 2 }}
-                  className="group flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-stone-50/60 cursor-pointer transition-all"
+                  className="group flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-surface-hover/60 cursor-pointer transition-all"
                 >
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-text-primary truncate">

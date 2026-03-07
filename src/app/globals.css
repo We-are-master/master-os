@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme inline {
   --color-primary: #e93701;
   --color-primary-hover: #cf3101;
@@ -13,33 +15,36 @@
   --color-navy: #020034;
   --color-navy-light: #0a0a4a;
 
-  --color-surface: #ffffff;
-  --color-surface-secondary: #f8f6f5;
-  --color-surface-tertiary: #f1efee;
-  --color-surface-hover: #fafaf9;
+  --color-surface: var(--surface);
+  --color-surface-secondary: var(--surface-secondary);
+  --color-surface-tertiary: var(--surface-tertiary);
+  --color-surface-hover: var(--surface-hover);
 
-  --color-border: #e7e5e4;
-  --color-border-light: #f1efee;
+  --color-border: var(--border-color);
+  --color-border-light: var(--border-light);
 
-  --color-text-primary: #1c1917;
-  --color-text-secondary: #78716c;
-  --color-text-tertiary: #a8a29e;
-  --color-text-inverse: #ffffff;
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-inverse: var(--text-inverse);
 
   --color-success: #10b981;
-  --color-success-light: #ecfdf5;
+  --color-success-light: var(--success-light);
   --color-warning: #f59e0b;
-  --color-warning-light: #fffbeb;
+  --color-warning-light: var(--warning-light);
   --color-danger: #ef4444;
-  --color-danger-light: #fef2f2;
+  --color-danger-light: var(--danger-light);
   --color-info: #3b82f6;
-  --color-info-light: #eff6ff;
+  --color-info-light: var(--info-light);
 
-  --color-sidebar: #1c1917;
-  --color-sidebar-hover: #292524;
+  --color-sidebar: var(--sidebar-bg);
+  --color-sidebar-hover: var(--sidebar-hover);
   --color-sidebar-active: #e93701;
   --color-sidebar-text: #d6d3d1;
   --color-sidebar-text-muted: #78716c;
+
+  --color-card: var(--card-bg);
+  --color-card-border: var(--card-border);
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 
@@ -56,6 +61,74 @@
   --shadow-glow: 0 0 20px rgba(233, 55, 1, 0.15);
 }
 
+/* ============ LIGHT THEME (default) ============ */
+:root {
+  --surface: #ffffff;
+  --surface-secondary: #f8f6f5;
+  --surface-tertiary: #f1efee;
+  --surface-hover: #fafaf9;
+
+  --border-color: #e7e5e4;
+  --border-light: #f1efee;
+
+  --text-primary: #1c1917;
+  --text-secondary: #78716c;
+  --text-tertiary: #a8a29e;
+  --text-inverse: #ffffff;
+
+  --success-light: #ecfdf5;
+  --warning-light: #fffbeb;
+  --danger-light: #fef2f2;
+  --info-light: #eff6ff;
+
+  --sidebar-bg: #1c1917;
+  --sidebar-hover: #292524;
+
+  --card-bg: #ffffff;
+  --card-border: #f1efee;
+
+  --input-bg: #ffffff;
+  --input-border: #e7e5e4;
+  --badge-muted: #f5f5f4;
+  --scrollbar-thumb: #d6d3d1;
+  --scrollbar-hover: #a8a29e;
+}
+
+/* ============ DARK THEME ============ */
+.dark {
+  --surface: #0f0f0f;
+  --surface-secondary: #171717;
+  --surface-tertiary: #1f1f1f;
+  --surface-hover: #1a1a1a;
+
+  --border-color: #2a2a2a;
+  --border-light: #222222;
+
+  --text-primary: #f5f5f5;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --text-inverse: #0f0f0f;
+
+  --success-light: #052e16;
+  --warning-light: #422006;
+  --danger-light: #450a0a;
+  --info-light: #172554;
+
+  --sidebar-bg: #0a0a0a;
+  --sidebar-hover: #171717;
+
+  --card-bg: #171717;
+  --card-border: #2a2a2a;
+
+  --input-bg: #1f1f1f;
+  --input-border: #2a2a2a;
+  --badge-muted: #262626;
+  --scrollbar-thumb: #3f3f46;
+  --scrollbar-hover: #52525b;
+
+  color-scheme: dark;
+}
+
 @font-face {
   font-family: "Inter";
   font-style: normal;
@@ -66,7 +139,7 @@
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #d6d3d1 transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -79,12 +152,12 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: #d6d3d1;
+  background-color: var(--scrollbar-thumb);
   border-radius: 20px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: #a8a29e;
+  background-color: var(--scrollbar-hover);
 }
 
 html {
@@ -94,14 +167,14 @@ html {
 }
 
 body {
-  background: #f8f6f5;
-  color: #1c1917;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
 ::selection {
   background: rgba(233, 55, 1, 0.15);
-  color: #1c1917;
+  color: var(--text-primary);
 }
 
 @keyframes shimmer {

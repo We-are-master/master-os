@@ -246,7 +246,7 @@ function ProfileTab() {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-[30px] text-stone-400 hover:text-stone-600"
+                className="absolute right-3 top-[30px] text-text-tertiary hover:text-text-secondary"
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -293,13 +293,13 @@ function ProfileTab() {
             <CardTitle>Security</CardTitle>
           </CardHeader>
           <div className="px-5 pb-5 space-y-3">
-            <div className="flex items-center justify-between p-3 rounded-xl bg-stone-50">
+            <div className="flex items-center justify-between p-3 rounded-xl bg-surface-hover">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                 <span className="text-sm text-text-primary">Email Verified</span>
               </div>
             </div>
-            <div className="flex items-center justify-between p-3 rounded-xl bg-stone-50">
+            <div className="flex items-center justify-between p-3 rounded-xl bg-surface-hover">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-500" />
                 <span className="text-sm text-text-primary">2FA</span>
@@ -315,7 +315,7 @@ function ProfileTab() {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-stone-50 last:border-0">
+    <div className="flex items-center justify-between py-2 border-b border-border-light last:border-0">
       <span className="text-xs font-medium text-text-tertiary">{label}</span>
       <span className="text-sm font-medium text-text-primary">{value}</span>
     </div>
@@ -393,15 +393,15 @@ function TeamTab() {
       </div>
 
       <Card padding="none">
-        <div className="divide-y divide-stone-100">
+        <div className="divide-y divide-border-light">
           {loading && (
             <div className="p-6 space-y-4">
               {Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="animate-pulse flex items-center gap-4">
-                  <div className="h-10 w-10 bg-stone-100 rounded-full" />
+                  <div className="h-10 w-10 bg-surface-tertiary rounded-full" />
                   <div className="flex-1 space-y-2">
-                    <div className="h-4 bg-stone-100 rounded w-48" />
-                    <div className="h-3 bg-stone-100 rounded w-32" />
+                    <div className="h-4 bg-surface-tertiary rounded w-48" />
+                    <div className="h-3 bg-surface-tertiary rounded w-32" />
                   </div>
                 </div>
               ))}
@@ -409,7 +409,7 @@ function TeamTab() {
           )}
           {!loading && members.length === 0 && (
             <div className="p-12 text-center">
-              <Users className="h-8 w-8 text-stone-300 mx-auto mb-2" />
+              <Users className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
               <p className="text-sm text-text-tertiary">No team members found</p>
             </div>
           )}
@@ -418,7 +418,7 @@ function TeamTab() {
               <motion.div
                 key={member.id}
                 variants={staggerItem}
-                className="flex items-center gap-4 px-6 py-4 hover:bg-stone-50/60 transition-colors"
+                className="flex items-center gap-4 px-6 py-4 hover:bg-surface-hover/60 transition-colors"
               >
                 <Avatar name={member.full_name} size="md" />
                 <div className="flex-1 min-w-0">
@@ -437,7 +437,7 @@ function TeamTab() {
                   <select
                     value={member.role}
                     onChange={(e) => handleRoleChange(member.id, e.target.value as Profile["role"])}
-                    className="text-xs font-medium px-3 py-1.5 rounded-lg border border-stone-200 bg-white text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border bg-card text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
                   >
                     <option value="admin">Admin</option>
                     <option value="manager">Manager</option>
@@ -447,8 +447,8 @@ function TeamTab() {
                     onClick={() => handleToggleActive(member)}
                     className={`h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
                       member.is_active
-                        ? "text-emerald-600 hover:bg-emerald-50"
-                        : "text-stone-400 hover:bg-stone-100"
+                        ? "text-emerald-600 hover:bg-emerald-50 dark:bg-emerald-950/30"
+                        : "text-text-tertiary hover:bg-surface-tertiary"
                     }`}
                     title={member.is_active ? "Deactivate user" : "Activate user"}
                   >
@@ -486,7 +486,7 @@ function InviteModal({ onClose }: { onClose: () => void }) {
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="relative bg-white rounded-2xl shadow-modal border border-stone-200 w-full max-w-md p-6 space-y-4"
+        className="relative bg-card rounded-2xl shadow-modal border border-border w-full max-w-md p-6 space-y-4"
       >
         <h3 className="text-lg font-semibold text-text-primary">Invite Team Member</h3>
         <div>
@@ -523,7 +523,7 @@ function PermissionsTab() {
     {
       name: "Admin",
       description: "Full system access with all permissions",
-      color: "text-red-600 bg-red-50",
+      color: "text-red-600 bg-red-50 dark:bg-red-950/30",
       permissions: {
         dashboard: true, requests: true, quotes: true, jobs: true,
         partners: true, accounts: true, finance: true, settings: true,
@@ -533,7 +533,7 @@ function PermissionsTab() {
     {
       name: "Manager",
       description: "Operational management with limited admin access",
-      color: "text-blue-600 bg-blue-50",
+      color: "text-blue-600 bg-blue-50 dark:bg-blue-950/30",
       permissions: {
         dashboard: true, requests: true, quotes: true, jobs: true,
         partners: true, accounts: true, finance: true, settings: false,
@@ -543,7 +543,7 @@ function PermissionsTab() {
     {
       name: "Operator",
       description: "Day-to-day operations with read-only finance",
-      color: "text-emerald-600 bg-emerald-50",
+      color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30",
       permissions: {
         dashboard: true, requests: true, quotes: true, jobs: true,
         partners: false, accounts: false, finance: false, settings: false,
@@ -598,7 +598,7 @@ function PermissionsTab() {
                       {permissionLabels[key]}
                     </span>
                     <div className={`h-5 w-5 rounded-full flex items-center justify-center ${
-                      enabled ? "bg-emerald-100 text-emerald-600" : "bg-stone-100 text-stone-400"
+                      enabled ? "bg-emerald-100 text-emerald-600" : "bg-surface-tertiary text-text-tertiary"
                     }`}>
                       {enabled ? (
                         <CheckCircle2 className="h-3.5 w-3.5" />
@@ -683,7 +683,7 @@ function SystemTab() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-stone-400" />
+        <Loader2 className="h-6 w-6 animate-spin text-text-tertiary" />
       </div>
     );
   }
@@ -749,7 +749,7 @@ function SystemTab() {
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Logo URL</label>
               <Input value={form.logo_url} onChange={(e) => update("logo_url", e.target.value)} placeholder="https://your-domain.com/logo.png" />
               {form.logo_url && (
-                <div className="mt-2 p-3 rounded-xl bg-stone-50 flex items-center gap-3">
+                <div className="mt-2 p-3 rounded-xl bg-surface-hover flex items-center gap-3">
                   <img src={form.logo_url} alt="Logo preview" className="h-8 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                   <span className="text-xs text-text-tertiary">Logo preview</span>
                 </div>
@@ -762,7 +762,7 @@ function SystemTab() {
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Brand Color</label>
               <div className="flex items-center gap-3">
-                <input type="color" value={form.primary_color} onChange={(e) => update("primary_color", e.target.value)} className="h-10 w-10 rounded-lg border border-stone-200 cursor-pointer" />
+                <input type="color" value={form.primary_color} onChange={(e) => update("primary_color", e.target.value)} className="h-10 w-10 rounded-lg border border-border cursor-pointer" />
                 <Input value={form.primary_color} onChange={(e) => update("primary_color", e.target.value)} className="flex-1 font-mono" placeholder="#F97316" />
               </div>
               <div className="mt-2 h-2 rounded-full" style={{ backgroundColor: form.primary_color }} />
@@ -773,7 +773,7 @@ function SystemTab() {
                 value={form.quote_footer_notes}
                 onChange={(e) => update("quote_footer_notes", e.target.value)}
                 placeholder="Default notes to include at the bottom of every quote PDF..."
-                className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none h-20"
+                className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none h-20"
               />
             </div>
 
@@ -826,14 +826,14 @@ function SystemTab() {
                 { value: "America/Sao_Paulo", label: "São Paulo (BRT)" },
               ]}
             />
-            <div className="flex items-center justify-between p-3 rounded-xl bg-stone-50 mt-4">
+            <div className="flex items-center justify-between p-3 rounded-xl bg-surface-hover mt-4">
               <div>
                 <p className="text-sm font-medium text-text-primary">Email Notifications</p>
                 <p className="text-xs text-text-tertiary">Receive alerts for critical events</p>
               </div>
               <ToggleSwitch defaultChecked />
             </div>
-            <div className="flex items-center justify-between p-3 rounded-xl bg-stone-50">
+            <div className="flex items-center justify-between p-3 rounded-xl bg-surface-hover">
               <div>
                 <p className="text-sm font-medium text-text-primary">Auto-assign Jobs</p>
                 <p className="text-xs text-text-tertiary">Automatically assign jobs to available partners</p>
@@ -853,19 +853,19 @@ function SystemTab() {
           </CardHeader>
           <div className="p-6">
             <div className="grid grid-cols-2 gap-4">
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Version</p>
                 <p className="text-sm font-bold text-text-primary mt-1">1.0.0</p>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Environment</p>
                 <p className="text-sm font-bold text-text-primary mt-1">Production</p>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Database</p>
                 <p className="text-sm font-bold text-emerald-600 mt-1">Connected</p>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">API Status</p>
                 <p className="text-sm font-bold text-emerald-600 mt-1">Healthy</p>
               </div>
@@ -890,7 +890,7 @@ function ToggleSwitch({ defaultChecked = false }: { defaultChecked?: boolean }) 
     <button
       onClick={() => setChecked(!checked)}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-        checked ? "bg-primary" : "bg-stone-200"
+        checked ? "bg-primary" : "bg-border"
       }`}
     >
       <span

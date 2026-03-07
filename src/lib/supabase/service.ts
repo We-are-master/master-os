@@ -1,9 +1,15 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-/**
- * Service role key for server-only API routes.
- * Accepts SERVICE_ROLE_KEY or SUPABASE_SERVICE_ROLE_KEY (common in production).
- */
+/** Supabase URL: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL (Vercel/Supabase docs). */
+function getSupabaseUrl(): string | undefined {
+  return (
+    process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ||
+    process.env.SUPABASE_URL?.trim() ||
+    undefined
+  );
+}
+
+/** Service role key: SERVICE_ROLE_KEY or SUPABASE_SERVICE_ROLE_KEY. */
 function getServiceRoleKey(): string | undefined {
   return (
     process.env.SERVICE_ROLE_KEY?.trim() ||
@@ -15,17 +21,17 @@ function getServiceRoleKey(): string | undefined {
 /**
  * Creates a Supabase client with the service role (bypasses RLS).
  * Use only in API routes / server code. Never expose this key to the client.
- *
- * In production, set SERVICE_ROLE_KEY or SUPABASE_SERVICE_ROLE_KEY in your
- * host's environment variables (e.g. Vercel → Settings → Environment Variables).
  */
 export function createServiceClient(): SupabaseClient {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const url = getSupabaseUrl();
   const key = getServiceRoleKey();
 
   if (!url || !key) {
+    const missing: string[] = [];
+    if (!url) missing.push("NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL");
+    if (!key) missing.push("SERVICE_ROLE_KEY or SUPABASE_SERVICE_ROLE_KEY");
     throw new Error(
-      "Server config: NEXT_PUBLIC_SUPABASE_URL and SERVICE_ROLE_KEY (or SUPABASE_SERVICE_ROLE_KEY) are required. Add them in your deployment environment variables (e.g. Vercel → Settings → Environment Variables)."
+      `Server config missing: ${missing.join(", ")}. In Vercel: Settings → Environment Variables — add them for the same Environment (Production/Preview) you're using, then redeploy.`
     );
   }
 

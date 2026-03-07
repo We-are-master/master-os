@@ -33,7 +33,7 @@ const tradeColors: Record<string, string> = {
   "Plumbing": "bg-teal-100 text-teal-700 border-teal-200",
   "Painting": "bg-emerald-100 text-emerald-700 border-emerald-200",
   "Carpentry": "bg-amber-100 text-amber-700 border-amber-200",
-  "General": "bg-stone-100 text-stone-700 border-stone-200",
+  "General": "bg-surface-tertiary text-text-primary border-border",
 };
 
 function getJobColor(title: string): string {
@@ -162,11 +162,11 @@ export default function SchedulePage() {
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <Card padding="none">
             {/* Calendar Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-light">
               <div className="flex items-center gap-3">
                 <button
                   onClick={goPrev}
-                  className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-500 hover:bg-stone-100 transition-colors"
+                  className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
@@ -175,7 +175,7 @@ export default function SchedulePage() {
                 </h3>
                 <button
                   onClick={goNext}
-                  className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-500 hover:bg-stone-100 transition-colors"
+                  className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
@@ -199,7 +199,7 @@ export default function SchedulePage() {
             {/* Day Headers */}
             <div className="grid grid-cols-7">
               {DAYS_OF_WEEK.map((day) => (
-                <div key={day} className="px-3 py-2 text-center text-[11px] font-semibold text-text-tertiary uppercase tracking-wider border-b border-stone-100">
+                <div key={day} className="px-3 py-2 text-center text-[11px] font-semibold text-text-tertiary uppercase tracking-wider border-b border-border-light">
                   {day}
                 </div>
               ))}
@@ -213,8 +213,8 @@ export default function SchedulePage() {
                 return (
                   <div
                     key={index}
-                    className={`min-h-[110px] p-1.5 border-b border-r border-stone-50 transition-colors ${
-                      isTodayCell ? "bg-primary/[0.03]" : day ? "hover:bg-stone-50/40" : "bg-stone-50/20"
+                    className={`min-h-[110px] p-1.5 border-b border-r border-border-light transition-colors ${
+                      isTodayCell ? "bg-primary/[0.03]" : day ? "hover:bg-surface-hover/40" : "bg-surface-hover/20"
                     }`}
                   >
                     {day && (
@@ -269,7 +269,7 @@ export default function SchedulePage() {
         {selectedJob && (
           <div className="p-6 space-y-5">
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Status</label>
                 <div className="mt-1.5">
                   <Badge variant={statusConfig[selectedJob.status]?.variant ?? "default"} dot size="md">
@@ -277,7 +277,7 @@ export default function SchedulePage() {
                   </Badge>
                 </div>
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Progress</label>
                 <div className="mt-1.5">
                   <span className="text-lg font-bold text-text-primary">{selectedJob.progress}%</span>
@@ -300,7 +300,7 @@ export default function SchedulePage() {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner</label>
                 {selectedJob.partner_name ? (
                   <div className="flex items-center gap-2 mt-2">
@@ -311,7 +311,7 @@ export default function SchedulePage() {
                   <p className="text-sm text-amber-600 font-medium mt-2">Unassigned</p>
                 )}
               </div>
-              <div className="p-3 rounded-xl bg-stone-50">
+              <div className="p-3 rounded-xl bg-surface-hover">
                 <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Owner</label>
                 {selectedJob.owner_name ? (
                   <div className="flex items-center gap-2 mt-2">
@@ -324,7 +324,7 @@ export default function SchedulePage() {
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-stone-100">
+            <div className="p-4 rounded-xl bg-gradient-to-br from-surface-hover to-surface-tertiary/50 border border-border-light">
               <div className="flex items-center gap-2 mb-2">
                 <DollarSign className="h-4 w-4 text-text-tertiary" />
                 <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial</label>
@@ -348,7 +348,7 @@ export default function SchedulePage() {
               <span>Phase {selectedJob.current_phase}/{selectedJob.total_phases}</span>
             </div>
 
-            <div className="pt-4 border-t border-stone-100">
+            <div className="pt-4 border-t border-border-light">
               <Button
                 className="w-full"
                 onClick={() => {

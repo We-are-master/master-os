@@ -99,10 +99,10 @@ export function RevenueChart() {
             {Array.from({ length: 12 }).map((_, i) => (
               <div key={i} className="flex-1 flex flex-col items-center gap-1">
                 <div className="relative w-full flex items-end justify-center gap-[2px] h-40">
-                  <div className="w-[40%] animate-pulse bg-stone-100 rounded-t-sm" style={{ height: `${30 + Math.random() * 50}%` }} />
-                  <div className="w-[40%] animate-pulse bg-stone-50 rounded-t-sm" style={{ height: `${20 + Math.random() * 40}%` }} />
+                  <div className="w-[40%] animate-pulse bg-surface-tertiary rounded-t-sm" style={{ height: `${30 + Math.random() * 50}%` }} />
+                  <div className="w-[40%] animate-pulse bg-surface-hover rounded-t-sm" style={{ height: `${20 + Math.random() * 40}%` }} />
                 </div>
-                <div className="h-3 w-6 animate-pulse bg-stone-100 rounded" />
+                <div className="h-3 w-6 animate-pulse bg-surface-tertiary rounded" />
               </div>
             ))}
           </div>
@@ -125,7 +125,7 @@ export function RevenueChart() {
                           delay: index * 0.04 + 0.2,
                           ease: [0.25, 0.46, 0.45, 0.94],
                         }}
-                        className="w-[40%] bg-stone-100 rounded-t-sm group relative"
+                        className="w-[40%] bg-surface-tertiary rounded-t-sm group relative"
                       >
                         <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-stone-700 text-white text-[10px] font-medium px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
                           {formatCurrency(item.invoiced)}
@@ -154,13 +154,13 @@ export function RevenueChart() {
           </>
         )}
 
-        <div className="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-stone-100">
+        <div className="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-border-light">
           <div className="flex items-center gap-2">
             <div className="h-2.5 w-2.5 rounded-sm bg-primary" />
             <span className="text-xs text-text-secondary">Collected</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="h-2.5 w-2.5 rounded-sm bg-stone-200" />
+            <div className="h-2.5 w-2.5 rounded-sm bg-border" />
             <span className="text-xs text-text-secondary">Invoiced</span>
           </div>
         </div>

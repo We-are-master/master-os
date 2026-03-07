@@ -47,7 +47,7 @@ function Checkbox({ checked, indeterminate, onChange, className }: {
         "h-4.5 w-4.5 rounded-md border-2 flex items-center justify-center transition-all shrink-0",
         checked || indeterminate
           ? "bg-primary border-primary text-white"
-          : "border-stone-300 hover:border-stone-400 bg-white",
+          : "border-border hover:border-text-tertiary bg-card",
         className
       )}
       style={{ height: 18, width: 18 }}
@@ -105,8 +105,7 @@ export function DataTable<T>({
   };
 
   return (
-    <div className={cn("bg-white rounded-xl border border-border-light shadow-soft overflow-hidden relative", className)}>
-      {/* Bulk Action Bar */}
+    <div className={cn("bg-card rounded-xl border border-card-border shadow-soft overflow-hidden relative", className)}>
       <AnimatePresence>
         {selectable && selectionCount > 0 && bulkActions && (
           <motion.div
@@ -126,7 +125,7 @@ export function DataTable<T>({
                 {selectionCount} selected
               </span>
             </div>
-            <div className="h-4 w-px bg-stone-200" />
+            <div className="h-4 w-px bg-border" />
             <div className="flex items-center gap-1.5">
               {bulkActions}
             </div>
@@ -143,7 +142,7 @@ export function DataTable<T>({
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-stone-100">
+            <tr className="border-b border-border-light">
               {selectable && (
                 <th className="w-12 px-4 py-3">
                   <Checkbox
@@ -171,15 +170,15 @@ export function DataTable<T>({
             {loading ? (
               <tbody>
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i} className="border-b border-stone-50">
+                  <tr key={i} className="border-b border-border-light/50">
                     {selectable && (
                       <td className="px-4 py-4">
-                        <div className="h-4 w-4 bg-stone-100 rounded animate-shimmer" />
+                        <div className="h-4 w-4 bg-surface-tertiary rounded animate-shimmer" />
                       </td>
                     )}
                     {columns.map((col) => (
                       <td key={col.key} className="px-5 py-4">
-                        <div className="h-4 bg-stone-100 rounded animate-shimmer" style={{ width: `${60 + Math.random() * 30}%` }} />
+                        <div className="h-4 bg-surface-tertiary rounded animate-shimmer" style={{ width: `${60 + Math.random() * 30}%` }} />
                       </td>
                     ))}
                   </tr>
@@ -190,8 +189,8 @@ export function DataTable<T>({
                 <tr>
                   <td colSpan={columns.length + (selectable ? 1 : 0)} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-2">
-                      <div className="h-12 w-12 rounded-xl bg-stone-100 flex items-center justify-center">
-                        <svg className="h-6 w-6 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <div className="h-12 w-12 rounded-xl bg-surface-tertiary flex items-center justify-center">
+                        <svg className="h-6 w-6 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
                         </svg>
                       </div>
@@ -217,13 +216,13 @@ export function DataTable<T>({
                       variants={tableRowVariant}
                       onClick={() => onRowClick?.(item)}
                       className={cn(
-                        "border-b border-stone-50 transition-colors duration-150",
+                        "border-b border-border-light/50 transition-colors duration-150",
                         onRowClick && "cursor-pointer",
                         isChecked
                           ? "bg-primary/[0.04]"
                           : isRowSelected
                             ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
-                            : "hover:bg-stone-50/60 border-l-[3px] border-l-transparent"
+                            : "hover:bg-surface-hover border-l-[3px] border-l-transparent"
                       )}
                     >
                       {selectable && (
@@ -254,7 +253,7 @@ export function DataTable<T>({
       </div>
 
       {totalPages && totalPages > 1 && (
-        <div className="flex items-center justify-between px-5 py-3 border-t border-stone-100">
+        <div className="flex items-center justify-between px-5 py-3 border-t border-border-light">
           <p className="text-xs text-text-tertiary">
             Showing {(page - 1) * 10 + 1}-{Math.min(page * 10, totalItems ?? 0)} of {totalItems}
           </p>
@@ -262,7 +261,7 @@ export function DataTable<T>({
             <button
               onClick={() => onPageChange?.(page - 1)}
               disabled={page <= 1}
-              className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-500 hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -276,7 +275,7 @@ export function DataTable<T>({
                     "h-8 w-8 rounded-lg text-xs font-medium transition-colors",
                     page === pageNum
                       ? "bg-primary text-white"
-                      : "text-stone-600 hover:bg-stone-100"
+                      : "text-text-secondary hover:bg-surface-tertiary"
                   )}
                 >
                   {pageNum}
@@ -286,7 +285,7 @@ export function DataTable<T>({
             <button
               onClick={() => onPageChange?.(page + 1)}
               disabled={page >= totalPages}
-              className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-500 hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
