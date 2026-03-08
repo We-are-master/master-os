@@ -85,12 +85,12 @@ export default function SchedulePage() {
       const { data } = await supabase.from("jobs").select("*");
       const allJobs = (data ?? []) as Job[];
       const withDate = allJobs.filter((j) => j.scheduled_date);
-      const withoutDate = allJobs.filter((j) => !j.scheduled_date && j.status !== "completed" && j.status !== "cancelled");
+      const withoutDate = allJobs.filter((j) => !j.scheduled_date && j.status !== "completed");
       setStats({
         total: allJobs.length,
         scheduled: withDate.length,
         unassigned: withoutDate.length,
-        active: allJobs.filter((j) => j.status === "in_progress").length,
+        active: allJobs.filter((j) => j.status === "in_progress_phase1" || j.status === "in_progress_phase2" || j.status === "in_progress_phase3").length,
       });
     } catch { /* cosmetic */ }
   }, []);

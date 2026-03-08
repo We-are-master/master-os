@@ -72,13 +72,13 @@ export default function DashboardPage() {
       setFilterCounts({
         commission_pending: jobs.filter((j) => (j.commission ?? 0) > 0 && j.finance_status !== "paid").length,
         awaiting_payment: jobs.filter((j) => j.status === "awaiting_payment").length,
-        without_invoice: jobs.filter((j) => !invoiceRefs.has(j.id) && j.status !== "cancelled").length,
+        without_invoice: jobs.filter((j) => !invoiceRefs.has(j.id) && j.status !== "completed").length,
         without_selfbill: jobs.filter((j) => j.partner_name && j.status === "completed").length,
-        without_report: jobs.filter((j) => !j.report_submitted && !["cancelled", "ready_to_start"].includes(j.status)).length,
+        without_report: jobs.filter((j) => !j.report_submitted && !["completed", "scheduled"].includes(j.status)).length,
         without_partner: jobs.filter((j) => !j.partner_id && !j.partner_name).length,
         without_quote: jobs.filter((j) => !j.quote_id).length,
         low_margin: jobs.filter((j) => j.margin_percent < 20 && j.margin_percent > 0).length,
-        financial_status: jobs.filter((j) => j.finance_status !== "paid" && !["cancelled", "ready_to_start"].includes(j.status)).length,
+        financial_status: jobs.filter((j) => j.finance_status !== "paid" && !["completed", "scheduled"].includes(j.status)).length,
       });
     } catch { /* non-critical */ }
   }, []);
