@@ -1,6 +1,7 @@
 export type RequestStatus = "new" | "qualified" | "in_review" | "converted" | "declined";
 export type QuoteStatus = "draft" | "partner_bidding" | "ai_review" | "sent" | "approved" | "expired";
-export type JobStatus = "pending_schedule" | "in_progress" | "on_hold" | "completed" | "cancelled";
+export type JobStatus = "ready_to_start" | "in_progress" | "final_check" | "send_report" | "awaiting_payment" | "paid" | "on_hold" | "completed" | "cancelled";
+export type JobFinanceStatus = "unpaid" | "partial" | "paid";
 export type PartnerStatus = "active" | "inactive" | "on_break" | "onboarding";
 export type InvoiceStatus = "paid" | "pending" | "overdue" | "cancelled";
 export type PipelineStage = "lead" | "qualified" | "meeting" | "proposal" | "negotiation" | "closed";
@@ -35,6 +36,10 @@ export interface ServiceRequest {
   owner_name?: string;
   assigned_to?: string;
   estimated_value?: number;
+  partner_value?: number;
+  scope?: string;
+  notes?: string;
+  internal_info?: string;
   created_at: string;
   updated_at: string;
 }
@@ -53,9 +58,24 @@ export interface Quote {
   automation_status?: string;
   owner_id?: string;
   owner_name?: string;
+  cost: number;
+  sell_price: number;
+  margin_percent: number;
+  quote_type: "internal" | "partner";
   created_at: string;
   updated_at: string;
   expires_at?: string;
+}
+
+export interface QuoteLineItem {
+  id: string;
+  quote_id: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  total: number;
+  sort_order: number;
+  created_at: string;
 }
 
 export interface Job {
@@ -80,6 +100,18 @@ export interface Job {
   scheduled_date?: string;
   scheduled_start_at?: string;
   completed_date?: string;
+  cash_in: number;
+  cash_out: number;
+  expenses: number;
+  commission: number;
+  vat: number;
+  partner_agreed_value: number;
+  finance_status: JobFinanceStatus;
+  report_submitted: boolean;
+  report_submitted_at?: string;
+  report_notes?: string;
+  scope?: string;
+  internal_notes?: string;
   created_at: string;
   updated_at: string;
 }
@@ -98,6 +130,9 @@ export interface Partner {
   compliance_score: number;
   location: string;
   verified: boolean;
+  internal_notes?: string;
+  role?: string;
+  permission?: string;
   joined_at: string;
 }
 

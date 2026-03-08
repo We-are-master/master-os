@@ -341,6 +341,7 @@ export default function PartnersPage() {
         onClose={() => setSelectedPartner(null)}
         onStatusChange={handleStatusChange}
         onVerify={handleVerify}
+        onPartnerUpdate={setSelectedPartner}
       />
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Add Partner" subtitle="Create a new partner in your network.">
@@ -452,11 +453,13 @@ function PartnerDetailDrawer({
   onClose,
   onStatusChange,
   onVerify,
+  onPartnerUpdate,
 }: {
   partner: Partner | null;
   onClose: () => void;
   onStatusChange: (partner: Partner, status: PartnerStatus) => void;
   onVerify: (partner: Partner) => void;
+  onPartnerUpdate?: (updated: Partner) => void;
 }) {
   const [tab, setTab] = useState("overview");
   const [documents, setDocuments] = useState<PartnerDoc[]>([]);
@@ -561,6 +564,7 @@ function PartnerDetailDrawer({
 
   const drawerTabs = [
     { id: "overview", label: "Overview" },
+    { id: "internal", label: "Internal" },
     { id: "jobs", label: "Jobs", count: realJobsCount },
     { id: "financial", label: "Financial", count: selfBills.length },
     { id: "documents", label: "Documents", count: documents.length },
@@ -655,6 +659,19 @@ function PartnerDetailDrawer({
               ))}
             </div>
           </div>
+        )}
+
+        {/* ========== INTERNAL PROFILE ========== */}
+        {tab === "internal" && (
+          <InternalProfileTab partner={partner} onUpdate={async (updates) => {
+            try {
+              const updated = await updatePartner(partner.id, updates);
+              onPartnerUpdate?.(updated);
+              toast.success("Internal profile updated");
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "Failed to update");
+            }
+          }} />
         )}
 
         {/* ========== JOBS ========== */}
@@ -870,6 +887,71 @@ function PartnerDetailDrawer({
         )}
       </div>
     </Drawer>
+  );
+}
+
+function InternalProfileTab({ partner, onUpdate }: { partner: Partner; onUpdate: (updates: Partial<Partner>) => void }) {
+  const [internalNotes, setInternalNotes] = useState(partner.internal_notes ?? "");
+  const [role, setRole] = useState(partner.role ?? "");
+  const [permission, setPermission] = useState(partner.permission ?? "");
+
+  useEffect(() => {
+    setInternalNotes(partner.internal_notes ?? "");
+    setRole(partner.role ?? "");
+    setPermission(partner.permission ?? "");
+  }, [partner.id, partner.internal_notes, partner.role, partner.permission]);
+
+  return (
+    <div className="p-6 space-y-5">
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Role</label>
+        <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Subcontractor, Lead Partner..." />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Permission Level</label>
+        <select
+          value={permission}
+          onChange={(e) => setPermission(e.target.value)}
+          className="w-full h-9 px-3 rounded-lg border border-border text-sm text-text-secondary bg-card focus:outline-none focus:ring-2 focus:ring-primary/15"
+        >
+          <option value="">No permission set</option>
+          <option value="view_only">View Only</option>
+          <option value="submit_reports">Submit Reports</option>
+          <option value="submit_quotes">Submit Quotes</option>
+          <option value="full_access">Full Access</option>
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Internal Notes</label>
+        <textarea
+          value={internalNotes}
+          onChange={(e) => setInternalNotes(e.target.value)}
+          rows={5}
+          placeholder="Internal information about this partner..."
+          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none"
+        />
+      </div>
+      <div className="p-4 rounded-xl bg-surface-hover">
+        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Partner History</p>
+        <div className="space-y-2 text-xs text-text-secondary">
+          <div className="flex justify-between">
+            <span>Joined</span>
+            <span className="font-medium text-text-primary">{new Date(partner.joined_at).toLocaleDateString()}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Status</span>
+            <Badge variant={statusConfig[partner.status]?.variant ?? "default"} size="sm">{statusConfig[partner.status]?.label ?? partner.status}</Badge>
+          </div>
+          <div className="flex justify-between">
+            <span>Verified</span>
+            <span className={`font-medium ${partner.verified ? "text-emerald-600" : "text-text-tertiary"}`}>{partner.verified ? "Yes" : "No"}</span>
+          </div>
+        </div>
+      </div>
+      <Button onClick={() => onUpdate({ internal_notes: internalNotes, role, permission })} className="w-full">
+        Save Internal Profile
+      </Button>
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -14,17 +14,22 @@ import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
-import { Plus, Filter, MapPin, Phone, Mail } from "lucide-react";
+import { Plus, Filter, MapPin, Phone, Mail, CheckCircle2, XCircle, ArrowRight, Briefcase, FileText } from "lucide-react";
 import { toast } from "sonner";
-import type { ServiceRequest } from "@/types/database";
+import type { ServiceRequest, Quote } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listRequests, createRequest, updateRequestStatus } from "@/services/requests";
+import { listRequests, createRequest, updateRequestStatus, updateRequest } from "@/services/requests";
+import { createQuote } from "@/services/quotes";
+import { createJob } from "@/services/jobs";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { getStatusCounts, getSupabase } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
+import { useRouter } from "next/navigation";
+import { listPartners } from "@/services/partners";
+import type { Partner } from "@/types/database";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   new: { label: "New", variant: "primary" },
@@ -52,18 +57,10 @@ const serviceColors: Record<string, string> = {
 };
 
 export default function RequestsPage() {
+  const router = useRouter();
   const {
-    data,
-    loading,
-    page,
-    totalPages,
-    totalItems,
-    setPage,
-    search,
-    setSearch,
-    status,
-    setStatus,
-    refresh,
+    data, loading, page, totalPages, totalItems,
+    setPage, search, setSearch, status, setStatus, refresh,
   } = useSupabaseList<ServiceRequest>({ fetcher: listRequests });
 
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
@@ -71,31 +68,41 @@ export default function RequestsPage() {
   const [drawerTab, setDrawerTab] = useState("details");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterRef = useRef<HTMLDivElement>(null);
+  const [filterPriority, setFilterPriority] = useState<"all" | "high" | "urgent">("all");
+  const [filterService, setFilterService] = useState<string>("all");
+  const [convertToJobOpen, setConvertToJobOpen] = useState<ServiceRequest | null>(null);
   const { profile } = useProfile();
-  const isAdmin = profile?.role === "admin";
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) setFilterOpen(false);
+    }
+    if (filterOpen) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [filterOpen]);
+
+  const filteredRequests = useMemo(() => {
+    return data.filter((r) => {
+      if (filterPriority === "high" && r.priority !== "high" && r.priority !== "urgent") return false;
+      if (filterPriority === "urgent" && r.priority !== "urgent") return false;
+      if (filterService !== "all" && r.service_type !== filterService) return false;
+      return true;
+    });
+  }, [data, filterPriority, filterService]);
 
   const loadCounts = useCallback(async () => {
     try {
       const counts = await getStatusCounts("service_requests", [
-        "new",
-        "qualified",
-        "in_review",
-        "converted",
-        "declined",
+        "new", "qualified", "in_review", "converted", "declined",
       ]);
       setStatusCounts(counts);
-    } catch {
-      // non-critical — tabs will show 0
-    }
+    } catch { /* cosmetic */ }
   }, []);
 
-  useEffect(() => {
-    loadCounts();
-  }, [loadCounts]);
-
-  useEffect(() => {
-    setDrawerTab("details");
-  }, [selectedRequest?.id]);
+  useEffect(() => { loadCounts(); }, [loadCounts]);
+  useEffect(() => { setDrawerTab("details"); }, [selectedRequest?.id]);
 
   const tabs = [
     { id: "all", label: "All Requests", count: statusCounts.all ?? 0 },
@@ -103,6 +110,7 @@ export default function RequestsPage() {
     { id: "qualified", label: "Qualified", count: statusCounts.qualified ?? 0 },
     { id: "in_review", label: "In Review", count: statusCounts.in_review ?? 0 },
     { id: "converted", label: "Converted", count: statusCounts.converted ?? 0 },
+    { id: "declined", label: "Not Qualified", count: statusCounts.declined ?? 0 },
   ];
 
   const handleBulkStatusChange = async (newStatus: string) => {
@@ -118,31 +126,14 @@ export default function RequestsPage() {
     } catch { toast.error("Failed to update requests"); }
   };
 
-  const handleBulkDelete = async () => {
-    if (selectedIds.size === 0) return;
-    const supabase = getSupabase();
-    try {
-      const { error } = await supabase.from("service_requests").update({ status: "declined" }).in("id", Array.from(selectedIds));
-      if (error) throw error;
-      toast.success(`${selectedIds.size} requests declined`);
-      setSelectedIds(new Set());
-      refresh();
-    } catch { toast.error("Failed to update requests"); }
-  };
-
   const handleStatusChange = useCallback(
     async (id: string, newStatus: string, oldStatus?: string) => {
       try {
         await updateRequestStatus(id, newStatus);
         await logAudit({
-          entityType: "request",
-          entityId: id,
-          action: "status_changed",
-          fieldName: "status",
-          oldValue: oldStatus,
-          newValue: newStatus,
-          userId: profile?.id,
-          userName: profile?.full_name,
+          entityType: "request", entityId: id, action: "status_changed",
+          fieldName: "status", oldValue: oldStatus, newValue: newStatus,
+          userId: profile?.id, userName: profile?.full_name,
         });
         setSelectedRequest(null);
         refresh();
@@ -153,6 +144,68 @@ export default function RequestsPage() {
       }
     },
     [refresh, loadCounts, profile?.id, profile?.full_name]
+  );
+
+  const handleAccept = useCallback(
+    async (req: ServiceRequest) => {
+      await handleStatusChange(req.id, "qualified", req.status);
+    },
+    [handleStatusChange]
+  );
+
+  const handleDecline = useCallback(
+    async (req: ServiceRequest) => {
+      await handleStatusChange(req.id, "declined", req.status);
+    },
+    [handleStatusChange]
+  );
+
+  const handleConvertToQuote = useCallback(
+    async (req: ServiceRequest) => {
+      try {
+        const quote = await createQuote({
+          title: `${req.service_type} — ${req.client_name}`,
+          client_name: req.client_name,
+          client_email: req.client_email,
+          request_id: req.id,
+          status: "draft",
+          total_value: req.estimated_value ?? 0,
+          partner_quotes_count: 0,
+          cost: 0,
+          sell_price: req.estimated_value ?? 0,
+          margin_percent: 0,
+          quote_type: "internal",
+        });
+        await updateRequestStatus(req.id, "converted");
+        await logAudit({
+          entityType: "request", entityId: req.id, entityRef: req.reference,
+          action: "status_changed", fieldName: "status",
+          oldValue: req.status, newValue: "converted",
+          metadata: { converted_to_quote: quote.reference },
+          userId: profile?.id, userName: profile?.full_name,
+        });
+        await logAudit({
+          entityType: "quote", entityId: quote.id, entityRef: quote.reference,
+          action: "created", metadata: { from_request: req.reference },
+          userId: profile?.id, userName: profile?.full_name,
+        });
+        setSelectedRequest(null);
+        refresh();
+        await loadCounts();
+        toast.success(`Quote ${quote.reference} created. Redirecting...`);
+        router.push("/quotes");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to convert to quote");
+      }
+    },
+    [refresh, loadCounts, profile?.id, profile?.full_name, router]
+  );
+
+  const handleConvertToJob = useCallback(
+    (req: ServiceRequest) => {
+      setConvertToJobOpen(req);
+    },
+    []
   );
 
   const handleCreate = useCallback(
@@ -173,12 +226,8 @@ export default function RequestsPage() {
           estimated_value: formData.estimated_value,
         });
         await logAudit({
-          entityType: "request",
-          entityId: result.id,
-          entityRef: result.reference,
-          action: "created",
-          userId: profile?.id,
-          userName: profile?.full_name,
+          entityType: "request", entityId: result.id, entityRef: result.reference,
+          action: "created", userId: profile?.id, userName: profile?.full_name,
         });
         setCreateOpen(false);
         refresh();
@@ -262,7 +311,32 @@ export default function RequestsPage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Requests" subtitle="Manage incoming service requests and leads.">
-          <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
+          <div className="relative flex items-center gap-2" ref={filterRef}>
+            <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
+            {(filterPriority !== "all" || filterService !== "all") && <span className="text-[10px] font-medium text-primary">Active</span>}
+            {filterOpen && (
+              <div className="absolute top-full right-0 mt-1 w-52 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Priority</p>
+                <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value as "all" | "high" | "urgent")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                  <option value="all">All</option>
+                  <option value="high">High & Urgent</option>
+                  <option value="urgent">Urgent only</option>
+                </select>
+                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Service type</p>
+                <select value={filterService} onChange={(e) => setFilterService(e.target.value)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                  <option value="all">All</option>
+                  <option value="HVAC Installation">HVAC Installation</option>
+                  <option value="HVAC Maintenance">HVAC Maintenance</option>
+                  <option value="Electrical">Electrical</option>
+                  <option value="Plumbing">Plumbing</option>
+                  <option value="Painting">Painting</option>
+                  <option value="Carpentry">Carpentry</option>
+                  <option value="General Maintenance">General Maintenance</option>
+                </select>
+                <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPriority("all"); setFilterService("all"); }}>Clear filters</Button>
+              </div>
+            )}
+          </div>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Request</Button>
         </PageHeader>
 
@@ -279,7 +353,7 @@ export default function RequestsPage() {
 
           <DataTable
             columns={columns}
-            data={data}
+            data={filteredRequests}
             loading={loading}
             getRowId={(item) => item.id}
             selectedId={selectedRequest?.id}
@@ -294,10 +368,10 @@ export default function RequestsPage() {
             bulkActions={
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
-                <BulkBtn label="Mark Qualified" onClick={() => handleBulkStatusChange("qualified")} variant="success" />
+                <BulkBtn label="Accept" onClick={() => handleBulkStatusChange("qualified")} variant="success" />
                 <BulkBtn label="In Review" onClick={() => handleBulkStatusChange("in_review")} variant="warning" />
                 <BulkBtn label="Convert" onClick={() => handleBulkStatusChange("converted")} variant="success" />
-                <BulkBtn label="Decline" onClick={() => handleBulkDelete()} variant="danger" />
+                <BulkBtn label="Decline" onClick={() => handleBulkStatusChange("declined")} variant="danger" />
               </div>
             }
           />
@@ -324,90 +398,152 @@ export default function RequestsPage() {
             {drawerTab === "details" && (
               <div className="p-6 space-y-6 flex-1 overflow-auto">
                 <div className="space-y-4">
-              <div>
-                <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
-                <div className="flex items-center gap-3 mt-2">
-                  <Avatar name={selectedRequest.client_name} size="lg" />
                   <div>
-                    <p className="text-base font-semibold text-text-primary">{selectedRequest.client_name}</p>
-                    <p className="text-sm text-text-secondary">{selectedRequest.client_email}</p>
+                    <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
+                    <div className="flex items-center gap-3 mt-2">
+                      <Avatar name={selectedRequest.client_name} size="lg" />
+                      <div>
+                        <p className="text-base font-semibold text-text-primary">{selectedRequest.client_name}</p>
+                        <p className="text-sm text-text-secondary">{selectedRequest.client_email}</p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-surface-hover">
-                  <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Status</label>
-                  <div className="mt-1">
-                    <Badge variant={statusConfig[selectedRequest.status].variant} dot size="md">
-                      {statusConfig[selectedRequest.status].label}
-                    </Badge>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 rounded-xl bg-surface-hover">
+                      <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Status</label>
+                      <div className="mt-1">
+                        <Badge variant={statusConfig[selectedRequest.status].variant} dot size="md">
+                          {statusConfig[selectedRequest.status].label}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-surface-hover">
+                      <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Priority</label>
+                      <div className="mt-1">
+                        <Badge variant={priorityConfig[selectedRequest.priority].variant} size="md">
+                          {priorityConfig[selectedRequest.priority].label}
+                        </Badge>
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="p-3 rounded-xl bg-surface-hover">
-                  <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Priority</label>
-                  <div className="mt-1">
-                    <Badge variant={priorityConfig[selectedRequest.priority].variant} size="md">
-                      {priorityConfig[selectedRequest.priority].label}
-                    </Badge>
+                  {selectedRequest.owner_name && (
+                    <div className="p-3 rounded-xl bg-surface-hover">
+                      <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Owner (Commission)</label>
+                      <div className="flex items-center gap-2.5 mt-2">
+                        <Avatar name={selectedRequest.owner_name} size="sm" />
+                        <p className="text-sm font-semibold text-text-primary">{selectedRequest.owner_name}</p>
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Property</label>
+                    <div className="flex items-start gap-2 mt-1.5">
+                      <MapPin className="h-4 w-4 text-text-tertiary mt-0.5 shrink-0" />
+                      <p className="text-sm text-text-primary">{selectedRequest.property_address}</p>
+                    </div>
+                    <LocationMiniMap address={selectedRequest.property_address} className="mt-2" />
                   </div>
-                </div>
-              </div>
-              {selectedRequest.owner_name && (
-                <div className="p-3 rounded-xl bg-surface-hover">
-                  <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Owner (Commission)</label>
-                  <div className="flex items-center gap-2.5 mt-2">
-                    <Avatar name={selectedRequest.owner_name} size="sm" />
-                    <p className="text-sm font-semibold text-text-primary">{selectedRequest.owner_name}</p>
+                  <div>
+                    <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Description</label>
+                    <p className="text-sm text-text-secondary mt-1.5 leading-relaxed">{selectedRequest.description}</p>
                   </div>
+                  {selectedRequest.estimated_value && (
+                    <div className="p-4 rounded-xl bg-primary/[0.03] border border-primary/10">
+                      <label className="text-[10px] font-semibold text-primary uppercase tracking-wide">Estimated Value</label>
+                      <p className="text-2xl font-bold text-text-primary mt-1">
+                        ${selectedRequest.estimated_value.toLocaleString()}
+                      </p>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 text-sm text-text-secondary">
+                    <Mail className="h-4 w-4" />
+                    {selectedRequest.client_email}
+                  </div>
+                  {selectedRequest.client_phone && (
+                    <div className="flex items-center gap-2 text-sm text-text-secondary">
+                      <Phone className="h-4 w-4" />
+                      {selectedRequest.client_phone}
+                    </div>
+                  )}
                 </div>
-              )}
-              <div>
-                <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Property</label>
-                <div className="flex items-start gap-2 mt-1.5">
-                  <MapPin className="h-4 w-4 text-text-tertiary mt-0.5 shrink-0" />
-                  <p className="text-sm text-text-primary">{selectedRequest.property_address}</p>
-                </div>
-                <LocationMiniMap address={selectedRequest.property_address} className="mt-2" />
+
+                {/* Accept / Decline buttons for new/in_review requests */}
+                {["new", "in_review"].includes(selectedRequest.status) && (
+                  <div className="flex gap-2 pt-4 border-t border-border-light">
+                    <Button
+                      variant="primary"
+                      className="flex-1"
+                      size="sm"
+                      icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                      onClick={() => handleAccept(selectedRequest)}
+                    >
+                      Accept
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      size="sm"
+                      icon={<XCircle className="h-3.5 w-3.5" />}
+                      onClick={() => handleDecline(selectedRequest)}
+                    >
+                      Decline
+                    </Button>
+                  </div>
+                )}
+
+                {/* Convert buttons for qualified requests */}
+                {selectedRequest.status === "qualified" && (
+                  <div className="flex gap-2 pt-4 border-t border-border-light">
+                    <Button
+                      variant="primary"
+                      className="flex-1"
+                      size="sm"
+                      icon={<FileText className="h-3.5 w-3.5" />}
+                      onClick={() => handleConvertToQuote(selectedRequest)}
+                    >
+                      Convert to Quote
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      size="sm"
+                      icon={<Briefcase className="h-3.5 w-3.5" />}
+                      onClick={() => handleConvertToJob(selectedRequest)}
+                    >
+                      Convert to Job
+                    </Button>
+                  </div>
+                )}
+
+                {/* Converted status indicator */}
+                {selectedRequest.status === "converted" && (
+                  <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      <p className="text-sm font-medium text-emerald-700">This request has been converted</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Declined status indicator */}
+                {selectedRequest.status === "declined" && (
+                  <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <XCircle className="h-4 w-4 text-red-600" />
+                      <p className="text-sm font-medium text-red-700">Not Qualified / Declined</p>
+                    </div>
+                    <p className="text-xs text-red-600">This request was declined but is kept for records.</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      onClick={() => handleStatusChange(selectedRequest.id, "new", selectedRequest.status)}
+                    >
+                      Reopen Request
+                    </Button>
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Description</label>
-                <p className="text-sm text-text-secondary mt-1.5 leading-relaxed">{selectedRequest.description}</p>
-              </div>
-              {selectedRequest.estimated_value && (
-                <div className="p-4 rounded-xl bg-primary/[0.03] border border-primary/10">
-                  <label className="text-[10px] font-semibold text-primary uppercase tracking-wide">Estimated Value</label>
-                  <p className="text-2xl font-bold text-text-primary mt-1">
-                    ${selectedRequest.estimated_value.toLocaleString()}
-                  </p>
-                </div>
-              )}
-              <div className="flex items-center gap-2 text-sm text-text-secondary">
-                <Mail className="h-4 w-4" />
-                {selectedRequest.client_email}
-              </div>
-              {selectedRequest.client_phone && (
-                <div className="flex items-center gap-2 text-sm text-text-secondary">
-                  <Phone className="h-4 w-4" />
-                  {selectedRequest.client_phone}
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2 pt-4 border-t border-border-light">
-              <Button
-                variant="primary"
-                className="flex-1"
-                onClick={() => handleStatusChange(selectedRequest.id, "converted", selectedRequest?.status)}
-              >
-                Convert to Quote
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => handleStatusChange(selectedRequest.id, "declined", selectedRequest?.status)}
-              >
-                Decline
-              </Button>
-            </div>
-          </div>
             )}
             {drawerTab === "history" && (
               <div className="p-6 flex-1 overflow-auto">
@@ -423,38 +559,206 @@ export default function RequestsPage() {
         onClose={() => setCreateOpen(false)}
         onCreate={handleCreate}
       />
+
+      <ConvertToJobModal
+        request={convertToJobOpen}
+        onClose={() => setConvertToJobOpen(null)}
+        onConvert={async (data) => {
+          if (!convertToJobOpen) return;
+          try {
+            const clientPrice = data.client_price ?? 0;
+            const partnerCost = data.partner_cost ?? 0;
+            const margin = clientPrice > 0 ? Math.round(((clientPrice - partnerCost) / clientPrice) * 1000) / 10 : 0;
+            const job = await createJob({
+              title: `${convertToJobOpen.service_type} — ${convertToJobOpen.client_name}`,
+              client_name: convertToJobOpen.client_name,
+              property_address: convertToJobOpen.property_address,
+              partner_name: data.partner_name,
+              partner_id: data.partner_id,
+              status: "ready_to_start",
+              progress: 0,
+              current_phase: 0,
+              total_phases: 1,
+              client_price: clientPrice,
+              partner_cost: partnerCost,
+              materials_cost: 0,
+              margin_percent: margin,
+              partner_agreed_value: data.partner_value ?? 0,
+              scope: data.scope,
+              internal_notes: data.internal_notes,
+              cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
+              finance_status: "unpaid",
+              report_submitted: false,
+              owner_id: profile?.id,
+              owner_name: profile?.full_name,
+            });
+            await updateRequestStatus(convertToJobOpen.id, "converted");
+            await logAudit({
+              entityType: "job", entityId: job.id, entityRef: job.reference,
+              action: "created", metadata: { from_request: convertToJobOpen.reference },
+              userId: profile?.id, userName: profile?.full_name,
+            });
+            setConvertToJobOpen(null);
+            setSelectedRequest(null);
+            refresh();
+            loadCounts();
+            toast.success(`Job ${job.reference} created`);
+            router.push(`/jobs?jobId=${job.id}`);
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Failed to convert to job");
+          }
+        }}
+      />
     </PageTransition>
   );
 }
 
-function CreateRequestModal({
-  open,
+function ConvertToJobModal({
+  request,
   onClose,
-  onCreate,
+  onConvert,
+}: {
+  request: ServiceRequest | null;
+  onClose: () => void;
+  onConvert: (data: {
+    partner_value?: number;
+    partner_id?: string;
+    partner_name?: string;
+    scope?: string;
+    notes?: string;
+    internal_notes?: string;
+    client_price?: number;
+    partner_cost?: number;
+  }) => void;
+}) {
+  const [form, setForm] = useState({
+    partner_value: "",
+    partner_id: "",
+    scope: "",
+    notes: "",
+    internal_notes: "",
+    client_price: "",
+    partner_cost: "",
+  });
+  const [partners, setPartners] = useState<Partner[]>([]);
+
+  useEffect(() => {
+    if (!request) return;
+    setForm({
+      partner_value: "",
+      partner_id: "",
+      scope: "",
+      notes: "",
+      internal_notes: "",
+      client_price: String(request.estimated_value ?? 0),
+      partner_cost: "",
+    });
+    listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
+  }, [request]);
+
+  if (!request) return null;
+
+  const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
+  const selectedPartner = partners.find((p) => p.id === form.partner_id);
+
+  return (
+    <Modal open={!!request} onClose={onClose} title="Convert to Job" subtitle={`${request.reference} — Same card, new status`} size="lg">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onConvert({
+            partner_value: form.partner_value ? Number(form.partner_value) : undefined,
+            partner_id: form.partner_id || undefined,
+            partner_name: selectedPartner?.company_name,
+            scope: form.scope || undefined,
+            notes: form.notes || undefined,
+            internal_notes: form.internal_notes || undefined,
+            client_price: Number(form.client_price) || 0,
+            partner_cost: Number(form.partner_cost) || 0,
+          });
+        }}
+        className="p-6 space-y-4"
+      >
+        <div className="p-3 rounded-xl bg-surface-hover">
+          <p className="text-xs text-text-tertiary">Converting request <span className="font-bold text-text-primary">{request.reference}</span> to a Job. Same ID is preserved.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label>
+            <Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} placeholder="0.00" min={0} step="0.01" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Value</label>
+            <Input type="number" value={form.partner_value} onChange={(e) => update("partner_value", e.target.value)} placeholder="0.00" min={0} step="0.01" />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label>
+          <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} placeholder="0.00" min={0} step="0.01" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Assign Partner</label>
+          <Select
+            options={[{ value: "", label: "No partner" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]}
+            value={form.partner_id}
+            onChange={(e) => update("partner_id", e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope</label>
+          <textarea
+            value={form.scope}
+            onChange={(e) => update("scope", e.target.value)}
+            rows={2}
+            placeholder="Define the scope of work..."
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Notes</label>
+          <textarea
+            value={form.notes}
+            onChange={(e) => update("notes", e.target.value)}
+            rows={2}
+            placeholder="Any notes..."
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Internal Info</label>
+          <textarea
+            value={form.internal_notes}
+            onChange={(e) => update("internal_notes", e.target.value)}
+            rows={2}
+            placeholder="Internal information only..."
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none"
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button type="submit" icon={<Briefcase className="h-3.5 w-3.5" />}>Convert to Job</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function CreateRequestModal({
+  open, onClose, onCreate,
 }: {
   open: boolean;
   onClose: () => void;
   onCreate: (data: Partial<ServiceRequest>) => void;
 }) {
   const [form, setForm] = useState({
-    client_name: "",
-    client_email: "",
-    client_phone: "",
-    property_address: "",
-    service_type: "HVAC Installation",
-    description: "",
-    priority: "medium",
-    estimated_value: "",
+    client_name: "", client_email: "", client_phone: "", property_address: "",
+    service_type: "HVAC Installation", description: "", priority: "medium", estimated_value: "",
   });
-
-  const update = (field: string, value: string) =>
-    setForm((prev) => ({ ...prev, [field]: value }));
-
+  const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.client_name || !form.client_email || !form.property_address) {
-      toast.error("Please fill in all required fields");
-      return;
+      toast.error("Please fill in all required fields"); return;
     }
     onCreate({
       ...form,
@@ -487,38 +791,23 @@ function CreateRequestModal({
             <Input type="number" value={form.estimated_value} onChange={(e) => update("estimated_value", e.target.value)} placeholder="0.00" />
           </div>
         </div>
-        <AddressAutocomplete
-          label="Property Address *"
-          value={form.property_address}
-          onSelect={(parts) => update("property_address", parts.full_address)}
-          placeholder="Start typing address or postcode..."
-        />
+        <AddressAutocomplete label="Property Address *" value={form.property_address} onSelect={(parts) => update("property_address", parts.full_address)} placeholder="Start typing address or postcode..." />
         <div className="grid grid-cols-2 gap-4">
           <Select label="Service Type" value={form.service_type} onChange={(e) => update("service_type", e.target.value)} options={[
-            { value: "HVAC Installation", label: "HVAC Installation" },
-            { value: "HVAC Maintenance", label: "HVAC Maintenance" },
-            { value: "Electrical", label: "Electrical" },
-            { value: "Plumbing", label: "Plumbing" },
-            { value: "Painting", label: "Painting" },
-            { value: "Carpentry", label: "Carpentry" },
+            { value: "HVAC Installation", label: "HVAC Installation" }, { value: "HVAC Maintenance", label: "HVAC Maintenance" },
+            { value: "Electrical", label: "Electrical" }, { value: "Plumbing", label: "Plumbing" },
+            { value: "Painting", label: "Painting" }, { value: "Carpentry", label: "Carpentry" },
             { value: "General Maintenance", label: "General Maintenance" },
           ]} />
           <Select label="Priority" value={form.priority} onChange={(e) => update("priority", e.target.value)} options={[
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High" },
-            { value: "urgent", label: "Urgent" },
+            { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
+            { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
           ]} />
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
-          <textarea
-            value={form.description}
-            onChange={(e) => update("description", e.target.value)}
-            rows={3}
-            placeholder="Describe the service needed..."
-            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none"
-          />
+          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} placeholder="Describe the service needed..."
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none" />
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
