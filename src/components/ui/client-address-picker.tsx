@@ -34,8 +34,8 @@ interface ClientAddressPickerProps {
 export function ClientAddressPicker({
   value,
   onChange,
-  labelClient = "Cliente *",
-  labelAddress = "Endereço do imóvel *",
+  labelClient = "Client *",
+  labelAddress = "Property address *",
   required = true,
   className = "",
 }: ClientAddressPickerProps) {

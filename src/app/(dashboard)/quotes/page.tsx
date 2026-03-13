@@ -1104,8 +1104,8 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title?.trim()) { toast.error("Título do job é obrigatório"); return; }
-    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Selecione o cliente e o endereço do imóvel"); return; }
+    if (!form.title?.trim()) { toast.error("Job title is required"); return; }
+    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const scheduled_date = form.scheduled_date || undefined;
     const scheduled_start_at = form.scheduled_date && form.scheduled_time ? `${form.scheduled_date}T${form.scheduled_time}:00` : form.scheduled_date ? `${form.scheduled_date}T09:00:00` : undefined;
@@ -1126,9 +1126,9 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   };
 
   return (
-    <Modal open={!!quote} onClose={onClose} title="Criar Job a partir do Orçamento" subtitle={`${quote.reference} — criar job`} size="lg">
+    <Modal open={!!quote} onClose={onClose} title="Create Job from Quote" subtitle={`${quote.reference} — create job`} size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Título do job *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
+        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Job title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
@@ -1193,8 +1193,8 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title) { toast.error("Título é obrigatório"); return; }
-    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Selecione o cliente e o endereço do imóvel"); return; }
+    if (!form.title) { toast.error("Title is required"); return; }
+    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
     onSubmit({
       ...form,
       client_id: clientAddress.client_id,
@@ -1213,7 +1213,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
 
   return (
     <form onSubmit={handleSubmit} className="p-6 space-y-4">
-      <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Título do orçamento *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="ex: Reforma HVAC comercial" required /></div>
+      <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Quote title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="e.g. Commercial HVAC Refurbishment" required /></div>
       <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
       <div>
         <div className="flex items-center justify-between mb-2">

@@ -1,7 +1,8 @@
 # Master OS — Documentação de API
 
 > **Base URL:** `http://localhost:3000` (dev) / `https://<seu-domínio>` (prod)  
-> Todas as rotas de API exigem autenticação via sessão Supabase (cookie), exceto o webhook do Stripe.
+> Todas as rotas de API exigem autenticação via sessão Supabase (cookie), exceto o webhook do Stripe.  
+> **Postman:** Collection pronta em [`docs/Master-OS-API.postman_collection.json`](Master-OS-API.postman_collection.json) — importe no Postman para testar todas as APIs.
 
 ---
 

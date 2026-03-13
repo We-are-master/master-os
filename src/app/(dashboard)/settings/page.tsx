@@ -18,6 +18,7 @@ import {
   Mail, Phone, Building2, Key, Eye, EyeOff,
   CheckCircle2, AlertTriangle, Lock, Unlock,
   Palette, Globe, Upload, FileText, Loader2,
+  SlidersHorizontal, X, MinusCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
@@ -25,7 +26,8 @@ import { useAdminConfig } from "@/hooks/use-admin-config";
 import { getSupabase } from "@/services/base";
 import type { Profile } from "@/types/database";
 import type { NavGroup } from "@/lib/constants";
-import type { PermissionKey, RoleKey } from "@/types/admin-config";
+import type { PermissionKey, RoleKey, PermissionsByRole, UserPermissionOverride } from "@/types/admin-config";
+import { saveUserPermissions, resolvePermission } from "@/services/admin-config";
 
 const settingsTabs = [
   { id: "profile", label: "My Profile" },
@@ -45,11 +47,11 @@ export default function SettingsPage() {
       <div className="space-y-6">
         <PageHeader
           title="Settings"
-          subtitle="Manage your profile, team, and system configuration."
+          subtitle={isAdmin ? "The system is modular — only the Admin profile can change navigation, permissions and system configuration. All other profiles use what is configured." : "Manage your profile."}
         >
           {isAdmin && (
             <Badge variant="primary" dot size="md">
-              Admin Access
+              Admin access only
             </Badge>
           )}
         </PageHeader>
@@ -331,6 +333,8 @@ function TeamTab() {
   const [members, setMembers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [permTarget, setPermTarget] = useState<Profile | null>(null);
+  const { permissions } = useAdminConfig();
 
   useEffect(() => {
     async function loadTeam() {
@@ -385,12 +389,19 @@ function TeamTab() {
     }
   };
 
+  const handlePermissionsSaved = (memberId: string, overrides: UserPermissionOverride | null) => {
+    setMembers((prev) =>
+      prev.map((m) => (m.id === memberId ? { ...m, custom_permissions: overrides } : m))
+    );
+    setPermTarget(null);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold text-text-primary">Team Members</h3>
-          <p className="text-sm text-text-tertiary">{members.length} members in your organization</p>
+          <p className="text-sm text-text-tertiary">{members.length} members · click the sliders icon to set per-user permission overrides</p>
         </div>
         <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setInviteOpen(true)}>
           Invite Member
@@ -419,59 +430,303 @@ function TeamTab() {
             </div>
           )}
           {!loading &&
-            members.map((member) => (
-              <motion.div
-                key={member.id}
-                variants={staggerItem}
-                className="flex items-center gap-4 px-6 py-4 hover:bg-surface-hover/60 transition-colors"
-              >
-                <Avatar name={member.full_name} size="md" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-text-primary">{member.full_name}</p>
-                    {!member.is_active && (
-                      <Badge variant="default" size="sm">Inactive</Badge>
+            members.map((member) => {
+              const overrideCount = member.custom_permissions
+                ? Object.keys(member.custom_permissions).length
+                : 0;
+              return (
+                <motion.div
+                  key={member.id}
+                  variants={staggerItem}
+                  className="flex items-center gap-4 px-6 py-4 hover:bg-surface-hover/60 transition-colors"
+                >
+                  <Avatar name={member.full_name} size="md" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-text-primary">{member.full_name}</p>
+                      {!member.is_active && (
+                        <Badge variant="default" size="sm">Inactive</Badge>
+                      )}
+                      {overrideCount > 0 && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                          <SlidersHorizontal className="h-2.5 w-2.5" />
+                          {overrideCount} override{overrideCount > 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-text-tertiary">{member.email}</p>
+                    {member.job_title && (
+                      <p className="text-xs text-text-tertiary">{member.job_title}</p>
                     )}
                   </div>
-                  <p className="text-xs text-text-tertiary">{member.email}</p>
-                  {member.job_title && (
-                    <p className="text-xs text-text-tertiary">{member.job_title}</p>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <select
-                    value={member.role}
-                    onChange={(e) => handleRoleChange(member.id, e.target.value as Profile["role"])}
-                    className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border bg-card text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
-                  >
-                    <option value="admin">Admin</option>
-                    <option value="manager">Manager</option>
-                    <option value="operator">Operator</option>
-                  </select>
-                  <button
-                    onClick={() => handleToggleActive(member)}
-                    className={`h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
-                      member.is_active
-                        ? "text-emerald-600 hover:bg-emerald-50 dark:bg-emerald-950/30"
-                        : "text-text-tertiary hover:bg-surface-tertiary"
-                    }`}
-                    title={member.is_active ? "Deactivate user" : "Activate user"}
-                  >
-                    {member.is_active ? <Unlock className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
-                  </button>
-                </div>
-              </motion.div>
-            ))}
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={member.role}
+                      onChange={(e) => handleRoleChange(member.id, e.target.value as Profile["role"])}
+                      className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border bg-card text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                    >
+                      <option value="admin">Admin</option>
+                      <option value="manager">Manager</option>
+                      <option value="operator">Operator</option>
+                    </select>
+                    <button
+                      onClick={() => setPermTarget(member)}
+                      className="h-8 w-8 rounded-lg flex items-center justify-center text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors"
+                      title="Edit user permissions"
+                    >
+                      <SlidersHorizontal className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => handleToggleActive(member)}
+                      className={`h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
+                        member.is_active
+                          ? "text-emerald-600 hover:bg-emerald-50 dark:bg-emerald-950/30"
+                          : "text-text-tertiary hover:bg-surface-tertiary"
+                      }`}
+                      title={member.is_active ? "Deactivate user" : "Activate user"}
+                    >
+                      {member.is_active ? <Unlock className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
         </div>
       </Card>
 
       {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
+      {permTarget && (
+        <UserPermissionsModal
+          member={permTarget}
+          permissions={permissions}
+          onClose={() => setPermTarget(null)}
+          onSaved={handlePermissionsSaved}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Per-user permission override modal
+// ---------------------------------------------------------------------------
+
+const ALL_PERMISSIONS: PermissionKey[] = [
+  "dashboard", "requests", "quotes", "jobs", "partners",
+  "accounts", "finance", "settings", "manage_team", "manage_roles",
+  "delete_data", "export_data",
+];
+
+const PERMISSION_GROUPS: { label: string; keys: PermissionKey[] }[] = [
+  { label: "Operations", keys: ["dashboard", "requests", "quotes", "jobs"] },
+  { label: "Network & Finance", keys: ["partners", "accounts", "finance"] },
+  { label: "Administration", keys: ["settings", "manage_team", "manage_roles", "delete_data", "export_data"] },
+];
+
+function UserPermissionsModal({
+  member,
+  permissions,
+  onClose,
+  onSaved,
+}: {
+  member: Profile;
+  permissions: PermissionsByRole;
+  onClose: () => void;
+  onSaved: (memberId: string, overrides: UserPermissionOverride | null) => void;
+}) {
+  // localOverrides: null = inherit, true = grant, false = revoke
+  const [localOverrides, setLocalOverrides] = useState<Record<PermissionKey, boolean | null>>(() => {
+    const base: Record<PermissionKey, boolean | null> = {} as Record<PermissionKey, boolean | null>;
+    for (const key of ALL_PERMISSIONS) {
+      const existing = member.custom_permissions;
+      base[key] = existing && key in existing ? (existing[key] ?? null) : null;
+    }
+    return base;
+  });
+  const [saving, setSaving] = useState(false);
+
+  const rolePerms = permissions[member.role as RoleKey] ?? {};
+  const isAdmin = member.role === "admin";
+
+  const setState = (key: PermissionKey, value: boolean | null) => {
+    setLocalOverrides((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const overrides: UserPermissionOverride = {};
+      for (const key of ALL_PERMISSIONS) {
+        if (localOverrides[key] !== null) {
+          overrides[key] = localOverrides[key] as boolean;
+        }
+      }
+      await saveUserPermissions(member.id, Object.keys(overrides).length > 0 ? overrides : null);
+      toast.success(`Permissions saved for ${member.full_name}`);
+      onSaved(member.id, Object.keys(overrides).length > 0 ? overrides : null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClearAll = () => {
+    const reset: Record<PermissionKey, boolean | null> = {} as Record<PermissionKey, boolean | null>;
+    for (const key of ALL_PERMISSIONS) reset[key] = null;
+    setLocalOverrides(reset);
+  };
+
+  const overrideCount = Object.values(localOverrides).filter((v) => v !== null).length;
+  const grantCount = Object.values(localOverrides).filter((v) => v === true).length;
+  const revokeCount = Object.values(localOverrides).filter((v) => v === false).length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-end">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <motion.div
+        initial={{ x: "100%" }}
+        animate={{ x: 0 }}
+        exit={{ x: "100%" }}
+        transition={{ type: "spring", damping: 28, stiffness: 260 }}
+        className="relative h-full w-full max-w-md bg-card border-l border-border shadow-2xl flex flex-col"
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between p-6 border-b border-border-light">
+          <div className="flex items-center gap-3">
+            <Avatar name={member.full_name} size="md" />
+            <div>
+              <p className="text-sm font-bold text-text-primary">{member.full_name}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="text-xs text-text-tertiary capitalize">{member.role}</span>
+                {overrideCount > 0 && (
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                    {overrideCount} override{overrideCount > 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-lg text-text-tertiary hover:bg-surface-hover transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {isAdmin ? (
+          <div className="flex-1 flex items-center justify-center p-8 text-center">
+            <div>
+              <Shield className="h-10 w-10 text-red-500 mx-auto mb-3" />
+              <p className="text-sm font-semibold text-text-primary">Admin has full access</p>
+              <p className="text-xs text-text-tertiary mt-1">Permission overrides cannot be applied to the Admin role.</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Legend */}
+            <div className="px-6 pt-5 pb-3">
+              <p className="text-xs text-text-tertiary mb-3">
+                Each permission can be <span className="font-semibold text-text-secondary">inherited</span> from the role default, <span className="font-semibold text-emerald-600">explicitly granted</span>, or <span className="font-semibold text-red-500">explicitly revoked</span> — regardless of what the role allows.
+              </p>
+              <div className="flex items-center gap-3 text-[11px] text-text-tertiary">
+                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-border inline-block" /> Inherited</span>
+                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500 inline-block" /> Granted</span>
+                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500 inline-block" /> Revoked</span>
+              </div>
+            </div>
+
+            {/* Permission list */}
+            <div className="flex-1 overflow-y-auto px-6 space-y-5 pb-4">
+              {PERMISSION_GROUPS.map((group) => (
+                <div key={group.label}>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-text-tertiary mb-2">{group.label}</p>
+                  <div className="space-y-1">
+                    {group.keys.map((key) => {
+                      const roleDefault = (rolePerms as Record<string, boolean>)[key] ?? false;
+                      const override = localOverrides[key];
+                      const effective = override !== null ? override : roleDefault;
+
+                      return (
+                        <div key={key} className="flex items-center gap-3 py-2 px-3 rounded-xl hover:bg-surface-hover/60 transition-colors">
+                          {/* Effective indicator */}
+                          <div className={`h-2 w-2 rounded-full flex-shrink-0 ${effective ? "bg-emerald-500" : "bg-border"}`} />
+
+                          {/* Label + role default */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-text-primary">{permissionLabels[key] ?? key}</p>
+                            <p className="text-[10px] text-text-tertiary">
+                              Role default: {roleDefault ? "allowed" : "denied"}
+                              {override !== null && (
+                                <span className={`ml-1 font-semibold ${override ? "text-emerald-600" : "text-red-500"}`}>
+                                  · overridden to {override ? "grant" : "revoke"}
+                                </span>
+                              )}
+                            </p>
+                          </div>
+
+                          {/* 3-state toggle */}
+                          <div className="flex items-center rounded-lg border border-border overflow-hidden text-[10px] font-semibold flex-shrink-0">
+                            <button
+                              onClick={() => setState(key, null)}
+                              className={`px-2 py-1.5 transition-colors ${override === null ? "bg-surface-tertiary text-text-primary" : "text-text-tertiary hover:bg-surface-hover"}`}
+                              title="Inherit from role"
+                            >
+                              Inherit
+                            </button>
+                            <button
+                              onClick={() => setState(key, true)}
+                              className={`px-2 py-1.5 transition-colors border-l border-border ${override === true ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400" : "text-text-tertiary hover:bg-surface-hover"}`}
+                              title="Always grant"
+                            >
+                              Grant
+                            </button>
+                            <button
+                              onClick={() => setState(key, false)}
+                              className={`px-2 py-1.5 transition-colors border-l border-border ${override === false ? "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400" : "text-text-tertiary hover:bg-surface-hover"}`}
+                              title="Always revoke"
+                            >
+                              Revoke
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Summary + footer */}
+            <div className="border-t border-border-light p-5 space-y-4">
+              {overrideCount > 0 ? (
+                <div className="flex items-center justify-between text-xs text-text-tertiary">
+                  <span>
+                    {grantCount > 0 && <span className="text-emerald-600 font-semibold">{grantCount} granted</span>}
+                    {grantCount > 0 && revokeCount > 0 && <span className="mx-1">·</span>}
+                    {revokeCount > 0 && <span className="text-red-500 font-semibold">{revokeCount} revoked</span>}
+                  </span>
+                  <button onClick={handleClearAll} className="flex items-center gap-1 text-text-tertiary hover:text-text-primary transition-colors">
+                    <MinusCircle className="h-3 w-3" /> Clear all overrides
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-text-tertiary text-center">All permissions inherited from role defaults</p>
+              )}
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
+                <Button className="flex-1" onClick={handleSave} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}>
+                  {saving ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </motion.div>
     </div>
   );
 }
 
 function NavigationTab() {
-  const { navigation, setNavigation, loading } = useAdminConfig();
+  const { navigation, setNavigation, loading, canEditConfig } = useAdminConfig();
   const [localNav, setLocalNav] = useState<NavGroup[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -551,11 +806,13 @@ function NavigationTab() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold text-text-primary">Navigation (Sidebar)</h3>
-          <p className="text-sm text-text-tertiary">Edit menu groups and items. Changes apply by permission per role.</p>
+          <p className="text-sm text-text-tertiary">The menu is modular. Only Admin can edit groups and items; visibility depends on each role's permissions.</p>
         </div>
-        <Button size="sm" onClick={handleSave} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}>
-          {saving ? "Saving..." : "Save"}
-        </Button>
+        {canEditConfig && (
+          <Button size="sm" onClick={handleSave} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}>
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        )}
       </div>
 
       <div className="space-y-4">
@@ -567,37 +824,45 @@ function NavigationTab() {
                 onChange={(e) => updateGroup(gi, { label: e.target.value })}
                 placeholder="Group label"
                 className="font-semibold max-w-xs"
+                disabled={!canEditConfig}
               />
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => addItem(gi)}>+ Item</Button>
-                <Button variant="ghost" size="sm" onClick={() => removeGroup(gi)} className="text-red-600">Remove group</Button>
+                {canEditConfig && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => addItem(gi)}>+ Item</Button>
+                    <Button variant="ghost" size="sm" onClick={() => removeGroup(gi)} className="text-red-600">Remove group</Button>
+                  </>
+                )}
               </div>
             </div>
             <div className="space-y-2 pl-2 border-l-2 border-border-light">
               {group.items.map((item, ii) => (
                 <div key={ii} className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-surface-hover">
-                  <Input value={item.label} onChange={(e) => updateItem(gi, ii, { label: e.target.value })} placeholder="Label" className="w-32" />
-                  <Input value={item.href} onChange={(e) => updateItem(gi, ii, { href: e.target.value })} placeholder="/path" className="w-40" />
-                  <Input value={item.icon} onChange={(e) => updateItem(gi, ii, { icon: e.target.value })} placeholder="icon name" className="w-28" />
+                  <Input value={item.label} onChange={(e) => updateItem(gi, ii, { label: e.target.value })} placeholder="Label" className="w-32" disabled={!canEditConfig} />
+                  <Input value={item.href} onChange={(e) => updateItem(gi, ii, { href: e.target.value })} placeholder="/path" className="w-40" disabled={!canEditConfig} />
+                  <Input value={item.icon} onChange={(e) => updateItem(gi, ii, { icon: e.target.value })} placeholder="icon name" className="w-28" disabled={!canEditConfig} />
                   <select
                     value={item.permission ?? ""}
                     onChange={(e) => updateItem(gi, ii, { permission: e.target.value || undefined })}
                     className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card"
+                    disabled={!canEditConfig}
                   >
                     <option value="">— permission —</option>
                     {permissionOptions.map((p) => (
                       <option key={p} value={p}>{p}</option>
                     ))}
                   </select>
-                  <Button variant="ghost" size="sm" onClick={() => removeItem(gi, ii)} className="text-red-600">×</Button>
+                  {canEditConfig && <Button variant="ghost" size="sm" onClick={() => removeItem(gi, ii)} className="text-red-600">×</Button>}
                 </div>
               ))}
             </div>
           </Card>
         ))}
-        <Button variant="outline" onClick={addGroup} icon={<Plus className="h-3.5 w-3.5" />}>
-          Add group
-        </Button>
+        {canEditConfig && (
+          <Button variant="outline" onClick={addGroup} icon={<Plus className="h-3.5 w-3.5" />}>
+            Add group
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -656,106 +921,131 @@ function InviteModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function PermissionsTab() {
-  const roles = [
-    {
-      name: "Admin",
-      description: "Full system access with all permissions",
-      color: "text-red-600 bg-red-50 dark:bg-red-950/30",
-      permissions: {
-        dashboard: true, requests: true, quotes: true, jobs: true,
-        partners: true, accounts: true, finance: true, settings: true,
-        manage_team: true, manage_roles: true, delete_data: true, export_data: true,
-      },
-    },
-    {
-      name: "Manager",
-      description: "Operational management with limited admin access",
-      color: "text-blue-600 bg-blue-50 dark:bg-blue-950/30",
-      permissions: {
-        dashboard: true, requests: true, quotes: true, jobs: true,
-        partners: true, accounts: true, finance: true, settings: false,
-        manage_team: false, manage_roles: false, delete_data: false, export_data: true,
-      },
-    },
-    {
-      name: "Operator",
-      description: "Day-to-day operations with read-only finance",
-      color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30",
-      permissions: {
-        dashboard: true, requests: true, quotes: true, jobs: true,
-        partners: false, accounts: false, finance: false, settings: false,
-        manage_team: false, manage_roles: false, delete_data: false, export_data: false,
-      },
-    },
-  ];
+const ROLE_META: Record<RoleKey, { name: string; description: string; color: string }> = {
+  admin: { name: "Admin", description: "Full access; only this profile can change the modular configuration.", color: "text-red-600 bg-red-50 dark:bg-red-950/30" },
+  manager: { name: "Manager", description: "Operational management with limited access to settings.", color: "text-blue-600 bg-blue-50 dark:bg-blue-950/30" },
+  operator: { name: "Operator", description: "Day-to-day operations; access limited to permitted areas.", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30" },
+};
 
-  const permissionLabels: Record<string, string> = {
-    dashboard: "View Dashboard",
-    requests: "Manage Requests",
-    quotes: "Manage Quotes",
-    jobs: "Manage Jobs",
-    partners: "Manage Partners",
-    accounts: "Manage Accounts",
-    finance: "Access Finance",
-    settings: "System Settings",
-    manage_team: "Manage Team",
-    manage_roles: "Manage Roles",
-    delete_data: "Delete Records",
-    export_data: "Export Data",
+const permissionLabels: Record<string, string> = {
+  dashboard: "Dashboard",
+  requests: "Requests",
+  quotes: "Quotes",
+  jobs: "Jobs",
+  partners: "Partners",
+  accounts: "Accounts",
+  finance: "Finance",
+  settings: "System Settings",
+  manage_team: "Manage Team",
+  manage_roles: "Manage Roles",
+  delete_data: "Delete Records",
+  export_data: "Export Data",
+};
+
+function PermissionsTab() {
+  const { permissions, setPermissions, canEditConfig } = useAdminConfig();
+  const [localPerms, setLocalPerms] = useState<PermissionsByRole>(() => permissions);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (Object.keys(permissions).length > 0) setLocalPerms(permissions);
+  }, [permissions]);
+
+  const togglePermission = (role: RoleKey, key: PermissionKey) => {
+    if (!canEditConfig) return;
+    setLocalPerms((prev) => ({
+      ...prev,
+      [role]: { ...prev[role], [key]: !prev[role][key] },
+    }));
   };
+
+  const handleSave = async () => {
+    if (!canEditConfig) return;
+    setSaving(true);
+    try {
+      await setPermissions(localPerms);
+      toast.success("Permissions saved. Menu visibility and access are governed by these settings.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const roles: RoleKey[] = ["admin", "manager", "operator"];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-lg font-semibold text-text-primary">Roles & Permissions</h3>
-        <p className="text-sm text-text-tertiary">Configure what each role can access in the system</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-text-primary">Roles & Permissions</h3>
+          <p className="text-sm text-text-tertiary">The system is modular: each role sees only what is enabled. Only Admin can make changes.</p>
+        </div>
+        {canEditConfig && (
+          <Button size="sm" onClick={handleSave} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}>
+            {saving ? "Saving..." : "Save"}
+        </Button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {roles.map((role) => (
-          <Card key={role.name} padding="none">
-            <div className="p-5">
-              <div className="flex items-center gap-3 mb-3">
-                <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${role.color}`}>
-                  <Shield className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-base font-bold text-text-primary">{role.name}</p>
-                  <p className="text-xs text-text-tertiary">{role.description}</p>
-                </div>
-              </div>
-
-              <div className="space-y-1.5 mt-4">
-                {Object.entries(role.permissions).map(([key, enabled]) => (
-                  <div
-                    key={key}
-                    className="flex items-center justify-between py-1.5"
-                  >
-                    <span className="text-xs font-medium text-text-secondary">
-                      {permissionLabels[key]}
-                    </span>
-                    <div className={`h-5 w-5 rounded-full flex items-center justify-center ${
-                      enabled ? "bg-emerald-100 text-emerald-600" : "bg-surface-tertiary text-text-tertiary"
-                    }`}>
-                      {enabled ? (
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                      ) : (
-                        <Lock className="h-3 w-3" />
-                      )}
-                    </div>
+        {roles.map((roleKey) => {
+          const meta = ROLE_META[roleKey];
+          const perms = localPerms[roleKey] ?? {};
+          return (
+            <Card key={roleKey} padding="none">
+              <div className="p-5">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${meta.color}`}>
+                    <Shield className="h-5 w-5" />
                   </div>
-                ))}
+                  <div>
+                    <p className="text-base font-bold text-text-primary">{meta.name}</p>
+                    <p className="text-xs text-text-tertiary">{meta.description}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 mt-4">
+                  {(Object.keys(perms) as PermissionKey[]).map((key) => {
+                    const enabled = perms[key];
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center justify-between py-1.5"
+                      >
+                        <span className="text-xs font-medium text-text-secondary">
+                          {permissionLabels[key] ?? key}
+                        </span>
+                        {canEditConfig ? (
+                          <button
+                            type="button"
+                            onClick={() => togglePermission(roleKey, key)}
+                            className={`h-5 w-5 rounded-full flex items-center justify-center transition-colors ${
+                              enabled ? "bg-emerald-100 text-emerald-600" : "bg-surface-tertiary text-text-tertiary"
+                            } hover:opacity-80`}
+                          >
+                            {enabled ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Lock className="h-3 w-3" />}
+                          </button>
+                        ) : (
+                          <div className={`h-5 w-5 rounded-full flex items-center justify-center ${enabled ? "bg-emerald-100 text-emerald-600" : "bg-surface-tertiary text-text-tertiary"}`}>
+                            {enabled ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Lock className="h-3 w-3" />}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
 }
 
 function SystemTab() {
+  const { canEditConfig } = useAdminConfig();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -799,6 +1089,7 @@ function SystemTab() {
   }, []);
 
   const handleSave = async () => {
+    if (!canEditConfig) return;
     setSaving(true);
     try {
       const supabase = getSupabase();
@@ -833,7 +1124,7 @@ function SystemTab() {
     <div className="space-y-6">
       <div>
         <h3 className="text-lg font-semibold text-text-primary">System Configuration</h3>
-        <p className="text-sm text-text-tertiary">Company branding, PDF templates, and system preferences</p>
+        <p className="text-sm text-text-tertiary">Company branding, PDF templates and system preferences. Admin only.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -969,7 +1260,7 @@ function SystemTab() {
               options={[
                 { value: "Europe/London", label: "London (GMT)" },
                 { value: "America/New_York", label: "New York (EST)" },
-                { value: "America/Sao_Paulo", label: "São Paulo (BRT)" },
+                { value: "America/Sao_Paulo", label: "Sao Paulo (BRT)" },
               ]}
             />
             <div className="flex items-center justify-between p-3 rounded-xl bg-surface-hover mt-4">
@@ -1022,8 +1313,12 @@ function SystemTab() {
 
       {/* Save All */}
       <div className="flex justify-end">
-        <Button icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} onClick={handleSave} disabled={saving}>
-          {saving ? "Saving..." : "Save All Settings"}
+        <Button
+          icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          onClick={handleSave}
+          disabled={saving || !canEditConfig}
+        >
+          {saving ? "Saving..." : "Save Settings"}
         </Button>
       </div>
     </div>

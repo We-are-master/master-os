@@ -1,6 +1,6 @@
 import { getSupabase } from "./base";
 import type { NavGroup } from "@/lib/constants";
-import type { PermissionsByRole } from "@/types/admin-config";
+import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
 
 const DEFAULT_NAVIGATION: NavGroup[] = [
   { label: "Overview", items: [{ label: "Dashboard", href: "/", icon: "grid-2x2", permission: "dashboard" }] },
@@ -97,4 +97,47 @@ export async function setAdminConfig(
     .from("admin_config")
     .upsert({ key, value: value as unknown as Record<string, unknown>, updated_at: new Date().toISOString() }, { onConflict: "key" });
   if (error) throw new Error(error.message);
+}
+
+/** Persist per-user permission overrides to profiles.custom_permissions. Pass null to clear all overrides. */
+export async function saveUserPermissions(
+  userId: string,
+  overrides: UserPermissionOverride | null
+): Promise<void> {
+  const supabase = getSupabase();
+  const { error } = await supabase
+    .from("profiles")
+    .update({ custom_permissions: overrides && Object.keys(overrides).length > 0 ? overrides : null })
+    .eq("id", userId);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Resolve the effective boolean for a single permission for a given user,
+ * applying user overrides on top of the role defaults.
+ * Admin role always returns true regardless of overrides.
+ */
+export function resolvePermission(
+  permission: PermissionKey,
+  role: RoleKey,
+  rolePerms: Record<PermissionKey, boolean>,
+  overrides: UserPermissionOverride | null | undefined
+): boolean {
+  if (role === "admin") return true;
+  if (overrides && permission in overrides) return overrides[permission] === true;
+  return rolePerms[permission] ?? false;
+}
+
+/**
+ * Build the full effective permissions map for a user (12 keys → boolean).
+ */
+export function resolveEffectivePermissions(
+  role: RoleKey,
+  rolePerms: Record<PermissionKey, boolean>,
+  overrides: UserPermissionOverride | null | undefined
+): Record<PermissionKey, boolean> {
+  const keys = Object.keys(rolePerms) as PermissionKey[];
+  return Object.fromEntries(
+    keys.map((k) => [k, resolvePermission(k, role, rolePerms, overrides)])
+  ) as Record<PermissionKey, boolean>;
 }

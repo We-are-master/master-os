@@ -553,7 +553,7 @@ export default function RequestsPage() {
         onDone={async (req, partnerIds, sendMethod, clientAddress) => {
           try {
             if (!clientAddress?.client_id || !clientAddress?.property_address) {
-              toast.error("Selecione o cliente e o endereço do imóvel");
+              toast.error("Please select a client and property address");
               return;
             }
             const quote = await createQuote({
@@ -603,7 +603,7 @@ export default function RequestsPage() {
         onDone={async (req, lineItems, clientAddress) => {
           try {
             if (!clientAddress?.client_id || !clientAddress?.property_address) {
-              toast.error("Selecione o cliente e o endereço do imóvel");
+              toast.error("Please select a client and property address");
               return;
             }
             const total = lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
@@ -664,7 +664,7 @@ export default function RequestsPage() {
           if (!convertToJobOpen) return;
           try {
             if (!data.client_id || !data.property_address) {
-              toast.error("Selecione o cliente e o endereço do imóvel");
+              toast.error("Please select a client and property address");
               return;
             }
             const clientPrice = data.client_price ?? 0;
@@ -972,7 +972,7 @@ function ConvertToJobModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientAddress.client_id || !clientAddress.property_address) {
-      toast.error("Selecione o cliente e o endereço do imóvel");
+      toast.error("Please select a client and property address");
       return;
     }
     onConvert({
@@ -992,10 +992,10 @@ function ConvertToJobModal({
   };
 
   return (
-    <Modal open={!!request} onClose={onClose} title="Criar Job" subtitle={`${request.reference} — Criação direta`} size="lg">
+    <Modal open={!!request} onClose={onClose} title="Create Job" subtitle={`${request.reference} — Direct creation`} size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
         <div>
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Cliente e endereço *</p>
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; address *</p>
           <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         </div>
         <div className="grid grid-cols-2 gap-4">
@@ -1019,7 +1019,7 @@ function ConvertToJobModal({
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Notas internas</label>
-          <textarea value={form.internal_notes} onChange={(e) => update("internal_notes", e.target.value)} rows={2} placeholder="Apenas uso interno..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
+          <textarea value={form.internal_notes} onChange={(e) => update("internal_notes", e.target.value)} rows={2} placeholder="Internal use only..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose} type="button">Cancelar</Button>
