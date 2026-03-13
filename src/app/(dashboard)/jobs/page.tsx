@@ -29,15 +29,17 @@ import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob } from "@/services/jobs";
 import { getSupabase, getStatusCounts } from "@/services/base";
+import { listJobPayments, createJobPayment } from "@/services/job-payments";
 import { useProfile } from "@/hooks/use-profile";
-import type { Job } from "@/types/database";
+import type { Job, JobPayment, JobPaymentType } from "@/types/database";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
+import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 
-const JOB_STATUSES = ["scheduled", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "completed"] as const;
+const JOB_STATUSES = ["scheduled", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
@@ -46,6 +48,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   in_progress_phase3: { label: "In Progress — Phase 3", variant: "primary", dot: true },
   final_check: { label: "Final Check", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
+  need_attention: { label: "Need attention", variant: "warning", dot: true },
   completed: { label: "Completed", variant: "success", dot: true },
 };
 
@@ -81,10 +84,10 @@ function JobsPageContent() {
   }, [data, filterPartner, filterScheduled]);
 
   const kanbanColumns = useMemo(() => {
-    const ids = ["scheduled", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "completed"];
+    const ids = ["scheduled", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"];
     return ids.map((id) => ({
       id, title: statusConfig[id]?.label ?? id,
-      color: id === "completed" ? "bg-emerald-500" : id === "awaiting_payment" ? "bg-amber-500" : "bg-primary",
+      color: id === "completed" ? "bg-emerald-500" : id === "need_attention" ? "bg-amber-500" : id === "awaiting_payment" ? "bg-amber-500" : "bg-primary",
       items: filteredData.filter((j) => j.status === id),
     }));
   }, [filteredData]);
@@ -105,6 +108,7 @@ function JobsPageContent() {
     { id: "in_progress_phase3", label: "Phase 3", count: tabCounts.in_progress_phase3 ?? 0 },
     { id: "final_check", label: "Final Check", count: tabCounts.final_check ?? 0 },
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
+    { id: "need_attention", label: "Need attention", count: tabCounts.need_attention ?? 0 },
     { id: "completed", label: "Completed", count: tabCounts.completed ?? 0 },
   ];
 
@@ -115,7 +119,10 @@ function JobsPageContent() {
     const margin = cp > 0 ? Math.round(((cp - pc - mc) / cp) * 1000) / 10 : 0;
     try {
       const result = await createJob({
-        title: formData.title ?? "", client_name: formData.client_name ?? "",
+        title: formData.title ?? "",
+        client_id: formData.client_id,
+        client_address_id: formData.client_address_id,
+        client_name: formData.client_name ?? "",
         property_address: formData.property_address ?? "",
         partner_name: formData.partner_name, partner_id: formData.partner_id,
         owner_id: formData.owner_id, owner_name: formData.owner_name,
@@ -247,6 +254,59 @@ function JobDetailDrawer({ job, onClose, onStatusChange, onJobUpdate }: {
   const [tab, setTab] = useState("details");
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
+  const [partnerPayments, setPartnerPayments] = useState<JobPayment[]>([]);
+  const [customerPayments, setCustomerPayments] = useState<JobPayment[]>([]);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+  const [addPaymentOpen, setAddPaymentOpen] = useState(false);
+  const [addPaymentType, setAddPaymentType] = useState<JobPaymentType>("partner");
+  const [addPaymentAmount, setAddPaymentAmount] = useState("");
+  const [addPaymentDate, setAddPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [addPaymentNote, setAddPaymentNote] = useState("");
+  const [addingPayment, setAddingPayment] = useState(false);
+
+  const loadPayments = useCallback(async (jobId: string) => {
+    setLoadingPayments(true);
+    try {
+      const [partner, customer] = await Promise.all([
+        listJobPayments(jobId, "partner"),
+        listJobPayments(jobId),
+      ]);
+      setPartnerPayments(partner);
+      setCustomerPayments(customer.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"));
+    } catch {
+      toast.error("Failed to load payments");
+    } finally {
+      setLoadingPayments(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (job?.id && tab === "finance") loadPayments(job.id);
+  }, [job?.id, tab, loadPayments]);
+
+  const handleAddPayment = useCallback(async () => {
+    if (!job || !addPaymentAmount || Number(addPaymentAmount) <= 0) return;
+    setAddingPayment(true);
+    try {
+      await createJobPayment({
+        job_id: job.id,
+        type: addPaymentType,
+        amount: Number(addPaymentAmount),
+        payment_date: addPaymentDate,
+        note: addPaymentNote.trim() || undefined,
+      });
+      toast.success("Payment registered");
+      setAddPaymentOpen(false);
+      setAddPaymentAmount("");
+      setAddPaymentDate(new Date().toISOString().slice(0, 10));
+      setAddPaymentNote("");
+      loadPayments(job.id);
+    } catch {
+      toast.error("Failed to register payment");
+    } finally {
+      setAddingPayment(false);
+    }
+  }, [job, addPaymentAmount, addPaymentDate, addPaymentNote, addPaymentType, loadPayments]);
 
   useEffect(() => {
     if (job?.scheduled_start_at) {
@@ -441,61 +501,28 @@ function JobDetailDrawer({ job, onClose, onStatusChange, onJobUpdate }: {
         {/* FINANCE TAB */}
         {tab === "finance" && (
           <div className="p-6 space-y-6 flex-1 overflow-auto">
-            {/* Customer Payments */}
+            {/* Partner Payments — total due, list, remaining, add payment */}
             <div>
-              <p className="text-sm font-semibold text-text-primary mb-3">Customer Payments</p>
-              <div className="space-y-2">
-                <FinancePaymentRow label="Deposit" amount={job.customer_deposit} paid={job.customer_deposit_paid}
-                  onMarkPaid={() => onJobUpdate(job.id, { customer_deposit_paid: true } as Partial<Job>)}
-                  onAmountChange={(v) => onJobUpdate(job.id, { customer_deposit: v } as Partial<Job>)}
-                />
-                <FinancePaymentRow label="Final Payment" amount={job.customer_final_payment} paid={job.customer_final_paid}
-                  onMarkPaid={() => {
-                    onJobUpdate(job.id, { customer_final_paid: true, finance_status: "paid", status: "completed" } as Partial<Job>);
-                  }}
-                  onAmountChange={(v) => onJobUpdate(job.id, { customer_final_payment: v } as Partial<Job>)}
-                />
-              </div>
+              <p className="text-sm font-semibold text-text-primary mb-3">Partner payments</p>
+              <p className="text-xs text-text-tertiary mb-2">Register payments with any value; remaining balance is shown below.</p>
+              <JobPaymentBlock
+                totalDue={(job.partner_agreed_value ?? job.partner_cost) || 0}
+                payments={partnerPayments}
+                loading={loadingPayments}
+                onAddPayment={() => { setAddPaymentType("partner"); setAddPaymentOpen(true); }}
+              />
             </div>
 
-            {/* Partner Payments */}
+            {/* Customer Payments — total due, list, remaining, add payment */}
             <div>
-              <p className="text-sm font-semibold text-text-primary mb-3">Partner Payments</p>
-              <p className="text-xs text-text-tertiary mb-2">Payment is blocked if the corresponding report is not approved.</p>
-              <div className="space-y-2">
-                {[1, 2, 3].map((n) => {
-                  const amount = job[`partner_payment_${n}` as keyof Job] as number;
-                  const paid = job[`partner_payment_${n}_paid` as keyof Job] as boolean;
-                  const reportApproved = job[`report_${n}_approved` as keyof Job] as boolean;
-                  const label = n === 1 ? "Payment 1 — Start/Report 1" : n === 2 ? "Payment 2 — 50%/Report 2" : "Payment 3 — Finish/Final Report";
-                  return (
-                    <div key={n} className={`p-3 rounded-xl border ${paid ? "border-emerald-200 bg-emerald-50/30" : "border-border bg-surface-hover"}`}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-xs font-semibold text-text-primary">{label}</p>
-                          <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(amount)}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {paid ? (
-                            <Badge variant="success" size="sm">Paid</Badge>
-                          ) : !reportApproved ? (
-                            <div className="flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" /><span className="text-[10px] text-amber-600 font-medium">Report not approved</span></div>
-                          ) : (
-                            <Button size="sm" variant="primary" icon={<CreditCard className="h-3.5 w-3.5" />} onClick={() => {
-                              onJobUpdate(job.id, { [`partner_payment_${n}_paid`]: true } as Partial<Job>);
-                            }}>Pay</Button>
-                          )}
-                        </div>
-                      </div>
-                      {!paid && (
-                        <div className="mt-2">
-                          <Input type="number" placeholder="Amount" value={String(amount)} onChange={(e) => onJobUpdate(job.id, { [`partner_payment_${n}`]: Number(e.target.value) || 0 } as Partial<Job>)} className="text-xs" min={0} step="0.01" />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              <p className="text-sm font-semibold text-text-primary mb-3">Customer payments</p>
+              <p className="text-xs text-text-tertiary mb-2">Expected from client: deposit + final. Register each payment and see what&apos;s left.</p>
+              <JobPaymentBlock
+                totalDue={(job.customer_deposit ?? 0) + (job.customer_final_payment ?? 0)}
+                payments={customerPayments}
+                loading={loadingPayments}
+                onAddPayment={() => { setAddPaymentType("customer_deposit"); setAddPaymentOpen(true); }}
+              />
             </div>
 
             {/* Finance Summary */}
@@ -529,12 +556,14 @@ function JobDetailDrawer({ job, onClose, onStatusChange, onJobUpdate }: {
             <div className="space-y-3">
               <TimelineItem label="Created" date={job.created_at} active />
               {job.scheduled_date && <TimelineItem label="Scheduled" date={job.scheduled_date} active />}
-              {["in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "completed"].includes(job.status) && <TimelineItem label="Phase 1 Started" date={job.updated_at} active />}
-              {["in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "completed"].includes(job.status) && <TimelineItem label="Phase 2" date={job.updated_at} active />}
-              {["in_progress_phase3", "final_check", "awaiting_payment", "completed"].includes(job.status) && <TimelineItem label="Phase 3" date={job.updated_at} active />}
-              {["final_check", "awaiting_payment", "completed"].includes(job.status) && <TimelineItem label="Final Check" date={job.updated_at} active />}
+              {["in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Phase 1 Started" date={job.updated_at} active />}
+              {["in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Phase 2" date={job.updated_at} active />}
+              {["in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Phase 3" date={job.updated_at} active />}
+              {["final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Final Check" date={job.updated_at} active />}
               {job.report_submitted && <TimelineItem label="Report Sent to Customer" date={job.report_submitted_at ?? job.updated_at} active />}
-              {["awaiting_payment", "completed"].includes(job.status) && <TimelineItem label="Awaiting Payment" date={job.updated_at} active />}
+              {["awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Awaiting Payment" date={job.updated_at} active />}
+              {["need_attention", "completed"].includes(job.status) && <TimelineItem label="Partner completed (app)" date={job.completed_date ?? job.updated_at} active />}
+              {job.status === "need_attention" && <TimelineItem label="Need attention — validate in OS" date={job.updated_at} active />}
               {job.status === "completed" && <TimelineItem label="Completed / Paid" date={job.completed_date ?? job.updated_at} active />}
             </div>
           </div>
@@ -544,26 +573,109 @@ function JobDetailDrawer({ job, onClose, onStatusChange, onJobUpdate }: {
         {tab === "history" && (
           <div className="p-6"><AuditTimeline entityType="job" entityId={job.id} /></div>
         )}
+
+        {/* Add payment modal — mounted whenever drawer is open */}
+        <Modal open={addPaymentOpen} onClose={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); }} title="Register payment">
+          <div className="space-y-4">
+            {(addPaymentType === "customer_deposit" || addPaymentType === "customer_final") && (
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
+                <Select
+                  value={addPaymentType}
+                  onChange={(e) => setAddPaymentType(e.target.value as JobPaymentType)}
+                  options={[
+                    { value: "customer_deposit", label: "Deposit" },
+                    { value: "customer_final", label: "Final payment" },
+                  ]}
+                />
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
+              <Input type="number" min={0} step="0.01" placeholder="0.00" value={addPaymentAmount} onChange={(e) => setAddPaymentAmount(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Date</label>
+              <Input type="date" value={addPaymentDate} onChange={(e) => setAddPaymentDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Note (optional)</label>
+              <input
+                type="text"
+                placeholder="e.g. Bank transfer ref"
+                value={addPaymentNote}
+                onChange={(e) => setAddPaymentNote(e.target.value)}
+                className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
+              />
+            </div>
+            <div className="flex gap-2 justify-end pt-2">
+              <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); }}>Cancel</Button>
+              <Button size="sm" loading={addingPayment} disabled={!addPaymentAmount || Number(addPaymentAmount) <= 0} onClick={handleAddPayment}>Register</Button>
+            </div>
+          </div>
+        </Modal>
       </div>
     </Drawer>
   );
 }
 
-function FinancePaymentRow({ label, amount, paid, onMarkPaid, onAmountChange }: { label: string; amount: number; paid: boolean; onMarkPaid: () => void; onAmountChange: (v: number) => void }) {
+function JobPaymentBlock({
+  totalDue,
+  payments,
+  loading,
+  onAddPayment,
+}: {
+  totalDue: number;
+  payments: JobPayment[];
+  loading: boolean;
+  onAddPayment: () => void;
+}) {
+  const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
+  const remaining = Math.max(0, totalDue - totalPaid);
+
   return (
-    <div className={`p-3 rounded-xl border ${paid ? "border-emerald-200 bg-emerald-50/30" : "border-border bg-surface-hover"}`}>
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs font-semibold text-text-primary">{label}</p>
-          <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(amount)}</p>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-4">
+          <div>
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total due</p>
+            <p className="text-lg font-bold text-text-primary">{formatCurrency(totalDue)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Paid</p>
+            <p className="text-lg font-bold text-emerald-600">{formatCurrency(totalPaid)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Remaining</p>
+            <p className={`text-lg font-bold ${remaining > 0 ? "text-amber-600" : "text-text-primary"}`}>
+              {formatCurrency(remaining)}
+            </p>
+          </div>
         </div>
-        {paid ? <Badge variant="success" size="sm">Paid</Badge> : (
-          <Button size="sm" variant="primary" icon={<CreditCard className="h-3.5 w-3.5" />} onClick={onMarkPaid}>Mark Paid</Button>
-        )}
+        <Button size="sm" variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={onAddPayment}>
+          Register payment
+        </Button>
       </div>
-      {!paid && (
-        <div className="mt-2">
-          <Input type="number" placeholder="Amount" value={String(amount)} onChange={(e) => onAmountChange(Number(e.target.value) || 0)} className="text-xs" min={0} step="0.01" />
+      {loading ? (
+        <div className="p-4 rounded-xl border border-border-light bg-surface-hover animate-pulse">Loading payments…</div>
+      ) : payments.length > 0 ? (
+        <div className="rounded-xl border border-border-light overflow-hidden">
+          <div className="bg-surface-tertiary/50 px-3 py-2 flex items-center gap-2 text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
+            <span className="w-24">Date</span>
+            <span className="flex-1">Amount</span>
+            <span className="flex-1">Note</span>
+          </div>
+          {payments.map((p) => (
+            <div key={p.id} className="px-3 py-2.5 flex items-center gap-2 border-t border-border-light text-sm">
+              <span className="w-24 text-text-secondary">{new Date(p.payment_date).toLocaleDateString()}</span>
+              <span className="flex-1 font-semibold text-text-primary">{formatCurrency(p.amount)}</span>
+              <span className="flex-1 text-text-tertiary truncate">{p.note || "—"}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="p-4 rounded-xl border border-border-light bg-surface-hover text-sm text-text-tertiary">
+          No payments registered yet. Use &quot;Register payment&quot; to add one.
         </div>
       )}
     </div>
@@ -610,6 +722,11 @@ function getStatusActions(currentStatus: string) {
       return [
         { label: "Mark Completed", status: "completed", icon: CheckCircle2, primary: true },
       ];
+    case "need_attention":
+      return [
+        { label: "Validate & complete", status: "completed", icon: ShieldCheck, primary: true },
+        { label: "Back to Phase 3", status: "in_progress_phase3", icon: RotateCcw, primary: false },
+      ];
     case "completed":
       return [
         { label: "Reopen", status: "scheduled", icon: RotateCcw, primary: false },
@@ -621,25 +738,37 @@ function getStatusActions(currentStatus: string) {
 
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
-  const [form, setForm] = useState({ title: "", client_name: "", property_address: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "" });
+  const [form, setForm] = useState({ title: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "" });
+  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title || !form.client_name || !form.property_address) { toast.error("Fill required fields"); return; }
+    if (!form.title) { toast.error("Título do job é obrigatório"); return; }
+    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Selecione o cliente e o endereço do imóvel"); return; }
     const scheduled_date = form.scheduled_date || undefined;
     const scheduled_start_at = form.scheduled_date && form.scheduled_time ? `${form.scheduled_date}T${form.scheduled_time}:00` : form.scheduled_date ? `${form.scheduled_date}T09:00:00` : undefined;
-    onCreate({ title: form.title, client_name: form.client_name, property_address: form.property_address, partner_name: form.partner_name || undefined, client_price: Number(form.client_price) || 0, partner_cost: Number(form.partner_cost) || 0, materials_cost: Number(form.materials_cost) || 0, scheduled_date, scheduled_start_at });
-    setForm({ title: "", client_name: "", property_address: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "" });
+    onCreate({
+      title: form.title,
+      client_id: clientAddress.client_id,
+      client_address_id: clientAddress.client_address_id,
+      client_name: clientAddress.client_name,
+      property_address: clientAddress.property_address,
+      partner_name: form.partner_name || undefined,
+      client_price: Number(form.client_price) || 0,
+      partner_cost: Number(form.partner_cost) || 0,
+      materials_cost: Number(form.materials_cost) || 0,
+      scheduled_date,
+      scheduled_start_at,
+    });
+    setForm({ title: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "" });
+    setClientAddress({ client_name: "", property_address: "" });
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="New Job" subtitle="Create a new job" size="lg">
+    <Modal open={open} onClose={onClose} title="Novo Job" subtitle="Criar um novo job" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Job Title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Name *</label><Input value={form.client_name} onChange={(e) => update("client_name", e.target.value)} required /></div>
-        </div>
-        <AddressAutocomplete label="Property Address *" value={form.property_address} onSelect={(parts) => update("property_address", parts.full_address)} placeholder="Start typing..." />
+        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Título do job *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
+        <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Time</label><Input type="time" value={form.scheduled_time} onChange={(e) => update("scheduled_time", e.target.value)} /></div>

@@ -29,6 +29,8 @@ import type { Client, ClientType, ClientSource, ClientStatus } from "@/types/dat
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useProfile } from "@/hooks/use-profile";
 import { listClients, createClient, updateClient } from "@/services/clients";
+import { createClientAddress } from "@/services/client-addresses";
+import { listClientSourceAccounts } from "@/services/client-source-accounts";
 import { getStatusCounts, getSupabase } from "@/services/base";
 import { logAudit, logBulkAction } from "@/services/audit";
 
@@ -66,6 +68,7 @@ export default function ClientsPage() {
   const [totalSpent, setTotalSpent] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [sourceAccounts, setSourceAccounts] = useState<Array<{ id: string; name: string }>>([]);
 
   const loadCounts = useCallback(async () => {
     try {
@@ -84,6 +87,9 @@ export default function ClientsPage() {
   }, []);
 
   useEffect(() => { loadCounts(); loadAggregates(); }, [loadCounts, loadAggregates]);
+  useEffect(() => {
+    listClientSourceAccounts().then((list) => setSourceAccounts(list.map((a) => ({ id: a.id, name: a.name })))).catch(() => {});
+  }, []);
 
   const tabs = [
     { id: "all", label: "All", count: statusCounts.all ?? 0 },
@@ -93,9 +99,14 @@ export default function ClientsPage() {
     { id: "blocked", label: "Blocked", count: statusCounts.blocked ?? 0 },
   ];
 
-  const handleCreate = useCallback(async (formData: Partial<Client>) => {
+  const handleCreate = useCallback(async (formData: Partial<Client> & { property_address_parts?: AddressParts }) => {
     try {
+      if (!formData.source_account_id) {
+        toast.error("Please select the client's source account");
+        return;
+      }
       const result = await createClient({
+        source_account_id: formData.source_account_id,
         full_name: formData.full_name ?? "",
         email: formData.email ?? undefined,
         phone: formData.phone ?? undefined,
@@ -108,6 +119,16 @@ export default function ClientsPage() {
         notes: formData.notes ?? undefined,
         tags: [],
       });
+      if (formData.property_address_parts) {
+        await createClientAddress({
+          client_id: result.id,
+          address: formData.property_address_parts.address || formData.property_address_parts.full_address,
+          city: formData.property_address_parts.city,
+          postcode: formData.property_address_parts.postcode,
+          country: formData.property_address_parts.country || "gb",
+          is_default: true,
+        });
+      }
       await logAudit({
         entityType: "account",
         entityId: result.id,
@@ -172,6 +193,13 @@ export default function ClientsPage() {
             <span className="text-xs font-medium text-text-primary">{cfg.label}</span>
           </div>
         );
+      },
+    },
+    {
+      key: "source_account_id", label: "Source account",
+      render: (item) => {
+        const name = item.source_account_id ? sourceAccounts.find((a) => a.id === item.source_account_id)?.name : null;
+        return <span className="text-xs text-text-secondary">{name ?? "—"}</span>;
       },
     },
     {
@@ -265,12 +293,13 @@ export default function ClientsPage() {
 
       <ClientDetailDrawer
         client={selectedClient}
+        sourceAccounts={sourceAccounts}
         onClose={() => setSelectedClient(null)}
         onUpdate={(updated) => { setSelectedClient(updated); refresh(); loadCounts(); loadAggregates(); }}
       />
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Client" subtitle="Add an individual client" size="lg">
-        <CreateClientForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New client" subtitle="Enter details and select where the client came from (source account)" size="lg">
+        <CreateClientForm sourceAccounts={sourceAccounts} onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
     </PageTransition>
   );
@@ -279,10 +308,12 @@ export default function ClientsPage() {
 /* ============ DETAIL DRAWER ============ */
 function ClientDetailDrawer({
   client,
+  sourceAccounts,
   onClose,
   onUpdate,
 }: {
   client: Client | null;
+  sourceAccounts: Array<{ id: string; name: string }>;
   onClose: () => void;
   onUpdate: (c: Client) => void;
 }) {
@@ -416,7 +447,11 @@ function ClientDetailDrawer({
                 <p className="text-[10px] font-semibold text-primary uppercase tracking-wide">Lifetime Value</p>
                 <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(totalJobValue)}</p>
                 <p className="text-xs text-text-tertiary mt-1">
-                  {formatCurrency(totalQuoteValue)} in quotes · {sourceLabels[client.source]} source
+                  {formatCurrency(totalQuoteValue)} in quotes
+                  {client.source_account_id && sourceAccounts.length > 0 && (
+                    <> · Source: {sourceAccounts.find((a) => a.id === client.source_account_id)?.name ?? "—"}</>
+                  )}
+                  {!client.source_account_id && <> · {sourceLabels[client.source]} source</>}
                 </p>
               </div>
 
@@ -560,6 +595,7 @@ function ClientDetailDrawer({
           {tab === "edit" && (
             <EditClientForm
               client={client}
+              sourceAccounts={sourceAccounts}
               saving={saving}
               onSave={handleSave}
               onCancel={() => setTab("overview")}
@@ -574,11 +610,13 @@ function ClientDetailDrawer({
 /* ============ EDIT FORM ============ */
 function EditClientForm({
   client,
+  sourceAccounts,
   saving,
   onSave,
   onCancel,
 }: {
   client: Client;
+  sourceAccounts: Array<{ id: string; name: string }>;
   saving: boolean;
   onSave: (data: Partial<Client>) => void;
   onCancel: () => void;
@@ -591,6 +629,7 @@ function EditClientForm({
     city: client.city ?? "",
     postcode: client.postcode ?? "",
     client_type: client.client_type,
+    source_account_id: client.source_account_id ?? "",
     source: client.source,
     status: client.status,
     notes: client.notes ?? "",
@@ -627,6 +666,15 @@ function EditClientForm({
           ]}
         />
       </div>
+      <Select
+        label="Source account *"
+        value={form.source_account_id}
+        onChange={(e) => update("source_account_id", e.target.value)}
+        options={[
+          { value: "", label: "— Where did the client come from? —" },
+          ...sourceAccounts.map((a) => ({ value: a.id, label: a.name })),
+        ]}
+      />
       <AddressAutocomplete
         label="Address"
         value={form.address}
@@ -681,7 +729,7 @@ function EditClientForm({
       </div>
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="outline" onClick={onCancel}>Cancel</Button>
-        <Button onClick={() => onSave(form)} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}>
+        <Button onClick={() => onSave({ ...form, source_account_id: form.source_account_id || undefined })} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}>
           {saving ? "Saving..." : "Save Changes"}
         </Button>
       </div>
@@ -690,29 +738,43 @@ function EditClientForm({
 }
 
 /* ============ CREATE FORM ============ */
-function CreateClientForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Client>) => void; onCancel: () => void }) {
+function CreateClientForm({ sourceAccounts, onSubmit, onCancel }: { sourceAccounts: Array<{ id: string; name: string }>; onSubmit: (d: Partial<Client> & { property_address_parts?: AddressParts }) => void; onCancel: () => void }) {
   const [form, setForm] = useState({
     full_name: "", email: "", phone: "", address: "", city: "", postcode: "",
+    source_account_id: "",
     client_type: "residential" as ClientType, source: "direct" as ClientSource, notes: "",
   });
+  const [propertyAddressParts, setPropertyAddressParts] = useState<AddressParts | null>(null);
+  const [propertyAddressRaw, setPropertyAddressRaw] = useState("");
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.full_name) { toast.error("Name is required"); return; }
-    onSubmit(form);
+    if (!form.full_name) { toast.error("Full name is required"); return; }
+    if (!form.source_account_id) { toast.error("Please select the client's source account"); return; }
+    onSubmit({ ...form, property_address_parts: propertyAddressParts ?? undefined });
   };
 
   return (
     <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      <Select
+        label="Source account *"
+        value={form.source_account_id}
+        onChange={(e) => update("source_account_id", e.target.value)}
+        options={[
+          { value: "", label: "— Where did the client come from? —" },
+          ...sourceAccounts.map((a) => ({ value: a.id, label: a.name })),
+        ]}
+      />
+      <p className="text-[10px] text-text-tertiary -mt-2">List is from the database (client source accounts). The client is linked to the selected source.</p>
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Full Name *</label>
-          <Input value={form.full_name} onChange={(e) => update("full_name", e.target.value)} placeholder="John Smith" required />
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Full name *</label>
+          <Input value={form.full_name} onChange={(e) => update("full_name", e.target.value)} placeholder="Client name" required />
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Email</label>
-          <Input type="email" value={form.email} onChange={(e) => update("email", e.target.value)} placeholder="john@email.com" />
+          <Input type="email" value={form.email} onChange={(e) => update("email", e.target.value)} placeholder="email@example.com" />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
@@ -721,7 +783,7 @@ function CreateClientForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Client
           <Input value={form.phone} onChange={(e) => update("phone", e.target.value)} placeholder="+44 7700 900000" />
         </div>
         <Select
-          label="Client Type"
+          label="Client type"
           value={form.client_type}
           onChange={(e) => update("client_type", e.target.value)}
           options={[
@@ -751,6 +813,31 @@ function CreateClientForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Client
           <Input value={form.postcode} onChange={(e) => update("postcode", e.target.value)} placeholder="EC1A 1BB" />
         </div>
       </div>
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Property address (optional)</label>
+        <p className="text-[10px] text-text-tertiary mb-2">Select an existing address or add a new one. For a new client there are no addresses yet.</p>
+        <select
+          disabled
+          className="w-full h-9 rounded-lg border border-border bg-surface-hover px-3 text-sm text-text-tertiary cursor-not-allowed"
+          title="No addresses yet for new client"
+        >
+          <option>— No addresses yet —</option>
+        </select>
+        <div className="mt-2">
+          <p className="text-[10px] font-medium text-text-secondary mb-1.5">Add new address</p>
+          <AddressAutocomplete
+            value={propertyAddressRaw}
+            onSelect={(parts) => {
+              setPropertyAddressParts(parts);
+              setPropertyAddressRaw(parts.full_address);
+            }}
+            placeholder="Type address or postcode..."
+          />
+          {propertyAddressParts && (
+            <p className="text-[10px] text-primary mt-1">This address will be saved as a property linked to the client.</p>
+          )}
+        </div>
+      </div>
       <Select
         label="Source"
         value={form.source}
@@ -775,7 +862,7 @@ function CreateClientForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Client
       </div>
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="outline" onClick={onCancel} type="button">Cancel</Button>
-        <Button type="submit" icon={<UserPlus className="h-3.5 w-3.5" />}>Create Client</Button>
+        <Button type="submit" icon={<UserPlus className="h-3.5 w-3.5" />}>Create client</Button>
       </div>
     </form>
   );

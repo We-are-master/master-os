@@ -21,12 +21,16 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import { getSupabase } from "@/services/base";
 import type { Profile } from "@/types/database";
+import type { NavGroup } from "@/lib/constants";
+import type { PermissionKey, RoleKey } from "@/types/admin-config";
 
 const settingsTabs = [
   { id: "profile", label: "My Profile" },
   { id: "team", label: "Team Members" },
+  { id: "navigation", label: "Navigation" },
   { id: "permissions", label: "Roles & Permissions" },
   { id: "system", label: "System" },
 ];
@@ -59,6 +63,7 @@ export default function SettingsPage() {
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "team" && isAdmin && <TeamTab />}
+          {activeTab === "navigation" && isAdmin && <NavigationTab />}
           {activeTab === "permissions" && isAdmin && <PermissionsTab />}
           {activeTab === "system" && isAdmin && <SystemTab />}
         </motion.div>
@@ -465,6 +470,139 @@ function TeamTab() {
   );
 }
 
+function NavigationTab() {
+  const { navigation, setNavigation, loading } = useAdminConfig();
+  const [localNav, setLocalNav] = useState<NavGroup[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setLocalNav(navigation.length ? navigation : []);
+  }, [navigation]);
+
+  const updateGroup = (groupIndex: number, updates: Partial<NavGroup>) => {
+    setLocalNav((prev) =>
+      prev.map((g, i) => (i === groupIndex ? { ...g, ...updates } : g))
+    );
+  };
+
+  const updateItem = (groupIndex: number, itemIndex: number, updates: Partial<NavGroup["items"][0]>) => {
+    setLocalNav((prev) =>
+      prev.map((g, i) =>
+        i === groupIndex
+          ? { ...g, items: g.items.map((it, j) => (j === itemIndex ? { ...it, ...updates } : it)) }
+          : g
+      )
+    );
+  };
+
+  const addGroup = () => {
+    setLocalNav((prev) => [...prev, { label: "New group", items: [] }]);
+  };
+
+  const addItem = (groupIndex: number) => {
+    setLocalNav((prev) =>
+      prev.map((g, i) =>
+        i === groupIndex
+          ? { ...g, items: [...g.items, { label: "New item", href: "/", icon: "grid-2x2", permission: "dashboard" }] }
+          : g
+      )
+    );
+  };
+
+  const removeGroup = (groupIndex: number) => {
+    setLocalNav((prev) => prev.filter((_, i) => i !== groupIndex));
+  };
+
+  const removeItem = (groupIndex: number, itemIndex: number) => {
+    setLocalNav((prev) =>
+      prev.map((g, i) =>
+        i === groupIndex ? { ...g, items: g.items.filter((_, j) => j !== itemIndex) } : g
+      )
+    );
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await setNavigation(localNav);
+      toast.success("Navigation saved. Sidebar will update.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const permissionOptions = [
+    "dashboard", "requests", "quotes", "jobs", "partners", "accounts", "finance", "settings",
+  ];
+
+  if (loading && localNav.length === 0) {
+    return (
+      <div className="p-8 text-center text-text-tertiary">
+        <Cog className="h-8 w-8 animate-spin mx-auto mb-2" />
+        Loading navigation...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-text-primary">Navigation (Sidebar)</h3>
+          <p className="text-sm text-text-tertiary">Edit menu groups and items. Changes apply by permission per role.</p>
+        </div>
+        <Button size="sm" onClick={handleSave} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}>
+          {saving ? "Saving..." : "Save"}
+        </Button>
+      </div>
+
+      <div className="space-y-4">
+        {localNav.map((group, gi) => (
+          <Card key={gi} padding="md">
+            <div className="flex items-center justify-between mb-3">
+              <Input
+                value={group.label}
+                onChange={(e) => updateGroup(gi, { label: e.target.value })}
+                placeholder="Group label"
+                className="font-semibold max-w-xs"
+              />
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => addItem(gi)}>+ Item</Button>
+                <Button variant="ghost" size="sm" onClick={() => removeGroup(gi)} className="text-red-600">Remove group</Button>
+              </div>
+            </div>
+            <div className="space-y-2 pl-2 border-l-2 border-border-light">
+              {group.items.map((item, ii) => (
+                <div key={ii} className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-surface-hover">
+                  <Input value={item.label} onChange={(e) => updateItem(gi, ii, { label: e.target.value })} placeholder="Label" className="w-32" />
+                  <Input value={item.href} onChange={(e) => updateItem(gi, ii, { href: e.target.value })} placeholder="/path" className="w-40" />
+                  <Input value={item.icon} onChange={(e) => updateItem(gi, ii, { icon: e.target.value })} placeholder="icon name" className="w-28" />
+                  <select
+                    value={item.permission ?? ""}
+                    onChange={(e) => updateItem(gi, ii, { permission: e.target.value || undefined })}
+                    className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card"
+                  >
+                    <option value="">— permission —</option>
+                    {permissionOptions.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                  <Button variant="ghost" size="sm" onClick={() => removeItem(gi, ii)} className="text-red-600">×</Button>
+                </div>
+              ))}
+            </div>
+          </Card>
+        ))}
+        <Button variant="outline" onClick={addGroup} icon={<Plus className="h-3.5 w-3.5" />}>
+          Add group
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function InviteModal({ onClose }: { onClose: () => void }) {
   const [form, setForm] = useState({ email: "", full_name: "", role: "operator" });
   const [sending, setSending] = useState(false);
@@ -627,6 +765,7 @@ function SystemTab() {
     address: "",
     website: "",
     vat_number: "",
+    vat_percent: "20",
     primary_color: "#F97316",
     tagline: "",
     logo_url: "",
@@ -647,6 +786,7 @@ function SystemTab() {
           address: data.address ?? "",
           website: data.website ?? "",
           vat_number: data.vat_number ?? "",
+          vat_percent: data.vat_percent != null ? String(data.vat_percent) : "20",
           primary_color: data.primary_color ?? "#F97316",
           tagline: data.tagline ?? "",
           logo_url: data.logo_url ?? "",
@@ -662,11 +802,12 @@ function SystemTab() {
     setSaving(true);
     try {
       const supabase = getSupabase();
+      const payload = { ...form, vat_percent: Number(form.vat_percent) || 20 };
       if (settingsId) {
-        const { error } = await supabase.from("company_settings").update(form).eq("id", settingsId);
+        const { error } = await supabase.from("company_settings").update(payload).eq("id", settingsId);
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.from("company_settings").insert(form).select().single();
+        const { data, error } = await supabase.from("company_settings").insert(payload).select().single();
         if (error) throw error;
         setSettingsId(data.id);
       }
@@ -732,6 +873,11 @@ function SystemTab() {
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">VAT Number</label>
                 <Input value={form.vat_number} onChange={(e) => update("vat_number", e.target.value)} placeholder="GB123456789" />
               </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">VAT % (quote line items)</label>
+              <Input type="number" min={0} max={100} step={0.5} value={form.vat_percent} onChange={(e) => update("vat_percent", e.target.value)} placeholder="20" />
+              <p className="text-[10px] text-text-tertiary mt-1">Applied when VAT is ticked on manual quote lines (e.g. 20 for 20%).</p>
             </div>
           </div>
         </Card>

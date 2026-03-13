@@ -14,6 +14,7 @@ import { Modal } from "@/components/ui/modal";
 import { Input, SearchInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
+import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
@@ -29,9 +30,10 @@ import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Quote, Partner, Job } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listQuotes, createQuote, updateQuote } from "@/services/quotes";
+import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { createJob, getJobByQuoteId } from "@/services/jobs";
 import { listPartners } from "@/services/partners";
+import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
 import { getStatusCounts, getAggregates, getSupabase } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
@@ -153,6 +155,8 @@ export default function QuotesPage() {
     try {
       const result = await createQuote({
         title: formData.title ?? "",
+        client_id: formData.client_id,
+        client_address_id: formData.client_address_id,
         client_name: formData.client_name ?? "",
         client_email: formData.client_email ?? "",
         status: "draft",
@@ -178,7 +182,7 @@ export default function QuotesPage() {
     if (selectedIds.size === 0) return;
     const supabase = getSupabase();
     try {
-      const { error } = await supabase.from("quotes").update({ status: newStatus }).in("id", Array.from(selectedIds));
+      const { error } = await supabase.from("quotes").update({ status: newStatus, updated_at: new Date().toISOString() }).in("id", Array.from(selectedIds));
       if (error) throw error;
       await logBulkAction("quote", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name);
       toast.success(`${selectedIds.size} quotes updated`);
@@ -188,12 +192,14 @@ export default function QuotesPage() {
   };
 
   const handleConfirmCreateJob = useCallback(
-    async (formData: { title: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string }) => {
+    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string }) => {
       if (!quoteToConvert) return;
       try {
         const margin = formData.client_price > 0 ? Math.round(((formData.client_price - formData.partner_cost - formData.materials_cost) / formData.client_price) * 1000) / 10 : 0;
         const job = await createJob({
           title: formData.title,
+          client_id: formData.client_id,
+          client_address_id: formData.client_address_id,
           client_name: formData.client_name,
           property_address: formData.property_address,
           partner_id: formData.partner_id ?? quoteToConvert.partner_id,
@@ -244,7 +250,11 @@ export default function QuotesPage() {
         setSelectedQuote(updated);
         toast.success(`Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
         refresh(); loadCounts();
-      } catch (err) { toast.error(err instanceof Error ? err.message : "Failed to update quote"); }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update quote";
+        toast.error(message);
+        console.error("Quote status update failed:", err);
+      }
     },
     [refresh, loadCounts, profile?.id, profile?.full_name]
   );
@@ -426,7 +436,7 @@ export default function QuotesPage() {
         </div>
       </Modal>
 
-      <QuoteDetailDrawer quote={selectedQuote} onClose={() => setSelectedQuote(null)} onStatusChange={handleStatusChange} />
+      <QuoteDetailDrawer quote={selectedQuote} onClose={() => setSelectedQuote(null)} onStatusChange={handleStatusChange} onQuoteUpdate={(q) => { setSelectedQuote(q); refresh(); }} />
       <CreateJobFromQuoteModal quote={quoteToConvert} onClose={() => setQuoteToConvert(null)} onSubmit={handleConfirmCreateJob} />
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Quote Internally" subtitle="Add line items and calculate total" size="lg">
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
@@ -436,8 +446,9 @@ export default function QuotesPage() {
 }
 
 /* ========== QUOTE DETAIL DRAWER ========== */
-function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | null; onClose: () => void; onStatusChange: (quote: Quote, status: string) => void }) {
-  const [tab, setTab] = useState("status");
+function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { quote: Quote | null; onClose: () => void; onStatusChange: (quote: Quote, status: string) => void; onQuoteUpdate?: (updated: Quote) => void }) {
+  const { profile } = useProfile();
+  const [tab, setTab] = useState("overview");
   const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [sendEmail, setSendEmail] = useState("");
   const [lineItems, setLineItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([]);
@@ -445,11 +456,20 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
   const [invitePartnerOpen, setInvitePartnerOpen] = useState(false);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
+  const [bids, setBids] = useState<QuoteBid[]>([]);
+  const [bidsLoading, setBidsLoading] = useState(false);
+  const [panelPartnerCost, setPanelPartnerCost] = useState("");
+  const [panelSellPrice, setPanelSellPrice] = useState("");
+  const [panelSaving, setPanelSaving] = useState(false);
 
   // Send to customer fields
   const [depositRequired, setDepositRequired] = useState("");
   const [startDate1, setStartDate1] = useState("");
   const [startDate2, setStartDate2] = useState("");
+  const [customMessage, setCustomMessage] = useState("");
+  const [previewLinks, setPreviewLinks] = useState<{ acceptUrl: string; rejectUrl: string } | null>(null);
+  const [emailPreviewHtml, setEmailPreviewHtml] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
     if (quote) {
@@ -459,6 +479,8 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
       setDepositRequired(String(quote.deposit_required ?? 0));
       setStartDate1(quote.start_date_option_1 ?? "");
       setStartDate2(quote.start_date_option_2 ?? "");
+      setPanelPartnerCost(String(quote.partner_cost ?? quote.cost ?? 0));
+      setPanelSellPrice(String(quote.sell_price ?? quote.total_value ?? 0));
       loadLineItems(quote.id);
     }
   }, [quote]);
@@ -468,6 +490,27 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
       getJobByQuoteId(quote.id).then(setConvertedJob);
     } else { setConvertedJob(null); }
   }, [quote?.id, quote?.status]);
+
+  useEffect(() => {
+    if (tab !== "send" || !quote?.id) return;
+    setPreviewLoading(true);
+    const recipientName = quote.client_name ?? "";
+    const params = new URLSearchParams({ quoteId: quote.id, recipientName });
+    if (customMessage.trim()) params.set("customMessage", customMessage.trim());
+    Promise.all([
+      fetch(`/api/quotes/preview-links?quoteId=${encodeURIComponent(quote.id)}`).then((r) => r.ok ? r.json() : null),
+      fetch(`/api/quotes/email-preview?${params}`).then((r) => r.ok ? r.text() : null),
+    ])
+      .then(([links, html]) => {
+        setPreviewLinks(links ?? null);
+        setEmailPreviewHtml(html ?? null);
+      })
+      .catch(() => {
+        setPreviewLinks(null);
+        setEmailPreviewHtml(null);
+      })
+      .finally(() => setPreviewLoading(false));
+  }, [tab, quote?.id, quote?.client_name, customMessage]);
 
   const loadLineItems = async (quoteId: string) => {
     const supabase = getSupabase();
@@ -488,6 +531,20 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
     if (invitePartnerOpen) { loadPartners(); setSelectedPartnerIds(new Set()); }
   }, [invitePartnerOpen, loadPartners]);
 
+  const loadBids = useCallback(async (quoteId: string) => {
+    setBidsLoading(true);
+    try {
+      const list = await getBidsByQuoteId(quoteId);
+      setBids(list);
+    } finally {
+      setBidsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (quote?.id && tab === "bids") loadBids(quote.id);
+  }, [quote?.id, tab, loadBids]);
+
   if (!quote) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
@@ -497,8 +554,8 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
 
   const drawerTabs = [
-    { id: "status", label: "Status" },
-    { id: "details", label: "Details" },
+    { id: "overview", label: "Status & Details" },
+    { id: "bids", label: "Bids" },
     { id: "send", label: "Send to Customer" },
     { id: "history", label: "History" },
   ];
@@ -521,16 +578,42 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
     setSendState("sending");
     try {
       await updateQuote(quote.id, {
-        status: "awaiting_customer",
         deposit_required: Number(depositRequired) || 0,
         start_date_option_1: startDate1 || undefined,
         start_date_option_2: startDate2 || undefined,
       });
-      await logAudit({ entityType: "quote", entityId: quote.id, entityRef: quote.reference, action: "status_changed", fieldName: "status", oldValue: quote.status, newValue: "awaiting_customer" });
+      const items = lineItems.map((li) => {
+        const qty = Number(li.quantity) || 1;
+        const unit = Number(li.unitPrice) || 0;
+        return { description: li.description, quantity: qty, unitPrice: unit, total: qty * unit };
+      });
+      const res = await fetch("/api/quotes/send-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quoteId: quote.id,
+          recipientEmail: sendEmail,
+          recipientName: quote.client_name,
+          customMessage: customMessage.trim() || undefined,
+          items: items.length ? items : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to send email");
+      }
+      if (!data.emailSent) {
+        toast.warning(data.reason ?? "Quote updated but email was not sent");
+      } else {
+        toast.success(`Quote with PDF sent to ${sendEmail}. Customer can Accept or Reject via the email link.`);
+      }
       setSendState("sent");
-      toast.success(`Quote sent to ${sendEmail} — status changed to Awaiting Customer`);
+      if (data.emailSent && onQuoteUpdate && data.sentTo) {
+        const updated = await getQuote(quote.id);
+        if (updated) onQuoteUpdate(updated);
+      }
     } catch (err) {
-      setSendState("error");
+      setSendState("idle");
       toast.error(err instanceof Error ? err.message : "Failed to send");
     }
   };
@@ -541,9 +624,10 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} className="px-6 pt-2" />
         <div className="flex-1 overflow-y-auto">
 
-          {/* STATUS TAB */}
-          {tab === "status" && (
+          {/* OVERVIEW TAB: Status + Details together */}
+          {tab === "overview" && (
             <div className="p-6 space-y-6">
+              {/* Status block */}
               <div className="text-center">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1">Current status</p>
                 <Badge variant={config.variant} dot={config.dot} size="md" className="text-base px-4 py-2">
@@ -571,7 +655,10 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
                   {quote.status === "rejected" && (
                     <div className="flex items-center gap-4">
                       <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-red-100 text-red-600"><XCircle className="h-4 w-4" /></div>
-                      <p className="text-sm font-semibold text-red-600">Rejected</p>
+                      <div>
+                        <p className="text-sm font-semibold text-red-600">Rejected</p>
+                        {quote.rejection_reason && <p className="text-xs text-text-tertiary mt-1">{quote.rejection_reason}</p>}
+                      </div>
                     </div>
                   )}
                   {quote.status === "converted_to_job" && (
@@ -592,13 +679,8 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
                   <p className="text-xl font-bold text-text-primary mt-1">{quote.partner_quotes_count}</p>
                 </div>
               </div>
-            </div>
-          )}
 
-          {/* DETAILS TAB (Quote Select Panel) */}
-          {tab === "details" && (
-            <div className="p-6 space-y-6">
-              {/* Margin Info */}
+              {/* Details block: Editable margin panel, Client, Actions */}
               <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light">
                 <div className="flex items-center gap-2 mb-3">
                   <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
@@ -606,28 +688,93 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
                 </div>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Partner Cost</p>
-                    <p className="text-sm font-bold text-text-primary">{formatCurrency(quote.partner_cost ?? quote.cost)}</p>
+                    <p className="text-[10px] text-text-tertiary uppercase mb-1">Partner Cost</p>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={panelPartnerCost}
+                      onChange={(e) => setPanelPartnerCost(e.target.value)}
+                      className="text-sm font-semibold h-9"
+                    />
                   </div>
                   <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Sell Price</p>
-                    <p className="text-sm font-bold text-primary">{formatCurrency(quote.sell_price ?? quote.total_value)}</p>
+                    <p className="text-[10px] text-text-tertiary uppercase mb-1">Sell Price</p>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={panelSellPrice}
+                      onChange={(e) => setPanelSellPrice(e.target.value)}
+                      className="text-sm font-semibold h-9 text-primary"
+                    />
                   </div>
                   <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Margin %</p>
-                    <p className={`text-sm font-bold ${(quote.margin_percent ?? 0) >= 40 ? "text-emerald-600" : (quote.margin_percent ?? 0) >= 10 ? "text-amber-600" : "text-red-500"}`}>
-                      {quote.margin_percent ?? 0}%
+                    <p className="text-[10px] text-text-tertiary uppercase mb-1">Margin %</p>
+                    <p className="text-sm font-bold h-9 flex items-center">
+                      {(() => {
+                        const sp = Number(panelSellPrice) || 0;
+                        const pc = Number(panelPartnerCost) || 0;
+                        const marginPct = sp > 0 ? Math.round(((sp - pc) / sp) * 1000) / 10 : 0;
+                        return (
+                          <span className={marginPct >= 40 ? "text-emerald-600" : marginPct >= 10 ? "text-amber-600" : "text-red-500"}>
+                            {marginPct}%
+                          </span>
+                        );
+                      })()}
                     </p>
                   </div>
                 </div>
-                {(quote.margin_percent ?? 0) < 40 && (quote.margin_percent ?? 0) > 0 && (
-                  <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
-                    <p className="text-xs text-amber-700 font-medium">Below standard margin (40%)</p>
-                  </div>
-                )}
+                {(() => {
+                  const sp = Number(panelSellPrice) || 0;
+                  const pc = Number(panelPartnerCost) || 0;
+                  const marginPct = sp > 0 ? ((sp - pc) / sp) * 100 : 0;
+                  return marginPct < 40 && marginPct > 0 ? (
+                    <div className="mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200">
+                      <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">Below standard margin (40%)</p>
+                    </div>
+                  ) : null;
+                })()}
+                <Button
+                  size="sm"
+                  variant="primary"
+                  className="mt-3 w-full"
+                  disabled={panelSaving}
+                  icon={panelSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+                  onClick={async () => {
+                    const pc = Number(panelPartnerCost) || 0;
+                    const sp = Number(panelSellPrice) || 0;
+                    const marginPct = sp > 0 ? Math.round(((sp - pc) / sp) * 1000) / 10 : 0;
+                    const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
+                    const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
+                    setPanelSaving(true);
+                    try {
+                      const updated = await updateQuote(quote.id, { partner_cost: pc, sell_price: sp, margin_percent: marginPct, total_value: sp });
+                      await logAudit({
+                        entityType: "quote",
+                        entityId: quote.id,
+                        entityRef: quote.reference,
+                        action: "updated",
+                        fieldName: "quote_figures",
+                        oldValue: oldSummary,
+                        newValue: newSummary,
+                        userId: profile?.id,
+                        userName: profile?.full_name,
+                        metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
+                      });
+                      onQuoteUpdate?.(updated);
+                      toast.success("Quote figures updated");
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Failed to update");
+                    } finally {
+                      setPanelSaving(false);
+                    }
+                  }}
+                >
+                  {panelSaving ? "Saving..." : "Save quote figures"}
+                </Button>
               </div>
 
-              {/* Client */}
               <div>
                 <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
                 <div className="flex items-center gap-3 mt-2">
@@ -639,12 +786,10 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
                 </div>
               </div>
 
-              {/* Invite Partner Button */}
               <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="w-full">
                 Invite more partners
               </Button>
 
-              {/* Converted to Job */}
               {convertedJob && (
                 <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200">
                   <div className="flex items-center gap-2 mb-2"><Briefcase className="h-4 w-4 text-emerald-600" /><label className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Converted to Job</label></div>
@@ -654,13 +799,56 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
                 </div>
               )}
 
-              <div className="flex gap-2 pt-4 border-t border-border-light">
+              <div className="flex flex-wrap gap-2 pt-4 border-t border-border-light">
                 {actions.map((action) => (
-                  <Button key={action.status} variant={action.primary ? "primary" : "outline"} className="flex-1" size="sm" icon={<action.icon className="h-3.5 w-3.5" />} onClick={() => onStatusChange(quote, action.status)}>
+                  <Button key={action.status} variant={action.primary ? "primary" : "outline"} size="sm" icon={<action.icon className="h-3.5 w-3.5" />} onClick={() => onStatusChange(quote, action.status)}>
                     {action.label}
                   </Button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* BIDS TAB — Partner bids from app; approve to set quote partner */}
+          {tab === "bids" && (
+            <div className="p-6 space-y-5">
+              <div className="p-4 rounded-xl bg-surface-hover border border-border-light">
+                <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
+                <p className="text-xs text-text-tertiary mt-0.5">Approve a bid to assign this quote to that partner. Then you can move to Accepted and Convert to Job.</p>
+              </div>
+              {bidsLoading ? (
+                <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+              ) : bids.length === 0 ? (
+                <p className="text-sm text-text-tertiary">No bids yet. Partners submit bids from the app when the quote is in Bidding.</p>
+              ) : (
+                <div className="space-y-3">
+                  {bids.map((bid) => (
+                    <div key={bid.id} className="flex items-center justify-between p-4 rounded-xl bg-surface-hover border border-border-light">
+                      <div>
+                        <p className="text-sm font-semibold text-text-primary">{bid.partner_name ?? bid.partner_id}</p>
+                        <p className="text-lg font-bold text-primary mt-0.5">{formatCurrency(bid.bid_amount)}</p>
+                        {bid.notes && <p className="text-xs text-text-tertiary mt-1">{bid.notes}</p>}
+                        <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="mt-2">{bid.status}</Badge>
+                      </div>
+                      {bid.status === "submitted" && (
+                        <Button size="sm" variant="primary" onClick={async () => {
+                          try {
+                            await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
+                            await updateQuote(quote.id, { status: "accepted" });
+                            await loadBids(quote.id);
+                            toast.success("Bid approved. Quote partner set — status set to Accepted.");
+                            onStatusChange(quote, "accepted");
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : "Failed to approve bid");
+                          }
+                        }}>
+                          Approve
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -727,6 +915,63 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange }: { quote: Quote | 
                 <Input type="email" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} placeholder="client@company.com" />
               </div>
 
+              {/* Personal message (customizable) */}
+              <div>
+                <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Personal message (optional)</label>
+                <textarea
+                  value={customMessage}
+                  onChange={(e) => setCustomMessage(e.target.value)}
+                  placeholder="Add a short message that will appear in the email before the Accept/Reject buttons..."
+                  rows={3}
+                  className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+                />
+              </div>
+
+              {/* Preview: links and email */}
+              <div className="rounded-xl border border-border-light bg-surface-hover p-4 space-y-4">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Preview</p>
+                {previewLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-text-tertiary py-4">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading preview...
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <p className="text-[10px] text-text-tertiary uppercase mb-1.5">Links the customer will receive</p>
+                      {previewLinks ? (
+                        <div className="space-y-2 text-xs">
+                          <div>
+                            <span className="text-text-tertiary">Accept: </span>
+                            <a href={previewLinks.acceptUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{previewLinks.acceptUrl}</a>
+                          </div>
+                          <div>
+                            <span className="text-text-tertiary">Reject: </span>
+                            <a href={previewLinks.rejectUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{previewLinks.rejectUrl}</a>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-text-tertiary">Could not load links</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-text-tertiary uppercase mb-1.5">Email preview</p>
+                      <div className="rounded-lg border border-border bg-white overflow-hidden" style={{ minHeight: 320 }}>
+                        {emailPreviewHtml ? (
+                          <iframe
+                            srcDoc={emailPreviewHtml}
+                            title="Email preview"
+                            className="w-full border-0 bg-white"
+                            style={{ height: 420, maxHeight: "70vh" }}
+                          />
+                        ) : (
+                          <div className="flex items-center justify-center text-sm text-text-tertiary" style={{ height: 420 }}>No preview</div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
               {sendState === "sent" && (
                 <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
@@ -789,7 +1034,8 @@ function getQuoteActions(currentStatus: string) {
   switch (currentStatus) {
     case "draft":
       return [
-        { label: "In Survey", status: "in_survey", icon: Eye, primary: true },
+        { label: "Start Bidding", status: "bidding", icon: Send, primary: true },
+        { label: "In Survey", status: "in_survey", icon: Eye, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "in_survey":
@@ -800,7 +1046,7 @@ function getQuoteActions(currentStatus: string) {
     case "bidding":
       return [
         { label: "Send to Customer", status: "awaiting_customer", icon: Send, primary: true },
-        { label: "Back to Survey", status: "in_survey", icon: RotateCcw, primary: false },
+        { label: "Back to Draft", status: "draft", icon: RotateCcw, primary: false },
       ];
     case "awaiting_customer":
       return [
@@ -826,23 +1072,30 @@ function getQuoteActions(currentStatus: string) {
 /* ========== CREATE JOB FROM QUOTE MODAL ========== */
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
-  onSubmit: (data: { title: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string }) => void;
+  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string }) => void;
 }) {
-  const [form, setForm] = useState({ title: "", client_name: "", property_address: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "" });
+  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "" });
+  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
   useEffect(() => {
     if (!quote) return;
     setForm({
-      title: quote.title ?? "", client_name: quote.client_name ?? "",
-      property_address: quote.property_address ?? "", partner_id: quote.partner_id ?? "",
+      title: quote.title ?? "", partner_id: quote.partner_id ?? "",
       client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
       materials_cost: "0", scheduled_date: "", scheduled_time: "",
+    });
+    setClientAddress({
+      client_id: quote.client_id,
+      client_address_id: quote.client_address_id,
+      client_name: quote.client_name ?? "",
+      client_email: quote.client_email ?? undefined,
+      property_address: quote.property_address ?? "",
     });
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
     if (quote.request_id) {
       getRequest(quote.request_id).then((req) => {
-        if (req?.property_address) setForm((p) => ({ ...p, property_address: req.property_address }));
+        if (req?.property_address) setClientAddress((p) => ({ ...p, property_address: req.property_address }));
       });
     }
   }, [quote]);
@@ -851,26 +1104,32 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title?.trim() || !form.client_name?.trim()) { toast.error("Title and client name are required"); return; }
+    if (!form.title?.trim()) { toast.error("Título do job é obrigatório"); return; }
+    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Selecione o cliente e o endereço do imóvel"); return; }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const scheduled_date = form.scheduled_date || undefined;
     const scheduled_start_at = form.scheduled_date && form.scheduled_time ? `${form.scheduled_date}T${form.scheduled_time}:00` : form.scheduled_date ? `${form.scheduled_date}T09:00:00` : undefined;
     onSubmit({
-      title: form.title.trim(), client_name: form.client_name.trim(), property_address: form.property_address.trim(),
-      partner_id: form.partner_id || undefined, partner_name: selectedPartner ? selectedPartner.company_name : quote.partner_name ?? undefined,
-      client_price: Number(form.client_price) || 0, partner_cost: Number(form.partner_cost) || 0, materials_cost: Number(form.materials_cost) || 0,
-      scheduled_date, scheduled_start_at,
+      title: form.title.trim(),
+      client_id: clientAddress.client_id,
+      client_address_id: clientAddress.client_address_id,
+      client_name: clientAddress.client_name,
+      property_address: clientAddress.property_address,
+      partner_id: form.partner_id || undefined,
+      partner_name: selectedPartner ? selectedPartner.company_name : quote.partner_name ?? undefined,
+      client_price: Number(form.client_price) || 0,
+      partner_cost: Number(form.partner_cost) || 0,
+      materials_cost: Number(form.materials_cost) || 0,
+      scheduled_date,
+      scheduled_start_at,
     });
   };
 
   return (
-    <Modal open={!!quote} onClose={onClose} title="Create Job from Quote" subtitle={`${quote.reference} — deposit paid, moving to job`} size="lg">
+    <Modal open={!!quote} onClose={onClose} title="Criar Job a partir do Orçamento" subtitle={`${quote.reference} — criar job`} size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Job Title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Name *</label><Input value={form.client_name} onChange={(e) => update("client_name", e.target.value)} required /></div>
-        </div>
-        <AddressAutocomplete label="Property Address *" value={form.property_address} onSelect={(parts) => update("property_address", parts.full_address)} placeholder="Start typing address..." />
+        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Título do job *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
+        <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Time</label><Input type="time" value={form.scheduled_time} onChange={(e) => update("scheduled_time", e.target.value)} /></div>
@@ -924,7 +1183,8 @@ function MarginCalculator({ cost, onSellPriceChange, onMarginChange }: { cost: n
 
 /* ========== CREATE QUOTE FORM ========== */
 function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>) => void; onCancel: () => void }) {
-  const [form, setForm] = useState({ title: "", client_name: "", client_email: "", total_value: "" });
+  const [form, setForm] = useState({ title: "", total_value: "" });
+  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", unitPrice: "0" }]);
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
@@ -933,18 +1193,28 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title || !form.client_name) { toast.error("Fill required fields"); return; }
-    onSubmit({ ...form, total_value: sellPrice > 0 ? sellPrice : lineTotal, cost: lineTotal, sell_price: sellPrice > 0 ? sellPrice : lineTotal, margin_percent: marginPct, quote_type: "internal" });
-    setForm({ title: "", client_name: "", client_email: "", total_value: "" });
+    if (!form.title) { toast.error("Título é obrigatório"); return; }
+    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Selecione o cliente e o endereço do imóvel"); return; }
+    onSubmit({
+      ...form,
+      client_id: clientAddress.client_id,
+      client_address_id: clientAddress.client_address_id,
+      client_name: clientAddress.client_name,
+      client_email: clientAddress.client_email,
+      total_value: sellPrice > 0 ? sellPrice : lineTotal,
+      cost: lineTotal,
+      sell_price: sellPrice > 0 ? sellPrice : lineTotal,
+      margin_percent: marginPct,
+      quote_type: "internal",
+    });
+    setForm({ title: "", total_value: "" });
+    setClientAddress({ client_name: "", property_address: "" });
   };
 
   return (
     <form onSubmit={handleSubmit} className="p-6 space-y-4">
-      <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Quote Title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="e.g. Commercial HVAC Overhaul" required /></div>
-      <div className="grid grid-cols-2 gap-4">
-        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Name *</label><Input value={form.client_name} onChange={(e) => update("client_name", e.target.value)} required /></div>
-        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Email</label><Input type="email" value={form.client_email} onChange={(e) => update("client_email", e.target.value)} /></div>
-      </div>
+      <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Título do orçamento *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="ex: Reforma HVAC comercial" required /></div>
+      <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
       <div>
         <div className="flex items-center justify-between mb-2">
           <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Line Items</label>

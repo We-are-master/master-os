@@ -6,6 +6,7 @@ export type NavItem = {
   href: string;
   icon: string;
   badge?: string | number;
+  permission?: string;
   children?: NavItem[];
 };
 

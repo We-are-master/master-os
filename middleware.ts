@@ -29,21 +29,42 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isAuthPage = request.nextUrl.pathname.startsWith("/login");
+  const pathname = request.nextUrl.pathname;
+  const isApiRoute = pathname.startsWith("/api");
+  const isAuthPage = pathname.startsWith("/login");
+
+  // API routes: do not redirect; let the route return 401 if unauthenticated
+  if (isApiRoute) {
+    addSecurityHeaders(supabaseResponse);
+    return supabaseResponse;
+  }
 
   if (!user && !isAuthPage) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    const redirect = NextResponse.redirect(url);
+    addSecurityHeaders(redirect);
+    return redirect;
   }
 
   if (user && isAuthPage) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
-    return NextResponse.redirect(url);
+    const redirect = NextResponse.redirect(url);
+    addSecurityHeaders(redirect);
+    return redirect;
   }
 
+  addSecurityHeaders(supabaseResponse);
   return supabaseResponse;
+}
+
+function addSecurityHeaders(res: NextResponse) {
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("X-Frame-Options", "DENY");
+  res.headers.set("X-XSS-Protection", "1; mode=block");
+  res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 }
 
 export const config = {

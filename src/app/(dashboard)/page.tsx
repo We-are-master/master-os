@@ -205,7 +205,7 @@ function FinancialSnapshot() {
         const pending = invoices.filter((i) => i.status === "pending");
         const overdue = invoices.filter((i) => i.status === "overdue");
         const paid = invoices.filter((i) => i.status === "paid");
-        const partnerDue = selfBills.filter((s) => s.status === "generated");
+        const partnerDue = selfBills.filter((s) => s.status === "awaiting_payment" || s.status === "ready_to_pay");
 
         setData({
           receivable: [...pending, ...overdue].reduce((s, i) => s + Number(i.amount), 0),

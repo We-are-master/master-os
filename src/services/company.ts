@@ -10,6 +10,7 @@ export interface CompanySettings {
   email: string;
   website?: string;
   vat_number?: string;
+  vat_percent?: number;
   primary_color?: string;
   tagline?: string;
   quote_footer_notes?: string;

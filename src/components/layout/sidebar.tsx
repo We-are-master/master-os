@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 import { NAVIGATION, type NavItem } from "@/lib/constants";
 import { useSidebar } from "@/hooks/use-sidebar";
+import { useAdminConfigOptional } from "@/hooks/use-admin-config";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -100,6 +101,10 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
 
 export function Sidebar() {
   const { collapsed, toggle } = useSidebar();
+  const adminConfig = useAdminConfigOptional();
+  const navGroups = adminConfig?.filteredNavigation?.length
+    ? adminConfig.filteredNavigation
+    : NAVIGATION;
 
   return (
     <motion.aside
@@ -131,7 +136,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
-        {NAVIGATION.map((group) => (
+        {navGroups.map((group) => (
           <div key={group.label}>
             <AnimatePresence>
               {!collapsed && (

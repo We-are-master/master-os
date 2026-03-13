@@ -6,6 +6,7 @@ import { Header } from "@/components/layout/header";
 import { SidebarContext } from "@/hooks/use-sidebar";
 import { ProfileContext, useProfileLoader } from "@/hooks/use-profile";
 import { ThemeContext, useThemeProvider } from "@/hooks/use-theme";
+import { AdminConfigProvider } from "@/hooks/use-admin-config";
 import { motion } from "framer-motion";
 
 export default function DashboardLayout({
@@ -28,6 +29,7 @@ export default function DashboardLayout({
         value={{ collapsed, mobileOpen, toggle, toggleMobile, closeMobile }}
       >
         <ProfileContext.Provider value={profileState}>
+          <AdminConfigProvider>
           <div className="min-h-screen bg-surface-secondary">
             <Sidebar />
             <motion.div
@@ -42,6 +44,7 @@ export default function DashboardLayout({
               </main>
             </motion.div>
           </div>
+          </AdminConfigProvider>
         </ProfileContext.Provider>
       </SidebarContext.Provider>
     </ThemeContext.Provider>

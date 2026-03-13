@@ -4,6 +4,9 @@ import { Resend } from "resend";
 import React from "react";
 import { QuotePDF, type QuotePDFData, type CompanyBranding } from "@/lib/pdf/quote-template";
 import { createClient } from "@supabase/supabase-js";
+import { requireAuth, isValidUUID } from "@/lib/auth-api";
+import { createQuoteResponseToken } from "@/lib/quote-response-token";
+import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -15,18 +18,25 @@ function getServiceSupabase() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const body = await req.json();
-    const { quoteId, recipientEmail, recipientName, notes, items } = body as {
+    const { quoteId, recipientEmail, recipientName, notes, items, customMessage } = body as {
       quoteId: string;
       recipientEmail?: string;
       recipientName?: string;
       notes?: string;
+      customMessage?: string;
       items?: { description: string; quantity: number; unitPrice: number; total: number }[];
     };
 
-    if (!quoteId) {
+    if (!quoteId || typeof quoteId !== "string") {
       return NextResponse.json({ error: "quoteId is required" }, { status: 400 });
+    }
+    if (!isValidUUID(quoteId)) {
+      return NextResponse.json({ error: "Invalid quoteId" }, { status: 400 });
     }
 
     const supabase = getServiceSupabase();
@@ -39,6 +49,17 @@ export async function POST(req: NextRequest) {
 
     if (quoteError || !quote) {
       return NextResponse.json({ error: "Quote not found" }, { status: 404 });
+    }
+
+    let lineItemsForPdf = items;
+    if (!lineItemsForPdf?.length) {
+      const { data: rows } = await supabase.from("quote_line_items").select("description, quantity, unit_price").eq("quote_id", quoteId).order("sort_order");
+      lineItemsForPdf = (rows ?? []).map((r: { description: string; quantity: number; unit_price: number }) => ({
+        description: r.description,
+        quantity: Number(r.quantity) || 1,
+        unitPrice: Number(r.unit_price) || 0,
+        total: (Number(r.quantity) || 1) * (Number(r.unit_price) || 0),
+      }));
     }
 
     const { data: settings } = await supabase
@@ -77,7 +98,7 @@ export async function POST(req: NextRequest) {
       createdAt: quote.created_at,
       expiresAt: quote.expires_at ?? undefined,
       ownerName: quote.owner_name ?? undefined,
-      items,
+      items: lineItemsForPdf,
       notes: notes ?? settings?.quote_footer_notes ?? undefined,
     };
 
@@ -94,13 +115,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
+    const responseToken = createQuoteResponseToken(quoteId);
+    const acceptUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=accept`;
+    const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
+
     const fromEmail = process.env.RESEND_FROM_EMAIL ?? `${branding.companyName} <quotes@${branding.website ?? "mastergroup.com"}>`;
 
     const { data: emailResult, error: emailError } = await resend.emails.send({
       from: fromEmail,
       to: [emailTo],
       subject: `Quote ${quote.reference} — ${quote.title}`,
-      html: buildEmailHTML(pdfData, branding),
+      html: buildQuoteEmailHTML(pdfData, branding, { acceptUrl, rejectUrl, customMessage }),
       attachments: [
         {
           filename: `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
@@ -120,7 +146,7 @@ export async function POST(req: NextRequest) {
 
     await supabase
       .from("quotes")
-      .update({ status: "sent" })
+      .update({ status: "awaiting_customer" })
       .eq("id", quoteId);
 
     await supabase.from("audit_logs").insert({
@@ -130,7 +156,7 @@ export async function POST(req: NextRequest) {
       action: "status_changed",
       field_name: "status",
       old_value: quote.status,
-      new_value: "sent",
+      new_value: "awaiting_customer",
       metadata: { email_to: emailTo, resend_id: emailResult?.id },
     });
 
@@ -150,10 +176,16 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const quoteId = req.nextUrl.searchParams.get("quoteId");
     if (!quoteId) {
       return NextResponse.json({ error: "quoteId is required" }, { status: 400 });
+    }
+    if (!isValidUUID(quoteId)) {
+      return NextResponse.json({ error: "Invalid quoteId" }, { status: 400 });
     }
 
     const supabase = getServiceSupabase();
@@ -188,9 +220,9 @@ export async function GET(req: NextRequest) {
         }
       : {
           companyName: "Master Group",
-          address: "123 Business Street, London, UK",
+          address: "124 City Road, London, UK",
           phone: "+44 20 1234 5678",
-          email: "info@mastergroup.com",
+          email: "hello@wearemaster.com",
           primaryColor: "#F97316",
           tagline: "Professional Property Services",
         };
@@ -226,61 +258,3 @@ export async function GET(req: NextRequest) {
   }
 }
 
-function buildEmailHTML(data: QuotePDFData, branding: CompanyBranding): string {
-  const color = branding.primaryColor ?? "#F97316";
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#F5F5F4;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#fff;">
-    <tr><td style="height:4px;background:${color};"></td></tr>
-    <tr><td style="padding:40px 40px 20px;">
-      ${branding.logoUrl ? `<img src="${branding.logoUrl}" alt="${branding.companyName}" style="height:40px;margin-bottom:16px;" />` : ""}
-      <h1 style="margin:0 0 4px;font-size:24px;color:${color};">${branding.companyName}</h1>
-      ${branding.tagline ? `<p style="margin:0 0 20px;font-size:12px;color:#78716C;text-transform:uppercase;letter-spacing:1px;">${branding.tagline}</p>` : ""}
-    </td></tr>
-    <tr><td style="padding:0 40px 30px;">
-      <p style="margin:0 0 8px;font-size:16px;color:#1C1917;">Dear <strong>${data.clientName}</strong>,</p>
-      <p style="margin:0 0 20px;font-size:14px;color:#57534E;line-height:1.6;">
-        Thank you for your interest. Please find attached our quotation <strong>${data.reference}</strong> for the following:
-      </p>
-      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E7E5E4;border-radius:8px;overflow:hidden;margin-bottom:20px;">
-        <tr style="background:#FAFAF9;">
-          <td style="padding:16px;border-bottom:1px solid #E7E5E4;">
-            <p style="margin:0 0 4px;font-size:12px;color:#78716C;">Service</p>
-            <p style="margin:0;font-size:15px;font-weight:600;color:#1C1917;">${data.title}</p>
-          </td>
-          <td style="padding:16px;border-bottom:1px solid #E7E5E4;text-align:right;">
-            <p style="margin:0 0 4px;font-size:12px;color:#78716C;">Quoted Value</p>
-            <p style="margin:0;font-size:20px;font-weight:700;color:${color};">£${data.totalValue.toLocaleString("en-GB", { minimumFractionDigits: 2 })}</p>
-          </td>
-        </tr>
-        <tr>
-          <td colspan="2" style="padding:16px;">
-            <p style="margin:0;font-size:12px;color:#78716C;">
-              Reference: <strong>${data.reference}</strong>
-              ${data.expiresAt ? ` — Valid until: <strong>${new Date(data.expiresAt).toLocaleDateString("en-GB")}</strong>` : ""}
-            </p>
-          </td>
-        </tr>
-      </table>
-      <p style="margin:0 0 24px;font-size:14px;color:#57534E;line-height:1.6;">
-        The full breakdown is attached as a PDF. If you have any questions or would like to proceed, simply reply to this email.
-      </p>
-      <table cellpadding="0" cellspacing="0" style="margin:0 auto;">
-        <tr><td style="background:${color};border-radius:8px;padding:14px 32px;">
-          <a href="mailto:${branding.email}?subject=Re: ${data.reference}" style="color:#fff;text-decoration:none;font-size:14px;font-weight:600;">
-            Reply to Accept
-          </a>
-        </td></tr>
-      </table>
-    </td></tr>
-    <tr><td style="padding:20px 40px;background:#FAFAF9;border-top:1px solid #E7E5E4;">
-      <p style="margin:0 0 4px;font-size:11px;color:#A8A29E;">${branding.companyName} — ${branding.address}</p>
-      <p style="margin:0;font-size:11px;color:#A8A29E;">${branding.phone} — ${branding.email}</p>
-    </td></tr>
-  </table>
-</body>
-</html>`;
-}

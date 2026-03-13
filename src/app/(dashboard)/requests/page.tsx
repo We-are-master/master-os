@@ -29,6 +29,7 @@ import { getStatusCounts, getSupabase } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
+import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { useRouter } from "next/navigation";
 import { listPartners } from "@/services/partners";
@@ -148,7 +149,9 @@ export default function RequestsPage() {
         await loadCounts();
         toast.success(`Request updated to ${statusConfig[newStatus]?.label ?? newStatus}`);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to update request status");
+        const message = err instanceof Error ? err.message : "Failed to update request status";
+        toast.error(message);
+        console.error("Request status update failed:", err);
       }
     },
     [refresh, loadCounts, profile?.id, profile?.full_name]
@@ -547,12 +550,18 @@ export default function RequestsPage() {
       <InvitePartnerToQuote
         request={invitePartnerOpen}
         onClose={() => setInvitePartnerOpen(null)}
-        onDone={async (req, partnerIds, sendMethod) => {
+        onDone={async (req, partnerIds, sendMethod, clientAddress) => {
           try {
+            if (!clientAddress?.client_id || !clientAddress?.property_address) {
+              toast.error("Selecione o cliente e o endereço do imóvel");
+              return;
+            }
             const quote = await createQuote({
-              title: `${req.service_type} — ${req.client_name}`,
-              client_name: req.client_name,
-              client_email: req.client_email,
+              title: `${req.service_type} — ${clientAddress.client_name}`,
+              client_id: clientAddress.client_id,
+              client_address_id: clientAddress.client_address_id,
+              client_name: clientAddress.client_name,
+              client_email: clientAddress.client_email ?? req.client_email,
               request_id: req.id,
               status: "bidding",
               total_value: req.estimated_value ?? 0,
@@ -565,7 +574,7 @@ export default function RequestsPage() {
               customer_accepted: false,
               customer_deposit_paid: false,
               partner_cost: 0,
-              property_address: req.property_address,
+              property_address: clientAddress.property_address,
               scope: req.scope,
             });
             await updateRequestStatus(req.id, "converted_to_quote");
@@ -591,13 +600,19 @@ export default function RequestsPage() {
       <ManualQuoteModal
         request={manualQuoteOpen}
         onClose={() => setManualQuoteOpen(null)}
-        onDone={async (req, lineItems) => {
+        onDone={async (req, lineItems, clientAddress) => {
           try {
+            if (!clientAddress?.client_id || !clientAddress?.property_address) {
+              toast.error("Selecione o cliente e o endereço do imóvel");
+              return;
+            }
             const total = lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
             const quote = await createQuote({
-              title: `${req.service_type} — ${req.client_name}`,
-              client_name: req.client_name,
-              client_email: req.client_email,
+              title: `${req.service_type} — ${clientAddress.client_name}`,
+              client_id: clientAddress.client_id,
+              client_address_id: clientAddress.client_address_id,
+              client_name: clientAddress.client_name,
+              client_email: clientAddress.client_email ?? req.client_email,
               request_id: req.id,
               status: "draft",
               total_value: total,
@@ -610,7 +625,7 @@ export default function RequestsPage() {
               customer_accepted: false,
               customer_deposit_paid: false,
               partner_cost: 0,
-              property_address: req.property_address,
+              property_address: clientAddress.property_address,
               scope: req.scope,
             });
             const supabase = getSupabase();
@@ -648,13 +663,19 @@ export default function RequestsPage() {
         onConvert={async (data) => {
           if (!convertToJobOpen) return;
           try {
+            if (!data.client_id || !data.property_address) {
+              toast.error("Selecione o cliente e o endereço do imóvel");
+              return;
+            }
             const clientPrice = data.client_price ?? 0;
             const partnerCost = data.partner_cost ?? 0;
             const margin = clientPrice > 0 ? Math.round(((clientPrice - partnerCost) / clientPrice) * 1000) / 10 : 0;
             const job = await createJob({
-              title: `${convertToJobOpen.service_type} — ${convertToJobOpen.client_name}`,
-              client_name: convertToJobOpen.client_name,
-              property_address: convertToJobOpen.property_address,
+              title: `${convertToJobOpen.service_type} — ${data.client_name}`,
+              client_id: data.client_id,
+              client_address_id: data.client_address_id,
+              client_name: data.client_name,
+              property_address: data.property_address,
               partner_name: data.partner_name,
               partner_id: data.partner_id,
               status: "scheduled",
@@ -710,17 +731,23 @@ function InvitePartnerToQuote({
 }: {
   request: ServiceRequest | null;
   onClose: () => void;
-  onDone: (req: ServiceRequest, partnerIds: string[], sendMethod: string) => void;
+  onDone: (req: ServiceRequest, partnerIds: string[], sendMethod: string, clientAddress: ClientAndAddressValue) => void;
 }) {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sendMethod, setSendMethod] = useState<"email" | "app" | "both">("both");
   const [searchTerm, setSearchTerm] = useState("");
+  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
 
   useEffect(() => {
     if (!request) return;
     setSelectedIds(new Set());
     setSearchTerm("");
+    setClientAddress({
+      client_name: request.client_name ?? "",
+      client_email: request.client_email ?? undefined,
+      property_address: request.property_address ?? "",
+    });
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
   }, [request]);
 
@@ -739,10 +766,14 @@ function InvitePartnerToQuote({
   );
 
   return (
-    <Modal open={!!request} onClose={onClose} title="Invite to Partner" subtitle={`${request.reference} — ${request.service_type}`} size="lg">
-      <div className="p-6 flex flex-col max-h-[75vh]">
+    <Modal open={!!request} onClose={onClose} title="Invite partners" subtitle={`${request.reference} — ${request.service_type}`} size="lg">
+      <div className="p-6 flex flex-col max-h-[75vh] overflow-y-auto">
+        <div className="mb-4">
+          <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client and address *</p>
+          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} labelClient="Client *" labelAddress="Property address *" />
+        </div>
         <div className="mb-3">
-          <Input placeholder="Search partners by name or trade..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="text-sm" />
+          <Input placeholder="Search partners by name or service..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="text-sm" />
         </div>
 
         {serviceRelated.length > 0 && (
@@ -787,10 +818,15 @@ function InvitePartnerToQuote({
           </div>
           <div className="flex items-center justify-between">
             <p className="text-sm text-text-tertiary">
-              {selectedIds.size === 0 ? "Select at least one partner" : `${selectedIds.size} partner(s) selected`}
+              {selectedIds.size === 0 ? "Please select at least one partner" : `${selectedIds.size} partner(s) selected`}
             </p>
-            <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} disabled={selectedIds.size === 0} onClick={() => onDone(request, Array.from(selectedIds), sendMethod)}>
-              Invite selected partners
+            <Button
+              size="sm"
+              icon={<Send className="h-3.5 w-3.5" />}
+              disabled={selectedIds.size === 0 || !clientAddress.client_id || !clientAddress.property_address}
+              onClick={() => onDone(request, Array.from(selectedIds), sendMethod, clientAddress)}
+            >
+              Invite partners
             </Button>
           </div>
         </div>
@@ -804,24 +840,49 @@ function ManualQuoteModal({
 }: {
   request: ServiceRequest | null;
   onClose: () => void;
-  onDone: (req: ServiceRequest, lineItems: { description: string; quantity: number; unitPrice: number; vat: boolean }[]) => void;
+  onDone: (req: ServiceRequest, lineItems: { description: string; quantity: number; unitPrice: number; vat: boolean }[], clientAddress: ClientAndAddressValue) => void;
 }) {
   const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", unitPrice: "0", vat: false }]);
+  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
+  const [vatPercent, setVatPercent] = useState(20);
 
   useEffect(() => {
-    if (request) setLineItems([{ description: request.service_type, quantity: "1", unitPrice: String(request.estimated_value ?? 0), vat: false }]);
+    if (request) {
+      setLineItems([{ description: request.service_type, quantity: "1", unitPrice: String(request.estimated_value ?? 0), vat: false }]);
+      setClientAddress({
+        client_name: request.client_name ?? "",
+        client_email: request.client_email ?? undefined,
+        property_address: request.property_address ?? "",
+      });
+      void Promise.resolve(
+        getSupabase().from("company_settings").select("vat_percent").limit(1).single(),
+      ).then(({ data }) => {
+        setVatPercent(data?.vat_percent != null ? Number(data.vat_percent) : 20);
+      }).catch(() => setVatPercent(20));
+    }
   }, [request]);
 
   if (!request) return null;
 
-  const total = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
+  const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const lineSubtotal = (li: { quantity: string; unitPrice: string }) => (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0);
+  const lineVat = (li: { quantity: string; unitPrice: string; vat: boolean }) => li.vat ? lineSubtotal(li) * (vatPercent / 100) : 0;
+  const lineTotal = (li: { quantity: string; unitPrice: string; vat: boolean }) => lineSubtotal(li) + lineVat(li);
+
+  const subtotalAll = lineItems.reduce((s, li) => s + lineSubtotal(li), 0);
+  const vatAll = lineItems.reduce((s, li) => s + lineVat(li), 0);
+  const totalAll = subtotalAll + vatAll;
 
   return (
-    <Modal open={!!request} onClose={onClose} title="Add Manual Quote" subtitle={`${request.reference} — ${request.service_type}`} size="lg">
+    <Modal open={!!request} onClose={onClose} title="Manual quote" subtitle={`${request.reference} — ${request.service_type}`} size="lg">
       <div className="p-6 space-y-4">
         <div>
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client and address *</p>
+          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} labelClient="Client *" labelAddress="Property address *" />
+        </div>
+        <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Line Items</label>
+            <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Quote items</label>
             <button type="button" onClick={() => setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0", vat: false }])} className="text-[11px] font-medium text-primary hover:underline">+ Add Item</button>
           </div>
           <div className="space-y-2">
@@ -835,32 +896,47 @@ function ManualQuoteModal({
                       <Input type="number" placeholder="Unit price" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1" />
                       <label className="flex items-center gap-1.5 text-xs text-text-secondary">
                         <input type="checkbox" checked={item.vat} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], vat: e.target.checked }; setLineItems(n); }} className="h-3.5 w-3.5 rounded border-border" />
-                        VAT
+                        VAT ({vatPercent}%)
                       </label>
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1 pt-1">
-                    <span className="text-xs font-semibold text-text-primary">${((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0)).toLocaleString()}</span>
+                  <div className="flex flex-col items-end gap-0.5 pt-1 text-right">
+                    <span className="text-xs text-text-secondary">Subtotal: £{fmt(lineSubtotal(item))}</span>
+                    {item.vat && <span className="text-xs text-text-secondary">VAT: £{fmt(lineVat(item))}</span>}
+                    <span className="text-xs font-semibold text-text-primary">Line total: £{fmt(lineTotal(item))}</span>
                     {lineItems.length > 1 && (
-                      <button onClick={() => setLineItems((prev) => prev.filter((_, i) => i !== idx))} className="text-text-tertiary hover:text-red-500 text-xs">Remove</button>
+                      <button onClick={() => setLineItems((prev) => prev.filter((_, i) => i !== idx))} className="text-text-tertiary hover:text-red-500 text-xs mt-1">Remove</button>
                     )}
                   </div>
                 </div>
               </div>
             ))}
           </div>
-          <div className="flex justify-end mt-3 pt-2 border-t border-border-light">
-            <span className="text-sm font-bold text-text-primary">Total: ${total.toLocaleString()}</span>
+          <div className="mt-3 pt-2 border-t border-border-light space-y-1 flex flex-col items-end">
+            <span className="text-xs text-text-secondary">Subtotal: £{fmt(subtotalAll)}</span>
+            {vatAll > 0 && <span className="text-xs text-text-secondary">VAT: £{fmt(vatAll)}</span>}
+            <span className="text-sm font-bold text-text-primary">Total: £{fmt(totalAll)}</span>
           </div>
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={() => {
-            const items = lineItems.map((li) => ({
-              description: li.description, quantity: Number(li.quantity) || 1, unitPrice: Number(li.unitPrice) || 0, vat: li.vat,
-            }));
-            onDone(request, items);
-          }}>Create Quote</Button>
+          <Button
+            onClick={() => {
+              if (!clientAddress.client_id || !clientAddress.property_address) {
+                toast.error("Please select the client and property address");
+                return;
+              }
+              const items = lineItems.map((li) => {
+                const qty = Number(li.quantity) || 1;
+                const baseUnit = Number(li.unitPrice) || 0;
+                const unitPriceInclVat = li.vat ? baseUnit * (1 + vatPercent / 100) : baseUnit;
+                return { description: li.description, quantity: qty, unitPrice: unitPriceInclVat, vat: li.vat };
+              });
+              onDone(request, items, clientAddress);
+            }}
+          >
+            Create quote
+          </Button>
         </div>
       </div>
     </Modal>
@@ -872,14 +948,20 @@ function ConvertToJobModal({
 }: {
   request: ServiceRequest | null;
   onClose: () => void;
-  onConvert: (data: { partner_value?: number; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number }) => void;
+  onConvert: (data: { client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_value?: number; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number }) => void;
 }) {
   const [form, setForm] = useState({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "" });
+  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
   useEffect(() => {
     if (!request) return;
     setForm({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: String(request.estimated_value ?? 0), partner_cost: "" });
+    setClientAddress({
+      client_name: request.client_name ?? "",
+      client_email: request.client_email ?? undefined,
+      property_address: request.property_address ?? "",
+    });
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
   }, [request]);
 
@@ -887,35 +969,61 @@ function ConvertToJobModal({
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedPartner = partners.find((p) => p.id === form.partner_id);
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clientAddress.client_id || !clientAddress.property_address) {
+      toast.error("Selecione o cliente e o endereço do imóvel");
+      return;
+    }
+    onConvert({
+      client_id: clientAddress.client_id,
+      client_address_id: clientAddress.client_address_id,
+      client_name: clientAddress.client_name,
+      property_address: clientAddress.property_address,
+      partner_value: form.partner_value ? Number(form.partner_value) : undefined,
+      partner_id: form.partner_id || undefined,
+      partner_name: selectedPartner?.company_name,
+      scope: form.scope || undefined,
+      notes: form.notes || undefined,
+      internal_notes: form.internal_notes || undefined,
+      client_price: Number(form.client_price) || 0,
+      partner_cost: Number(form.partner_cost) || 0,
+    });
+  };
+
   return (
-    <Modal open={!!request} onClose={onClose} title="Create Job" subtitle={`${request.reference} — Direct job creation`} size="lg">
-      <form onSubmit={(e) => { e.preventDefault(); onConvert({ partner_value: form.partner_value ? Number(form.partner_value) : undefined, partner_id: form.partner_id || undefined, partner_name: selectedPartner?.company_name, scope: form.scope || undefined, notes: form.notes || undefined, internal_notes: form.internal_notes || undefined, client_price: Number(form.client_price) || 0, partner_cost: Number(form.partner_cost) || 0 }); }} className="p-6 space-y-4">
+    <Modal open={!!request} onClose={onClose} title="Criar Job" subtitle={`${request.reference} — Criação direta`} size="lg">
+      <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <div>
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Cliente e endereço *</p>
+          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Valor ao cliente</label>
             <Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} placeholder="0.00" min={0} step="0.01" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Value</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Valor parceiro</label>
             <Input type="number" value={form.partner_value} onChange={(e) => update("partner_value", e.target.value)} placeholder="0.00" min={0} step="0.01" />
           </div>
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Custo parceiro</label>
           <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} placeholder="0.00" min={0} step="0.01" />
         </div>
-        <Select label="Assign Partner" options={[{ value: "", label: "No partner" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
+        <Select label="Parceiro" options={[{ value: "", label: "Nenhum" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope</label>
-          <textarea value={form.scope} onChange={(e) => update("scope", e.target.value)} rows={2} placeholder="Define the scope of work..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Escopo</label>
+          <textarea value={form.scope} onChange={(e) => update("scope", e.target.value)} rows={2} placeholder="Descreva o escopo do trabalho..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Internal Info</label>
-          <textarea value={form.internal_notes} onChange={(e) => update("internal_notes", e.target.value)} rows={2} placeholder="Internal information only..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Notas internas</label>
+          <textarea value={form.internal_notes} onChange={(e) => update("internal_notes", e.target.value)} rows={2} placeholder="Apenas uso interno..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
         </div>
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit" icon={<Briefcase className="h-3.5 w-3.5" />}>Create Job</Button>
+          <Button variant="outline" onClick={onClose} type="button">Cancelar</Button>
+          <Button type="submit" icon={<Briefcase className="h-3.5 w-3.5" />}>Criar Job</Button>
         </div>
       </form>
     </Modal>
