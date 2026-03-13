@@ -38,12 +38,13 @@ export async function updateQuote(
   input: Partial<Quote>
 ): Promise<Quote> {
   const supabase = getSupabase();
+  const payload = { ...input, updated_at: new Date().toISOString() };
   const { data, error } = await supabase
     .from("quotes")
-    .update(input)
+    .update(payload)
     .eq("id", id)
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw new Error(error.message);
   return data as Quote;
 }

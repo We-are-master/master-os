@@ -1,15 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { requireStripe } from "@/lib/stripe";
-import { createServiceClient } from "@/lib/supabase/service";
+import { requireAuth, isValidUUID } from "@/lib/auth-api";
+
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SERVICE_ROLE_KEY!,
+  );
+}
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const stripe = requireStripe();
-    const supabaseAdmin = createServiceClient();
+    const supabaseAdmin = getSupabaseAdmin();
     const { invoiceId, paymentLinkId } = await req.json();
 
     if (!invoiceId || !paymentLinkId) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+    if (!isValidUUID(invoiceId)) {
+      return NextResponse.json({ error: "Invalid invoiceId" }, { status: 400 });
     }
 
     const sessions = await stripe.checkout.sessions.list({

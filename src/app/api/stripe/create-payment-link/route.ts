@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireStripe } from "@/lib/stripe";
+import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+
   try {
     const stripe = requireStripe();
     const supabaseAdmin = createServiceClient();
@@ -10,6 +14,9 @@ export async function POST(req: NextRequest) {
 
     if (!invoiceId || !amount || !clientName || !reference) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+    if (!isValidUUID(invoiceId)) {
+      return NextResponse.json({ error: "Invalid invoiceId" }, { status: 400 });
     }
 
     const product = await stripe.products.create({

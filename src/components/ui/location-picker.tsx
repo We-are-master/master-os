@@ -212,6 +212,39 @@ export function LocationPicker({
   );
 }
 
+/** Mini map centered on lat/lng (e.g. live partner location) */
+export function LocationMiniMapByCoords({
+  latitude,
+  longitude,
+  className,
+  label,
+}: {
+  latitude: number;
+  longitude: number;
+  className?: string;
+  label?: string;
+}) {
+  const center: [number, number] = [Number(longitude), Number(latitude)];
+  if (!MAPBOX_TOKEN) {
+    return (
+      <div className={`rounded-xl bg-surface-hover p-4 text-center text-sm text-text-tertiary ${className ?? ""}`}>
+        Set NEXT_PUBLIC_MAPBOX_TOKEN to show map. Location: {latitude.toFixed(5)}, {longitude.toFixed(5)}
+      </div>
+    );
+  }
+  return (
+    <div className={className}>
+      <LocationPicker readOnly center={center} value="" onChange={() => {}} mapHeight="200px" />
+      {label && (
+        <div className="flex items-center gap-2 mt-1.5">
+          <MapPin className="h-3 w-3 text-primary shrink-0" />
+          <p className="text-xs text-text-tertiary">{label}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Small static map for read-only location display in drawers */
 export function LocationMiniMap({ address, className }: { address: string; className?: string }) {
   const [coords, setCoords] = useState<[number, number] | null>(null);

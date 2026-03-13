@@ -19,9 +19,10 @@ import type { SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
-  payment_sent: { label: "Payment Sent", variant: "success" },
-  generated: { label: "Generated", variant: "info" },
-  audit_required: { label: "Audit Required", variant: "warning" },
+  awaiting_payment: { label: "Awaiting Payment", variant: "warning" },
+  ready_to_pay: { label: "Ready to Pay", variant: "info" },
+  paid: { label: "Paid", variant: "success" },
+  audit_required: { label: "Audit Required", variant: "danger" },
 };
 
 export default function SelfBillPage() {
@@ -61,8 +62,9 @@ export default function SelfBillPage() {
       totalCommission: all.reduce((s, sb) => s + Number(sb.commission), 0),
       totalJobValue: all.reduce((s, sb) => s + Number(sb.job_value), 0),
       totalMaterials: all.reduce((s, sb) => s + Number(sb.materials), 0),
-      paidCount: all.filter((sb) => sb.status === "payment_sent").length,
-      pendingCount: all.filter((sb) => sb.status === "generated").length,
+      paidCount: all.filter((sb) => sb.status === "paid").length,
+      readyCount: all.filter((sb) => sb.status === "ready_to_pay").length,
+      awaitingCount: all.filter((sb) => sb.status === "awaiting_payment").length,
       auditCount: all.filter((sb) => sb.status === "audit_required").length,
     };
   }, [selfBills]);
@@ -81,8 +83,9 @@ export default function SelfBillPage() {
 
   const tabs = [
     { id: "all", label: "All", count: selfBills.length },
-    { id: "payment_sent", label: "Paid", count: selfBills.filter((sb) => sb.status === "payment_sent").length },
-    { id: "generated", label: "Generated", count: selfBills.filter((sb) => sb.status === "generated").length },
+    { id: "awaiting_payment", label: "Awaiting Payment", count: selfBills.filter((sb) => sb.status === "awaiting_payment").length },
+    { id: "ready_to_pay", label: "Ready to Pay", count: selfBills.filter((sb) => sb.status === "ready_to_pay").length },
+    { id: "paid", label: "Paid", count: selfBills.filter((sb) => sb.status === "paid").length },
     { id: "audit_required", label: "Audit Required", count: selfBills.filter((sb) => sb.status === "audit_required").length },
   ];
 
@@ -139,8 +142,8 @@ export default function SelfBillPage() {
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Total Payouts" value={totals.totalPayouts} format="currency" icon={Wallet} accent="primary" />
           <KpiCard title="Commissions Earned" value={totals.totalCommission} format="currency" icon={DollarSign} accent="emerald" />
-          <KpiCard title="Partners Paid" value={totals.paidCount} format="number" description={`of ${selfBills.length} total`} icon={Users} accent="blue" />
-          <KpiCard title="Pending Bills" value={totals.pendingCount} format="number" description={`${totals.auditCount} require audit`} icon={Clock} accent="amber" />
+          <KpiCard title="Paid" value={totals.paidCount} format="number" description={`of ${selfBills.length} total`} icon={Users} accent="blue" />
+          <KpiCard title="Awaiting / Ready" value={totals.awaitingCount + totals.readyCount} format="number" description={`${totals.auditCount} audit required`} icon={Clock} accent="amber" />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
@@ -166,9 +169,10 @@ export default function SelfBillPage() {
             bulkActions={
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
-                <BulkBtn label="Mark Paid" onClick={() => handleBulkStatusChange("payment_sent")} variant="success" />
-                <BulkBtn label="Require Audit" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
-                <BulkBtn label="Reset to Generated" onClick={() => handleBulkStatusChange("generated")} variant="default" />
+                <BulkBtn label="Ready to Pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="info" />
+                <BulkBtn label="Mark Paid" onClick={() => handleBulkStatusChange("paid")} variant="success" />
+                <BulkBtn label="Audit Required" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
+                <BulkBtn label="Awaiting Payment" onClick={() => handleBulkStatusChange("awaiting_payment")} variant="default" />
               </div>
             }
           />
@@ -201,11 +205,12 @@ export default function SelfBillPage() {
   );
 }
 
-function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "default" }) {
+function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "info" | "default" }) {
   const colors = {
     success: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 border-emerald-200",
     danger: "text-red-700 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 border-red-200",
     warning: "text-amber-700 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 border-amber-200",
+    info: "text-blue-700 bg-blue-50 dark:bg-blue-950/30 hover:bg-blue-100 border-blue-200",
     default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (

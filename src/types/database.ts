@@ -1,6 +1,6 @@
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
-export type JobStatus = "scheduled" | "in_progress_phase1" | "in_progress_phase2" | "in_progress_phase3" | "final_check" | "awaiting_payment" | "completed";
+export type JobStatus = "scheduled" | "in_progress_phase1" | "in_progress_phase2" | "in_progress_phase3" | "final_check" | "awaiting_payment" | "need_attention" | "completed";
 export type JobFinanceStatus = "unpaid" | "partial" | "paid";
 export type PartnerStatus = "active" | "inactive" | "on_break" | "onboarding";
 export type InvoiceStatus = "paid" | "pending" | "overdue" | "cancelled";
@@ -44,11 +44,26 @@ export interface ServiceRequest {
   updated_at: string;
 }
 
+export interface ClientAddress {
+  id: string;
+  client_id: string;
+  label?: string;
+  address: string;
+  city?: string;
+  postcode?: string;
+  country?: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Quote {
   id: string;
   reference: string;
   title: string;
   request_id?: string;
+  client_id?: string;
+  client_address_id?: string;
   client_name: string;
   client_email: string;
   status: QuoteStatus;
@@ -75,6 +90,7 @@ export interface Quote {
   created_at: string;
   updated_at: string;
   expires_at?: string;
+  rejection_reason?: string;
 }
 
 export interface QuoteLineItem {
@@ -92,6 +108,8 @@ export interface Job {
   id: string;
   reference: string;
   title: string;
+  client_id?: string;
+  client_address_id?: string;
   client_name: string;
   property_address: string;
   partner_id?: string;
@@ -154,6 +172,19 @@ export interface Job {
   updated_at: string;
 }
 
+export type JobPaymentType = "partner" | "customer_deposit" | "customer_final";
+
+export interface JobPayment {
+  id: string;
+  job_id: string;
+  type: JobPaymentType;
+  amount: number;
+  payment_date: string;
+  note?: string;
+  created_at: string;
+  created_by?: string;
+}
+
 export interface Partner {
   id: string;
   company_name: string;
@@ -172,6 +203,8 @@ export interface Partner {
   role?: string;
   permission?: string;
   joined_at: string;
+  /** When set, this partner is the app user (jobs.partner_id, location in user_locations) */
+  auth_user_id?: string | null;
 }
 
 export interface Account {
@@ -216,7 +249,7 @@ export interface SelfBill {
   materials: number;
   commission: number;
   net_payout: number;
-  status: "payment_sent" | "generated" | "audit_required";
+  status: "awaiting_payment" | "ready_to_pay" | "paid" | "audit_required";
   created_at: string;
 }
 
@@ -224,8 +257,17 @@ export type ClientType = "residential" | "landlord" | "tenant" | "commercial" | 
 export type ClientSource = "direct" | "referral" | "website" | "partner" | "corporate" | "other";
 export type ClientStatus = "active" | "inactive" | "vip" | "blocked";
 
+/** Account de origem do cliente (ex: Facebook, Housekeep, Website) */
+export interface ClientSourceAccount {
+  id: string;
+  name: string;
+  slug?: string;
+  created_at: string;
+}
+
 export interface Client {
   id: string;
+  source_account_id?: string;
   full_name: string;
   email?: string;
   phone?: string;

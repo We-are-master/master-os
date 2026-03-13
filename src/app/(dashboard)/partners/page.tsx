@@ -20,7 +20,7 @@ import {
   ArrowRight, Mail, Phone, Calendar, DollarSign,
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye,
-  Play, Pause, RotateCcw,
+  Play, Pause, RotateCcw, KeyRound, MailPlus,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
@@ -31,6 +31,15 @@ import { getStatusCounts } from "@/services/base";
 import { getSupabase } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import type { ListParams } from "@/services/base";
+import {
+  getTeamMembers,
+  getProfileById,
+  getJobsByPartnerUserId,
+  getLatestLocation,
+  getPartnerFinancial,
+  type TeamMember,
+} from "@/services/partner-detail";
+import { LocationMiniMapByCoords } from "@/components/ui/location-picker";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
@@ -93,16 +102,32 @@ const emptyForm = {
   trade: "HVAC", location: "", status: "active" as PartnerStatus,
 };
 
+type ViewMode = "directory" | "team";
+
 export default function PartnersPage() {
+  const [viewMode, setViewMode] = useState<ViewMode>("directory");
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
+  const [selectedTeamMember, setSelectedTeamMember] = useState<TeamMember | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [teamLoading, setTeamLoading] = useState(false);
   const { profile } = useProfile();
   const isAdmin = profile?.role === "admin";
+
+  useEffect(() => {
+    if (viewMode === "team") {
+      setTeamLoading(true);
+      getTeamMembers()
+        .then(setTeamMembers)
+        .catch(() => toast.error("Failed to load team"))
+        .finally(() => setTeamLoading(false));
+    }
+  }, [viewMode]);
 
   const fetcher = useCallback(
     (params: ListParams) => listPartners({ ...params, trade: tradeFilter !== "all" ? tradeFilter : undefined }),
@@ -279,17 +304,60 @@ export default function PartnersPage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Partners" subtitle="Manage your partner network and performance.">
-          <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
-          <Button size="sm" icon={<UserPlus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>Add Partner</Button>
+          <div className="flex items-center gap-2">
+            <Tabs
+              tabs={[
+                { id: "directory", label: "Directory" },
+                { id: "team", label: "Team (App)" },
+              ]}
+              activeTab={viewMode}
+              onChange={(id) => { setViewMode(id as ViewMode); setSelectedPartner(null); setSelectedTeamMember(null); }}
+            />
+            <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
+            <Button size="sm" icon={<UserPlus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>Add Partner</Button>
+          </div>
         </PageHeader>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Total Partners" value={totalPartners} format="number" icon={Users} accent="blue" />
           <KpiCard title="Active Partners" value={activeCount} format="number" icon={Briefcase} accent="emerald" />
-          <KpiCard title="Avg Rating" value="-" icon={Star} accent="amber" />
+          <KpiCard title="Team (App)" value={viewMode === "team" ? teamMembers.length : "-"} format="number" icon={Users} accent="primary" />
           <KpiCard title="Compliance Score" value="-" icon={ShieldCheck} accent="primary" />
         </StaggerContainer>
 
+        {viewMode === "team" && (
+          <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-3">
+            {teamLoading && <div className="text-sm text-text-tertiary">Loading team...</div>}
+            {!teamLoading && teamMembers.length === 0 && (
+              <div className="py-12 text-center text-text-tertiary">No app partners with jobs yet.</div>
+            )}
+            {!teamLoading && teamMembers.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {teamMembers.map((member) => (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => setSelectedTeamMember(member)}
+                    className="flex items-center gap-4 p-4 rounded-xl border border-border-light hover:border-primary/30 hover:bg-surface-hover text-left transition-all"
+                  >
+                    <Avatar name={member.full_name} size="lg" src={member.avatar_url} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-text-primary truncate">{member.full_name}</p>
+                      <p className="text-xs text-text-tertiary truncate">{member.email}</p>
+                      <div className="flex items-center gap-3 mt-1.5 text-xs">
+                        <span className="text-text-secondary">{member.jobs_count} jobs</span>
+                        <span className="font-medium text-emerald-600">{formatCurrency(member.total_earnings)}</span>
+                      </div>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-text-tertiary shrink-0" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {viewMode === "directory" && (
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -334,11 +402,13 @@ export default function PartnersPage() {
             }
           />
         </motion.div>
+        )}
       </div>
 
       <PartnerDetailDrawer
         partner={selectedPartner}
-        onClose={() => setSelectedPartner(null)}
+        teamMember={selectedTeamMember}
+        onClose={() => { setSelectedPartner(null); setSelectedTeamMember(null); }}
         onStatusChange={handleStatusChange}
         onVerify={handleVerify}
         onPartnerUpdate={setSelectedPartner}
@@ -450,12 +520,14 @@ const docStatusConfig: Record<string, { label: string; variant: "default" | "suc
 
 function PartnerDetailDrawer({
   partner,
+  teamMember,
   onClose,
   onStatusChange,
   onVerify,
   onPartnerUpdate,
 }: {
   partner: Partner | null;
+  teamMember: TeamMember | null;
   onClose: () => void;
   onStatusChange: (partner: Partner, status: PartnerStatus) => void;
   onVerify: (partner: Partner) => void;
@@ -472,13 +544,43 @@ function PartnerDetailDrawer({
   const [loadingFinance, setLoadingFinance] = useState(false);
   const [newNote, setNewNote] = useState("");
   const { profile } = useProfile();
+  const isAdmin = profile?.role === "admin";
+
+  const isAppUserMode = !!teamMember;
+
+  const [appProfile, setAppProfile] = useState<Awaited<ReturnType<typeof getProfileById>>>(null);
+  const [appJobs, setAppJobs] = useState<Awaited<ReturnType<typeof getJobsByPartnerUserId>>>([]);
+  const [appLocation, setAppLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
+  const [appFinancial, setAppFinancial] = useState<Awaited<ReturnType<typeof getPartnerFinancial>> | null>(null);
+  const [loadingApp, setLoadingApp] = useState(false);
+  const [actionEmail, setActionEmail] = useState("");
+  const [actionSubmitting, setActionSubmitting] = useState(false);
+  const [partnerLocation, setPartnerLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
+
+  useEffect(() => {
+    if (teamMember) {
+      setLoadingApp(true);
+      Promise.all([
+        getProfileById(teamMember.id),
+        getJobsByPartnerUserId(teamMember.id),
+        getLatestLocation(teamMember.id),
+        getPartnerFinancial(teamMember.id),
+      ]).then(([prof, jobs, loc, fin]) => {
+        setAppProfile(prof);
+        setAppJobs(jobs);
+        setAppLocation(loc);
+        setAppFinancial(fin);
+      }).finally(() => setLoadingApp(false));
+    }
+  }, [teamMember?.id]);
 
   const loadAll = useCallback(async (p: Partner) => {
     const supabase = getSupabase();
+    const partnerIdOrUser = p.auth_user_id ?? p.id;
 
     setLoadingJobs(true);
     supabase.from("jobs").select("*")
-      .or(`partner_id.eq.${p.id},partner_name.eq.${p.company_name}`)
+      .or(`partner_id.eq.${partnerIdOrUser},partner_name.eq.${p.company_name}`)
       .order("created_at", { ascending: false })
       .then(({ data }) => { setPartnerJobs((data ?? []) as PartnerJobRow[]); setLoadingJobs(false); }, () => setLoadingJobs(false));
 
@@ -499,6 +601,12 @@ function PartnerDetailDrawer({
       .eq("partner_id", p.id)
       .order("created_at", { ascending: false })
       .then(({ data }) => { setNotes((data ?? []) as PartnerNote[]); setLoadingNotes(false); }, () => setLoadingNotes(false));
+
+    if (p.auth_user_id) {
+      getLatestLocation(p.auth_user_id).then(setPartnerLocation);
+    } else {
+      setPartnerLocation(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -549,6 +657,150 @@ function PartnerDetailDrawer({
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
   };
 
+  if (!partner && !teamMember) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
+
+  if (teamMember) {
+    const appTabs = [
+      { id: "profile", label: "Profile" },
+      { id: "jobs", label: "Jobs", count: appJobs.length },
+      { id: "location", label: "Location" },
+      { id: "financial", label: "Financial" },
+      { id: "actions", label: "Actions" },
+    ];
+    return (
+      <Drawer open={true} onClose={onClose} title={teamMember.full_name} subtitle={teamMember.email} width="w-[620px]">
+        <div className="px-6 pt-3 pb-0 border-b border-border-light">
+          <Tabs tabs={appTabs} activeTab={tab} onChange={setTab} />
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {tab === "profile" && (
+            <div className="p-6 space-y-4">
+              {loadingApp && !appProfile ? <div className="animate-pulse h-24 bg-surface-hover rounded-xl" /> : appProfile && (
+                <>
+                  <div className="flex items-center gap-4">
+                    <Avatar name={appProfile.full_name} size="xl" src={appProfile.avatar_url} />
+                    <div>
+                      <p className="font-semibold text-text-primary">{appProfile.full_name}</p>
+                      <p className="text-sm text-text-tertiary">{appProfile.email}</p>
+                      <Badge variant="default" size="sm">{appProfile.role}</Badge>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="flex items-center gap-2 text-text-secondary"><Mail className="h-4 w-4" />{appProfile.email}</div>
+                    {appProfile.phone && <div className="flex items-center gap-2 text-text-secondary"><Phone className="h-4 w-4" />{appProfile.phone}</div>}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {tab === "jobs" && (
+            <div className="p-6 space-y-4">
+              <p className="text-sm font-semibold text-text-primary">{appJobs.length} jobs</p>
+              {loadingApp ? <div className="space-y-3">{[1,2,3].map((i) => <div key={i} className="animate-pulse h-20 bg-surface-hover rounded-xl" />)}</div> : appJobs.length === 0 ? (
+                <p className="text-sm text-text-tertiary">No jobs</p>
+              ) : appJobs.slice(0, 20).map((job) => {
+                const jConfig = jobStatusConfig[job.status] ?? { label: job.status, variant: "default" as const };
+                return (
+                  <div key={job.id} className="p-4 rounded-xl border border-border-light">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-text-primary">{job.reference}</span>
+                      <Badge variant={jConfig.variant} size="sm">{jConfig.label}</Badge>
+                    </div>
+                    <p className="text-xs text-text-tertiary mt-0.5">{job.title} — {job.client_name}</p>
+                    <p className="text-xs text-emerald-600 mt-1">{formatCurrency(Number(job.partner_cost))}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {tab === "location" && (
+            <div className="p-6 space-y-4">
+              <p className="text-sm font-semibold text-text-primary">Live location (from app)</p>
+              {loadingApp && !appLocation ? <div className="animate-pulse h-48 bg-surface-hover rounded-xl" /> : appLocation ? (
+                <>
+                  <LocationMiniMapByCoords
+                    latitude={Number(appLocation.latitude)}
+                    longitude={Number(appLocation.longitude)}
+                    label={`Last update: ${new Date(appLocation.created_at).toLocaleString()}`}
+                  />
+                </>
+              ) : <p className="text-sm text-text-tertiary">No recent location</p>}
+            </div>
+          )}
+          {tab === "financial" && appFinancial && (
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="p-3 rounded-xl bg-surface-hover">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase">Earned (jobs)</p>
+                  <p className="text-lg font-bold text-text-primary mt-1">{formatCurrency(appFinancial.total_earned)}</p>
+                </div>
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100">
+                  <p className="text-[10px] font-semibold text-emerald-700 uppercase">Paid</p>
+                  <p className="text-lg font-bold text-emerald-700 mt-1">{formatCurrency(appFinancial.total_paid)}</p>
+                </div>
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-100">
+                  <p className="text-[10px] font-semibold text-amber-700 uppercase">Pending</p>
+                  <p className="text-lg font-bold text-amber-700 mt-1">{formatCurrency(appFinancial.pending_payout)}</p>
+                </div>
+              </div>
+              <p className="text-xs text-text-tertiary">{appFinancial.jobs_count} jobs, {appFinancial.completed_count} completed · {appFinancial.self_bills_count} self-bills</p>
+            </div>
+          )}
+          {tab === "actions" && isAdmin && (
+            <div className="p-6 space-y-5">
+              <p className="text-sm font-semibold text-text-primary">Admin actions</p>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Change email</label>
+                  <div className="flex gap-2">
+                    <Input value={actionEmail} onChange={(e) => setActionEmail(e.target.value)} placeholder="New email" type="email" className="flex-1" />
+                    <Button size="sm" disabled={actionSubmitting || !actionEmail.trim()} onClick={async () => {
+                      setActionSubmitting(true);
+                      try {
+                        const res = await fetch("/api/admin/partner/update-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: teamMember.id, newEmail: actionEmail.trim() }) });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || "Failed");
+                        toast.success("Email updated");
+                        setActionEmail("");
+                      } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                    }}>Update</Button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Reset password</label>
+                  <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
+                    setActionSubmitting(true);
+                    try {
+                      const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: teamMember.id }) });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || "Failed");
+                      toast.success(data.reset_link ? "Link generated" : data.message);
+                      if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
+                    } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                  }}>Generate reset link</Button>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Send email</label>
+                  <Button size="sm" variant="outline" icon={<MailPlus className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
+                    setActionSubmitting(true);
+                    try {
+                      const res = await fetch("/api/admin/partner/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: teamMember.id }) });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || "Failed");
+                      if (data.mailto) window.location.href = data.mailto;
+                      else toast.success("Email: " + data.email);
+                    } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                  }}>Open mail client</Button>
+                </div>
+              </div>
+            </div>
+          )}
+          {tab === "actions" && !isAdmin && <div className="p-6 text-sm text-text-tertiary">Admin only</div>}
+        </div>
+      </Drawer>
+    );
+  }
+
   if (!partner) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
   const config = statusConfig[partner.status];
@@ -559,14 +811,16 @@ function PartnerDetailDrawer({
   const activeJobs = partnerJobs.filter((j) => j.status === "in_progress").length;
   const realEarnings = partnerJobs.reduce((s, j) => s + Number(j.partner_cost || 0), 0);
   const totalJobValue = partnerJobs.reduce((s, j) => s + Number(j.client_price || 0), 0);
-  const totalPaidOut = selfBills.filter((s) => s.status === "payment_sent").reduce((s, sb) => s + Number(sb.net_payout), 0);
-  const pendingPayout = selfBills.filter((s) => s.status === "generated").reduce((s, sb) => s + Number(sb.net_payout), 0);
+  const totalPaidOut = selfBills.filter((s) => s.status === "paid").reduce((s, sb) => s + Number(sb.net_payout), 0);
+  const pendingPayout = selfBills.filter((s) => s.status === "awaiting_payment" || s.status === "ready_to_pay").reduce((s, sb) => s + Number(sb.net_payout), 0);
 
   const drawerTabs = [
     { id: "overview", label: "Overview" },
     { id: "internal", label: "Internal" },
     { id: "jobs", label: "Jobs", count: realJobsCount },
+    ...(partner.auth_user_id ? [{ id: "location" as const, label: "Location" }] : []),
     { id: "financial", label: "Financial", count: selfBills.length },
+    ...(partner.auth_user_id ? [{ id: "actions" as const, label: "Actions" }] : []),
     { id: "documents", label: "Documents", count: documents.length },
     { id: "notes", label: "Notes", count: notes.length },
   ];
@@ -780,8 +1034,8 @@ function PartnerDetailDrawer({
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-bold text-text-primary">{sb.reference}</p>
-                    <Badge variant={sb.status === "payment_sent" ? "success" : sb.status === "audit_required" ? "danger" : "warning"} size="sm" dot>
-                      {sb.status === "payment_sent" ? "Paid" : sb.status === "audit_required" ? "Audit Required" : "Pending"}
+                    <Badge variant={sb.status === "paid" ? "success" : sb.status === "audit_required" ? "danger" : sb.status === "ready_to_pay" ? "info" : "warning"} size="sm" dot>
+                      {sb.status === "paid" ? "Paid" : sb.status === "audit_required" ? "Audit Required" : sb.status === "ready_to_pay" ? "Ready to Pay" : "Awaiting Payment"}
                     </Badge>
                   </div>
                   <span className="text-xs text-text-tertiary">{sb.period}</span>
@@ -806,6 +1060,71 @@ function PartnerDetailDrawer({
                 </div>
               </motion.div>
             ))}
+          </div>
+        )}
+
+        {/* ========== LOCATION (directory partner with app user link) ========== */}
+        {tab === "location" && partner.auth_user_id && (
+          <div className="p-6 space-y-4">
+            <p className="text-sm font-semibold text-text-primary">Live location (from app)</p>
+            {partnerLocation ? (
+              <LocationMiniMapByCoords
+                latitude={Number(partnerLocation.latitude)}
+                longitude={Number(partnerLocation.longitude)}
+                label={`Last update: ${new Date(partnerLocation.created_at).toLocaleString()}`}
+              />
+            ) : <p className="text-sm text-text-tertiary">No recent location</p>}
+          </div>
+        )}
+
+        {/* ========== ACTIONS (directory partner with app user link) ========== */}
+        {tab === "actions" && partner.auth_user_id && isAdmin && (
+          <div className="p-6 space-y-5">
+            <p className="text-sm font-semibold text-text-primary">Admin actions</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Change email</label>
+                <div className="flex gap-2">
+                  <Input value={actionEmail} onChange={(e) => setActionEmail(e.target.value)} placeholder="New email" type="email" className="flex-1" />
+                  <Button size="sm" disabled={actionSubmitting || !actionEmail.trim()} onClick={async () => {
+                    setActionSubmitting(true);
+                    try {
+                      const res = await fetch("/api/admin/partner/update-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id, newEmail: actionEmail.trim() }) });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || "Failed");
+                      toast.success("Email updated");
+                      setActionEmail("");
+                    } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                  }}>Update</Button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Reset password</label>
+                <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
+                  setActionSubmitting(true);
+                  try {
+                    const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || "Failed");
+                    toast.success(data.reset_link ? "Link generated" : data.message);
+                    if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
+                  } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                }}>Generate reset link</Button>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">Send email</label>
+                <Button size="sm" variant="outline" icon={<MailPlus className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
+                  setActionSubmitting(true);
+                  try {
+                    const res = await fetch("/api/admin/partner/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || "Failed");
+                    if (data.mailto) window.location.href = data.mailto;
+                    else toast.success("Email: " + data.email);
+                  } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                }}>Open mail client</Button>
+              </div>
+            </div>
           </div>
         )}
 

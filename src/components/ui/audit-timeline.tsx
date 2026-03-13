@@ -52,6 +52,7 @@ const fieldLabels: Record<string, string> = {
   ai_confidence: "AI Confidence",
   stripe_payment_status: "Stripe Status",
   margin_percent: "Margin %",
+  quote_figures: "Quote figures",
 };
 
 function formatFieldName(field: string): string {

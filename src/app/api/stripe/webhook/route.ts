@@ -36,6 +36,18 @@ export async function POST(req: NextRequest) {
         status: "paid",
         paid_date: new Date().toISOString().split("T")[0],
       }).eq("id", invoiceId);
+
+      // Mark job deposit as paid when this invoice is the job's deposit invoice
+      const { data: jobs } = await supabaseAdmin
+        .from("jobs")
+        .select("id")
+        .eq("invoice_id", invoiceId);
+      if (jobs?.length) {
+        await supabaseAdmin
+          .from("jobs")
+          .update({ customer_deposit_paid: true })
+          .eq("id", jobs[0].id);
+      }
     }
   }
 
