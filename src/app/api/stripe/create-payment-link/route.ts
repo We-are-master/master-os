@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const stripe = requireStripe();
-    const supabaseAdmin = getSupabaseAdmin();
+    const supabaseAdmin = createServiceClient();
     const { invoiceId, amount, clientName, reference, customerEmail } = await req.json();
 
     if (!invoiceId || !amount || !clientName || !reference) {
