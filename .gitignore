@@ -13,6 +13,9 @@
 # testing
 /coverage
 
+# supabase temp
+supabase/.temp/
+
 # next.js
 /.next/
 /out/

@@ -1,3 +1,5 @@
+import type { UserPermissionOverride } from "@/types/admin-config";
+
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
 export type JobStatus = "scheduled" | "in_progress_phase1" | "in_progress_phase2" | "in_progress_phase3" | "final_check" | "awaiting_payment" | "need_attention" | "completed";
@@ -17,6 +19,8 @@ export interface Profile {
   phone?: string;
   is_active: boolean;
   last_login_at?: string;
+  /** Per-user permission overrides. Absent key = inherit from role. */
+  custom_permissions?: UserPermissionOverride | null;
   created_at: string;
   updated_at: string;
 }

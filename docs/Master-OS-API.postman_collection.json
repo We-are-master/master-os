@@ -1,0 +1,180 @@
+{
+  "info": {
+    "name": "Master OS — API",
+    "description": "Collection com todas as APIs do Master OS.\n\n**Autenticação:** A maioria das rotas exige sessão Supabase (cookie). A exceção é o webhook do Stripe (usa assinatura HMAC).\n\n**Variáveis:** Use `baseUrl` para dev (http://localhost:3000) ou prod.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "quoteId", "value": "" },
+    { "key": "invoiceId", "value": "" },
+    { "key": "paymentLinkId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Quotes",
+      "item": [
+        {
+          "name": "Send PDF (POST) — Enviar orçamento por e-mail",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quoteId\": \"{{quoteId}}\",\n  \"recipientEmail\": \"cliente@exemplo.com\",\n  \"recipientName\": \"Nome do Cliente\",\n  \"notes\": \"Notas opcionais\",\n  \"items\": [\n    {\n      \"description\": \"Serviço de instalação\",\n      \"quantity\": 2,\n      \"unitPrice\": 150.00,\n      \"total\": 300.00\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/quotes/send-pdf",
+            "description": "Gera PDF do orçamento, envia por e-mail (Resend) e atualiza status para \"sent\"."
+          }
+        },
+        {
+          "name": "Send PDF (GET) — Download PDF",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/quotes/send-pdf?quoteId={{quoteId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "quotes", "send-pdf"],
+              "query": [{ "key": "quoteId", "value": "{{quoteId}}" }]
+            },
+            "description": "Retorna o PDF do orçamento como binário (Content-Type: application/pdf)."
+          }
+        },
+        {
+          "name": "Email Preview",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/quotes/email-preview?quoteId={{quoteId}}&recipientName=Nome&customMessage=Mensagem",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "quotes", "email-preview"],
+              "query": [
+                { "key": "quoteId", "value": "{{quoteId}}" },
+                { "key": "recipientName", "value": "Nome", "disabled": true },
+                { "key": "customMessage", "value": "Mensagem", "disabled": true }
+              ]
+            },
+            "description": "Retorna o HTML do e-mail que será enviado (preview no dashboard)."
+          }
+        },
+        {
+          "name": "Preview Links",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/quotes/preview-links?quoteId={{quoteId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "quotes", "preview-links"],
+              "query": [{ "key": "quoteId", "value": "{{quoteId}}" }]
+            },
+            "description": "Retorna as URLs de Aceitar e Rejeitar que serão enviadas ao cliente."
+          }
+        },
+        {
+          "name": "Respond (Accept/Reject)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"<token do link de e-mail>\",\n  \"action\": \"accept\",\n  \"rejectionReason\": \"\"\n}"
+            },
+            "url": "{{baseUrl}}/api/quotes/respond",
+            "description": "Público: cliente aceita ou rejeita orçamento via link do e-mail. action: \"accept\" | \"reject\". Em accept com depósito, cria job, fatura e link Stripe."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stripe — Pagamentos",
+      "item": [
+        {
+          "name": "Create Payment Link",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invoiceId\": \"{{invoiceId}}\",\n  \"amount\": 150.00,\n  \"clientName\": \"Nome do Cliente\",\n  \"reference\": \"INV-2026-101\",\n  \"customerEmail\": \"cliente@exemplo.com\"\n}"
+            },
+            "url": "{{baseUrl}}/api/stripe/create-payment-link",
+            "description": "Cria Produto + Preço + PaymentLink no Stripe e persiste a URL em invoices.stripe_payment_link_url."
+          }
+        },
+        {
+          "name": "Check Status",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invoiceId\": \"{{invoiceId}}\",\n  \"paymentLinkId\": \"{{paymentLinkId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/stripe/check-status",
+            "description": "Consulta Checkout Sessions do Stripe e atualiza status da fatura no Supabase."
+          }
+        },
+        {
+          "name": "Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "stripe-signature", "value": "t=...,v1=...", "description": "Assinatura HMAC do Stripe" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/api/stripe/webhook",
+            "description": "Recebe eventos do Stripe. Não usa sessão — validação por STRIPE_WEBHOOK_SECRET. Eventos: checkout.session.completed, payment_intent.succeeded, payment_intent.payment_failed."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin — Partner",
+      "item": [
+        {
+          "name": "Update Partner Email",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"<uuid do usuário>\",\n  \"newEmail\": \"novo@email.com\"\n}"
+            },
+            "url": "{{baseUrl}}/api/admin/partner/update-email",
+            "description": "Atualiza o e-mail do parceiro no Auth e em profiles. Apenas admin."
+          }
+        },
+        {
+          "name": "Reset Partner Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"<uuid do usuário>\"\n}"
+            },
+            "url": "{{baseUrl}}/api/admin/partner/reset-password",
+            "description": "Gera link de recuperação de senha (Supabase envia e-mail). Retorna reset_link. Apenas admin."
+          }
+        },
+        {
+          "name": "Send Email (mailto)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"<uuid do usuário>\",\n  \"subject\": \"Assunto\",\n  \"body\": \"Corpo do e-mail\"\n}"
+            },
+            "url": "{{baseUrl}}/api/admin/partner/send-email",
+            "description": "Retorna e-mail do parceiro e link mailto (para abrir cliente de e-mail). Apenas admin."
+          }
+        }
+      ]
+    }
+  ]
+}
