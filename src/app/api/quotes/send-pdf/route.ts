@@ -3,10 +3,10 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { Resend } from "resend";
 import React from "react";
 import { QuotePDF, type QuotePDFData, type CompanyBranding } from "@/lib/pdf/quote-template";
-import { createClient } from "@supabase/supabase-js";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createQuoteResponseToken } from "@/lib/quote-response-token";
 import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
+import { createServiceClient } from "@/lib/supabase/service";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 

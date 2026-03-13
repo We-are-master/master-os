@@ -54,6 +54,10 @@ function QuoteRespondContent() {
         setError(data.error ?? "Something went wrong");
         return;
       }
+      if (data.paymentLinkUrl) {
+        window.location.href = data.paymentLinkUrl;
+        return;
+      }
       setResult({ success: true, message: data.message ?? (action === "accept" ? "Quote accepted." : "Quote declined.") });
     } catch {
       setError("Network error. Please try again.");
