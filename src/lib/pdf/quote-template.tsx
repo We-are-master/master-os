@@ -20,6 +20,9 @@ export interface QuotePDFData {
   ownerName?: string;
   items?: QuoteLineItem[];
   notes?: string;
+  /** Shown in email for accept/reject so client sees full quote. */
+  depositRequired?: number;
+  scope?: string;
 }
 
 export interface QuoteLineItem {

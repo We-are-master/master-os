@@ -93,6 +93,8 @@ export async function POST(req: NextRequest) {
       ownerName: quote.owner_name ?? undefined,
       items: lineItemsForPdf,
       notes: notes ?? settings?.quote_footer_notes ?? undefined,
+      depositRequired: Number(quote.deposit_required ?? 0) || undefined,
+      scope: typeof quote.scope === "string" && quote.scope.trim() ? quote.scope.trim() : undefined,
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,9 +1,81 @@
-import type { QuotePDFData, CompanyBranding } from "@/lib/pdf/quote-template";
+import type { QuotePDFData, CompanyBranding, QuoteLineItem } from "@/lib/pdf/quote-template";
 
 export interface QuoteEmailOptions {
   acceptUrl?: string;
   rejectUrl?: string;
   customMessage?: string;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/** Line items table + deposit + scope + notes for the email so the client can review the quote in detail. */
+function buildQuoteDetailsSection(data: QuotePDFData, color: string): string {
+  const items: QuoteLineItem[] =
+    data.items?.length ? data.items : [{ description: data.title || "Services", quantity: 1, unitPrice: data.totalValue, total: data.totalValue }];
+  const hasDeposit = (data.depositRequired ?? 0) > 0;
+  const hasScope = typeof data.scope === "string" && data.scope.trim().length > 0;
+  const hasNotes = typeof data.notes === "string" && data.notes.trim().length > 0;
+  if (items.length === 0 && !hasDeposit && !hasScope && !hasNotes) return "";
+
+  const rows = items
+    .map(
+      (row) =>
+        `<tr>
+          <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;color:#1C1917;">${escapeHtml(row.description)}</td>
+          <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;color:#57534E;text-align:center;">${row.quantity}</td>
+          <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;color:#57534E;text-align:right;">£${Number(row.unitPrice).toLocaleString("en-GB", { minimumFractionDigits: 2 })}</td>
+          <td style="padding:12px 16px;border-bottom:1px solid #E7E5E4;font-size:13px;font-weight:600;color:#1C1917;text-align:right;">£${Number(row.total).toLocaleString("en-GB", { minimumFractionDigits: 2 })}</td>
+        </tr>`,
+    )
+    .join("");
+
+  const depositBlock = hasDeposit
+    ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;border:1px solid #E7E5E4;border-radius:8px;overflow:hidden;">
+        <tr style="background:#FFFBEB;"><td style="padding:12px 16px;font-size:13px;color:#92400E;">
+          <strong>Deposit required:</strong> £${Number(data.depositRequired).toLocaleString("en-GB", { minimumFractionDigits: 2 })} (payable on acceptance)
+        </td></tr>
+      </table>`
+    : "";
+
+  const scopeBlock = hasScope
+    ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;border:1px solid #E7E5E4;border-radius:8px;overflow:hidden;">
+        <tr style="background:#FAFAF9;"><td style="padding:12px 16px;">
+          <p style="margin:0 0 4px;font-size:11px;color:#78716C;text-transform:uppercase;letter-spacing:0.5px;">Scope of work</p>
+          <p style="margin:0;font-size:13px;color:#1C1917;line-height:1.5;white-space:pre-wrap;">${escapeHtml(data.scope!.trim())}</p>
+        </td></tr>
+      </table>`
+    : "";
+
+  const notesBlock = hasNotes
+    ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;border:1px solid #E7E5E4;border-left:3px solid ${color};border-radius:8px;overflow:hidden;">
+        <tr><td style="padding:12px 16px;background:#FFFBEB;">
+          <p style="margin:0 0 4px;font-size:11px;color:#92400E;text-transform:uppercase;letter-spacing:0.5px;">Notes</p>
+          <p style="margin:0;font-size:13px;color:#57534E;line-height:1.5;white-space:pre-wrap;">${escapeHtml(data.notes!.trim())}</p>
+        </td></tr>
+      </table>`
+    : "";
+
+  return `
+      <p style="margin:0 0 8px;font-size:12px;color:#78716C;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Quote details</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E7E5E4;border-radius:8px;overflow:hidden;margin-bottom:16px;">
+        <tr style="background:#1C1917;">
+          <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;">Description</td>
+          <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;text-align:center;width:60px;">Qty</td>
+          <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;text-align:right;width:80px;">Unit price</td>
+          <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#fff;text-transform:uppercase;text-align:right;width:90px;">Total</td>
+        </tr>
+        ${rows}
+      </table>
+      ${depositBlock}
+      ${scopeBlock}
+      ${notesBlock}`;
 }
 
 /**
@@ -79,8 +151,9 @@ export function buildQuoteEmailHTML(
           </td>
         </tr>
       </table>
+      ${buildQuoteDetailsSection(data, color)}
       <p style="margin:0 0 16px;font-size:14px;color:#57534E;line-height:1.6;">
-        The full breakdown is attached as a PDF.
+        A PDF copy of this quote is also attached.
       </p>
       ${buttons}
     </td></tr>
@@ -91,13 +164,4 @@ export function buildQuoteEmailHTML(
   </table>
 </body>
 </html>`;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }

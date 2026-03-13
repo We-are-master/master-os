@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireStripe } from "@/lib/stripe";
 import { createClient } from "@supabase/supabase-js";
+import { requireStripe } from "@/lib/stripe";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 
 function getSupabaseAdmin() {
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const stripe = requireStripe();
-    const supabaseAdmin = createServiceClient();
+    const supabaseAdmin = getSupabaseAdmin();
     const { invoiceId, paymentLinkId } = await req.json();
 
     if (!invoiceId || !paymentLinkId) {

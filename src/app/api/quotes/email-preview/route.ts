@@ -40,6 +40,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Quote not found" }, { status: 404 });
     }
 
+    const { data: lineItemRows } = await supabase
+      .from("quote_line_items")
+      .select("description, quantity, unit_price")
+      .eq("quote_id", quoteId)
+      .order("sort_order", { ascending: true });
+    const items =
+      lineItemRows?.map((r: { description: string; quantity: number; unit_price: number }) => ({
+        description: r.description,
+        quantity: Number(r.quantity) || 1,
+        unitPrice: Number(r.unit_price) || 0,
+        total: (Number(r.quantity) || 1) * (Number(r.unit_price) || 0),
+      })) ?? undefined;
+
     const { data: settings } = await supabase
       .from("company_settings")
       .select("*")
@@ -76,6 +89,10 @@ export async function GET(req: NextRequest) {
       createdAt: quote.created_at,
       expiresAt: quote.expires_at ?? undefined,
       ownerName: quote.owner_name ?? undefined,
+      items,
+      notes: settings?.quote_footer_notes ?? undefined,
+      depositRequired: Number(quote.deposit_required ?? 0) || undefined,
+      scope: typeof quote.scope === "string" && quote.scope.trim() ? quote.scope.trim() : undefined,
     };
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
