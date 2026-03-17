@@ -596,8 +596,8 @@ export default function RequestsPage() {
         onClose={() => setInvitePartnerOpen(null)}
         onDone={async (req, partnerIds, sendMethod, clientAddress) => {
           try {
-            if (!clientAddress?.client_id || !clientAddress?.property_address) {
-              toast.error("Please select a client and property address");
+            if (!clientAddress?.client_id || !clientAddress?.property_address?.trim()) {
+              toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
             }
             const quote = await createQuote({
@@ -646,8 +646,8 @@ export default function RequestsPage() {
         onClose={() => setManualQuoteOpen(null)}
         onDone={async (req, lineItems, clientAddress) => {
           try {
-            if (!clientAddress?.client_id || !clientAddress?.property_address) {
-              toast.error("Please select a client and property address");
+            if (!clientAddress?.client_id || !clientAddress?.property_address?.trim()) {
+              toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
             }
             const total = lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
@@ -707,8 +707,8 @@ export default function RequestsPage() {
         onConvert={async (data) => {
           if (!convertToJobOpen) return;
           try {
-            if (!data.client_id || !data.property_address) {
-              toast.error("Please select a client and property address");
+            if (!data.client_id || !data.property_address?.trim()) {
+              toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
             }
             const clientPrice = data.client_price ?? 0;
@@ -966,8 +966,8 @@ function ManualQuoteModal({
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
             onClick={() => {
-              if (!clientAddress.client_id || !clientAddress.property_address) {
-                toast.error("Please select the client and property address");
+              if (!clientAddress.client_id || !clientAddress.property_address?.trim()) {
+                toast.error("Select a client from the list (click the name) and choose or add a property address.");
                 return;
               }
               const items = lineItems.map((li) => {
@@ -1015,8 +1015,8 @@ function ConvertToJobModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clientAddress.client_id || !clientAddress.property_address) {
-      toast.error("Please select a client and property address");
+    if (!clientAddress.client_id || !clientAddress.property_address?.trim()) {
+      toast.error("Select a client from the list (click the name) and choose or add a property address.");
       return;
     }
     onConvert({
