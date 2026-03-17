@@ -113,14 +113,18 @@ export function ClientAddressPicker({
     if (!value.client_id) {
       setSelectedClient(null);
       setAddresses([]);
-      if (value.client_name) setClientSearch(value.client_name);
+      if (value.client_name) {
+        setClientSearch(value.client_name);
+        setClientDropdownOpen(true);
+        loadClientResults(value.client_name);
+      }
       return;
     }
     getClient(value.client_id).then((c) => {
       setSelectedClient(c ?? null);
       if (c) setClientSearch(c.full_name);
     });
-  }, [value.client_id, value.client_name]);
+  }, [value.client_id, value.client_name, loadClientResults]);
 
   useEffect(() => {
     if (!selectedClient?.id) {
@@ -133,6 +137,13 @@ export function ClientAddressPicker({
       .catch(() => setAddresses([]))
       .finally(() => setAddressLoading(false));
   }, [selectedClient?.id]);
+
+  useEffect(() => {
+    if (selectedClient && !addressLoading && addresses.length === 0 && value.property_address?.trim()) {
+      setAddingNewAddress(true);
+      setNewAddressRaw(value.property_address.trim());
+    }
+  }, [selectedClient, addressLoading, addresses.length, value.property_address]);
 
   const selectAddress = useCallback(
     (addr: ClientAddress) => {
@@ -332,6 +343,10 @@ export function ClientAddressPicker({
                   <p className="text-xs font-medium text-text-secondary mb-2">New address</p>
                   <AddressAutocomplete
                     value={newAddressRaw}
+                    onChange={(val) => {
+                      setNewAddressRaw(val);
+                      if (val.trim()) onChange({ ...value, property_address: val.trim() });
+                    }}
                     onSelect={(parts) => {
                       setNewAddressRaw(parts.full_address);
                       handleNewAddressSelect(parts);

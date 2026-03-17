@@ -19,6 +19,8 @@ export interface AddressParts {
 interface AddressAutocompleteProps {
   value?: string;
   onSelect: (parts: AddressParts) => void;
+  /** Called when the user types (so parent can sync e.g. property_address for validation) */
+  onChange?: (value: string) => void;
   placeholder?: string;
   className?: string;
   country?: string;
@@ -56,6 +58,7 @@ function extractParts(feature: GeoFeature): AddressParts {
 export function AddressAutocomplete({
   value = "",
   onSelect,
+  onChange,
   placeholder = "Start typing an address or postcode...",
   className = "",
   country = "gb",
@@ -111,6 +114,7 @@ export function AddressAutocomplete({
 
   const handleChange = (val: string) => {
     setQuery(val);
+    onChange?.(val);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => search(val), 300);
   };

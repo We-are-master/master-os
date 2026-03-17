@@ -323,7 +323,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Job title is required"); return; }
-    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
+    if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
     const scheduled_date = form.scheduled_date || undefined;
     const scheduled_start_at = form.scheduled_date && form.scheduled_time ? `${form.scheduled_date}T${form.scheduled_time}:00` : form.scheduled_date ? `${form.scheduled_date}T09:00:00` : undefined;
     onCreate({
