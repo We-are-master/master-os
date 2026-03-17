@@ -24,7 +24,9 @@ import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { getSupabase } from "@/services/base";
-import type { Profile } from "@/types/database";
+import { listCommissionTiers, listCommissionPoolShares, updateCommissionTier, updateCommissionPoolShare, getCurrentMonthRevenue } from "@/services/tiers";
+import { formatCurrency } from "@/lib/utils";
+import type { Profile, CommissionTier, CommissionPoolShare } from "@/types/database";
 import type { NavGroup } from "@/lib/constants";
 import type { PermissionKey, RoleKey, PermissionsByRole, UserPermissionOverride } from "@/types/admin-config";
 import { saveUserPermissions, resolvePermission } from "@/services/admin-config";
@@ -32,6 +34,7 @@ import { saveUserPermissions, resolvePermission } from "@/services/admin-config"
 const settingsTabs = [
   { id: "profile", label: "My Profile" },
   { id: "team", label: "Team Members" },
+  { id: "tiers", label: "Commission Tiers" },
   { id: "navigation", label: "Navigation" },
   { id: "permissions", label: "Roles & Permissions" },
   { id: "system", label: "System" },
@@ -65,6 +68,7 @@ export default function SettingsPage() {
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "team" && isAdmin && <TeamTab />}
+          {activeTab === "tiers" && isAdmin && <TiersTab />}
           {activeTab === "navigation" && isAdmin && <NavigationTab />}
           {activeTab === "permissions" && isAdmin && <PermissionsTab />}
           {activeTab === "system" && isAdmin && <SystemTab />}
@@ -513,13 +517,13 @@ function TeamTab() {
 
 const ALL_PERMISSIONS: PermissionKey[] = [
   "dashboard", "requests", "quotes", "jobs", "partners",
-  "accounts", "finance", "settings", "manage_team", "manage_roles",
+  "accounts", "finance", "team", "settings", "manage_team", "manage_roles",
   "delete_data", "export_data",
 ];
 
 const PERMISSION_GROUPS: { label: string; keys: PermissionKey[] }[] = [
   { label: "Operations", keys: ["dashboard", "requests", "quotes", "jobs"] },
-  { label: "Network & Finance", keys: ["partners", "accounts", "finance"] },
+  { label: "Network & Finance", keys: ["partners", "accounts", "finance", "team"] },
   { label: "Administration", keys: ["settings", "manage_team", "manage_roles", "delete_data", "export_data"] },
 ];
 
@@ -725,6 +729,206 @@ function UserPermissionsModal({
   );
 }
 
+function TiersTab() {
+  const [tiers, setTiers] = useState<CommissionTier[]>([]);
+  const [poolShares, setPoolShares] = useState<CommissionPoolShare[]>([]);
+  const [revenue, setRevenue] = useState<number>(0);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [t, p, r] = await Promise.all([
+        listCommissionTiers(),
+        listCommissionPoolShares(),
+        getCurrentMonthRevenue(),
+      ]);
+      setTiers(t);
+      setPoolShares(p);
+      setRevenue(r);
+    } catch {
+      toast.error("Failed to load tiers");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleSaveTier = async (id: string, breakeven_amount: number, rate_percent: number) => {
+    setSavingId(id);
+    try {
+      await updateCommissionTier(id, { breakeven_amount, rate_percent });
+      setTiers((prev) => prev.map((x) => (x.id === id ? { ...x, breakeven_amount, rate_percent } : x)));
+      toast.success("Tier updated");
+    } catch {
+      toast.error("Failed to update tier");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleSavePool = async (id: string, share_percent: number) => {
+    setSavingId(id);
+    try {
+      await updateCommissionPoolShare(id, { share_percent });
+      setPoolShares((prev) => prev.map((x) => (x.id === id ? { ...x, share_percent } : x)));
+      toast.success("Pool share updated");
+    } catch {
+      toast.error("Failed to update pool share");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const roleLabel: Record<string, string> = { head_ops: "Head Ops", am: "Account Managers", biz_dev: "Biz Dev" };
+  const currentTier = tiers.slice().sort((a, b) => b.breakeven_amount - a.breakeven_amount).find((t) => revenue >= t.breakeven_amount) ?? tiers[0];
+
+  if (loading && tiers.length === 0) {
+    return (
+      <div className="p-8 text-center text-text-tertiary">
+        <Cog className="h-8 w-8 animate-spin mx-auto mb-2" />
+        Loading tiers...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold text-text-primary">Commission Tiers</h3>
+        <p className="text-sm text-text-tertiary">Breakeven and rates per tier. Used by Run Commission in Payroll.</p>
+      </div>
+
+      <Card padding="md">
+        <h4 className="text-sm font-semibold text-text-primary mb-2">Current month revenue vs tiers</h4>
+        <p className="text-2xl font-bold text-primary">{formatCurrency(revenue)}</p>
+        <p className="text-xs text-text-tertiary mt-1">
+          Current tier: Tier {currentTier?.tier_number ?? "-"} ({currentTier?.rate_percent ?? 0}% on excess above {formatCurrency(currentTier?.breakeven_amount ?? 0)})
+        </p>
+      </Card>
+
+      <Card padding="md">
+        <h4 className="text-sm font-semibold text-text-primary mb-3">Tier structure</h4>
+        <div className="space-y-2">
+          {tiers.map((t) => (
+            <TierRow
+              key={t.id}
+              tier={t}
+              onSave={handleSaveTier}
+              saving={savingId === t.id}
+            />
+          ))}
+        </div>
+      </Card>
+
+      <Card padding="md">
+        <h4 className="text-sm font-semibold text-text-primary mb-3">Pool distribution</h4>
+        <p className="text-xs text-text-tertiary mb-3">Share of commission pool by role (must total 100%).</p>
+        <div className="space-y-2">
+          {poolShares.map((p) => (
+            <PoolRow
+              key={p.id}
+              share={p}
+              label={roleLabel[p.role] ?? p.role}
+              onSave={handleSavePool}
+              saving={savingId === p.id}
+            />
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function TierRow({
+  tier,
+  onSave,
+  saving,
+}: {
+  tier: CommissionTier;
+  onSave: (id: string, breakeven_amount: number, rate_percent: number) => void;
+  saving: boolean;
+}) {
+  const [breakeven, setBreakeven] = useState(String(tier.breakeven_amount));
+  const [rate, setRate] = useState(String(tier.rate_percent));
+
+  useEffect(() => {
+    setBreakeven(String(tier.breakeven_amount));
+    setRate(String(tier.rate_percent));
+  }, [tier.id, tier.breakeven_amount, tier.rate_percent]);
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg bg-surface-hover">
+      <span className="text-sm font-medium text-text-primary w-20">Tier {tier.tier_number}</span>
+      <Input
+        type="number"
+        value={breakeven}
+        onChange={(e) => setBreakeven(e.target.value)}
+        placeholder="Breakeven"
+        className="w-28"
+      />
+      <Input
+        type="number"
+        value={rate}
+        onChange={(e) => setRate(e.target.value)}
+        placeholder="Rate %"
+        className="w-20"
+      />
+      <Button
+        size="sm"
+        disabled={saving}
+        icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+        onClick={() => onSave(tier.id, parseFloat(breakeven) || 0, parseFloat(rate) || 0)}
+      >
+        Save
+      </Button>
+    </div>
+  );
+}
+
+function PoolRow({
+  share,
+  label,
+  onSave,
+  saving,
+}: {
+  share: CommissionPoolShare;
+  label: string;
+  onSave: (id: string, share_percent: number) => void;
+  saving: boolean;
+}) {
+  const [val, setVal] = useState(String(share.share_percent));
+
+  useEffect(() => {
+    setVal(String(share.share_percent));
+  }, [share.id, share.share_percent]);
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg bg-surface-hover">
+      <span className="text-sm font-medium text-text-primary w-32">{label}</span>
+      <Input
+        type="number"
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        placeholder="%"
+        className="w-20"
+      />
+      <Button
+        size="sm"
+        disabled={saving}
+        icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+        onClick={() => onSave(share.id, parseFloat(val) || 0)}
+      >
+        Save
+      </Button>
+    </div>
+  );
+}
+
 function NavigationTab() {
   const { navigation, setNavigation, loading, canEditConfig } = useAdminConfig();
   const [localNav, setLocalNav] = useState<NavGroup[]>([]);
@@ -789,7 +993,7 @@ function NavigationTab() {
   };
 
   const permissionOptions = [
-    "dashboard", "requests", "quotes", "jobs", "partners", "accounts", "finance", "settings",
+    "dashboard", "requests", "quotes", "jobs", "partners", "accounts", "finance", "team", "settings",
   ];
 
   if (loading && localNav.length === 0) {
@@ -935,6 +1139,7 @@ const permissionLabels: Record<string, string> = {
   partners: "Partners",
   accounts: "Accounts",
   finance: "Finance",
+  team: "Team",
   settings: "System Settings",
   manage_team: "Manage Team",
   manage_roles: "Manage Roles",
@@ -963,7 +1168,17 @@ function PermissionsTab() {
     if (!canEditConfig) return;
     setSaving(true);
     try {
-      await setPermissions(localPerms);
+      const full: PermissionsByRole = {
+        admin: {} as Record<PermissionKey, boolean>,
+        manager: {} as Record<PermissionKey, boolean>,
+        operator: {} as Record<PermissionKey, boolean>,
+      };
+      for (const role of roles) {
+        for (const key of ALL_PERMISSIONS) {
+          full[role][key] = localPerms[role]?.[key] ?? false;
+        }
+      }
+      await setPermissions(full);
       toast.success("Permissions saved. Menu visibility and access are governed by these settings.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save");
@@ -1006,7 +1221,7 @@ function PermissionsTab() {
                 </div>
 
                 <div className="space-y-1.5 mt-4">
-                  {(Object.keys(perms) as PermissionKey[]).map((key) => {
+                  {ALL_PERMISSIONS.map((key) => {
                     const enabled = perms[key];
                     return (
                       <div

@@ -16,6 +16,7 @@ import {
   GitBranch,
   Building2,
   Users,
+  UsersRound,
   Building,
   Receipt,
   Wallet,
@@ -23,6 +24,9 @@ import {
   ChevronLeft,
   Layers,
   UserCircle,
+  CircleDollarSign,
+  FileCheck,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -35,17 +39,61 @@ const iconMap: Record<string, LucideIcon> = {
   "git-branch": GitBranch,
   "building-2": Building2,
   users: Users,
+  "users-2": UsersRound,
   building: Building,
   receipt: Receipt,
   wallet: Wallet,
+  "file-check": FileCheck,
+  "calendar-clock": CalendarClock,
   settings: Settings,
   "user-circle": UserCircle,
+  "circle-dollar-sign": CircleDollarSign,
+};
+
+/** Logos (SVG inline para herdar currentColor) para Clients, Partners, Accounts */
+function LogoClients({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20c0-3.314 3.582-6 8-6s8 2.686 8 6" />
+    </svg>
+  );
+}
+function LogoPartners({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+function LogoAccounts({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8" />
+      <path d="M12 17v4" />
+    </svg>
+  );
+}
+
+const navLogoComponents: Record<string, (props: { className?: string }) => React.ReactElement> = {
+  "/clients": LogoClients,
+  "/partners": LogoPartners,
+  "/accounts": LogoAccounts,
 };
 
 function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const pathname = usePathname();
   const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
   const Icon = iconMap[item.icon] || LayoutGrid;
+  const LogoComponent = navLogoComponents[item.href];
+  const iconClassName = cn(
+    "h-[18px] w-[18px] shrink-0 transition-colors",
+    isActive ? "text-primary" : "text-sidebar-text-muted group-hover:text-stone-300"
+  );
 
   return (
     <Link href={item.href}>
@@ -67,12 +115,11 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
           />
         )}
-        <Icon
-          className={cn(
-            "h-[18px] w-[18px] shrink-0 transition-colors",
-            isActive ? "text-primary" : "text-sidebar-text-muted group-hover:text-stone-300"
-          )}
-        />
+        {LogoComponent ? (
+          <LogoComponent className={iconClassName} />
+        ) : (
+          <Icon className={iconClassName} />
+        )}
         <AnimatePresence>
           {!collapsed && (
             <motion.span

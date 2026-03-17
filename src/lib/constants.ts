@@ -51,8 +51,12 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { label: "Invoices", href: "/finance/invoices", icon: "receipt" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet" },
+      { label: "Bills", href: "/finance/bills", icon: "file-check" },
+      { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign" },
+      { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock" },
     ],
   },
+  { label: "Team", items: [{ label: "Team", href: "/team", icon: "users-2" }] },
   {
     label: "Admin",
     items: [

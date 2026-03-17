@@ -1,5 +1,6 @@
 import type { UserPermissionOverride } from "@/types/admin-config";
 
+export type RequestSource = "whatsapp" | "checkatrade" | "meta" | "website" | "b2b" | "manual";
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
 export type JobStatus = "scheduled" | "in_progress_phase1" | "in_progress_phase2" | "in_progress_phase3" | "final_check" | "awaiting_payment" | "need_attention" | "completed";
@@ -32,9 +33,11 @@ export interface ServiceRequest {
   client_email: string;
   client_phone?: string;
   property_address: string;
+  postcode?: string;
   service_type: string;
   description: string;
   status: RequestStatus;
+  source?: RequestSource;
   priority: "low" | "medium" | "high" | "urgent";
   owner_id?: string;
   owner_name?: string;
@@ -255,6 +258,160 @@ export interface SelfBill {
   net_payout: number;
   status: "awaiting_payment" | "ready_to_pay" | "paid" | "audit_required";
   created_at: string;
+}
+
+/** Custos internos (payroll, despesas operacionais pontuais) */
+export type InternalCostStatus = "pending" | "paid";
+export interface InternalCost {
+  id: string;
+  reference?: string;
+  description: string;
+  amount: number;
+  category?: string;
+  due_date?: string;
+  status: InternalCostStatus;
+  paid_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Bills recorrentes (rent, software, utilities, etc.) */
+export type RecurringBillFrequency = "monthly" | "quarterly" | "yearly";
+export type RecurringBillStatus = "active" | "paused";
+export interface RecurringBill {
+  id: string;
+  name: string;
+  description?: string;
+  amount: number;
+  frequency: RecurringBillFrequency;
+  next_due_date: string;
+  category?: string;
+  status: RecurringBillStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Internal squad (London, Midlands, North) for routing and payroll */
+export interface Squad {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type TeamMemberRole = "am" | "ops_coord" | "biz_dev" | "head_ops" | "ceo" | "it";
+export type TeamMemberStatus = "active" | "inactive";
+
+export interface TeamMember {
+  id: string;
+  profile_id?: string;
+  full_name: string;
+  email?: string;
+  phone?: string;
+  role: TeamMemberRole;
+  squad_id?: string;
+  squad_name?: string;
+  base_salary?: number;
+  start_date?: string;
+  status: TeamMemberStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Commission tier (e.g. Tier 1 <£35k 0%, Tier 2 £35k–£40k 10%) */
+export interface CommissionTier {
+  id: string;
+  tier_number: number;
+  breakeven_amount: number;
+  rate_percent: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Pool share by role: Head Ops 40%, AM 40%, Biz Dev 20% */
+export interface CommissionPoolShare {
+  id: string;
+  role: "head_ops" | "am" | "biz_dev";
+  share_percent: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Unified company bills: recurring + one-off, workflow Submitted → Approved → Paid/Rejected */
+export type BillStatus = "submitted" | "approved" | "paid" | "rejected";
+export type BillRecurrence = "monthly" | "quarterly" | "yearly";
+
+export interface Bill {
+  id: string;
+  description: string;
+  category?: string;
+  amount: number;
+  due_date: string;
+  is_recurring: boolean;
+  recurrence_interval?: BillRecurrence;
+  submitted_by_id?: string;
+  submitted_by_name?: string;
+  status: BillStatus;
+  receipt_url?: string;
+  paid_at?: string;
+  created_at: string;
+  updated_at: string;
+  parent_bill_id?: string;
+}
+
+/** Commission run: period, tier calc, manager approves → feeds Pay Run */
+export type CommissionRunStatus = "draft" | "approved";
+
+export interface CommissionRun {
+  id: string;
+  period_start: string;
+  period_end: string;
+  status: CommissionRunStatus;
+  approved_at?: string;
+  approved_by_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommissionRunItem {
+  id: string;
+  commission_run_id: string;
+  team_member_id: string;
+  team_member_name?: string;
+  base_salary?: number;
+  commission_amount: number;
+  tier_detail?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Pay run: weekly hub, aggregates payroll + self_bills + bills */
+export type PayRunStatus = "open" | "closed";
+
+export interface PayRun {
+  id: string;
+  week_start: string;
+  week_end: string;
+  status: PayRunStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PayRunItemType = "payroll" | "self_bill" | "bill";
+
+export interface PayRunItem {
+  id: string;
+  pay_run_id: string;
+  item_type: PayRunItemType;
+  source_id: string;
+  amount: number;
+  due_date?: string;
+  status: "pending" | "paid";
+  paid_at?: string;
+  created_at: string;
+  /** Display: description or partner/bill name */
+  source_label?: string;
 }
 
 export type ClientType = "residential" | "landlord" | "tenant" | "commercial" | "other";
