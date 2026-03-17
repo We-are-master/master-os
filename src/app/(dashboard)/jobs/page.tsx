@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -10,9 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
-import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
-import { Progress } from "@/components/ui/progress";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
@@ -22,7 +20,7 @@ import {
   ArrowRight, Briefcase, DollarSign, Clock,
   MapPin, Building2, TrendingUp,
   Play, Pause, CheckCircle2, RotateCcw,
-  FileText, CreditCard, AlertTriangle, Upload, ShieldCheck, XCircle,
+  CreditCard, AlertTriangle, ShieldCheck, XCircle,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
@@ -30,14 +28,12 @@ import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts } from "@/services/base";
-import { listJobPayments, createJobPayment } from "@/services/job-payments";
 import { useProfile } from "@/hooks/use-profile";
-import type { Job, JobPayment, JobPaymentType } from "@/types/database";
+import type { Job } from "@/types/database";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
-import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 
 const JOB_STATUSES = ["scheduled", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
@@ -55,6 +51,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 
 function JobsPageContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh } = useSupabaseList<Job>({ fetcher: listJobs });
   const { profile } = useProfile();
   const [viewMode, setViewMode] = useState("list");
@@ -63,7 +60,6 @@ function JobsPageContent() {
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterPartner, setFilterPartner] = useState<"all" | "with" | "without">("all");
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
 
@@ -94,7 +90,7 @@ function JobsPageContent() {
   }, [filteredData]);
 
   const jobIdFromUrl = searchParams.get("jobId");
-  useEffect(() => { if (jobIdFromUrl) getJob(jobIdFromUrl).then((job) => { if (job) setSelectedJob(job); }); }, [jobIdFromUrl]);
+  useEffect(() => { if (jobIdFromUrl) router.replace(`/jobs/${jobIdFromUrl}`); }, [jobIdFromUrl, router]);
 
   const loadCounts = useCallback(async () => {
     try { const counts = await getStatusCounts("jobs", [...JOB_STATUSES]); setTabCounts(counts); } catch { /* cosmetic */ }
@@ -145,8 +141,9 @@ function JobsPageContent() {
       await logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
       toast.success("Job created"); refresh(); loadCounts();
+      router.push(`/jobs/${result.id}`);
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed to create job"); }
-  }, [refresh, loadCounts, profile?.id, profile?.full_name]);
+  }, [refresh, loadCounts, profile?.id, profile?.full_name, router]);
 
   const handleStatusChange = useCallback(async (job: Job, newStatus: Job["status"]) => {
     const check = canAdvanceJob(job, newStatus);
@@ -168,7 +165,6 @@ function JobsPageContent() {
       }
       const updated = await updateJob(job.id, { status: newStatus, ...(selfBillId ? { self_bill_id: selfBillId } : {}) });
       await logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "status_changed", fieldName: "status", oldValue: job.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
-      setSelectedJob(updated);
       toast.success(selfBillId ? `Self-bill created. Job moved to ${statusConfig[newStatus]?.label ?? newStatus}` : `Job moved to ${statusConfig[newStatus]?.label ?? newStatus}`);
       refresh(); loadCounts();
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
@@ -176,8 +172,7 @@ function JobsPageContent() {
 
   const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>) => {
     try {
-      const updated = await updateJob(jobId, updates);
-      setSelectedJob(updated);
+      await updateJob(jobId, updates);
       toast.success("Job updated"); refresh(); loadCounts();
     } catch { toast.error("Failed to update"); }
   }, [refresh, loadCounts]);
@@ -245,14 +240,13 @@ function JobsPageContent() {
               <SearchInput placeholder="Search jobs..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           </div>
-          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} selectedId={selectedJob?.id} onRowClick={setSelectedJob} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /></div>} />}
-          {viewMode === "kanban" && <div className="min-h-[400px]">{loading ? <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div> : <KanbanBoard columns={kanbanColumns} getCardId={(j) => j.id} onCardClick={setSelectedJob} renderCard={(j) => (<div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors"><p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p><p className="text-xs text-text-tertiary truncate">{j.title}</p><p className="text-[11px] text-text-secondary mt-1">{j.client_name}</p><p className="text-xs font-medium text-primary mt-1">{formatCurrency(j.client_price)}</p></div>)} />}</div>}
-          {viewMode === "calendar" && <JobsCalendarView jobs={filteredData} loading={loading} onSelectJob={setSelectedJob} />}
-          {viewMode === "map" && <JobsMapView jobs={filteredData} loading={loading} onSelectJob={setSelectedJob} />}
+          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /></div>} />}
+          {viewMode === "kanban" && <div className="min-h-[400px]">{loading ? <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div> : <KanbanBoard columns={kanbanColumns} getCardId={(j) => j.id} onCardClick={(j) => router.push(`/jobs/${j.id}`)} renderCard={(j) => (<div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors cursor-pointer"><p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p><p className="text-xs text-text-tertiary truncate">{j.title}</p><p className="text-[11px] text-text-secondary mt-1">{j.client_name}</p><p className="text-xs font-medium text-primary mt-1">{formatCurrency(j.client_price)}</p></div>)} />}</div>}
+          {viewMode === "calendar" && <JobsCalendarView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
+          {viewMode === "map" && <JobsMapView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
         </motion.div>
       </div>
 
-      <JobDetailDrawer job={selectedJob} onClose={() => setSelectedJob(null)} onStatusChange={handleStatusChange} onJobUpdate={handleJobUpdate} />
       <CreateJobModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
     </PageTransition>
   );
@@ -260,455 +254,6 @@ function JobsPageContent() {
 
 export default function JobsPage() {
   return <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-tertiary">Loading...</div>}><JobsPageContent /></Suspense>;
-}
-
-/* ========== JOB DETAIL DRAWER ========== */
-function JobDetailDrawer({ job, onClose, onStatusChange, onJobUpdate }: {
-  job: Job | null; onClose: () => void;
-  onStatusChange: (job: Job, status: Job["status"]) => void;
-  onJobUpdate: (jobId: string, updates: Partial<Job>) => void;
-}) {
-  const [tab, setTab] = useState("details");
-  const [scheduleDate, setScheduleDate] = useState("");
-  const [scheduleTime, setScheduleTime] = useState("");
-  const [partnerPayments, setPartnerPayments] = useState<JobPayment[]>([]);
-  const [customerPayments, setCustomerPayments] = useState<JobPayment[]>([]);
-  const [loadingPayments, setLoadingPayments] = useState(false);
-  const [addPaymentOpen, setAddPaymentOpen] = useState(false);
-  const [addPaymentType, setAddPaymentType] = useState<JobPaymentType>("partner");
-  const [addPaymentAmount, setAddPaymentAmount] = useState("");
-  const [addPaymentDate, setAddPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [addPaymentNote, setAddPaymentNote] = useState("");
-  const [addingPayment, setAddingPayment] = useState(false);
-
-  const loadPayments = useCallback(async (jobId: string) => {
-    setLoadingPayments(true);
-    try {
-      const [partner, customer] = await Promise.all([
-        listJobPayments(jobId, "partner"),
-        listJobPayments(jobId),
-      ]);
-      setPartnerPayments(partner);
-      setCustomerPayments(customer.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"));
-    } catch {
-      toast.error("Failed to load payments");
-    } finally {
-      setLoadingPayments(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (job?.id && tab === "finance") loadPayments(job.id);
-  }, [job?.id, tab, loadPayments]);
-
-  const handleAddPayment = useCallback(async () => {
-    if (!job || !addPaymentAmount || Number(addPaymentAmount) <= 0) return;
-    setAddingPayment(true);
-    try {
-      await createJobPayment({
-        job_id: job.id,
-        type: addPaymentType,
-        amount: Number(addPaymentAmount),
-        payment_date: addPaymentDate,
-        note: addPaymentNote.trim() || undefined,
-      });
-      toast.success("Payment registered");
-      setAddPaymentOpen(false);
-      setAddPaymentAmount("");
-      setAddPaymentDate(new Date().toISOString().slice(0, 10));
-      setAddPaymentNote("");
-      loadPayments(job.id);
-    } catch {
-      toast.error("Failed to register payment");
-    } finally {
-      setAddingPayment(false);
-    }
-  }, [job, addPaymentAmount, addPaymentDate, addPaymentNote, addPaymentType, loadPayments]);
-
-  useEffect(() => {
-    if (job?.scheduled_start_at) {
-      const d = new Date(job.scheduled_start_at);
-      setScheduleDate(d.toISOString().slice(0, 10));
-      setScheduleTime(d.toTimeString().slice(0, 5));
-    } else if (job?.scheduled_date) {
-      setScheduleDate(job.scheduled_date); setScheduleTime("");
-    } else { setScheduleDate(""); setScheduleTime(""); }
-  }, [job?.id, job?.scheduled_start_at, job?.scheduled_date]);
-
-  useEffect(() => { setTab("details"); }, [job?.id]);
-
-  if (!job) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
-
-  const config = statusConfig[job.status] ?? { label: job.status, variant: "default" as const };
-  const profit = job.client_price - job.partner_cost - job.materials_cost;
-  const statusActions = getStatusActions(job.status);
-
-  const handleScheduleChange = (date: string, time: string) => {
-    const scheduled_date = date || undefined;
-    const scheduled_start_at = date && time ? `${date}T${time}:00` : date ? `${date}T09:00:00` : undefined;
-    onJobUpdate(job.id, { scheduled_start_at, scheduled_date } as Partial<Job>);
-  };
-
-  const drawerTabs = [
-    { id: "details", label: "Details" },
-    { id: "reports", label: "Reports" },
-    { id: "finance", label: "Finance" },
-    { id: "timeline", label: "Timeline" },
-    { id: "history", label: "History" },
-  ];
-
-  return (
-    <Drawer open={!!job} onClose={onClose} title={job.reference} subtitle={job.title} width="w-[580px]">
-      <div className="flex flex-col h-full">
-        <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} className="px-6 pt-2" />
-
-        {/* DETAILS TAB */}
-        {tab === "details" && (
-          <div className="p-6 space-y-6 flex-1 overflow-auto">
-            {/* Mini Dashboard */}
-            <div className="grid grid-cols-4 gap-2">
-              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-center">
-                <p className="text-[9px] font-semibold text-emerald-700 uppercase">Revenue</p>
-                <p className="text-sm font-bold text-emerald-700">{formatCurrency(job.client_price)}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 text-center">
-                <p className="text-[9px] font-semibold text-red-700 uppercase">Cost</p>
-                <p className="text-sm font-bold text-red-700">{formatCurrency(job.partner_cost + job.materials_cost)}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 text-center">
-                <p className="text-[9px] font-semibold text-blue-700 uppercase">Profit</p>
-                <p className={`text-sm font-bold ${profit >= 0 ? "text-blue-700" : "text-red-600"}`}>{formatCurrency(profit)}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-center">
-                <p className="text-[9px] font-semibold text-amber-700 uppercase">Margin</p>
-                <p className={`text-sm font-bold ${job.margin_percent >= 20 ? "text-amber-700" : "text-red-600"}`}>{job.margin_percent}%</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-surface-hover">
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Status</label>
-                <div className="mt-1.5"><Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge></div>
-              </div>
-              <div className="p-3 rounded-xl bg-surface-hover">
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Progress</label>
-                <div className="mt-1.5">
-                  <span className="text-lg font-bold text-text-primary">{job.progress}%</span>
-                  <Progress value={job.progress} size="md" color={job.progress === 100 ? "emerald" : "primary"} className="mt-1.5" />
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
-              <div className="flex items-center gap-3 mt-2">
-                <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center"><Building2 className="h-5 w-5 text-blue-600" /></div>
-                <p className="text-sm font-semibold text-text-primary">{job.client_name}</p>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Property</label>
-              <div className="flex items-start gap-2 mt-1.5">
-                <MapPin className="h-4 w-4 text-text-tertiary mt-0.5 shrink-0" />
-                <p className="text-sm text-text-primary">{job.property_address}</p>
-              </div>
-              <LocationMiniMap address={job.property_address} className="mt-2" />
-            </div>
-
-            {job.scope && (
-              <div className="p-3 rounded-xl bg-surface-hover">
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope</label>
-                <p className="text-sm text-text-primary mt-1">{job.scope}</p>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-surface-hover">
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner</label>
-                {job.partner_name ? (
-                  <div className="flex items-center gap-2 mt-2"><Avatar name={job.partner_name} size="sm" /><p className="text-sm font-semibold text-text-primary">{job.partner_name}</p></div>
-                ) : <p className="text-sm text-text-tertiary italic mt-2">Unassigned</p>}
-              </div>
-              <div className="p-3 rounded-xl bg-surface-hover">
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Owner</label>
-                {job.owner_name ? (
-                  <div className="flex items-center gap-2 mt-2"><Avatar name={job.owner_name} size="sm" /><p className="text-sm font-semibold text-text-primary">{job.owner_name}</p></div>
-                ) : <p className="text-sm text-text-tertiary italic mt-2">No owner</p>}
-              </div>
-            </div>
-
-            {/* Scheduled */}
-            <div className="p-3 rounded-xl bg-surface-hover">
-              <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scheduled</label>
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <div><label className="block text-[10px] text-text-tertiary mb-0.5">Date</label><Input type="date" value={scheduleDate} onChange={(e) => { setScheduleDate(e.target.value); handleScheduleChange(e.target.value, scheduleTime); }} className="text-xs" /></div>
-                <div><label className="block text-[10px] text-text-tertiary mb-0.5">Time</label><Input type="time" value={scheduleTime} onChange={(e) => { setScheduleTime(e.target.value); handleScheduleChange(scheduleDate, e.target.value); }} className="text-xs" /></div>
-              </div>
-            </div>
-
-            {/* Status Actions */}
-            <div className="flex gap-2 pt-4 border-t border-border-light">
-              {statusActions.map((action) => (
-                <Button key={action.status} variant={action.primary ? "primary" : "outline"} className="flex-1" size="sm" icon={<action.icon className="h-3.5 w-3.5" />} onClick={() => onStatusChange(job, action.status as Job["status"])}>
-                  {action.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* REPORTS TAB — 3 Report Stages */}
-        {tab === "reports" && (
-          <div className="p-6 space-y-4 flex-1 overflow-auto">
-            <p className="text-sm font-semibold text-text-primary">Job Report Stages</p>
-            <p className="text-xs text-text-tertiary">Partner uploads reports. Reports must be approved before partner payment is released.</p>
-
-            {[1, 2, 3].map((n) => {
-              const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
-              const approved = job[`report_${n}_approved` as keyof Job] as boolean;
-              const uploadedAt = job[`report_${n}_uploaded_at` as keyof Job] as string | undefined;
-              const approvedAt = job[`report_${n}_approved_at` as keyof Job] as string | undefined;
-              const phaseLabel = n === 1 ? "Report 1 — Start & Complete" : n === 2 ? "Report 2 — 50% Done" : "Final Report — Work Finished";
-
-              return (
-                <div key={n} className={`p-4 rounded-xl border ${approved ? "border-emerald-200 bg-emerald-50/50" : uploaded ? "border-amber-200 bg-amber-50/50" : "border-border bg-surface-hover"}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      {approved ? <ShieldCheck className="h-4 w-4 text-emerald-600" /> : uploaded ? <Upload className="h-4 w-4 text-amber-600" /> : <FileText className="h-4 w-4 text-text-tertiary" />}
-                      <p className="text-sm font-semibold text-text-primary">{phaseLabel}</p>
-                    </div>
-                    <Badge variant={approved ? "success" : uploaded ? "warning" : "default"} size="sm">
-                      {approved ? "Approved" : uploaded ? "Pending Approval" : "Not uploaded"}
-                    </Badge>
-                  </div>
-                  {uploadedAt && <p className="text-xs text-text-tertiary">Uploaded: {new Date(uploadedAt).toLocaleDateString()}</p>}
-                  {approvedAt && <p className="text-xs text-emerald-600">Approved: {new Date(approvedAt).toLocaleDateString()}</p>}
-
-                  <div className="flex gap-2 mt-3">
-                    {!uploaded && (
-                      <Button size="sm" variant="outline" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => {
-                        onJobUpdate(job.id, { [`report_${n}_uploaded`]: true, [`report_${n}_uploaded_at`]: new Date().toISOString() } as Partial<Job>);
-                      }}>Mark as Uploaded</Button>
-                    )}
-                    {uploaded && !approved && (
-                      <Button size="sm" variant="primary" icon={<ShieldCheck className="h-3.5 w-3.5" />} onClick={() => {
-                        onJobUpdate(job.id, { [`report_${n}_approved`]: true, [`report_${n}_approved_at`]: new Date().toISOString() } as Partial<Job>);
-                      }}>Approve Report</Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Send final report to customer */}
-            {job.report_3_uploaded && job.report_3_approved && (
-              <div className="p-4 rounded-xl bg-primary/5 border border-primary/10">
-                <p className="text-sm font-semibold text-text-primary">All reports approved</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Final report can be sent to the customer + request final payment.</p>
-                <Button size="sm" className="mt-3" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => {
-                  onJobUpdate(job.id, { report_submitted: true, report_submitted_at: new Date().toISOString() } as Partial<Job>);
-                  onStatusChange(job, "awaiting_payment");
-                }}>Send Report & Request Final Payment</Button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* FINANCE TAB */}
-        {tab === "finance" && (
-          <div className="p-6 space-y-6 flex-1 overflow-auto">
-            {/* Partner Payments — total due, list, remaining, add payment */}
-            <div>
-              <p className="text-sm font-semibold text-text-primary mb-3">Partner payments</p>
-              <p className="text-xs text-text-tertiary mb-2">Register payments with any value; remaining balance is shown below.</p>
-              <JobPaymentBlock
-                totalDue={(job.partner_agreed_value ?? job.partner_cost) || 0}
-                payments={partnerPayments}
-                loading={loadingPayments}
-                onAddPayment={() => { setAddPaymentType("partner"); setAddPaymentOpen(true); }}
-              />
-            </div>
-
-            {/* Customer Payments — total due, list, remaining, add payment */}
-            <div>
-              <p className="text-sm font-semibold text-text-primary mb-3">Customer payments</p>
-              <p className="text-xs text-text-tertiary mb-2">Expected from client: deposit + final. Register each payment and see what&apos;s left.</p>
-              <JobPaymentBlock
-                totalDue={(job.customer_deposit ?? 0) + (job.customer_final_payment ?? 0)}
-                payments={customerPayments}
-                loading={loadingPayments}
-                onAddPayment={() => { setAddPaymentType("customer_deposit"); setAddPaymentOpen(true); }}
-              />
-            </div>
-
-            {/* Finance Summary */}
-            <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-3">Finance Summary</p>
-              <div className="space-y-2">
-                <div className="flex justify-between"><span className="text-sm text-text-secondary">Revenue (Client)</span><span className="text-sm font-semibold">{formatCurrency(job.client_price)}</span></div>
-                <div className="flex justify-between"><span className="text-sm text-text-secondary">Partner Cost</span><span className="text-sm font-medium text-red-600">-{formatCurrency(job.partner_cost)}</span></div>
-                <div className="flex justify-between"><span className="text-sm text-text-secondary">Materials</span><span className="text-sm font-medium text-red-600">-{formatCurrency(job.materials_cost)}</span></div>
-                <div className="border-t border-border pt-2 mt-2">
-                  <div className="flex justify-between"><span className="text-sm font-semibold">Profit</span><span className={`text-lg font-bold ${profit >= 0 ? "text-emerald-600" : "text-red-600"}`}>{formatCurrency(profit)}</span></div>
-                  <div className="flex justify-between mt-1"><span className="text-xs text-text-tertiary">Margin</span><span className={`text-xs font-semibold ${job.margin_percent >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{job.margin_percent}%</span></div>
-                </div>
-              </div>
-            </div>
-
-            {/* When fully paid → auto generate self bill + invoice */}
-            {job.customer_final_paid && (
-              <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200">
-                <div className="flex items-center gap-2 mb-2"><CheckCircle2 className="h-4 w-4 text-emerald-600" /><p className="text-sm font-medium text-emerald-700">Job fully paid — Done</p></div>
-                <p className="text-xs text-emerald-600">Self Bill (partner) and Invoice (customer) should be generated automatically.</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TIMELINE TAB */}
-        {tab === "timeline" && (
-          <div className="p-6 space-y-4 flex-1 overflow-auto">
-            <p className="text-sm font-semibold text-text-primary">Job Timeline</p>
-            <div className="space-y-3">
-              <TimelineItem label="Created" date={job.created_at} active />
-              {job.scheduled_date && <TimelineItem label="Scheduled" date={job.scheduled_date} active />}
-              {["in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Phase 1 Started" date={job.updated_at} active />}
-              {["in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Phase 2" date={job.updated_at} active />}
-              {["in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Phase 3" date={job.updated_at} active />}
-              {["final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Final Check" date={job.updated_at} active />}
-              {job.report_submitted && <TimelineItem label="Report Sent to Customer" date={job.report_submitted_at ?? job.updated_at} active />}
-              {["awaiting_payment", "need_attention", "completed"].includes(job.status) && <TimelineItem label="Awaiting Payment" date={job.updated_at} active />}
-              {["need_attention", "completed"].includes(job.status) && <TimelineItem label="Partner completed (app)" date={job.completed_date ?? job.updated_at} active />}
-              {job.status === "need_attention" && <TimelineItem label="Need attention — validate in OS" date={job.updated_at} active />}
-              {job.status === "completed" && <TimelineItem label="Completed / Paid" date={job.completed_date ?? job.updated_at} active />}
-            </div>
-          </div>
-        )}
-
-        {/* HISTORY TAB */}
-        {tab === "history" && (
-          <div className="p-6"><AuditTimeline entityType="job" entityId={job.id} /></div>
-        )}
-
-        {/* Add payment modal — mounted whenever drawer is open */}
-        <Modal open={addPaymentOpen} onClose={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); }} title="Register payment">
-          <div className="space-y-4">
-            {(addPaymentType === "customer_deposit" || addPaymentType === "customer_final") && (
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
-                <Select
-                  value={addPaymentType}
-                  onChange={(e) => setAddPaymentType(e.target.value as JobPaymentType)}
-                  options={[
-                    { value: "customer_deposit", label: "Deposit" },
-                    { value: "customer_final", label: "Final payment" },
-                  ]}
-                />
-              </div>
-            )}
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
-              <Input type="number" min={0} step="0.01" placeholder="0.00" value={addPaymentAmount} onChange={(e) => setAddPaymentAmount(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Date</label>
-              <Input type="date" value={addPaymentDate} onChange={(e) => setAddPaymentDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Note (optional)</label>
-              <input
-                type="text"
-                placeholder="e.g. Bank transfer ref"
-                value={addPaymentNote}
-                onChange={(e) => setAddPaymentNote(e.target.value)}
-                className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
-              />
-            </div>
-            <div className="flex gap-2 justify-end pt-2">
-              <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); }}>Cancel</Button>
-              <Button size="sm" loading={addingPayment} disabled={!addPaymentAmount || Number(addPaymentAmount) <= 0} onClick={handleAddPayment}>Register</Button>
-            </div>
-          </div>
-        </Modal>
-      </div>
-    </Drawer>
-  );
-}
-
-function JobPaymentBlock({
-  totalDue,
-  payments,
-  loading,
-  onAddPayment,
-}: {
-  totalDue: number;
-  payments: JobPayment[];
-  loading: boolean;
-  onAddPayment: () => void;
-}) {
-  const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
-  const remaining = Math.max(0, totalDue - totalPaid);
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-4">
-          <div>
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total due</p>
-            <p className="text-lg font-bold text-text-primary">{formatCurrency(totalDue)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Paid</p>
-            <p className="text-lg font-bold text-emerald-600">{formatCurrency(totalPaid)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Remaining</p>
-            <p className={`text-lg font-bold ${remaining > 0 ? "text-amber-600" : "text-text-primary"}`}>
-              {formatCurrency(remaining)}
-            </p>
-          </div>
-        </div>
-        <Button size="sm" variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={onAddPayment}>
-          Register payment
-        </Button>
-      </div>
-      {loading ? (
-        <div className="p-4 rounded-xl border border-border-light bg-surface-hover animate-pulse">Loading payments…</div>
-      ) : payments.length > 0 ? (
-        <div className="rounded-xl border border-border-light overflow-hidden">
-          <div className="bg-surface-tertiary/50 px-3 py-2 flex items-center gap-2 text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
-            <span className="w-24">Date</span>
-            <span className="flex-1">Amount</span>
-            <span className="flex-1">Note</span>
-          </div>
-          {payments.map((p) => (
-            <div key={p.id} className="px-3 py-2.5 flex items-center gap-2 border-t border-border-light text-sm">
-              <span className="w-24 text-text-secondary">{new Date(p.payment_date).toLocaleDateString()}</span>
-              <span className="flex-1 font-semibold text-text-primary">{formatCurrency(p.amount)}</span>
-              <span className="flex-1 text-text-tertiary truncate">{p.note || "—"}</span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="p-4 rounded-xl border border-border-light bg-surface-hover text-sm text-text-tertiary">
-          No payments registered yet. Use &quot;Register payment&quot; to add one.
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TimelineItem({ label, date, active }: { label: string; date: string; active: boolean }) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className={`mt-1 h-3 w-3 rounded-full border-2 ${active ? "border-primary bg-primary" : "border-border bg-card"}`} />
-      <div>
-        <p className={`text-sm font-medium ${active ? "text-text-primary" : "text-text-tertiary"}`}>{label}</p>
-        <p className="text-[11px] text-text-tertiary">{new Date(date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</p>
-      </div>
-    </div>
-  );
 }
 
 /** 7 statuses with blocks: Ready to Book → Scheduled (partner+date); In Progress → Final Check (≥1 report); Final Check → Awaiting Payment (report approved). */
