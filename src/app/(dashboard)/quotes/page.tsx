@@ -192,10 +192,11 @@ export default function QuotesPage() {
   };
 
   const handleConfirmCreateJob = useCallback(
-    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string }) => {
+    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean }) => {
       if (!quoteToConvert) return;
       try {
         const margin = formData.client_price > 0 ? Math.round(((formData.client_price - formData.partner_cost - formData.materials_cost) / formData.client_price) * 1000) / 10 : 0;
+        const noDeposit = !!formData.createWithoutDeposit;
         const job = await createJob({
           title: formData.title,
           client_id: formData.client_id,
@@ -225,8 +226,8 @@ export default function QuotesPage() {
           partner_payment_1: 0, partner_payment_1_paid: false,
           partner_payment_2: 0, partner_payment_2_paid: false,
           partner_payment_3: 0, partner_payment_3_paid: false,
-          customer_deposit: quoteToConvert.deposit_required ?? 0,
-          customer_deposit_paid: false,
+          customer_deposit: noDeposit ? 0 : (quoteToConvert.deposit_required ?? 0),
+          customer_deposit_paid: noDeposit,
           customer_final_payment: 0, customer_final_paid: false,
           scope: quoteToConvert.scope,
         });
@@ -244,6 +245,14 @@ export default function QuotesPage() {
   const handleStatusChange = useCallback(
     async (quote: Quote, newStatus: string) => {
       if (newStatus === "create_job") { setQuoteToConvert(quote); return; }
+      const check = canAdvanceQuote(quote, newStatus);
+      if (!check.ok) {
+        toast.error(check.message ?? "Complete the current step before advancing.");
+        return;
+      }
+      if (newStatus === "awaiting_customer" && (quote.margin_percent ?? 0) < 25 && (quote.margin_percent ?? 0) > 0) {
+        if (typeof window !== "undefined" && !window.confirm("Margin is below 25%. Send quote to customer anyway?")) return;
+      }
       try {
         const updated = await updateQuote(quote.id, { status: newStatus as Quote["status"] });
         await logAudit({ entityType: "quote", entityId: quote.id, entityRef: quote.reference, action: "status_changed", fieldName: "status", oldValue: quote.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
@@ -1030,6 +1039,21 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   );
 }
 
+/** Step-by-step: cannot skip steps. Each phase must be complete before advancing. */
+function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; message?: string } {
+  if (quote.status === "draft" && (nextStatus === "in_survey" || nextStatus === "bidding")) {
+    if (!quote.client_name?.trim()) return { ok: false, message: "Fill client name (Step 1: Job details)." };
+    if (!quote.client_email?.trim()) return { ok: false, message: "Fill client email (Step 1: Job details)." };
+    if (!quote.property_address?.trim()) return { ok: false, message: "Fill property address (Step 1: Job details)." };
+    if (!quote.title?.trim()) return { ok: false, message: "Fill job title / service (Step 1: Job details)." };
+    if (Number(quote.total_value) <= 0 && Number(quote.cost) <= 0) return { ok: false, message: "Set price or add line items (Step 3: Get price) before advancing." };
+  }
+  if (quote.status === "bidding" && nextStatus === "awaiting_customer") {
+    if (Number(quote.total_value) <= 0) return { ok: false, message: "Set total value before sending to customer (Step 4: Margin & PDF)." };
+  }
+  return { ok: true };
+}
+
 function getQuoteActions(currentStatus: string) {
   switch (currentStatus) {
     case "draft":
@@ -1072,9 +1096,9 @@ function getQuoteActions(currentStatus: string) {
 /* ========== CREATE JOB FROM QUOTE MODAL ========== */
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
-  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string }) => void;
+  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean }) => void;
 }) {
-  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "" });
+  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
@@ -1083,7 +1107,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     setForm({
       title: quote.title ?? "", partner_id: quote.partner_id ?? "",
       client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
-      materials_cost: "0", scheduled_date: "", scheduled_time: "",
+      materials_cost: "0", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false,
     });
     setClientAddress({
       client_id: quote.client_id,
@@ -1122,6 +1146,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       materials_cost: Number(form.materials_cost) || 0,
       scheduled_date,
       scheduled_start_at,
+      createWithoutDeposit: form.createWithoutDeposit,
     });
   };
 
@@ -1140,6 +1165,10 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min={0} step="0.01" /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min={0} step="0.01" /></div>
         </div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={form.createWithoutDeposit} onChange={(e) => setForm((p) => ({ ...p, createWithoutDeposit: e.target.checked }))} className="rounded border-border text-primary focus:ring-primary" />
+          <span className="text-sm text-text-secondary">Create job without deposit (override)</span>
+        </label>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
           <Button type="submit">Create Job</Button>

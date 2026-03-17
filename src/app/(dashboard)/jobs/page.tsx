@@ -28,6 +28,7 @@ import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob } from "@/services/jobs";
+import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts } from "@/services/base";
 import { listJobPayments, createJobPayment } from "@/services/job-payments";
 import { useProfile } from "@/hooks/use-profile";
@@ -148,11 +149,27 @@ function JobsPageContent() {
   }, [refresh, loadCounts, profile?.id, profile?.full_name]);
 
   const handleStatusChange = useCallback(async (job: Job, newStatus: Job["status"]) => {
+    const check = canAdvanceJob(job, newStatus);
+    if (!check.ok) {
+      toast.error(check.message ?? "Complete the current step before advancing.");
+      return;
+    }
     try {
-      const updated = await updateJob(job.id, { status: newStatus });
+      let selfBillId: string | undefined = job.self_bill_id ?? undefined;
+      if (newStatus === "awaiting_payment" && !job.self_bill_id) {
+        const selfBill = await createSelfBillFromJob({
+          id: job.id,
+          reference: job.reference,
+          partner_name: job.partner_name ?? "Unassigned",
+          partner_cost: job.partner_cost,
+          materials_cost: job.materials_cost,
+        });
+        selfBillId = selfBill.id;
+      }
+      const updated = await updateJob(job.id, { status: newStatus, ...(selfBillId ? { self_bill_id: selfBillId } : {}) });
       await logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "status_changed", fieldName: "status", oldValue: job.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
       setSelectedJob(updated);
-      toast.success(`Job moved to ${statusConfig[newStatus]?.label ?? newStatus}`);
+      toast.success(selfBillId ? `Self-bill created. Job moved to ${statusConfig[newStatus]?.label ?? newStatus}` : `Job moved to ${statusConfig[newStatus]?.label ?? newStatus}`);
       refresh(); loadCounts();
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
   }, [refresh, loadCounts, profile?.id, profile?.full_name]);
@@ -692,6 +709,23 @@ function TimelineItem({ label, date, active }: { label: string; date: string; ac
       </div>
     </div>
   );
+}
+
+/** 7 statuses with blocks: Ready to Book → Scheduled (partner+date); In Progress → Final Check (≥1 report); Final Check → Awaiting Payment (report approved). */
+function canAdvanceJob(job: Job, nextStatus: string): { ok: boolean; message?: string } {
+  if (nextStatus === "in_progress_phase1") {
+    if (!job.partner_id && !job.partner_name?.trim()) return { ok: false, message: "Assign a partner before starting the job." };
+    if (!job.scheduled_date && !job.scheduled_start_at) return { ok: false, message: "Set scheduled date before starting the job." };
+  }
+  if (nextStatus === "final_check") {
+    const hasReport = job.report_1_uploaded || job.report_2_uploaded || job.report_3_uploaded;
+    if (!hasReport) return { ok: false, message: "Upload at least one post-job report/photo before Final Check." };
+  }
+  if (nextStatus === "awaiting_payment") {
+    const approved = job.report_1_approved || job.report_2_approved || job.report_3_approved;
+    if (!approved) return { ok: false, message: "Ops must approve at least one report before Awaiting Payment." };
+  }
+  return { ok: true };
 }
 
 function getStatusActions(currentStatus: string) {

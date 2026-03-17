@@ -8,6 +8,7 @@ export type PermissionKey =
   | "partners"
   | "accounts"
   | "finance"
+  | "team"
   | "settings"
   | "manage_team"
   | "manage_roles"

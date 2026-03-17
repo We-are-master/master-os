@@ -68,6 +68,8 @@ export default function RequestsPage() {
 
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [selectedRequest, setSelectedRequest] = useState<ServiceRequest | null>(null);
+  const [drawerPostcode, setDrawerPostcode] = useState("");
+  const [drawerSaving, setDrawerSaving] = useState(false);
   const [drawerTab, setDrawerTab] = useState("details");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
@@ -112,6 +114,24 @@ export default function RequestsPage() {
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
   useEffect(() => { setDrawerTab("details"); }, [selectedRequest?.id]);
+  useEffect(() => {
+    setDrawerPostcode(selectedRequest?.postcode ?? "");
+  }, [selectedRequest?.id, selectedRequest?.postcode]);
+
+  const handleSaveRequestDetails = useCallback(async () => {
+    if (!selectedRequest) return;
+    setDrawerSaving(true);
+    try {
+      const updated = await updateRequest(selectedRequest.id, { postcode: drawerPostcode.trim() || undefined });
+      setSelectedRequest(updated);
+      refresh();
+      toast.success("Request updated");
+    } catch {
+      toast.error("Failed to update request");
+    } finally {
+      setDrawerSaving(false);
+    }
+  }, [selectedRequest, drawerPostcode, refresh]);
 
   const tabs = [
     { id: "all", label: "All Requests", count: statusCounts.all ?? 0 },
@@ -171,10 +191,25 @@ export default function RequestsPage() {
     [handleStatusChange]
   );
 
+  const canConvertToQuote = useCallback((req: ServiceRequest) => {
+    const hasClient = !!req.client_name?.trim();
+    const hasService = !!req.service_type?.trim();
+    const hasPostcode = !!req.postcode?.trim();
+    return hasClient && hasService && hasPostcode;
+  }, []);
+
   const handleConvertToQuoteChoice = useCallback((req: ServiceRequest) => {
+    if (!canConvertToQuote(req)) {
+      const missing: string[] = [];
+      if (!req.client_name?.trim()) missing.push("Client name");
+      if (!req.service_type?.trim()) missing.push("Service type");
+      if (!req.postcode?.trim()) missing.push("Postcode");
+      toast.error(`Complete required fields before converting to Quote: ${missing.join(", ")}`);
+      return;
+    }
     setSelectedRequest(null);
     setConvertChoiceOpen(req);
-  }, []);
+  }, [canConvertToQuote]);
 
   const handleConvertToJob = useCallback((req: ServiceRequest) => {
     setSelectedRequest(null);
@@ -189,6 +224,8 @@ export default function RequestsPage() {
           client_email: formData.client_email ?? "",
           client_phone: formData.client_phone,
           property_address: formData.property_address ?? "",
+          postcode: formData.postcode,
+          source: formData.source ?? "manual",
           service_type: formData.service_type ?? "",
           description: formData.description ?? "",
           status: "new",
@@ -410,6 +447,10 @@ export default function RequestsPage() {
                       <MapPin className="h-4 w-4 text-text-tertiary mt-0.5 shrink-0" />
                       <p className="text-sm text-text-primary">{selectedRequest.property_address}</p>
                     </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <Input value={drawerPostcode} onChange={(e) => setDrawerPostcode(e.target.value.toUpperCase())} placeholder="Postcode (required for Convert to Quote)" className="max-w-[140px]" />
+                      <Button variant="outline" size="sm" onClick={handleSaveRequestDetails} disabled={drawerSaving}>Save</Button>
+                    </div>
                     <LocationMiniMap address={selectedRequest.property_address} className="mt-2" />
                   </div>
                   <div>
@@ -451,7 +492,10 @@ export default function RequestsPage() {
                 {/* APPROVED: show Convert to Quote / Create Job */}
                 {selectedRequest.status === "approved" && (
                   <div className="flex gap-2 pt-4 border-t border-border-light">
-                    <Button variant="primary" className="flex-1" size="sm" icon={<FileText className="h-3.5 w-3.5" />} onClick={() => handleConvertToQuoteChoice(selectedRequest)}>
+                    {!canConvertToQuote(selectedRequest) && (
+                      <p className="text-xs text-amber-600 mb-2 w-full">Fill client name, service type and postcode to unlock Convert to Quote.</p>
+                    )}
+                    <Button variant="primary" className="flex-1" size="sm" icon={<FileText className="h-3.5 w-3.5" />} onClick={() => handleConvertToQuoteChoice(selectedRequest)} disabled={!canConvertToQuote(selectedRequest)}>
                       Convert to Quote
                     </Button>
                     <Button variant="outline" className="flex-1" size="sm" icon={<Briefcase className="h-3.5 w-3.5" />} onClick={() => handleConvertToJob(selectedRequest)}>
@@ -1030,14 +1074,29 @@ function ConvertToJobModal({
   );
 }
 
+const REQUEST_SOURCES: { value: ServiceRequest["source"]; label: string }[] = [
+  { value: "manual", label: "Manual" },
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "checkatrade", label: "Checkatrade" },
+  { value: "meta", label: "Meta" },
+  { value: "website", label: "Website" },
+  { value: "b2b", label: "B2B" },
+];
+
 function CreateRequestModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<ServiceRequest>) => void }) {
-  const [form, setForm] = useState({ client_name: "", client_email: "", client_phone: "", property_address: "", service_type: "HVAC Installation", description: "", priority: "medium", estimated_value: "" });
+  const [form, setForm] = useState({ client_name: "", client_email: "", client_phone: "", property_address: "", postcode: "", source: "manual" as ServiceRequest["source"], service_type: "HVAC Installation", description: "", priority: "medium", estimated_value: "" });
   const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.client_name || !form.client_email || !form.property_address) { toast.error("Please fill in all required fields"); return; }
-    onCreate({ ...form, estimated_value: form.estimated_value ? Number(form.estimated_value) : undefined, priority: form.priority as ServiceRequest["priority"] });
-    setForm({ client_name: "", client_email: "", client_phone: "", property_address: "", service_type: "HVAC Installation", description: "", priority: "medium", estimated_value: "" });
+    onCreate({
+      ...form,
+      postcode: form.postcode || undefined,
+      source: form.source,
+      estimated_value: form.estimated_value ? Number(form.estimated_value) : undefined,
+      priority: form.priority as ServiceRequest["priority"],
+    });
+    setForm({ client_name: "", client_email: "", client_phone: "", property_address: "", postcode: "", source: "manual", service_type: "HVAC Installation", description: "", priority: "medium", estimated_value: "" });
   };
 
   return (
@@ -1063,7 +1122,14 @@ function CreateRequestModal({ open, onClose, onCreate }: { open: boolean; onClos
             <Input type="number" value={form.estimated_value} onChange={(e) => update("estimated_value", e.target.value)} placeholder="0.00" />
           </div>
         </div>
-        <AddressAutocomplete label="Property Address *" value={form.property_address} onSelect={(parts) => update("property_address", parts.full_address)} placeholder="Start typing address or postcode..." />
+        <AddressAutocomplete label="Property Address *" value={form.property_address} onSelect={(parts) => { update("property_address", parts.full_address); if (parts.postcode) update("postcode", parts.postcode); }} placeholder="Start typing address or postcode..." />
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Postcode *</label>
+            <Input value={form.postcode} onChange={(e) => update("postcode", e.target.value.toUpperCase())} placeholder="e.g. SW1A 1AA" />
+          </div>
+          <Select label="Source" value={form.source ?? "manual"} onChange={(e) => update("source", e.target.value)} options={REQUEST_SOURCES.map((s) => ({ value: s.value!, label: s.label }))} />
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <Select label="Service Type" value={form.service_type} onChange={(e) => update("service_type", e.target.value)} options={[
             { value: "HVAC Installation", label: "HVAC Installation" }, { value: "HVAC Maintenance", label: "HVAC Maintenance" },

@@ -26,8 +26,12 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     items: [
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
+      { label: "Bills", href: "/finance/bills", icon: "file-check", permission: "finance" },
+      { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign", permission: "finance" },
+      { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
     ],
   },
+  { label: "Team", items: [{ label: "Team", href: "/team", icon: "users-2", permission: "team" }] },
   { label: "Admin", items: [{ label: "Settings", href: "/settings", icon: "settings", permission: "settings" }] },
 ];
 
@@ -40,6 +44,7 @@ const DEFAULT_PERMISSIONS: PermissionsByRole = {
     partners: true,
     accounts: true,
     finance: true,
+    team: true,
     settings: true,
     manage_team: true,
     manage_roles: true,
@@ -54,6 +59,7 @@ const DEFAULT_PERMISSIONS: PermissionsByRole = {
     partners: true,
     accounts: true,
     finance: true,
+    team: true,
     settings: false,
     manage_team: false,
     manage_roles: false,
@@ -68,6 +74,7 @@ const DEFAULT_PERMISSIONS: PermissionsByRole = {
     partners: false,
     accounts: false,
     finance: false,
+    team: false,
     settings: false,
     manage_team: false,
     manage_roles: false,
