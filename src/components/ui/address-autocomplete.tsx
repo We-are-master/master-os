@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { MapPin, Loader2, X } from "lucide-react";
+import { extractUkPostcode } from "@/lib/uk-postcode";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 
@@ -44,11 +45,14 @@ function extractParts(feature: GeoFeature): AddressParts {
   const streetName = feature.text ?? "";
   const street = streetNumber ? `${streetNumber} ${streetName}` : streetName;
 
+  const ctxPostcode = find("postcode");
+  const postcode = ctxPostcode || extractUkPostcode(feature.place_name) || "";
+
   return {
     full_address: feature.place_name,
     address: street,
     city: find("place") || find("locality") || find("district"),
-    postcode: find("postcode"),
+    postcode,
     country: find("country"),
     lng: feature.center[0],
     lat: feature.center[1],
@@ -131,6 +135,7 @@ export function AddressAutocomplete({
     setQuery("");
     setResults([]);
     setOpen(false);
+    onChange?.("");
   };
 
   return (
@@ -159,6 +164,11 @@ export function AddressAutocomplete({
         </div>
       </div>
 
+      {!MAPBOX_TOKEN && (
+        <p className="text-[10px] text-text-tertiary mt-1.5">
+          Enter the full address manually (Mapbox suggestions unavailable — set NEXT_PUBLIC_MAPBOX_TOKEN for autocomplete).
+        </p>
+      )}
       {open && results.length > 0 && dropdownRect && typeof document !== "undefined" &&
         createPortal(
           <div

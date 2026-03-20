@@ -66,7 +66,7 @@ interface LinkedJob {
 export default function InvoicesPage() {
   const {
     data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh,
-  } = useSupabaseList<Invoice>({ fetcher: listInvoices });
+  } = useSupabaseList<Invoice>({ fetcher: listInvoices, realtimeTable: "invoices" });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);

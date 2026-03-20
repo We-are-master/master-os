@@ -13,7 +13,6 @@ import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
 import { Input, SearchInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
@@ -35,11 +34,13 @@ import { createJob, getJobByQuoteId } from "@/services/jobs";
 import { listPartners } from "@/services/partners";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
+import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { getStatusCounts, getAggregates, getSupabase } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { KanbanBoard } from "@/components/shared/kanban-board";
+import { normalizeTotalPhases } from "@/lib/job-phases";
 
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
 
@@ -87,7 +88,7 @@ export default function QuotesPage() {
   const {
     data, loading, page, totalPages, totalItems,
     setPage, search, setSearch, status, setStatus, refresh,
-  } = useSupabaseList<Quote>({ fetcher: listQuotes });
+  } = useSupabaseList<Quote>({ fetcher: listQuotes, realtimeTable: "quotes" });
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { profile } = useProfile();
@@ -192,7 +193,7 @@ export default function QuotesPage() {
   };
 
   const handleConfirmCreateJob = useCallback(
-    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean }) => {
+    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number }) => {
       if (!quoteToConvert) return;
       try {
         const margin = formData.client_price > 0 ? Math.round(((formData.client_price - formData.partner_cost - formData.materials_cost) / formData.client_price) * 1000) / 10 : 0;
@@ -207,7 +208,7 @@ export default function QuotesPage() {
           partner_name: formData.partner_name ?? quoteToConvert.partner_name,
           quote_id: quoteToConvert.id,
           status: "scheduled",
-          progress: 0, current_phase: 0, total_phases: 3,
+          progress: 0, current_phase: 0, total_phases: normalizeTotalPhases(formData.total_phases),
           client_price: formData.client_price,
           partner_cost: formData.partner_cost,
           materials_cost: formData.materials_cost,
@@ -470,6 +471,9 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   const [panelPartnerCost, setPanelPartnerCost] = useState("");
   const [panelSellPrice, setPanelSellPrice] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
+  const [savingOwner, setSavingOwner] = useState(false);
+  const isAdmin = profile?.role === "admin";
 
   // Send to customer fields
   const [depositRequired, setDepositRequired] = useState("");
@@ -553,6 +557,11 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   useEffect(() => {
     if (quote?.id && tab === "bids") loadBids(quote.id);
   }, [quote?.id, tab, loadBids]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    listAssignableUsers().then(setAssignableUsers).catch(() => {});
+  }, [isAdmin]);
 
   if (!quote) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
@@ -687,6 +696,43 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Bids received</p>
                   <p className="text-xl font-bold text-text-primary mt-1">{quote.partner_quotes_count}</p>
                 </div>
+              </div>
+              <div className="p-4 rounded-xl bg-surface-hover">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Owner</p>
+                {isAdmin ? (
+                  <div className="mt-2 space-y-2">
+                    <select
+                      value={quote.owner_id ?? ""}
+                      disabled={savingOwner}
+                      onChange={async (e) => {
+                        const ownerId = e.target.value || undefined;
+                        const owner = assignableUsers.find((u) => u.id === ownerId);
+                        setSavingOwner(true);
+                        try {
+                          const updated = await updateQuote(quote.id, {
+                            owner_id: ownerId,
+                            owner_name: owner?.full_name,
+                          });
+                          onQuoteUpdate?.(updated);
+                          toast.success("Owner updated");
+                        } catch {
+                          toast.error("Failed to update owner");
+                        } finally {
+                          setSavingOwner(false);
+                        }
+                      }}
+                      className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                    >
+                      <option value="">No owner</option>
+                      {assignableUsers.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name}</option>
+                      ))}
+                    </select>
+                    {quote.owner_name && <p className="text-sm font-semibold text-text-primary">{quote.owner_name}</p>}
+                  </div>
+                ) : (
+                  <p className="text-sm font-semibold text-text-primary mt-1">{quote.owner_name || "No owner"}</p>
+                )}
               </div>
 
               {/* Details block: Editable margin panel, Client, Actions */}
@@ -1096,9 +1142,9 @@ function getQuoteActions(currentStatus: string) {
 /* ========== CREATE JOB FROM QUOTE MODAL ========== */
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
-  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean }) => void;
+  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number }) => void;
 }) {
-  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false });
+  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "3" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
@@ -1107,7 +1153,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     setForm({
       title: quote.title ?? "", partner_id: quote.partner_id ?? "",
       client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
-      materials_cost: "0", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false,
+      materials_cost: "0", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "3",
     });
     setClientAddress({
       client_id: quote.client_id,
@@ -1147,6 +1193,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       scheduled_date,
       scheduled_start_at,
       createWithoutDeposit: form.createWithoutDeposit,
+      total_phases: normalizeTotalPhases(Number(form.total_phases)),
     });
   };
 
@@ -1154,6 +1201,17 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     <Modal open={!!quote} onClose={onClose} title="Create Job from Quote" subtitle={`${quote.reference} — create job`} size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
         <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Job title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
+        <Select
+          label="Work phases *"
+          value={form.total_phases}
+          onChange={(e) => update("total_phases", e.target.value)}
+          options={[
+            { value: "1", label: "1 phase — straight to final check after Phase 1" },
+            { value: "2", label: "2 phases — Phase 1 → Phase 2 → final check" },
+            { value: "3", label: "3 phases — full progress (default)" },
+          ]}
+        />
+        <p className="text-[10px] text-text-tertiary -mt-2">Each phase can have one partner report (photos / completion).</p>
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>

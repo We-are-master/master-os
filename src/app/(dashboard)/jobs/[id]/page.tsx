@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
@@ -13,32 +14,36 @@ import { Select } from "@/components/ui/select";
 import {
   ArrowLeft,
   Building2,
-  MapPin,
-  Play,
-  Pause,
   CheckCircle2,
-  RotateCcw,
-  TrendingUp,
   FileText,
   Upload,
   ShieldCheck,
   Plus,
-  CreditCard,
-  DollarSign,
-  Calendar,
-  History,
+  ExternalLink,
+  Info,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { listJobPayments, createJobPayment } from "@/services/job-payments";
+import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit } from "@/services/audit";
 import { LocationMiniMap } from "@/components/ui/location-picker";
+import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
+import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Avatar } from "@/components/ui/avatar";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import type { Job, JobPayment, JobPaymentType } from "@/types/database";
+import {
+  allConfiguredReportsApproved,
+  canAdvanceJob,
+  getJobStatusActions,
+  normalizeTotalPhases,
+  reportPhaseIndices,
+  reportPhaseLabel,
+} from "@/lib/job-phases";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
@@ -50,60 +55,6 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   need_attention: { label: "Need attention", variant: "warning", dot: true },
   completed: { label: "Completed", variant: "success", dot: true },
 };
-
-function getStatusActions(currentStatus: string) {
-  switch (currentStatus) {
-    case "scheduled":
-      return [{ label: "Start Phase 1", status: "in_progress_phase1", icon: Play, primary: true }];
-    case "in_progress_phase1":
-      return [
-        { label: "Advance to Phase 2", status: "in_progress_phase2", icon: TrendingUp, primary: true },
-        { label: "Pause", status: "scheduled", icon: Pause, primary: false },
-      ];
-    case "in_progress_phase2":
-      return [
-        { label: "Advance to Phase 3", status: "in_progress_phase3", icon: TrendingUp, primary: true },
-        { label: "Back to Phase 1", status: "in_progress_phase1", icon: RotateCcw, primary: false },
-      ];
-    case "in_progress_phase3":
-      return [
-        { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
-        { label: "Back to Phase 2", status: "in_progress_phase2", icon: RotateCcw, primary: false },
-      ];
-    case "final_check":
-      return [
-        { label: "Awaiting Payment", status: "awaiting_payment", icon: CreditCard, primary: true },
-        { label: "Back to Phase 3", status: "in_progress_phase3", icon: RotateCcw, primary: false },
-      ];
-    case "awaiting_payment":
-      return [{ label: "Mark Completed", status: "completed", icon: CheckCircle2, primary: true }];
-    case "need_attention":
-      return [
-        { label: "Validate & complete", status: "completed", icon: ShieldCheck, primary: true },
-        { label: "Back to Phase 3", status: "in_progress_phase3", icon: RotateCcw, primary: false },
-      ];
-    case "completed":
-      return [{ label: "Reopen", status: "scheduled", icon: RotateCcw, primary: false }];
-    default:
-      return [];
-  }
-}
-
-function canAdvanceJob(job: Job, nextStatus: string): { ok: boolean; message?: string } {
-  if (nextStatus === "in_progress_phase1") {
-    if (!job.partner_id && !job.partner_name?.trim()) return { ok: false, message: "Assign a partner before starting the job." };
-    if (!job.scheduled_date && !job.scheduled_start_at) return { ok: false, message: "Set scheduled date before starting the job." };
-  }
-  if (nextStatus === "final_check") {
-    const hasReport = job.report_1_uploaded || job.report_2_uploaded || job.report_3_uploaded;
-    if (!hasReport) return { ok: false, message: "Upload at least one post-job report/photo before Final Check." };
-  }
-  if (nextStatus === "awaiting_payment") {
-    const approved = job.report_1_approved || job.report_2_approved || job.report_3_approved;
-    if (!approved) return { ok: false, message: "Ops must approve at least one report before Awaiting Payment." };
-  }
-  return { ok: true };
-}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -202,16 +153,23 @@ export default function JobDetailPage() {
   const [addPaymentDate, setAddPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [addPaymentNote, setAddPaymentNote] = useState("");
   const [addingPayment, setAddingPayment] = useState(false);
+  const [propertyEdit, setPropertyEdit] = useState<ClientAndAddressValue | null>(null);
+  const [savingProperty, setSavingProperty] = useState(false);
+  const [unlinkedAddressDraft, setUnlinkedAddressDraft] = useState("");
+  const [savingUnlinkedAddress, setSavingUnlinkedAddress] = useState(false);
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
+  const [savingOwner, setSavingOwner] = useState(false);
+  const isAdmin = profile?.role === "admin";
 
   const loadPayments = useCallback(async (jobId: string) => {
     setLoadingPayments(true);
     try {
-      const [partner, customer] = await Promise.all([
+      const [partner, all] = await Promise.all([
         listJobPayments(jobId, "partner"),
         listJobPayments(jobId),
       ]);
       setPartnerPayments(partner);
-      setCustomerPayments(customer.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"));
+      setCustomerPayments(all.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"));
     } catch {
       toast.error("Failed to load payments");
     } finally {
@@ -221,16 +179,29 @@ export default function JobDetailPage() {
 
   useEffect(() => {
     if (!id) return;
+    let cancelled = false;
     setLoading(true);
-    getJob(id).then((j) => {
-      setJob(j ?? null);
-      setLoading(false);
-    });
+    (async () => {
+      try {
+        const [j, partner, all] = await Promise.all([
+          getJob(id),
+          listJobPayments(id, "partner"),
+          listJobPayments(id),
+        ]);
+        if (cancelled) return;
+        setJob(j ?? null);
+        setPartnerPayments(partner);
+        setCustomerPayments(all.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"));
+      } catch {
+        if (!cancelled) toast.error("Failed to load job");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
-
-  useEffect(() => {
-    if (job?.id) loadPayments(job.id);
-  }, [job?.id, loadPayments]);
 
   useEffect(() => {
     if (job?.scheduled_start_at) {
@@ -245,6 +216,71 @@ export default function JobDetailPage() {
       setScheduleTime("");
     }
   }, [job?.id, job?.scheduled_start_at, job?.scheduled_date]);
+
+  useEffect(() => {
+    if (!job) {
+      setPropertyEdit(null);
+      setUnlinkedAddressDraft("");
+      return;
+    }
+    if (job.client_id) {
+      setPropertyEdit({
+        client_id: job.client_id,
+        client_address_id: job.client_address_id,
+        client_name: job.client_name,
+        client_email: undefined,
+        property_address: job.property_address,
+      });
+      setUnlinkedAddressDraft("");
+    } else {
+      setPropertyEdit(null);
+      setUnlinkedAddressDraft(job.property_address ?? "");
+    }
+  }, [job?.id, job?.client_id, job?.client_address_id, job?.client_name, job?.property_address]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    listAssignableUsers().then(setAssignableUsers).catch(() => {});
+  }, [isAdmin]);
+
+  const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>) => {
+    try {
+      const updated = await updateJob(jobId, updates);
+      setJob(updated);
+      toast.success("Job updated");
+    } catch {
+      toast.error("Failed to update");
+    }
+  }, []);
+
+  const handleSaveLinkedProperty = useCallback(async () => {
+    if (!job || !propertyEdit?.property_address?.trim()) {
+      toast.error("Property address is required");
+      return;
+    }
+    setSavingProperty(true);
+    try {
+      await handleJobUpdate(job.id, {
+        property_address: propertyEdit.property_address.trim(),
+        client_address_id: propertyEdit.client_address_id,
+      });
+    } finally {
+      setSavingProperty(false);
+    }
+  }, [job, propertyEdit, handleJobUpdate]);
+
+  const handleSaveUnlinkedProperty = useCallback(async () => {
+    if (!job || !unlinkedAddressDraft.trim()) {
+      toast.error("Property address is required");
+      return;
+    }
+    setSavingUnlinkedAddress(true);
+    try {
+      await handleJobUpdate(job.id, { property_address: unlinkedAddressDraft.trim() });
+    } finally {
+      setSavingUnlinkedAddress(false);
+    }
+  }, [job, unlinkedAddressDraft, handleJobUpdate]);
 
   const handleStatusChange = useCallback(async (j: Job, newStatus: Job["status"]) => {
     const check = canAdvanceJob(j, newStatus);
@@ -272,16 +308,6 @@ export default function JobDetailPage() {
       toast.error(err instanceof Error ? err.message : "Failed");
     }
   }, [profile?.id, profile?.full_name]);
-
-  const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>) => {
-    try {
-      const updated = await updateJob(jobId, updates);
-      setJob(updated);
-      toast.success("Job updated");
-    } catch {
-      toast.error("Failed to update");
-    }
-  }, []);
 
   const handleScheduleChange = useCallback((j: Job, date: string, time: string) => {
     const scheduled_date = date || undefined;
@@ -334,7 +360,8 @@ export default function JobDetailPage() {
 
   const config = statusConfig[job.status] ?? { label: job.status, variant: "default" as const };
   const profit = job.client_price - job.partner_cost - job.materials_cost;
-  const statusActions = getStatusActions(job.status);
+  const statusActions = getJobStatusActions(job);
+  const phaseCount = normalizeTotalPhases(job.total_phases);
 
   return (
     <PageTransition>
@@ -351,9 +378,9 @@ export default function JobDetailPage() {
           children={
             <div className="flex items-center gap-2">
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
-              {statusActions.map((action) => (
+              {statusActions.map((action, idx) => (
                 <Button
-                  key={action.status}
+                  key={`${action.status}-${idx}`}
                   variant={action.primary ? "primary" : "outline"}
                   size="sm"
                   icon={<action.icon className="h-3.5 w-3.5" />}
@@ -370,6 +397,114 @@ export default function JobDetailPage() {
           {/* Left column: overview, client, partner, schedule */}
           <div className="lg:col-span-2 space-y-8">
             <Section title="Overview">
+              <div className="rounded-xl border border-border-light bg-surface-hover/40 p-4 space-y-3 mb-4">
+                <div className="flex items-center gap-2 text-xs font-semibold text-text-secondary">
+                  <Info className="h-3.5 w-3.5 shrink-0" />
+                  Job record
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
+                    <span className="text-text-tertiary">Created</span>
+                    <span className="text-text-primary font-medium text-right tabular-nums">
+                      {new Date(job.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
+                    <span className="text-text-tertiary">Last updated</span>
+                    <span className="text-text-primary font-medium text-right tabular-nums">
+                      {new Date(job.updated_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
+                    <span className="text-text-tertiary">Phase</span>
+                    <span className="text-text-primary font-medium">
+                      {job.current_phase} / {phaseCount}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
+                    <span className="text-text-tertiary">Finance status</span>
+                    <Badge variant={job.finance_status === "paid" ? "success" : job.finance_status === "partial" ? "warning" : "default"} size="sm">
+                      {job.finance_status === "paid" ? "Paid" : job.finance_status === "partial" ? "Partial" : "Unpaid"}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
+                    <span className="text-text-tertiary">Customer</span>
+                    <span className="text-text-primary text-right text-xs leading-snug">
+                      Deposit {job.customer_deposit_paid ? "paid" : "due"}
+                      {" · "}
+                      Final {job.customer_final_paid ? "paid" : "due"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-text-tertiary">Service value</span>
+                    <span className="text-text-primary font-medium tabular-nums">{formatCurrency(job.service_value)}</span>
+                  </div>
+                  {(job.partner_payment_1_paid || job.partner_payment_2_paid || job.partner_payment_3_paid) && (
+                    <div className="sm:col-span-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-tertiary pt-1">
+                      <span className="font-medium text-text-secondary">Legacy partner milestones</span>
+                      <span>P1 {job.partner_payment_1_paid ? "paid" : "open"}</span>
+                      <span>P2 {job.partner_payment_2_paid ? "paid" : "open"}</span>
+                      <span>P3 {job.partner_payment_3_paid ? "paid" : "open"}</span>
+                    </div>
+                  )}
+                </div>
+                {(job.cash_in > 0 || job.cash_out > 0 || job.expenses > 0 || job.commission > 0 || job.vat > 0) && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 pt-2 border-t border-border-light text-[11px] text-text-tertiary">
+                    {job.cash_in > 0 && <span>Cash in {formatCurrency(job.cash_in)}</span>}
+                    {job.cash_out > 0 && <span>Cash out {formatCurrency(job.cash_out)}</span>}
+                    {job.expenses > 0 && <span>Expenses {formatCurrency(job.expenses)}</span>}
+                    {job.commission > 0 && <span>Commission {formatCurrency(job.commission)}</span>}
+                    {job.vat > 0 && <span>VAT {formatCurrency(job.vat)}</span>}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {job.quote_id && (
+                    <Link
+                      href="/quotes"
+                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                    >
+                      Quote <span className="font-mono text-[10px] opacity-80">{job.quote_id.slice(0, 8)}…</span>
+                      <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  )}
+                  {job.self_bill_id && (
+                    <Link
+                      href="/finance/selfbill"
+                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                    >
+                      Self-bill linked
+                      <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  )}
+                  {job.invoice_id && (
+                    <Link
+                      href="/finance/invoices"
+                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                    >
+                      Invoice linked
+                      <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  )}
+                  {job.partner_id && (
+                    <Link href="/partners" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                      Partner record
+                      <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  )}
+                </div>
+                {job.internal_notes?.trim() && (
+                  <div className="pt-2 border-t border-border-light">
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1">Internal notes</p>
+                    <p className="text-sm text-text-primary whitespace-pre-wrap">{job.internal_notes}</p>
+                  </div>
+                )}
+                {job.report_notes?.trim() && (
+                  <div className="pt-2 border-t border-border-light">
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1">Report notes</p>
+                    <p className="text-sm text-text-primary whitespace-pre-wrap">{job.report_notes}</p>
+                  </div>
+                )}
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-center">
                   <p className="text-[10px] font-semibold text-emerald-700 uppercase">Revenue</p>
@@ -400,17 +535,58 @@ export default function JobDetailPage() {
             </Section>
 
             <Section title="Client & property">
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-hover">
-                <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center shrink-0">
-                  <Building2 className="h-5 w-5 text-blue-600" />
-                </div>
-                <p className="text-sm font-semibold text-text-primary">{job.client_name}</p>
-              </div>
-              <div className="flex items-start gap-2 mt-2">
-                <MapPin className="h-4 w-4 text-text-tertiary mt-0.5 shrink-0" />
-                <p className="text-sm text-text-primary">{job.property_address}</p>
-              </div>
-              <LocationMiniMap address={job.property_address} className="mt-2 rounded-xl overflow-hidden" />
+              <p className="text-xs text-text-tertiary mb-3">Client details are read-only. You can update only the property address.</p>
+              {job.client_id && propertyEdit ? (
+                <>
+                  <ClientAddressPicker
+                    lockClient
+                    value={propertyEdit}
+                    onChange={setPropertyEdit}
+                    labelClient="Client"
+                    labelAddress="Property address *"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    loading={savingProperty}
+                    onClick={handleSaveLinkedProperty}
+                  >
+                    Save property address
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-hover">
+                    <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center shrink-0">
+                      <Building2 className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <p className="text-sm font-semibold text-text-primary">{job.client_name}</p>
+                  </div>
+                  <p className="text-xs text-text-tertiary mt-2">Not linked to a client record — edit the address text only.</p>
+                  <div className="mt-3">
+                    <AddressAutocomplete
+                      value={unlinkedAddressDraft}
+                      onChange={(v) => setUnlinkedAddressDraft(v)}
+                      onSelect={(parts) => setUnlinkedAddressDraft(parts.full_address)}
+                      label="Property address *"
+                      placeholder="Start typing address or postcode..."
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      loading={savingUnlinkedAddress}
+                      onClick={handleSaveUnlinkedProperty}
+                    >
+                      Save property address
+                    </Button>
+                  </div>
+                </>
+              )}
+              <LocationMiniMap address={job.property_address} className="mt-3 rounded-xl overflow-hidden" lazy />
             </Section>
 
             {job.scope && (
@@ -434,7 +610,42 @@ export default function JobDetailPage() {
                 </div>
                 <div className="p-4 rounded-xl bg-surface-hover">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job owner</p>
-                  {job.owner_name ? (
+                  {isAdmin ? (
+                    <div className="mt-2 space-y-2">
+                      <select
+                        value={job.owner_id ?? ""}
+                        disabled={savingOwner}
+                        onChange={async (e) => {
+                          const ownerId = e.target.value || undefined;
+                          const owner = assignableUsers.find((u) => u.id === ownerId);
+                          setSavingOwner(true);
+                          try {
+                            await handleJobUpdate(job.id, {
+                              owner_id: ownerId,
+                              owner_name: owner?.full_name,
+                            });
+                            toast.success("Owner updated");
+                          } catch {
+                            toast.error("Failed to update owner");
+                          } finally {
+                            setSavingOwner(false);
+                          }
+                        }}
+                        className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                      >
+                        <option value="">No owner</option>
+                        {assignableUsers.map((u) => (
+                          <option key={u.id} value={u.id}>{u.full_name}</option>
+                        ))}
+                      </select>
+                      {job.owner_name && (
+                        <div className="flex items-center gap-2">
+                          <Avatar name={job.owner_name} size="sm" />
+                          <p className="text-sm font-semibold text-text-primary">{job.owner_name}</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : job.owner_name ? (
                     <div className="flex items-center gap-2 mt-2">
                       <Avatar name={job.owner_name} size="sm" />
                       <p className="text-sm font-semibold text-text-primary">{job.owner_name}</p>
@@ -476,12 +687,12 @@ export default function JobDetailPage() {
             <Section title="Reports">
               <p className="text-xs text-text-tertiary mb-3">Partner uploads reports. Approve before releasing partner payment.</p>
               <div className="space-y-3">
-                {[1, 2, 3].map((n) => {
+                {reportPhaseIndices(job.total_phases).map((n) => {
                   const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
                   const approved = job[`report_${n}_approved` as keyof Job] as boolean;
                   const uploadedAt = job[`report_${n}_uploaded_at` as keyof Job] as string | undefined;
                   const approvedAt = job[`report_${n}_approved_at` as keyof Job] as string | undefined;
-                  const phaseLabel = n === 1 ? "Report 1 — Start & Complete" : n === 2 ? "Report 2 — 50% Done" : "Final Report — Work Finished";
+                  const phaseLabel = reportPhaseLabel(n, job.total_phases);
                   return (
                     <div
                       key={n}
@@ -524,7 +735,7 @@ export default function JobDetailPage() {
                   );
                 })}
               </div>
-              {job.report_3_uploaded && job.report_3_approved && (
+              {allConfiguredReportsApproved(job) && (
                 <div className="p-4 rounded-xl bg-primary/5 border border-primary/10 mt-3">
                   <p className="text-sm font-semibold text-text-primary">All reports approved</p>
                   <p className="text-xs text-text-tertiary mt-0.5">Send to customer and request final payment.</p>
@@ -546,19 +757,6 @@ export default function JobDetailPage() {
 
           {/* Right column: finance, timeline, history */}
           <div className="space-y-8">
-            <Section title="Finance summary">
-              <div className="p-4 rounded-xl bg-surface-hover space-y-2">
-                <div className="flex justify-between"><span className="text-sm text-text-secondary">Revenue</span><span className="text-sm font-semibold">{formatCurrency(job.client_price)}</span></div>
-                <div className="flex justify-between"><span className="text-sm text-text-secondary">Partner cost</span><span className="text-sm text-red-600">-{formatCurrency(job.partner_cost)}</span></div>
-                <div className="flex justify-between"><span className="text-sm text-text-secondary">Materials</span><span className="text-sm text-red-600">-{formatCurrency(job.materials_cost)}</span></div>
-                <div className="border-t border-border pt-2 flex justify-between">
-                  <span className="text-sm font-semibold">Profit</span>
-                  <span className={`font-bold ${profit >= 0 ? "text-emerald-600" : "text-red-600"}`}>{formatCurrency(profit)}</span>
-                </div>
-                <p className="text-xs text-text-tertiary">Margin {job.margin_percent}%</p>
-              </div>
-            </Section>
-
             <Section title="Partner payments">
               <JobPaymentBlock
                 totalDue={(job.partner_agreed_value ?? job.partner_cost) || 0}
@@ -587,20 +785,15 @@ export default function JobDetailPage() {
             )}
 
             <Section title="Timeline">
+              <p className="text-[11px] text-text-tertiary mb-3">Milestones from dates stored on the job (phase transitions are tracked in History).</p>
               <div className="space-y-2">
                 <TimelineItem label="Created" date={job.created_at} active />
-                {job.scheduled_date && <TimelineItem label="Scheduled" date={job.scheduled_date} active />}
-                {["in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && (
-                  <TimelineItem label="Phase 1 Started" date={job.updated_at} active />
-                )}
-                {["in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && (
-                  <TimelineItem label="Phase 2" date={job.updated_at} active />
-                )}
-                {["in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && (
-                  <TimelineItem label="Phase 3" date={job.updated_at} active />
-                )}
-                {["final_check", "awaiting_payment", "need_attention", "completed"].includes(job.status) && (
-                  <TimelineItem label="Final Check" date={job.updated_at} active />
+                {(job.scheduled_start_at || job.scheduled_date) && (
+                  <TimelineItem
+                    label="Scheduled"
+                    date={job.scheduled_start_at ?? `${job.scheduled_date}T12:00:00`}
+                    active
+                  />
                 )}
                 {job.report_submitted && (
                   <TimelineItem label="Report sent to customer" date={job.report_submitted_at ?? job.updated_at} active />
@@ -612,7 +805,7 @@ export default function JobDetailPage() {
             </Section>
 
             <Section title="History">
-              <AuditTimeline entityType="job" entityId={job.id} />
+              <AuditTimeline entityType="job" entityId={job.id} deferUntilVisible />
             </Section>
           </div>
         </div>

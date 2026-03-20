@@ -31,6 +31,7 @@ import { useProfile } from "@/hooks/use-profile";
 import { listClients, createClient, updateClient } from "@/services/clients";
 import { createClientAddress } from "@/services/client-addresses";
 import { listClientSourceAccounts } from "@/services/client-source-accounts";
+import { createAccount } from "@/services/accounts";
 import { getStatusCounts, getSupabase } from "@/services/base";
 import { logAudit, logBulkAction } from "@/services/audit";
 
@@ -60,7 +61,7 @@ export default function ClientsPage() {
   const {
     data, loading, page, totalPages, totalItems,
     setPage, search, setSearch, status, setStatus, refresh,
-  } = useSupabaseList<Client>({ fetcher: listClients });
+  } = useSupabaseList<Client>({ fetcher: listClients, realtimeTable: "clients" });
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { profile } = useProfile();
@@ -139,6 +140,7 @@ export default function ClientsPage() {
       });
       setCreateOpen(false);
       toast.success("Client created");
+      listClientSourceAccounts().then((list) => setSourceAccounts(list.map((a) => ({ id: a.id, name: a.name })))).catch(() => {});
       refresh(); loadCounts(); loadAggregates();
     } catch { toast.error("Failed to create client"); }
   }, [refresh, loadCounts, loadAggregates, profile?.id, profile?.full_name]);
@@ -678,6 +680,7 @@ function EditClientForm({
       <AddressAutocomplete
         label="Address"
         value={form.address}
+        onChange={(v) => update("address", v)}
         onSelect={(parts) => {
           setForm((p) => ({ ...p, address: parts.address || parts.full_address, city: parts.city || p.city, postcode: parts.postcode || p.postcode }));
         }}
@@ -738,21 +741,70 @@ function EditClientForm({
 }
 
 /* ============ CREATE FORM ============ */
-function CreateClientForm({ sourceAccounts, onSubmit, onCancel }: { sourceAccounts: Array<{ id: string; name: string }>; onSubmit: (d: Partial<Client> & { property_address_parts?: AddressParts }) => void; onCancel: () => void }) {
+function CreateClientForm({
+  sourceAccounts,
+  onSubmit,
+  onCancel,
+}: {
+  sourceAccounts: Array<{ id: string; name: string }>;
+  onSubmit: (d: Partial<Client> & { property_address_parts?: AddressParts }) => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  const CREATE_SOURCE_OPTION = "__create_new_account__";
   const [form, setForm] = useState({
     full_name: "", email: "", phone: "", address: "", city: "", postcode: "",
     source_account_id: "",
     client_type: "residential" as ClientType, source: "direct" as ClientSource, notes: "",
   });
+  const [newSourceForm, setNewSourceForm] = useState({
+    company_name: "",
+    contact_name: "",
+    email: "",
+    industry: "Residential Services",
+    payment_terms: "Net 30",
+  });
+  const [creatingSource, setCreatingSource] = useState(false);
   const [propertyAddressParts, setPropertyAddressParts] = useState<AddressParts | null>(null);
   const [propertyAddressRaw, setPropertyAddressRaw] = useState("");
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.full_name) { toast.error("Full name is required"); return; }
     if (!form.source_account_id) { toast.error("Please select the client's source account"); return; }
-    onSubmit({ ...form, property_address_parts: propertyAddressParts ?? undefined });
+    let sourceAccountId = form.source_account_id;
+    if (sourceAccountId === CREATE_SOURCE_OPTION) {
+      if (!newSourceForm.company_name.trim() || !newSourceForm.contact_name.trim() || !newSourceForm.email.trim()) {
+        toast.error("Please fill company, contact and email to create the account");
+        return;
+      }
+      setCreatingSource(true);
+      try {
+        const createdAccount = await createAccount({
+          company_name: newSourceForm.company_name.trim(),
+          contact_name: newSourceForm.contact_name.trim(),
+          email: newSourceForm.email.trim(),
+          industry: newSourceForm.industry.trim() || "General",
+          status: "onboarding",
+          credit_limit: 0,
+          payment_terms: newSourceForm.payment_terms.trim() || "Net 30",
+        });
+        sourceAccountId = createdAccount.id;
+        toast.success(`Source account "${createdAccount.company_name}" created`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to create source account");
+        return;
+      } finally {
+        setCreatingSource(false);
+      }
+    }
+    const typedProperty = propertyAddressRaw.trim();
+    const property_address_parts =
+      propertyAddressParts ??
+      (typedProperty
+        ? { full_address: typedProperty, address: typedProperty, city: "", postcode: "", country: "gb" }
+        : undefined);
+    await onSubmit({ ...form, source_account_id: sourceAccountId, property_address_parts });
   };
 
   return (
@@ -760,12 +812,65 @@ function CreateClientForm({ sourceAccounts, onSubmit, onCancel }: { sourceAccoun
       <Select
         label="Source account *"
         value={form.source_account_id}
-        onChange={(e) => update("source_account_id", e.target.value)}
+        onChange={(e) => {
+          const value = e.target.value;
+          update("source_account_id", value);
+          if (value === CREATE_SOURCE_OPTION) {
+            setNewSourceForm((prev) => ({
+              ...prev,
+              contact_name: prev.contact_name || form.full_name || "Client Team",
+              email: prev.email || form.email || "",
+            }));
+          }
+        }}
         options={[
           { value: "", label: "— Where did the client come from? —" },
           ...sourceAccounts.map((a) => ({ value: a.id, label: a.name })),
+          { value: CREATE_SOURCE_OPTION, label: "+ Create new account" },
         ]}
       />
+      {form.source_account_id === CREATE_SOURCE_OPTION && (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 space-y-3">
+          <p className="text-[11px] font-medium text-text-secondary">Create source account</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Company name *</label>
+              <Input
+                value={newSourceForm.company_name}
+                onChange={(e) => setNewSourceForm((p) => ({ ...p, company_name: e.target.value }))}
+                placeholder="Lead source company"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Contact name *</label>
+              <Input
+                value={newSourceForm.contact_name}
+                onChange={(e) => setNewSourceForm((p) => ({ ...p, contact_name: e.target.value }))}
+                placeholder="Source owner"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Email *</label>
+              <Input
+                type="email"
+                value={newSourceForm.email}
+                onChange={(e) => setNewSourceForm((p) => ({ ...p, email: e.target.value }))}
+                placeholder="source@example.com"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Industry</label>
+              <Input
+                value={newSourceForm.industry}
+                onChange={(e) => setNewSourceForm((p) => ({ ...p, industry: e.target.value }))}
+                placeholder="Residential Services"
+              />
+            </div>
+          </div>
+        </div>
+      )}
       <p className="text-[10px] text-text-tertiary -mt-2">List is from the database (client source accounts). The client is linked to the selected source.</p>
       <div className="grid grid-cols-2 gap-4">
         <div>
@@ -798,6 +903,7 @@ function CreateClientForm({ sourceAccounts, onSubmit, onCancel }: { sourceAccoun
       <AddressAutocomplete
         label="Address"
         value={form.address}
+        onChange={(v) => update("address", v)}
         onSelect={(parts) => {
           setForm((p) => ({ ...p, address: parts.address || parts.full_address, city: parts.city || p.city, postcode: parts.postcode || p.postcode }));
         }}
@@ -827,6 +933,10 @@ function CreateClientForm({ sourceAccounts, onSubmit, onCancel }: { sourceAccoun
           <p className="text-[10px] font-medium text-text-secondary mb-1.5">Add new address</p>
           <AddressAutocomplete
             value={propertyAddressRaw}
+            onChange={(v) => {
+              setPropertyAddressRaw(v);
+              setPropertyAddressParts(null);
+            }}
             onSelect={(parts) => {
               setPropertyAddressParts(parts);
               setPropertyAddressRaw(parts.full_address);
@@ -862,7 +972,9 @@ function CreateClientForm({ sourceAccounts, onSubmit, onCancel }: { sourceAccoun
       </div>
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="outline" onClick={onCancel} type="button">Cancel</Button>
-        <Button type="submit" icon={<UserPlus className="h-3.5 w-3.5" />}>Create client</Button>
+        <Button type="submit" disabled={creatingSource} icon={<UserPlus className="h-3.5 w-3.5" />}>
+          {creatingSource ? "Creating source..." : "Create client"}
+        </Button>
       </div>
     </form>
   );

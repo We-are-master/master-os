@@ -1,4 +1,4 @@
-import { queryList, getSupabase, type ListParams, type ListResult } from "./base";
+import { queryList, getSupabase, softDeleteById, type ListParams, type ListResult } from "./base";
 import type { Client } from "@/types/database";
 
 export async function listClients(params: ListParams): Promise<ListResult<Client>> {
@@ -10,7 +10,7 @@ export async function listClients(params: ListParams): Promise<ListResult<Client
 
 export async function getClient(id: string): Promise<Client | null> {
   const supabase = getSupabase();
-  const { data, error } = await supabase.from("clients").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await supabase.from("clients").select("*").eq("id", id).is("deleted_at", null).maybeSingle();
   if (error) throw new Error(error.message);
   return data as Client | null;
 }
@@ -39,7 +39,5 @@ export async function updateClient(id: string, data: Partial<Client>): Promise<C
 }
 
 export async function deleteClient(id: string): Promise<void> {
-  const supabase = getSupabase();
-  const { error } = await supabase.from("clients").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  await softDeleteById("clients", id);
 }

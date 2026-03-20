@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { staggerItem } from "@/lib/motion";
 import {
@@ -84,11 +84,40 @@ interface AuditTimelineProps {
   entityType: AuditEntityType;
   entityId: string;
   className?: string;
+  /** When true, audit logs are fetched only after the block enters the viewport (lighter initial page load). */
+  deferUntilVisible?: boolean;
 }
 
-export function AuditTimeline({ entityType, entityId, className = "" }: AuditTimelineProps) {
+export function AuditTimeline({
+  entityType,
+  entityId,
+  className = "",
+  deferUntilVisible = false,
+}: AuditTimelineProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [shouldLoad, setShouldLoad] = useState(!deferUntilVisible);
   const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!deferUntilVisible);
+
+  useEffect(() => {
+    setShouldLoad(!deferUntilVisible);
+    setLogs([]);
+    setLoading(!deferUntilVisible);
+  }, [entityId, entityType, deferUntilVisible]);
+
+  useEffect(() => {
+    if (!deferUntilVisible) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([e]) => {
+        if (e.isIntersecting) setShouldLoad(true);
+      },
+      { rootMargin: "160px", threshold: 0.01 }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [deferUntilVisible, entityId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,7 +128,22 @@ export function AuditTimeline({ entityType, entityId, className = "" }: AuditTim
     finally { setLoading(false); }
   }, [entityType, entityId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!shouldLoad) return;
+    load();
+  }, [shouldLoad, load]);
+
+  if (!shouldLoad) {
+    return (
+      <div
+        ref={containerRef}
+        className={`py-10 px-4 text-center rounded-xl border border-dashed border-border bg-surface-hover/50 ${className}`}
+      >
+        <Clock className="h-6 w-6 text-text-tertiary/80 mx-auto mb-2" />
+        <p className="text-xs text-text-tertiary">Activity history loads when you scroll to this section</p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -119,7 +163,7 @@ export function AuditTimeline({ entityType, entityId, className = "" }: AuditTim
 
   if (logs.length === 0) {
     return (
-      <div className={`py-12 text-center ${className}`}>
+      <div ref={containerRef} className={`py-12 text-center ${className}`}>
         <Clock className="h-8 w-8 text-stone-300 mx-auto mb-2" />
         <p className="text-sm text-text-tertiary">No activity recorded yet</p>
         <p className="text-xs text-text-tertiary mt-1">Changes will appear here as they happen</p>
@@ -130,7 +174,7 @@ export function AuditTimeline({ entityType, entityId, className = "" }: AuditTim
   const grouped = groupByDate(logs);
 
   return (
-    <div className={`space-y-5 ${className}`}>
+    <div ref={containerRef} className={`space-y-5 ${className}`}>
       {grouped.map(([dateLabel, items]) => (
         <div key={dateLabel}>
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider mb-3">{dateLabel}</p>

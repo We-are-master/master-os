@@ -1,10 +1,11 @@
-import { getSupabase } from "./base";
+import { getSupabase, softDeleteById } from "./base";
 import type { Squad, TeamMember } from "@/types/database";
 
 export async function listSquads(): Promise<Squad[]> {
   const { data, error } = await getSupabase()
     .from("squads")
     .select("*")
+    .is("deleted_at", null)
     .order("name", { ascending: true });
   if (error) throw error;
   return (data ?? []) as Squad[];
@@ -29,8 +30,7 @@ export async function updateSquad(id: string, updates: Partial<Pick<Squad, "name
 }
 
 export async function deleteSquad(id: string): Promise<void> {
-  const { error } = await getSupabase().from("squads").delete().eq("id", id);
-  if (error) throw error;
+  await softDeleteById("squads", id);
 }
 
 export async function listTeamMembers(): Promise<TeamMember[]> {
@@ -40,6 +40,7 @@ export async function listTeamMembers(): Promise<TeamMember[]> {
       *,
       squads(name)
     `)
+    .is("deleted_at", null)
     .order("full_name", { ascending: true });
   if (error) throw error;
   const rows = (data ?? []) as (TeamMember & { squads: { name: string } | null })[];
@@ -84,6 +85,5 @@ export async function updateTeamMember(
 }
 
 export async function deleteTeamMember(id: string): Promise<void> {
-  const { error } = await getSupabase().from("team_members").delete().eq("id", id);
-  if (error) throw error;
+  await softDeleteById("team_members", id);
 }

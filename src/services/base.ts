@@ -23,6 +23,20 @@ export function getSupabase() {
   return createClient();
 }
 
+export async function softDeleteById(
+  table: string,
+  id: string,
+  deletedBy?: string
+): Promise<void> {
+  const supabase = getSupabase();
+  const payload: { deleted_at: string; deleted_by?: string } = {
+    deleted_at: new Date().toISOString(),
+  };
+  if (deletedBy) payload.deleted_by = deletedBy;
+  const { error } = await supabase.from(table).update(payload).eq("id", id);
+  if (error) throw error;
+}
+
 export async function queryList<T>(
   table: string,
   params: ListParams,
@@ -37,7 +51,7 @@ export async function queryList<T>(
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  let query = supabase.from(table).select("*", { count: "exact" });
+  let query = supabase.from(table).select("*", { count: "exact" }).is("deleted_at", null);
 
   if (params.status && params.status !== "all") {
     query = query.eq("status", params.status);
@@ -79,7 +93,8 @@ export async function getStatusCounts(
 
   const { count: totalCount } = await supabase
     .from(table)
-    .select("*", { count: "exact", head: true });
+    .select("*", { count: "exact", head: true })
+    .is("deleted_at", null);
   counts["all"] = totalCount ?? 0;
 
   await Promise.all(
@@ -87,6 +102,7 @@ export async function getStatusCounts(
       const { count } = await supabase
         .from(table)
         .select("*", { count: "exact", head: true })
+        .is("deleted_at", null)
         .eq(statusColumn, s);
       counts[s] = count ?? 0;
     })
@@ -100,7 +116,7 @@ export async function getAggregates(
   column: string
 ): Promise<{ sum: number; count: number }> {
   const supabase = getSupabase();
-  const { data, error } = await supabase.from(table).select(column);
+  const { data, error } = await supabase.from(table).select(column).is("deleted_at", null);
   if (error) throw error;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rows = (data ?? []) as any[];
