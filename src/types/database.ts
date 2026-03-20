@@ -421,7 +421,7 @@ export type ClientType = "residential" | "landlord" | "tenant" | "commercial" | 
 export type ClientSource = "direct" | "referral" | "website" | "partner" | "corporate" | "other";
 export type ClientStatus = "active" | "inactive" | "vip" | "blocked";
 
-/** Account de origem do cliente (ex: Facebook, Housekeep, Website) */
+/** Row from `accounts` used in client linking UI (`clients.source_account_id` → `accounts.id`) */
 export interface ClientSourceAccount {
   id: string;
   name: string;

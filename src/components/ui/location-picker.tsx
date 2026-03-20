@@ -170,7 +170,7 @@ export function LocationPicker({
             />
             {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary animate-spin" />}
             {!searching && query && (
-              <button onClick={handleClear} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary transition-colors">
+              <button type="button" onClick={handleClear} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary transition-colors">
                 <X className="h-4 w-4" />
               </button>
             )}
@@ -181,6 +181,7 @@ export function LocationPicker({
             <div className="absolute z-50 mt-1 w-full bg-card rounded-xl border border-border shadow-lg overflow-hidden">
               {results.map((r, i) => (
                 <button
+                  type="button"
                   key={i}
                   onClick={() => handleSelectResult(r)}
                   className="w-full px-4 py-2.5 text-left text-sm hover:bg-surface-hover transition-colors flex items-start gap-2.5 border-b border-border-light last:border-0"

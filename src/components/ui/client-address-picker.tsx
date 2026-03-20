@@ -10,9 +10,10 @@ import { toast } from "sonner";
 import type { Client, ClientAddress } from "@/types/database";
 import { listClients, createClient, getClient } from "@/services/clients";
 import { listAddressesByClient, createClientAddress } from "@/services/client-addresses";
-import { listClientSourceAccounts } from "@/services/client-source-accounts";
-import { createAccount } from "@/services/accounts";
+import { listClientSourceAccounts, createClientSourceAccount } from "@/services/client-source-accounts";
 import type { ClientSourceAccount } from "@/types/database";
+import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
+import { isUuid } from "@/lib/utils";
 
 export interface ClientAndAddressValue {
   client_id?: string;
@@ -60,7 +61,6 @@ export function ClientAddressPicker({
   className = "",
   lockClient = false,
 }: ClientAddressPickerProps) {
-  const CREATE_SOURCE_OPTION = "__create_new_account__";
   const clientSectionLocked = lockClient && !!value.client_id;
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -246,31 +246,35 @@ export function ClientAddressPicker({
       return;
     }
     if (!createClientForm.source_account_id) {
-      toast.error("Please select the client's source account");
+      toast.error("Please select the linked account");
       return;
+    }
+    let sourceAccountId = createClientForm.source_account_id;
+    if (sourceAccountId === CREATE_LINKED_ACCOUNT_OPTION) {
+      if (!newSourceForm.company_name.trim() || !newSourceForm.contact_name.trim() || !newSourceForm.email.trim()) {
+        toast.error("Fill company name, contact and email to create the linked account");
+        return;
+      }
     }
     setCreating(true);
     try {
-      let sourceAccountId = createClientForm.source_account_id;
-      if (sourceAccountId === CREATE_SOURCE_OPTION) {
-        if (!newSourceForm.company_name.trim() || !newSourceForm.contact_name.trim() || !newSourceForm.email.trim()) {
-          toast.error("Please fill company, contact and email to create the account");
-          return;
-        }
-        const createdAccount = await createAccount({
-          company_name: newSourceForm.company_name.trim(),
+      if (sourceAccountId === CREATE_LINKED_ACCOUNT_OPTION) {
+        const createdAccount = await createClientSourceAccount({
+          name: newSourceForm.company_name.trim(),
           contact_name: newSourceForm.contact_name.trim(),
           email: newSourceForm.email.trim(),
-          industry: newSourceForm.industry.trim() || "General",
-          status: "onboarding",
-          credit_limit: 0,
-          payment_terms: newSourceForm.payment_terms.trim() || "Net 30",
+          industry: newSourceForm.industry,
+          payment_terms: newSourceForm.payment_terms,
         });
         sourceAccountId = createdAccount.id;
         setSourceAccounts((prev) => {
           if (prev.some((p) => p.id === createdAccount.id)) return prev;
-          return [...prev, { id: createdAccount.id, name: createdAccount.company_name, created_at: createdAccount.created_at }];
+          return [...prev, { id: createdAccount.id, name: createdAccount.name, created_at: createdAccount.created_at }];
         });
+      }
+      if (sourceAccountId === CREATE_LINKED_ACCOUNT_OPTION || !isUuid(sourceAccountId)) {
+        toast.error("Resolve the linked account first (fill new-account fields or pick an existing one).");
+        return;
       }
       const client = await createClient({
         source_account_id: sourceAccountId,
@@ -515,18 +519,18 @@ export function ClientAddressPicker({
           setCreateClientAddressRaw("");
         }}
         title="New client"
-        subtitle="Enter details and select where the client came from (source account)"
+        subtitle="Link the client to an account from Accounts (or create one)"
         size="md"
       >
         <div className="p-6 space-y-4">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Source account *</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Linked account (Accounts) *</label>
             <select
               value={createClientForm.source_account_id}
               onChange={(e) => {
                 const value = e.target.value;
                 setCreateClientForm((p) => ({ ...p, source_account_id: value }));
-                if (value === CREATE_SOURCE_OPTION) {
+                if (value === CREATE_LINKED_ACCOUNT_OPTION) {
                   setNewSourceForm((prev) => ({
                     ...prev,
                     contact_name: prev.contact_name || createClientForm.full_name || "Client Team",
@@ -540,13 +544,13 @@ export function ClientAddressPicker({
               {sourceAccounts.map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
-              <option value={CREATE_SOURCE_OPTION}>+ Create new account</option>
+              <option value={CREATE_LINKED_ACCOUNT_OPTION}>+ Create new account</option>
             </select>
-            <p className="text-[10px] text-text-tertiary mt-1">Client is linked to this source (e.g. Facebook, Website, Referral).</p>
+            <p className="text-[10px] text-text-tertiary mt-1">Pulled from Accounts — the client row stores this account&apos;s ID.</p>
           </div>
-          {createClientForm.source_account_id === CREATE_SOURCE_OPTION && (
+          {createClientForm.source_account_id === CREATE_LINKED_ACCOUNT_OPTION && (
             <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 space-y-3">
-              <p className="text-[11px] font-medium text-text-secondary">Create source account</p>
+              <p className="text-[11px] font-medium text-text-secondary">Create account (saved in Accounts)</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Company name *</label>
@@ -583,6 +587,14 @@ export function ClientAddressPicker({
                     placeholder="Residential Services"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Payment terms</label>
+                <Input
+                  value={newSourceForm.payment_terms}
+                  onChange={(e) => setNewSourceForm((p) => ({ ...p, payment_terms: e.target.value }))}
+                  placeholder="Net 30"
+                />
               </div>
             </div>
           )}

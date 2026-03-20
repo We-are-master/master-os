@@ -1,52 +1,61 @@
 import { getSupabase } from "./base";
 import type { ClientSourceAccount } from "@/types/database";
+import { createAccount } from "./accounts";
 
-/** Lista todos os accounts de origem (para dropdowns) */
+/**
+ * Accounts corporativos para vincular o cliente (`clients.source_account_id` → `accounts.id`).
+ * Mantém o tipo ClientSourceAccount como { id, name } para os dropdowns.
+ */
 export async function listClientSourceAccounts(): Promise<ClientSourceAccount[]> {
   const supabase = getSupabase();
-  // Preferred source: business accounts table (keeps source_account_id linked to real account rows).
-  const { data: accountRows, error: accountError } = await supabase
+  const { data, error } = await supabase
     .from("accounts")
     .select("id, company_name, created_at")
+    .is("deleted_at", null)
     .order("company_name", { ascending: true });
-
-  if (!accountError && accountRows) {
-    return accountRows.map((row) => ({
-      id: row.id,
-      name: row.company_name,
-      created_at: row.created_at,
-    })) as ClientSourceAccount[];
-  }
-
-  // Backward-compatible fallback in case the workspace still uses the legacy table.
-  const { data, error } = await supabase
-    .from("client_source_accounts")
-    .select("*")
-    .order("name", { ascending: true });
-  if (error) throw new Error(accountError?.message || error.message);
-  return (data ?? []) as ClientSourceAccount[];
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Array<{ id: string; company_name: string; created_at: string }>;
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.company_name,
+    created_at: row.created_at,
+  }));
 }
 
 export async function getClientSourceAccount(id: string): Promise<ClientSourceAccount | null> {
   const supabase = getSupabase();
   const { data, error } = await supabase
-    .from("client_source_accounts")
-    .select("*")
+    .from("accounts")
+    .select("id, company_name, created_at")
     .eq("id", id)
+    .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return data as ClientSourceAccount | null;
+  const row = data as { id: string; company_name: string; created_at: string } | null;
+  if (!row) return null;
+  return { id: row.id, name: row.company_name, created_at: row.created_at };
 }
 
-export async function createClientSourceAccount(
-  input: Omit<ClientSourceAccount, "id" | "created_at">
-): Promise<ClientSourceAccount> {
-  const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("client_source_accounts")
-    .insert(input)
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  return data as ClientSourceAccount;
+/** Cria um registro em `accounts` e devolve no formato usado pelos selects de cliente. */
+export async function createClientSourceAccount(input: {
+  name: string;
+  contact_name: string;
+  email: string;
+  industry?: string;
+  payment_terms?: string;
+}): Promise<ClientSourceAccount> {
+  const account = await createAccount({
+    company_name: input.name.trim(),
+    contact_name: input.contact_name.trim(),
+    email: input.email.trim(),
+    industry: (input.industry ?? "General").trim() || "General",
+    status: "onboarding",
+    credit_limit: 0,
+    payment_terms: (input.payment_terms ?? "Net 30").trim() || "Net 30",
+  });
+  return {
+    id: account.id,
+    name: account.company_name,
+    created_at: account.created_at,
+  };
 }
