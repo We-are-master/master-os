@@ -59,6 +59,7 @@ export function Modal({
                 {subtitle && <p className="text-xs text-text-tertiary mt-0.5">{subtitle}</p>}
               </div>
               <button
+                type="button"
                 onClick={onClose}
                 className="h-8 w-8 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary transition-colors"
               >

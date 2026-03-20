@@ -157,7 +157,7 @@ export function AddressAutocomplete({
         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-text-tertiary" />}
           {query && !loading && (
-            <button onClick={handleClear} className="text-text-tertiary hover:text-text-secondary transition-colors">
+            <button type="button" onClick={handleClear} className="text-text-tertiary hover:text-text-secondary transition-colors">
               <X className="h-3.5 w-3.5" />
             </button>
           )}
