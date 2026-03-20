@@ -48,14 +48,15 @@ export async function updateRequest(
   return data as ServiceRequest;
 }
 
-export async function updateRequestStatus(id: string, status: string): Promise<void> {
+export async function updateRequestStatus(id: string, status: string): Promise<ServiceRequest> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("service_requests")
     .update({ status, updated_at: new Date().toISOString() })
     .eq("id", id)
-    .select("id")
-    .maybeSingle();
+    .select("*")
+    .single();
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Request not found or update had no effect");
+  return data as ServiceRequest;
 }

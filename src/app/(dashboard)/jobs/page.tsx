@@ -19,8 +19,7 @@ import {
   Plus, Filter, List, LayoutGrid, Calendar, Map,
   ArrowRight, Briefcase, DollarSign, Clock,
   MapPin, Building2, TrendingUp,
-  Play, Pause, CheckCircle2, RotateCcw,
-  CreditCard, AlertTriangle, ShieldCheck, XCircle,
+  CheckCircle2, AlertTriangle, XCircle,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
@@ -31,10 +30,11 @@ import { getSupabase, getStatusCounts } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import type { Job } from "@/types/database";
 import { LocationMiniMap } from "@/components/ui/location-picker";
-import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
+import { canAdvanceJob, normalizeTotalPhases } from "@/lib/job-phases";
+import { jobScheduleYmd } from "@/lib/schedule-calendar";
 
 const JOB_STATUSES = ["scheduled", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
 
@@ -52,7 +52,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 function JobsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh } = useSupabaseList<Job>({ fetcher: listJobs });
+  const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh } = useSupabaseList<Job>({ fetcher: listJobs, realtimeTable: "jobs" });
   const { profile } = useProfile();
   const [viewMode, setViewMode] = useState("list");
   const [createOpen, setCreateOpen] = useState(false);
@@ -123,7 +123,10 @@ function JobsPageContent() {
         property_address: formData.property_address ?? "",
         partner_name: formData.partner_name, partner_id: formData.partner_id,
         owner_id: formData.owner_id, owner_name: formData.owner_name,
-        status: "scheduled", progress: 0, current_phase: 0, total_phases: 3,
+        status: "scheduled",
+        progress: 0,
+        current_phase: 0,
+        total_phases: normalizeTotalPhases(formData.total_phases),
         client_price: cp, partner_cost: pc, materials_cost: mc, margin_percent: margin,
         scheduled_date: formData.scheduled_date, scheduled_start_at: formData.scheduled_start_at,
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
@@ -256,68 +259,11 @@ export default function JobsPage() {
   return <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-tertiary">Loading...</div>}><JobsPageContent /></Suspense>;
 }
 
-/** 7 statuses with blocks: Ready to Book → Scheduled (partner+date); In Progress → Final Check (≥1 report); Final Check → Awaiting Payment (report approved). */
-function canAdvanceJob(job: Job, nextStatus: string): { ok: boolean; message?: string } {
-  if (nextStatus === "in_progress_phase1") {
-    if (!job.partner_id && !job.partner_name?.trim()) return { ok: false, message: "Assign a partner before starting the job." };
-    if (!job.scheduled_date && !job.scheduled_start_at) return { ok: false, message: "Set scheduled date before starting the job." };
-  }
-  if (nextStatus === "final_check") {
-    const hasReport = job.report_1_uploaded || job.report_2_uploaded || job.report_3_uploaded;
-    if (!hasReport) return { ok: false, message: "Upload at least one post-job report/photo before Final Check." };
-  }
-  if (nextStatus === "awaiting_payment") {
-    const approved = job.report_1_approved || job.report_2_approved || job.report_3_approved;
-    if (!approved) return { ok: false, message: "Ops must approve at least one report before Awaiting Payment." };
-  }
-  return { ok: true };
-}
-
-function getStatusActions(currentStatus: string) {
-  switch (currentStatus) {
-    case "scheduled":
-      return [{ label: "Start Phase 1", status: "in_progress_phase1", icon: Play, primary: true }];
-    case "in_progress_phase1":
-      return [
-        { label: "Advance to Phase 2", status: "in_progress_phase2", icon: TrendingUp, primary: true },
-        { label: "Pause", status: "scheduled", icon: Pause, primary: false },
-      ];
-    case "in_progress_phase2":
-      return [
-        { label: "Advance to Phase 3", status: "in_progress_phase3", icon: TrendingUp, primary: true },
-        { label: "Back to Phase 1", status: "in_progress_phase1", icon: RotateCcw, primary: false },
-      ];
-    case "in_progress_phase3":
-      return [
-        { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
-        { label: "Back to Phase 2", status: "in_progress_phase2", icon: RotateCcw, primary: false },
-      ];
-    case "final_check":
-      return [
-        { label: "Awaiting Payment", status: "awaiting_payment", icon: CreditCard, primary: true },
-        { label: "Back to Phase 3", status: "in_progress_phase3", icon: RotateCcw, primary: false },
-      ];
-    case "awaiting_payment":
-      return [
-        { label: "Mark Completed", status: "completed", icon: CheckCircle2, primary: true },
-      ];
-    case "need_attention":
-      return [
-        { label: "Validate & complete", status: "completed", icon: ShieldCheck, primary: true },
-        { label: "Back to Phase 3", status: "in_progress_phase3", icon: RotateCcw, primary: false },
-      ];
-    case "completed":
-      return [
-        { label: "Reopen", status: "scheduled", icon: RotateCcw, primary: false },
-      ];
-    default:
-      return [];
-  }
-}
-
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
-  const [form, setForm] = useState({ title: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "" });
+  const [form, setForm] = useState({
+    title: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "3",
+  });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const handleSubmit = (e: React.FormEvent) => {
@@ -338,8 +284,9 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       materials_cost: Number(form.materials_cost) || 0,
       scheduled_date,
       scheduled_start_at,
+      total_phases: normalizeTotalPhases(Number(form.total_phases)),
     });
-    setForm({ title: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "" });
+    setForm({ title: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "3" });
     setClientAddress({ client_name: "", property_address: "" });
   };
 
@@ -347,6 +294,17 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     <Modal open={open} onClose={onClose} title="Novo Job" subtitle="Criar um novo job" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
         <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Job title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
+        <Select
+          label="Work phases *"
+          value={form.total_phases}
+          onChange={(e) => update("total_phases", e.target.value)}
+          options={[
+            { value: "1", label: "1 phase — straight to final check after Phase 1" },
+            { value: "2", label: "2 phases — Phase 1 → Phase 2 → final check" },
+            { value: "3", label: "3 phases — full progress (default)" },
+          ]}
+        />
+        <p className="text-[10px] text-text-tertiary -mt-2">Each phase can have one partner report (photos / completion).</p>
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
@@ -387,12 +345,10 @@ function JobsCalendarView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading
   const jobsByDay = useMemo(() => {
     const map: Record<number, Job[]> = {};
     for (const job of jobs) {
-      const d = job.scheduled_date || (job.scheduled_start_at ? job.scheduled_start_at.slice(0, 10) : null);
-      if (!d) continue;
-      const [y, m, day] = d.split("-").map(Number);
-      if (y !== year || m !== month + 1) continue;
-      if (!map[day]) map[day] = [];
-      map[day].push(job);
+      const ymd = jobScheduleYmd(job);
+      if (!ymd || ymd.y !== year || ymd.m !== month + 1) continue;
+      if (!map[ymd.d]) map[ymd.d] = [];
+      map[ymd.d].push(job);
     }
     return map;
   }, [jobs, year, month]);

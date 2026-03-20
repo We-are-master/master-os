@@ -245,13 +245,15 @@ export function LocationMiniMapByCoords({
   );
 }
 
-/** Small static map for read-only location display in drawers */
-export function LocationMiniMap({ address, className }: { address: string; className?: string }) {
+function LocationMiniMapInner({ address }: { address: string }) {
   const [coords, setCoords] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!address || !MAPBOX_TOKEN) { setLoading(false); return; }
+    if (!address || !MAPBOX_TOKEN) {
+      setLoading(false);
+      return;
+    }
     fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${MAPBOX_TOKEN}&limit=1`)
       .then((r) => r.json())
       .then((data) => {
@@ -263,24 +265,63 @@ export function LocationMiniMap({ address, className }: { address: string; class
   }, [address]);
 
   if (loading) {
-    return <div className={`animate-pulse h-32 bg-surface-tertiary rounded-xl ${className}`} />;
+    return <div className="animate-pulse h-32 bg-surface-tertiary rounded-xl" />;
   }
 
   if (!coords || !MAPBOX_TOKEN) return null;
 
   return (
-    <div className={className}>
-      <LocationPicker
-        readOnly
-        center={coords}
-        value={address}
-        onChange={() => {}}
-        mapHeight="160px"
-      />
+    <div>
+      <LocationPicker readOnly center={coords} value={address} onChange={() => {}} mapHeight="160px" />
       <div className="flex items-center gap-2 mt-1.5">
         <MapPin className="h-3 w-3 text-red-400 shrink-0" />
         <p className="text-xs text-text-tertiary truncate">{address}</p>
       </div>
+    </div>
+  );
+}
+
+/** Small static map for read-only location display. Set `lazy` to defer geocoding + Mapbox until near the viewport. */
+export function LocationMiniMap({
+  address,
+  className,
+  lazy = false,
+}: {
+  address: string;
+  className?: string;
+  /** When true, Mapbox JS and geocoding run only after the block scrolls into view (faster first paint). */
+  lazy?: boolean;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(!lazy);
+
+  useEffect(() => {
+    if (!lazy) return;
+    const el = wrapRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([e]) => {
+        if (e.isIntersecting) setVisible(true);
+      },
+      { rootMargin: "200px", threshold: 0.01 }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [lazy]);
+
+  return (
+    <div ref={wrapRef} className={className}>
+      {lazy && !visible ? (
+        <div className="flex items-start gap-2 rounded-xl border border-border bg-surface-hover p-3 min-h-[4.5rem]">
+          <MapPin className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-text-primary line-clamp-3">{address || "No address"}</p>
+            <p className="text-[10px] text-text-tertiary mt-1">Map loads when you scroll here</p>
+          </div>
+        </div>
+      ) : (
+        <LocationMiniMapInner address={address} />
+      )}
     </div>
   );
 }

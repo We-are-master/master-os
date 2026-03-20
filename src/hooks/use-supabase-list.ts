@@ -2,10 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ListResult, ListParams } from "@/services/base";
+import { createClient } from "@/lib/supabase/client";
 
 interface UseSupabaseListOptions<T> {
   fetcher: (params: ListParams) => Promise<ListResult<T>>;
   pageSize?: number;
+  /** Subscribe to Postgres changes and soft-refresh the list (enable Realtime on this table in Supabase). */
+  realtimeTable?: string;
 }
 
 interface UseSupabaseListReturn<T> {
@@ -20,11 +23,14 @@ interface UseSupabaseListReturn<T> {
   setSearch: (s: string) => void;
   status: string;
   setStatus: (s: string) => void;
+  /** Full reload with loading skeleton */
   refresh: () => void;
+  /** Re-fetch in the background without clearing the table */
+  refreshSilent: () => void;
 }
 
 export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupabaseListReturn<T> {
-  const { fetcher, pageSize = 10 } = options;
+  const { fetcher, pageSize = 10, realtimeTable } = options;
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
@@ -37,6 +43,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   const [search, setSearchRaw] = useState("");
   const [status, setStatusRaw] = useState("all");
   const [tick, setTick] = useState(0);
+  const skipLoadingRef = useRef(false);
 
   const setSearch = useCallback((s: string) => {
     setSearchRaw(s);
@@ -49,13 +56,24 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   }, []);
 
   const refresh = useCallback(() => {
+    skipLoadingRef.current = false;
+    setTick((t) => t + 1);
+  }, []);
+
+  const refreshSilent = useCallback(() => {
+    skipLoadingRef.current = true;
     setTick((t) => t + 1);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    const silent = skipLoadingRef.current;
+    skipLoadingRef.current = false;
+
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
 
     fetcherRef
       .current({
@@ -74,16 +92,46 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
         if (cancelled) return;
         const message = err instanceof Error ? err.message : "Failed to load data";
         setError(message);
-        setData([]);
+        if (!silent) setData([]);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && !silent) setLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
   }, [page, pageSize, search, status, tick]);
+
+  const refreshSilentRef = useRef(refreshSilent);
+  refreshSilentRef.current = refreshSilent;
+
+  useEffect(() => {
+    if (!realtimeTable?.trim()) return;
+    let supabase: ReturnType<typeof createClient>;
+    try {
+      supabase = createClient();
+    } catch {
+      return;
+    }
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    const channel = supabase
+      .channel(`list:${realtimeTable}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: realtimeTable },
+        () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => refreshSilentRef.current(), 350);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+  }, [realtimeTable]);
 
   return {
     data,
@@ -98,5 +146,6 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     status,
     setStatus,
     refresh,
+    refreshSilent,
   };
 }

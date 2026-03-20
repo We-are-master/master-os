@@ -1,4 +1,4 @@
-import { getSupabase } from "./base";
+import { getSupabase, softDeleteById } from "./base";
 import type { JobPayment, JobPaymentType } from "@/types/database";
 
 export interface CreateJobPaymentInput {
@@ -16,6 +16,7 @@ export async function listJobPayments(jobId: string, type?: JobPaymentType): Pro
     .from("job_payments")
     .select("*")
     .eq("job_id", jobId)
+    .is("deleted_at", null)
     .order("payment_date", { ascending: false });
 
   if (type) query = query.eq("type", type);
@@ -45,7 +46,5 @@ export async function createJobPayment(input: CreateJobPaymentInput): Promise<Jo
 }
 
 export async function deleteJobPayment(id: string): Promise<void> {
-  const supabase = getSupabase();
-  const { error } = await supabase.from("job_payments").delete().eq("id", id);
-  if (error) throw error;
+  await softDeleteById("job_payments", id);
 }

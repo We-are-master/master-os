@@ -190,7 +190,10 @@ export async function POST(req: NextRequest) {
 
       if (invError || !invoice) {
         console.error("Quote accept: invoice creation failed", invError);
-        await supabase.from("jobs").delete().eq("id", job.id);
+        await supabase
+          .from("jobs")
+          .update({ deleted_at: new Date().toISOString(), deleted_by: "system" })
+          .eq("id", job.id);
         return NextResponse.json({ error: "Failed to create deposit invoice" }, { status: 500 });
       }
 

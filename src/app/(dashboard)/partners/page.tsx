@@ -135,7 +135,7 @@ export default function PartnersPage() {
   );
 
   const { data: partners, loading, page, totalPages, totalItems, setPage, search, setSearch, status: statusFilter, setStatus: setStatusFilter, refresh } =
-    useSupabaseList<Partner>({ fetcher });
+    useSupabaseList<Partner>({ fetcher, realtimeTable: "partners" });
 
   const loadCounts = useCallback(async () => {
     try {

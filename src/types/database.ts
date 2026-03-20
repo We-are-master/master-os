@@ -29,6 +29,9 @@ export interface Profile {
 export interface ServiceRequest {
   id: string;
   reference: string;
+  /** Linked account client — carried through quote/job when set */
+  client_id?: string;
+  client_address_id?: string;
   client_name: string;
   client_email: string;
   client_phone?: string;

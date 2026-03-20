@@ -1,4 +1,4 @@
-import { getSupabase } from "@/services/base";
+import { getSupabase, softDeleteById } from "@/services/base";
 import type { DashboardView, WidgetConfig } from "@/types/dashboard-config";
 import type { RoleKey } from "@/types/admin-config";
 
@@ -22,6 +22,7 @@ export async function getDashboardViews(): Promise<DashboardView[]> {
   const { data, error } = await supabase
     .from("dashboard_views")
     .select("*")
+    .is("deleted_at", null)
     .order("sort_order", { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []).map(parseView);
@@ -52,9 +53,7 @@ export async function saveDashboardView(view: Omit<DashboardView, "created_at" |
 }
 
 export async function deleteDashboardView(id: string): Promise<void> {
-  const supabase = getSupabase();
-  const { error } = await supabase.from("dashboard_views").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  await softDeleteById("dashboard_views", id);
 }
 
 export async function setDefaultView(id: string): Promise<void> {

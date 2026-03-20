@@ -28,11 +28,13 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { getStatusCounts, getSupabase } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { LocationMiniMap } from "@/components/ui/location-picker";
-import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { useRouter } from "next/navigation";
 import { listPartners } from "@/services/partners";
+import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
+import { extractUkPostcode } from "@/lib/uk-postcode";
+import { normalizeTotalPhases } from "@/lib/job-phases";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   new: { label: "New", variant: "primary" },
@@ -63,8 +65,8 @@ export default function RequestsPage() {
   const router = useRouter();
   const {
     data, loading, page, totalPages, totalItems,
-    setPage, search, setSearch, status, setStatus, refresh,
-  } = useSupabaseList<ServiceRequest>({ fetcher: listRequests });
+    setPage, search, setSearch, status, setStatus, refresh, refreshSilent,
+  } = useSupabaseList<ServiceRequest>({ fetcher: listRequests, realtimeTable: "service_requests" });
 
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [selectedRequest, setSelectedRequest] = useState<ServiceRequest | null>(null);
@@ -77,6 +79,8 @@ export default function RequestsPage() {
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterPriority, setFilterPriority] = useState<"all" | "high" | "urgent">("all");
   const [filterService, setFilterService] = useState<string>("all");
+  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
+  const [savingOwner, setSavingOwner] = useState(false);
 
   // Convert to Quote flow
   const [convertChoiceOpen, setConvertChoiceOpen] = useState<ServiceRequest | null>(null);
@@ -85,6 +89,12 @@ export default function RequestsPage() {
   const [convertToJobOpen, setConvertToJobOpen] = useState<ServiceRequest | null>(null);
 
   const { profile } = useProfile();
+  const isAdmin = profile?.role === "admin";
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    listAssignableUsers().then(setAssignableUsers).catch(() => {});
+  }, [isAdmin]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -124,14 +134,14 @@ export default function RequestsPage() {
     try {
       const updated = await updateRequest(selectedRequest.id, { postcode: drawerPostcode.trim() || undefined });
       setSelectedRequest(updated);
-      refresh();
+      refreshSilent();
       toast.success("Request updated");
     } catch {
       toast.error("Failed to update request");
     } finally {
       setDrawerSaving(false);
     }
-  }, [selectedRequest, drawerPostcode, refresh]);
+  }, [selectedRequest, drawerPostcode, refreshSilent]);
 
   const tabs = [
     { id: "all", label: "All Requests", count: statusCounts.all ?? 0 },
@@ -151,21 +161,21 @@ export default function RequestsPage() {
       await logBulkAction("request", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name);
       toast.success(`${selectedIds.size} requests updated to ${newStatus}`);
       setSelectedIds(new Set());
-      refresh();
+      refreshSilent();
     } catch { toast.error("Failed to update requests"); }
   };
 
   const handleStatusChange = useCallback(
     async (id: string, newStatus: string, oldStatus?: string) => {
       try {
-        await updateRequestStatus(id, newStatus);
+        const updated = await updateRequestStatus(id, newStatus);
         await logAudit({
           entityType: "request", entityId: id, action: "status_changed",
           fieldName: "status", oldValue: oldStatus, newValue: newStatus,
           userId: profile?.id, userName: profile?.full_name,
         });
-        setSelectedRequest(null);
-        refresh();
+        setSelectedRequest((prev) => (prev?.id === id ? updated : prev));
+        refreshSilent();
         await loadCounts();
         toast.success(`Request updated to ${statusConfig[newStatus]?.label ?? newStatus}`);
       } catch (err) {
@@ -174,7 +184,7 @@ export default function RequestsPage() {
         console.error("Request status update failed:", err);
       }
     },
-    [refresh, loadCounts, profile?.id, profile?.full_name]
+    [refreshSilent, loadCounts, profile?.id, profile?.full_name]
   );
 
   const handleAccept = useCallback(
@@ -219,7 +229,11 @@ export default function RequestsPage() {
   const handleCreate = useCallback(
     async (formData: Partial<ServiceRequest>) => {
       try {
+        const ownerId = formData.owner_id ?? profile?.id;
+        const ownerName = formData.owner_name ?? profile?.full_name;
         const result = await createRequest({
+          client_id: formData.client_id,
+          client_address_id: formData.client_address_id,
           client_name: formData.client_name ?? "",
           client_email: formData.client_email ?? "",
           client_phone: formData.client_phone,
@@ -230,8 +244,8 @@ export default function RequestsPage() {
           description: formData.description ?? "",
           status: "new",
           priority: formData.priority ?? "medium",
-          owner_id: formData.owner_id,
-          owner_name: formData.owner_name,
+          owner_id: ownerId,
+          owner_name: ownerName,
           assigned_to: formData.assigned_to,
           estimated_value: formData.estimated_value,
         });
@@ -432,15 +446,54 @@ export default function RequestsPage() {
                       </div>
                     </div>
                   </div>
-                  {selectedRequest.owner_name && (
-                    <div className="p-3 rounded-xl bg-surface-hover">
-                      <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Owner (Commission)</label>
+                  <div className="p-3 rounded-xl bg-surface-hover">
+                    <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Owner (Commission)</label>
+                    {isAdmin ? (
+                      <div className="mt-2 space-y-2">
+                        <select
+                          value={selectedRequest.owner_id ?? ""}
+                          disabled={savingOwner}
+                          onChange={async (e) => {
+                            const ownerId = e.target.value || undefined;
+                            const owner = assignableUsers.find((u) => u.id === ownerId);
+                            setSavingOwner(true);
+                            try {
+                              const updated = await updateRequest(selectedRequest.id, {
+                                owner_id: ownerId,
+                                owner_name: owner?.full_name,
+                              });
+                              setSelectedRequest(updated);
+                              refreshSilent();
+                              toast.success("Owner updated");
+                            } catch {
+                              toast.error("Failed to update owner");
+                            } finally {
+                              setSavingOwner(false);
+                            }
+                          }}
+                          className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                        >
+                          <option value="">No owner</option>
+                          {assignableUsers.map((u) => (
+                            <option key={u.id} value={u.id}>{u.full_name}</option>
+                          ))}
+                        </select>
+                        {selectedRequest.owner_name && (
+                          <div className="flex items-center gap-2.5">
+                            <Avatar name={selectedRequest.owner_name} size="sm" />
+                            <p className="text-sm font-semibold text-text-primary">{selectedRequest.owner_name}</p>
+                          </div>
+                        )}
+                      </div>
+                    ) : selectedRequest.owner_name ? (
                       <div className="flex items-center gap-2.5 mt-2">
                         <Avatar name={selectedRequest.owner_name} size="sm" />
                         <p className="text-sm font-semibold text-text-primary">{selectedRequest.owner_name}</p>
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <p className="text-sm text-text-tertiary italic mt-2">No owner</p>
+                    )}
+                  </div>
                   <div>
                     <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Property</label>
                     <div className="flex items-start gap-2 mt-1.5">
@@ -630,7 +683,7 @@ export default function RequestsPage() {
               userId: profile?.id, userName: profile?.full_name,
             });
             setInvitePartnerOpen(null);
-            refresh();
+            refreshSilent();
             loadCounts();
             toast.success(`Quote ${quote.reference} created. ${partnerIds.length} partner(s) invited via ${sendMethod}.`);
             router.push("/quotes");
@@ -690,7 +743,7 @@ export default function RequestsPage() {
               userId: profile?.id, userName: profile?.full_name,
             });
             setManualQuoteOpen(null);
-            refresh();
+            refreshSilent();
             loadCounts();
             toast.success(`Quote ${quote.reference} created with ${lineItems.length} line items.`);
             router.push("/quotes");
@@ -725,7 +778,7 @@ export default function RequestsPage() {
               status: "scheduled",
               progress: 0,
               current_phase: 0,
-              total_phases: 3,
+              total_phases: normalizeTotalPhases(data.total_phases),
               client_price: clientPrice,
               partner_cost: partnerCost,
               materials_cost: 0,
@@ -755,7 +808,7 @@ export default function RequestsPage() {
               userId: profile?.id, userName: profile?.full_name,
             });
             setConvertToJobOpen(null);
-            refresh();
+            refreshSilent();
             loadCounts();
             toast.success(`Job ${job.reference} created`);
             router.push(`/jobs?jobId=${job.id}`);
@@ -765,9 +818,25 @@ export default function RequestsPage() {
         }}
       />
 
-      <CreateRequestModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
+      <CreateRequestModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreate={handleCreate}
+        profileId={profile?.id}
+        profileName={profile?.full_name}
+      />
     </PageTransition>
   );
+}
+
+function serviceRequestToClientAddressValue(req: ServiceRequest): ClientAndAddressValue {
+  return {
+    client_id: req.client_id,
+    client_address_id: req.client_address_id,
+    client_name: req.client_name ?? "",
+    client_email: req.client_email ?? undefined,
+    property_address: req.property_address ?? "",
+  };
 }
 
 function InvitePartnerToQuote({
@@ -787,11 +856,7 @@ function InvitePartnerToQuote({
     if (!request) return;
     setSelectedIds(new Set());
     setSearchTerm("");
-    setClientAddress({
-      client_name: request.client_name ?? "",
-      client_email: request.client_email ?? undefined,
-      property_address: request.property_address ?? "",
-    });
+    setClientAddress(serviceRequestToClientAddressValue(request));
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
   }, [request]);
 
@@ -814,7 +879,13 @@ function InvitePartnerToQuote({
       <div className="p-6 flex flex-col max-h-[75vh] overflow-y-auto">
         <div className="mb-4">
           <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client and address *</p>
-          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} labelClient="Client *" labelAddress="Property address *" />
+          <ClientAddressPicker
+            value={clientAddress}
+            onChange={setClientAddress}
+            labelClient="Client *"
+            labelAddress="Property address *"
+            lockClient={!!request.client_id}
+          />
         </div>
         <div className="mb-3">
           <Input placeholder="Search partners by name or service..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="text-sm" />
@@ -893,11 +964,7 @@ function ManualQuoteModal({
   useEffect(() => {
     if (request) {
       setLineItems([{ description: request.service_type, quantity: "1", unitPrice: String(request.estimated_value ?? 0), vat: false }]);
-      setClientAddress({
-        client_name: request.client_name ?? "",
-        client_email: request.client_email ?? undefined,
-        property_address: request.property_address ?? "",
-      });
+      setClientAddress(serviceRequestToClientAddressValue(request));
       void Promise.resolve(
         getSupabase().from("company_settings").select("vat_percent").limit(1).single(),
       ).then(({ data }) => {
@@ -922,7 +989,13 @@ function ManualQuoteModal({
       <div className="p-6 space-y-4">
         <div>
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client and address *</p>
-          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} labelClient="Client *" labelAddress="Property address *" />
+          <ClientAddressPicker
+            value={clientAddress}
+            onChange={setClientAddress}
+            labelClient="Client *"
+            labelAddress="Property address *"
+            lockClient={!!request.client_id}
+          />
         </div>
         <div>
           <div className="flex items-center justify-between mb-2">
@@ -992,20 +1065,16 @@ function ConvertToJobModal({
 }: {
   request: ServiceRequest | null;
   onClose: () => void;
-  onConvert: (data: { client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_value?: number; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number }) => void;
+  onConvert: (data: { client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_value?: number; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number; total_phases?: number }) => void;
 }) {
-  const [form, setForm] = useState({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "" });
+  const [form, setForm] = useState({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", total_phases: "3" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
   useEffect(() => {
     if (!request) return;
-    setForm({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: String(request.estimated_value ?? 0), partner_cost: "" });
-    setClientAddress({
-      client_name: request.client_name ?? "",
-      client_email: request.client_email ?? undefined,
-      property_address: request.property_address ?? "",
-    });
+    setForm({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: String(request.estimated_value ?? 0), partner_cost: "", total_phases: "3" });
+    setClientAddress(serviceRequestToClientAddressValue(request));
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
   }, [request]);
 
@@ -1032,6 +1101,7 @@ function ConvertToJobModal({
       internal_notes: form.internal_notes || undefined,
       client_price: Number(form.client_price) || 0,
       partner_cost: Number(form.partner_cost) || 0,
+      total_phases: normalizeTotalPhases(Number(form.total_phases)),
     });
   };
 
@@ -1040,8 +1110,19 @@ function ConvertToJobModal({
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
         <div>
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; address *</p>
-          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} lockClient={!!request.client_id} />
         </div>
+        <Select
+          label="Work phases *"
+          value={form.total_phases}
+          onChange={(e) => update("total_phases", e.target.value)}
+          options={[
+            { value: "1", label: "1 phase — straight to final check after Phase 1" },
+            { value: "2", label: "2 phases — Phase 1 → Phase 2 → final check" },
+            { value: "3", label: "3 phases — full progress (default)" },
+          ]}
+        />
+        <p className="text-[10px] text-text-tertiary -mt-2">Each phase can have one partner report (photos / completion).</p>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Valor ao cliente</label>
@@ -1083,50 +1164,111 @@ const REQUEST_SOURCES: { value: ServiceRequest["source"]; label: string }[] = [
   { value: "b2b", label: "B2B" },
 ];
 
-function CreateRequestModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<ServiceRequest>) => void }) {
-  const [form, setForm] = useState({ client_name: "", client_email: "", client_phone: "", property_address: "", postcode: "", source: "manual" as ServiceRequest["source"], service_type: "HVAC Installation", description: "", priority: "medium", estimated_value: "" });
+function CreateRequestModal({
+  open,
+  onClose,
+  onCreate,
+  profileId,
+  profileName,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreate: (data: Partial<ServiceRequest>) => void;
+  profileId?: string;
+  profileName?: string;
+}) {
+  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
+  const [postcode, setPostcode] = useState("");
+  const [form, setForm] = useState({
+    client_phone: "",
+    source: "manual" as ServiceRequest["source"],
+    service_type: "HVAC Installation",
+    description: "",
+    priority: "medium",
+    estimated_value: "",
+  });
   const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
+
+  useEffect(() => {
+    if (!open) return;
+    setClientAddress({ client_name: "", property_address: "" });
+    setPostcode("");
+    setForm({
+      client_phone: "",
+      source: "manual",
+      service_type: "HVAC Installation",
+      description: "",
+      priority: "medium",
+      estimated_value: "",
+    });
+  }, [open]);
+
+  useEffect(() => {
+    const ex = extractUkPostcode(clientAddress.property_address);
+    if (ex) setPostcode(ex);
+    else if (!clientAddress.property_address.trim()) setPostcode("");
+  }, [clientAddress.property_address]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.client_name || !form.client_email || !form.property_address) { toast.error("Please fill in all required fields"); return; }
+    if (!clientAddress.client_id) {
+      toast.error("Select a client from the search above or use “Create new client”. Typing only the address does not link a client.");
+      return;
+    }
+    if (!clientAddress.property_address?.trim()) {
+      toast.error("Select a saved address or add a full property address for this client.");
+      return;
+    }
+    const pc = postcode.trim() || extractUkPostcode(clientAddress.property_address);
+    if (!pc?.trim()) {
+      toast.error("Postcode is required — include it in the property address or type it below.");
+      return;
+    }
     onCreate({
-      ...form,
-      postcode: form.postcode || undefined,
+      client_id: clientAddress.client_id,
+      client_address_id: clientAddress.client_address_id,
+      client_name: clientAddress.client_name,
+      client_email: clientAddress.client_email ?? "",
+      client_phone: form.client_phone || undefined,
+      property_address: clientAddress.property_address,
+      postcode: pc,
       source: form.source,
+      service_type: form.service_type,
+      description: form.description,
       estimated_value: form.estimated_value ? Number(form.estimated_value) : undefined,
       priority: form.priority as ServiceRequest["priority"],
+      owner_id: profileId,
+      owner_name: profileName,
     });
-    setForm({ client_name: "", client_email: "", client_phone: "", property_address: "", postcode: "", source: "manual", service_type: "HVAC Installation", description: "", priority: "medium", estimated_value: "" });
   };
 
   return (
     <Modal open={open} onClose={onClose} title="New Service Request" subtitle="Create a new incoming request" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Client Name *</label>
-            <Input value={form.client_name} onChange={(e) => update("client_name", e.target.value)} placeholder="Company name" required />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Client Email *</label>
-            <Input type="email" value={form.client_email} onChange={(e) => update("client_email", e.target.value)} placeholder="email@company.com" required />
-          </div>
+        <div>
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; property *</p>
+          <p className="text-xs text-text-tertiary mb-3">Search for an existing client or create a new one. This link is kept when you convert to quote or job.</p>
+          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} labelClient="Client *" labelAddress="Property address *" />
+          {!clientAddress.client_id && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2">
+              First pick or create a client in the field above, then choose or add the property address. Both are required.
+            </p>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Phone</label>
-            <Input value={form.client_phone} onChange={(e) => update("client_phone", e.target.value)} placeholder="+1 212-555-0100" />
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Phone (request)</label>
+            <Input value={form.client_phone} onChange={(e) => update("client_phone", e.target.value)} placeholder="Optional — contact for this lead" />
           </div>
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Estimated Value</label>
             <Input type="number" value={form.estimated_value} onChange={(e) => update("estimated_value", e.target.value)} placeholder="0.00" />
           </div>
         </div>
-        <AddressAutocomplete label="Property Address *" value={form.property_address} onSelect={(parts) => { update("property_address", parts.full_address); if (parts.postcode) update("postcode", parts.postcode); }} placeholder="Start typing address or postcode..." />
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Postcode *</label>
-            <Input value={form.postcode} onChange={(e) => update("postcode", e.target.value.toUpperCase())} placeholder="e.g. SW1A 1AA" />
+            <Input value={postcode} onChange={(e) => setPostcode(e.target.value.toUpperCase())} placeholder="e.g. SW1A 1AA — auto-filled from address" />
           </div>
           <Select label="Source" value={form.source ?? "manual"} onChange={(e) => update("source", e.target.value)} options={REQUEST_SOURCES.map((s) => ({ value: s.value!, label: s.label }))} />
         </div>

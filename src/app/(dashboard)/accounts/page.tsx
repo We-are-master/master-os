@@ -64,7 +64,7 @@ export default function AccountsPage() {
     search,
     setSearch,
     refresh,
-  } = useSupabaseList<Account>({ fetcher: listAccounts });
+  } = useSupabaseList<Account>({ fetcher: listAccounts, realtimeTable: "accounts" });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);

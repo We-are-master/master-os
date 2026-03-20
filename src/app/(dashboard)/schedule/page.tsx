@@ -19,6 +19,7 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import type { Job } from "@/types/database";
+import { formatJobScheduleLine, formatLocalYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -61,17 +62,41 @@ export default function SchedulePage() {
     setLoading(true);
     const supabase = getSupabase();
     try {
-      const startDate = new Date(year, month, 1).toISOString().split("T")[0];
-      const endDate = new Date(year, month + 1, 0).toISOString().split("T")[0];
+      const startDate = formatLocalYmd(new Date(year, month, 1));
+      const endDate = formatLocalYmd(new Date(year, month + 1, 0));
+      const monthStartInstant = new Date(year, month, 1, 0, 0, 0, 0).toISOString();
+      const nextMonthStartInstant = new Date(year, month + 1, 1, 0, 0, 0, 0).toISOString();
 
-      const { data } = await supabase
-        .from("jobs")
-        .select("*")
-        .gte("scheduled_date", startDate)
-        .lte("scheduled_date", endDate)
-        .order("scheduled_date", { ascending: true });
+      const [byScheduledDate, byStartAt] = await Promise.all([
+        supabase
+          .from("jobs")
+          .select("*")
+          .gte("scheduled_date", startDate)
+          .lte("scheduled_date", endDate)
+          .order("scheduled_date", { ascending: true }),
+        supabase
+          .from("jobs")
+          .select("*")
+          .not("scheduled_start_at", "is", null)
+          .gte("scheduled_start_at", monthStartInstant)
+          .lt("scheduled_start_at", nextMonthStartInstant)
+          .order("scheduled_start_at", { ascending: true }),
+      ]);
 
-      setJobs((data ?? []) as Job[]);
+      const merged = new Map<string, Job>();
+      for (const row of [...(byScheduledDate.data ?? []), ...(byStartAt.data ?? [])]) {
+        merged.set(row.id, row as Job);
+      }
+      const list = Array.from(merged.values()).filter((j) => {
+        const ymd = jobScheduleYmd(j);
+        return ymd && ymd.y === year && ymd.m === month + 1;
+      });
+      list.sort((a, b) => {
+        const ka = a.scheduled_start_at ?? (a.scheduled_date ? `${a.scheduled_date}T00:00:00` : "");
+        const kb = b.scheduled_start_at ?? (b.scheduled_date ? `${b.scheduled_date}T00:00:00` : "");
+        return ka.localeCompare(kb);
+      });
+      setJobs(list);
     } catch {
       // non-critical
     } finally {
@@ -137,13 +162,16 @@ export default function SchedulePage() {
   const jobsByDay = useMemo(() => {
     const map: Record<number, Job[]> = {};
     for (const job of jobs) {
-      if (!job.scheduled_date) continue;
-      const day = new Date(job.scheduled_date).getDate();
+      const ymd = jobScheduleYmd(job);
+      if (!ymd || ymd.y !== year || ymd.m !== month + 1) continue;
+      const day = ymd.d;
       if (!map[day]) map[day] = [];
       map[day].push(job);
     }
     return map;
-  }, [jobs]);
+  }, [jobs, year, month]);
+
+  const selectedScheduleLine = selectedJob ? formatJobScheduleLine(selectedJob) : null;
 
   return (
     <PageTransition>
@@ -341,9 +369,9 @@ export default function SchedulePage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-4 text-[11px] text-text-tertiary">
-              {selectedJob.scheduled_date && (
-                <span>Scheduled: {new Date(selectedJob.scheduled_date).toLocaleDateString()}</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-text-tertiary">
+              {selectedScheduleLine && (
+                <span>Scheduled: {selectedScheduleLine}</span>
               )}
               <span>Phase {selectedJob.current_phase}/{selectedJob.total_phases}</span>
             </div>

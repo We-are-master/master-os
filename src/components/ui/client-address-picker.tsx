@@ -11,6 +11,7 @@ import type { Client, ClientAddress } from "@/types/database";
 import { listClients, createClient, getClient } from "@/services/clients";
 import { listAddressesByClient, createClientAddress } from "@/services/client-addresses";
 import { listClientSourceAccounts } from "@/services/client-source-accounts";
+import { createAccount } from "@/services/accounts";
 import type { ClientSourceAccount } from "@/types/database";
 
 export interface ClientAndAddressValue {
@@ -21,6 +22,23 @@ export interface ClientAndAddressValue {
   property_address: string;
 }
 
+/** Minimal client row when getClient fails (e.g. RLS) but parent still has client_id */
+function clientPlaceholderFromValue(v: ClientAndAddressValue): Client {
+  return {
+    id: v.client_id!,
+    full_name: v.client_name || "Client",
+    email: v.client_email,
+    client_type: "residential",
+    source: "direct",
+    status: "active",
+    total_spent: 0,
+    jobs_count: 0,
+    tags: [],
+    created_at: "",
+    updated_at: "",
+  };
+}
+
 interface ClientAddressPickerProps {
   value: ClientAndAddressValue;
   onChange: (value: ClientAndAddressValue) => void;
@@ -29,6 +47,8 @@ interface ClientAddressPickerProps {
   required?: boolean;
   /** Prefill client search when value has client_name */
   className?: string;
+  /** When true and `value.client_id` is set, client cannot be changed (only property address). */
+  lockClient?: boolean;
 }
 
 export function ClientAddressPicker({
@@ -38,7 +58,20 @@ export function ClientAddressPicker({
   labelAddress = "Property address *",
   required = true,
   className = "",
+  lockClient = false,
 }: ClientAddressPickerProps) {
+  const CREATE_SOURCE_OPTION = "__create_new_account__";
+  const clientSectionLocked = lockClient && !!value.client_id;
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
+  const emit = useCallback(
+    (patch: Partial<ClientAndAddressValue>) => {
+      onChange({ ...valueRef.current, ...patch });
+    },
+    [onChange]
+  );
+
   const [clientSearch, setClientSearch] = useState("");
   const [clientDropdownOpen, setClientDropdownOpen] = useState(false);
   const [clientResults, setClientResults] = useState<Client[]>([]);
@@ -50,6 +83,13 @@ export function ClientAddressPicker({
   const [newAddressRaw, setNewAddressRaw] = useState("");
   const [createClientOpen, setCreateClientOpen] = useState(false);
   const [createClientForm, setCreateClientForm] = useState({ full_name: "", email: "", phone: "", source_account_id: "" });
+  const [newSourceForm, setNewSourceForm] = useState({
+    company_name: "",
+    contact_name: "",
+    email: "",
+    industry: "Residential Services",
+    payment_terms: "Net 30",
+  });
   const [createClientAddressParts, setCreateClientAddressParts] = useState<AddressParts | null>(null);
   const [createClientAddressRaw, setCreateClientAddressRaw] = useState("");
   const [sourceAccounts, setSourceAccounts] = useState<ClientSourceAccount[]>([]);
@@ -98,15 +138,16 @@ export function ClientAddressPicker({
       setClientSearch(client.full_name);
       setClientDropdownOpen(false);
       setClientResults([]);
+      const keepAddr = valueRef.current.property_address || "";
       onChange({
         client_id: client.id,
         client_address_id: undefined,
         client_name: client.full_name,
         client_email: client.email ?? undefined,
-        property_address: value.property_address || "",
+        property_address: keepAddr,
       });
     },
-    [onChange, value.property_address]
+    [onChange]
   );
 
   useEffect(() => {
@@ -120,10 +161,25 @@ export function ClientAddressPicker({
       }
       return;
     }
-    getClient(value.client_id).then((c) => {
-      setSelectedClient(c ?? null);
-      if (c) setClientSearch(c.full_name);
-    });
+    const requestedId = value.client_id;
+    getClient(requestedId)
+      .then((c) => {
+        const v = valueRef.current;
+        if (v.client_id !== requestedId) return;
+        if (c) {
+          setSelectedClient(c);
+          setClientSearch(c.full_name);
+        } else {
+          setSelectedClient(clientPlaceholderFromValue(v));
+          setClientSearch(v.client_name || "");
+        }
+      })
+      .catch(() => {
+        const v = valueRef.current;
+        if (v.client_id !== requestedId) return;
+        setSelectedClient(clientPlaceholderFromValue(v));
+        setClientSearch(v.client_name || "");
+      });
   }, [value.client_id, value.client_name, loadClientResults]);
 
   useEffect(() => {
@@ -148,15 +204,14 @@ export function ClientAddressPicker({
   const selectAddress = useCallback(
     (addr: ClientAddress) => {
       const full = [addr.address, addr.city, addr.postcode].filter(Boolean).join(", ");
-      onChange({
-        ...value,
+      emit({
         client_address_id: addr.id,
         property_address: full || addr.address,
       });
       setAddingNewAddress(false);
       setNewAddressRaw("");
     },
-    [onChange, value]
+    [emit]
   );
 
   const handleNewAddressSelect = useCallback(
@@ -196,8 +251,29 @@ export function ClientAddressPicker({
     }
     setCreating(true);
     try {
+      let sourceAccountId = createClientForm.source_account_id;
+      if (sourceAccountId === CREATE_SOURCE_OPTION) {
+        if (!newSourceForm.company_name.trim() || !newSourceForm.contact_name.trim() || !newSourceForm.email.trim()) {
+          toast.error("Please fill company, contact and email to create the account");
+          return;
+        }
+        const createdAccount = await createAccount({
+          company_name: newSourceForm.company_name.trim(),
+          contact_name: newSourceForm.contact_name.trim(),
+          email: newSourceForm.email.trim(),
+          industry: newSourceForm.industry.trim() || "General",
+          status: "onboarding",
+          credit_limit: 0,
+          payment_terms: newSourceForm.payment_terms.trim() || "Net 30",
+        });
+        sourceAccountId = createdAccount.id;
+        setSourceAccounts((prev) => {
+          if (prev.some((p) => p.id === createdAccount.id)) return prev;
+          return [...prev, { id: createdAccount.id, name: createdAccount.company_name, created_at: createdAccount.created_at }];
+        });
+      }
       const client = await createClient({
-        source_account_id: createClientForm.source_account_id,
+        source_account_id: sourceAccountId,
         full_name: createClientForm.full_name.trim(),
         email: createClientForm.email.trim() || undefined,
         phone: createClientForm.phone.trim() || undefined,
@@ -217,9 +293,27 @@ export function ClientAddressPicker({
           is_default: true,
         });
         addressToSelect = addr;
+      } else if (createClientAddressRaw.trim()) {
+        const raw = createClientAddressRaw.trim();
+        const addr = await createClientAddress({
+          client_id: client.id,
+          address: raw,
+          city: undefined,
+          postcode: undefined,
+          country: "gb",
+          is_default: true,
+        });
+        addressToSelect = addr;
       }
       setCreateClientOpen(false);
       setCreateClientForm({ full_name: "", email: "", phone: "", source_account_id: "" });
+      setNewSourceForm({
+        company_name: "",
+        contact_name: "",
+        email: "",
+        industry: "Residential Services",
+        payment_terms: "Net 30",
+      });
       setCreateClientAddressParts(null);
       setCreateClientAddressRaw("");
       selectClient(client);
@@ -236,7 +330,7 @@ export function ClientAddressPicker({
     } finally {
       setCreating(false);
     }
-  }, [createClientForm, createClientAddressParts, selectClient, selectAddress]);
+  }, [createClientForm, createClientAddressParts, newSourceForm, selectClient, selectAddress]);
 
   const clearClient = useCallback(() => {
     setSelectedClient(null);
@@ -254,65 +348,80 @@ export function ClientAddressPicker({
 
   return (
     <div className={className} ref={containerRef}>
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">{labelClient}</label>
-        <div className="relative">
-          <input
-            type="text"
-            value={selectedClient ? selectedClient.full_name : clientSearch}
-            onChange={(e) => {
-              setClientSearch(e.target.value);
-              if (!selectedClient) setClientDropdownOpen(true);
-            }}
-            onFocus={() => !selectedClient && setClientDropdownOpen(true)}
-            placeholder="Search by name or email..."
-            className="w-full h-9 rounded-lg border border-border bg-card px-3 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30"
-          />
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            {selectedClient ? (
-              <button
-                type="button"
-                onClick={clearClient}
-                className="text-text-tertiary hover:text-red-500 text-xs"
-              >
-                Clear
-              </button>
-            ) : (
-              <ChevronDown className="h-4 w-4 text-text-tertiary" />
-            )}
-          </div>
-          {clientDropdownOpen && !selectedClient && (
-            <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-border bg-card shadow-lg z-50 max-h-56 overflow-y-auto">
-              {clientLoading ? (
-                <div className="p-4 flex items-center justify-center gap-2 text-text-tertiary text-sm">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading...
-                </div>
+      {!clientSectionLocked ? (
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">{labelClient}</label>
+          <div className="relative">
+            <input
+              type="text"
+              value={selectedClient ? selectedClient.full_name : clientSearch}
+              onChange={(e) => {
+                setClientSearch(e.target.value);
+                if (!selectedClient) setClientDropdownOpen(true);
+              }}
+              onFocus={() => !selectedClient && setClientDropdownOpen(true)}
+              placeholder="Search by name or email..."
+              className="w-full h-9 rounded-lg border border-border bg-card px-3 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30"
+            />
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              {selectedClient ? (
+                <button
+                  type="button"
+                  onClick={clearClient}
+                  className="text-text-tertiary hover:text-red-500 text-xs"
+                >
+                  Clear
+                </button>
               ) : (
-                <>
-                  {clientResults.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => selectClient(c)}
-                      className="w-full text-left px-3 py-2.5 hover:bg-surface-hover border-b border-border last:border-0 text-sm"
-                    >
-                      <span className="font-medium text-text-primary">{c.full_name}</span>
-                      {c.email && <span className="text-text-tertiary text-xs block">{c.email}</span>}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => { setClientDropdownOpen(false); setCreateClientOpen(true); }}
-                    className="w-full text-left px-3 py-2.5 hover:bg-primary/10 text-primary text-sm font-medium flex items-center gap-2 border-t border-border"
-                  >
-                    <UserPlus className="h-4 w-4" /> Create new client
-                  </button>
-                </>
+                <ChevronDown className="h-4 w-4 text-text-tertiary" />
               )}
             </div>
-          )}
+            {clientDropdownOpen && !selectedClient && (
+              <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-border bg-card shadow-lg z-50 max-h-56 overflow-y-auto">
+                {clientLoading ? (
+                  <div className="p-4 flex items-center justify-center gap-2 text-text-tertiary text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+                  </div>
+                ) : (
+                  <>
+                    {clientResults.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => selectClient(c)}
+                        className="w-full text-left px-3 py-2.5 hover:bg-surface-hover border-b border-border last:border-0 text-sm"
+                      >
+                        <span className="font-medium text-text-primary">{c.full_name}</span>
+                        {c.email && <span className="text-text-tertiary text-xs block">{c.email}</span>}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => { setClientDropdownOpen(false); setCreateClientOpen(true); }}
+                      className="w-full text-left px-3 py-2.5 hover:bg-primary/10 text-primary text-sm font-medium flex items-center gap-2 border-t border-border"
+                    >
+                      <UserPlus className="h-4 w-4" /> Create new client
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">{labelClient}</label>
+          <div className="rounded-lg border border-border bg-surface-hover/80 px-3 py-2.5">
+            <p className="text-sm font-semibold text-text-primary">{value.client_name || selectedClient?.full_name}</p>
+            {(value.client_email || selectedClient?.email) && (
+              <p className="text-xs text-text-tertiary mt-0.5">{value.client_email || selectedClient?.email}</p>
+            )}
+            <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+              Linked client — change only the property address below.
+            </p>
+          </div>
+        </div>
+      )}
 
       {selectedClient && (
         <div className="mt-3">
@@ -345,7 +454,8 @@ export function ClientAddressPicker({
                     value={newAddressRaw}
                     onChange={(val) => {
                       setNewAddressRaw(val);
-                      if (val.trim()) onChange({ ...value, property_address: val.trim() });
+                      if (val.trim()) emit({ client_address_id: undefined, property_address: val.trim() });
+                      else emit({ client_address_id: undefined, property_address: "" });
                     }}
                     onSelect={(parts) => {
                       setNewAddressRaw(parts.full_address);
@@ -373,7 +483,8 @@ export function ClientAddressPicker({
                   type="button"
                   onClick={() => {
                     setAddingNewAddress(true);
-                    if (value.property_address) setNewAddressRaw(value.property_address);
+                    emit({ client_address_id: undefined });
+                    if (valueRef.current.property_address) setNewAddressRaw(valueRef.current.property_address);
                   }}
                   className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border hover:border-primary/50 hover:bg-primary/5 text-sm text-text-tertiary hover:text-primary"
                 >
@@ -393,6 +504,13 @@ export function ClientAddressPicker({
         onClose={() => {
           setCreateClientOpen(false);
           setCreateClientForm({ full_name: "", email: "", phone: "", source_account_id: "" });
+          setNewSourceForm({
+            company_name: "",
+            contact_name: "",
+            email: "",
+            industry: "Residential Services",
+            payment_terms: "Net 30",
+          });
           setCreateClientAddressParts(null);
           setCreateClientAddressRaw("");
         }}
@@ -405,16 +523,69 @@ export function ClientAddressPicker({
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Source account *</label>
             <select
               value={createClientForm.source_account_id}
-              onChange={(e) => setCreateClientForm((p) => ({ ...p, source_account_id: e.target.value }))}
+              onChange={(e) => {
+                const value = e.target.value;
+                setCreateClientForm((p) => ({ ...p, source_account_id: value }));
+                if (value === CREATE_SOURCE_OPTION) {
+                  setNewSourceForm((prev) => ({
+                    ...prev,
+                    contact_name: prev.contact_name || createClientForm.full_name || "Client Team",
+                    email: prev.email || createClientForm.email || "",
+                  }));
+                }
+              }}
               className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
             >
               <option value="">— Where did the client come from? —</option>
               {sourceAccounts.map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
+              <option value={CREATE_SOURCE_OPTION}>+ Create new account</option>
             </select>
             <p className="text-[10px] text-text-tertiary mt-1">Client is linked to this source (e.g. Facebook, Website, Referral).</p>
           </div>
+          {createClientForm.source_account_id === CREATE_SOURCE_OPTION && (
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 space-y-3">
+              <p className="text-[11px] font-medium text-text-secondary">Create source account</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Company name *</label>
+                  <Input
+                    value={newSourceForm.company_name}
+                    onChange={(e) => setNewSourceForm((p) => ({ ...p, company_name: e.target.value }))}
+                    placeholder="Lead source company"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Contact name *</label>
+                  <Input
+                    value={newSourceForm.contact_name}
+                    onChange={(e) => setNewSourceForm((p) => ({ ...p, contact_name: e.target.value }))}
+                    placeholder="Source owner"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Email *</label>
+                  <Input
+                    type="email"
+                    value={newSourceForm.email}
+                    onChange={(e) => setNewSourceForm((p) => ({ ...p, email: e.target.value }))}
+                    placeholder="source@example.com"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Industry</label>
+                  <Input
+                    value={newSourceForm.industry}
+                    onChange={(e) => setNewSourceForm((p) => ({ ...p, industry: e.target.value }))}
+                    placeholder="Residential Services"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Full name *</label>
             <Input
@@ -455,13 +626,17 @@ export function ClientAddressPicker({
               <p className="text-[10px] font-medium text-text-secondary mb-1.5">Add new address</p>
               <AddressAutocomplete
                 value={createClientAddressRaw}
+                onChange={(v) => {
+                  setCreateClientAddressRaw(v);
+                  setCreateClientAddressParts(null);
+                }}
                 onSelect={(parts) => {
                   setCreateClientAddressParts(parts);
                   setCreateClientAddressRaw(parts.full_address);
                 }}
                 placeholder="Type address or postcode..."
               />
-              {createClientAddressParts && (
+              {(createClientAddressParts || createClientAddressRaw.trim()) && (
                 <p className="text-[10px] text-primary mt-1">Address will be saved when you create the client.</p>
               )}
             </div>
