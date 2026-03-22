@@ -7,6 +7,7 @@ import { SidebarContext } from "@/hooks/use-sidebar";
 import { ProfileContext, useProfileLoader } from "@/hooks/use-profile";
 import { ThemeContext, useThemeProvider } from "@/hooks/use-theme";
 import { AdminConfigProvider } from "@/hooks/use-admin-config";
+import { MasterBrainAssistant } from "@/components/layout/master-brain-assistant";
 import { motion } from "framer-motion";
 
 export default function DashboardLayout({
@@ -42,6 +43,7 @@ export default function DashboardLayout({
               <main className="flex-1 overflow-y-auto p-6 lg:p-8">
                 {children}
               </main>
+              <MasterBrainAssistant />
             </motion.div>
           </div>
           </AdminConfigProvider>

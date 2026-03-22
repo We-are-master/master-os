@@ -5,6 +5,12 @@ export interface CompanySettings {
   id: string;
   company_name: string;
   logo_url?: string;
+  /** Sidebar / app chrome when theme is light */
+  logo_light_theme_url?: string | null;
+  /** Sidebar / app chrome when theme is dark */
+  logo_dark_theme_url?: string | null;
+  /** Browser tab icon (.ico / .png / .svg URL) */
+  favicon_url?: string | null;
   address: string;
   phone: string;
   email: string;
@@ -15,6 +21,18 @@ export interface CompanySettings {
   tagline?: string;
   quote_footer_notes?: string;
   invoice_footer_notes?: string;
+  /** Admin: show Master Brain floating assistant */
+  master_brain_enabled?: boolean;
+  master_brain_manager_enabled?: boolean;
+  master_brain_operator_enabled?: boolean;
+  master_brain_manager_instructions?: string | null;
+  master_brain_operator_instructions?: string | null;
+  /** Admin: cron-driven morning/evening e-mails */
+  daily_brief_enabled?: boolean;
+  daily_brief_morning_time?: string;
+  daily_brief_evening_time?: string;
+  daily_brief_timezone?: string;
+  daily_brief_emails?: string;
   updated_at: string;
 }
 

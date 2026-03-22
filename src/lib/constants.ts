@@ -20,12 +20,14 @@ export const NAVIGATION: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/", icon: "grid-2x2" },
+      { label: "Activity", href: "/activity", icon: "history" },
     ],
   },
   {
     label: "Operations",
     items: [
       { label: "Requests", href: "/requests", icon: "inbox", badge: 12 },
+      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
       { label: "Quotes", href: "/quotes", icon: "file-text" },
       { label: "Jobs", href: "/jobs", icon: "briefcase" },
       { label: "Schedule", href: "/schedule", icon: "calendar" },

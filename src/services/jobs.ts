@@ -1,7 +1,19 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
+import { JOB_IN_PROGRESS_STATUSES } from "@/lib/job-phases";
 
 export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
+  if (params.status === "in_progress") {
+    const { status: _omit, ...rest } = params;
+    return queryList<Job>(
+      "jobs",
+      { ...rest, statusIn: [...JOB_IN_PROGRESS_STATUSES] },
+      {
+        searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+        defaultSort: "created_at",
+      }
+    );
+  }
   return queryList<Job>("jobs", params, {
     searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
     defaultSort: "created_at",

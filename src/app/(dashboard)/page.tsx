@@ -139,11 +139,19 @@ function DashboardInner() {
                 const IconComp = ICON_MAP[view.icon] ?? LayoutDashboard;
                 const isActive = view.id === activeViewId;
                 return (
-                  <button
+                  <div
                     key={view.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setActiveViewId(view.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setActiveViewId(view.id);
+                      }
+                    }}
                     className={cn(
-                      "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-sm font-medium border transition-all",
+                      "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-sm font-medium border transition-all cursor-pointer select-none",
                       isActive
                         ? "bg-primary text-white border-primary shadow-sm"
                         : "bg-card text-text-secondary border-border hover:bg-surface-hover"
@@ -156,13 +164,18 @@ function DashboardInner() {
                     )}
                     {canEdit && isActive && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); openEditView(view); }}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditView(view);
+                        }}
                         className="ml-1 p-0.5 rounded hover:bg-white/20 transition-colors"
+                        aria-label={`Edit view ${view.name}`}
                       >
                         <Pencil className="h-2.5 w-2.5" />
                       </button>
                     )}
-                  </button>
+                  </div>
                 );
               })
           }
@@ -227,7 +240,7 @@ function DashboardInner() {
             ))}
           </div>
         ) : activeView ? (
-          <div className="grid grid-cols-12 gap-5">
+          <div className="grid grid-cols-12 gap-5 items-start">
             {[...activeView.widgets]
               .sort((a, b) => a.position - b.position)
               .map((widget, i) => (

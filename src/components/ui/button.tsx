@@ -37,6 +37,7 @@ interface ButtonProps {
   children?: React.ReactNode;
   onClick?: () => void;
   type?: "button" | "submit" | "reset";
+  title?: string;
 }
 
 export function Button({
@@ -49,10 +50,12 @@ export function Button({
   disabled,
   onClick,
   type = "button",
+  title,
 }: ButtonProps) {
   return (
     <motion.button
       type={type}
+      title={title}
       whileTap={!disabled ? buttonTap : undefined}
       className={cn(
         "inline-flex items-center justify-center font-medium transition-all duration-200 cursor-pointer select-none",

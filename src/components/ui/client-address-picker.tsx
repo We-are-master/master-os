@@ -96,10 +96,13 @@ export function ClientAddressPicker({
   const [creating, setCreating] = useState(false);
   const clientSearchDebounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
+  /** Synchronous “who is selected” for the same event-loop tick as selectClient → selectAddress (React state lags). */
+  const selectedClientRef = useRef<Client | null>(null);
 
   useEffect(() => {
-    listClientSourceAccounts().then(setSourceAccounts).catch(() => []);
-  }, []);
+    if (!createClientOpen) return;
+    listClientSourceAccounts().then(setSourceAccounts).catch(() => setSourceAccounts([]));
+  }, [createClientOpen]);
 
   const loadClientResults = useCallback(async (search: string) => {
     if (!search.trim()) {
@@ -134,6 +137,7 @@ export function ClientAddressPicker({
 
   const selectClient = useCallback(
     (client: Client) => {
+      selectedClientRef.current = client;
       setSelectedClient(client);
       setClientSearch(client.full_name);
       setClientDropdownOpen(false);
@@ -151,7 +155,12 @@ export function ClientAddressPicker({
   );
 
   useEffect(() => {
+    selectedClientRef.current = selectedClient;
+  }, [selectedClient]);
+
+  useEffect(() => {
     if (!value.client_id) {
+      selectedClientRef.current = null;
       setSelectedClient(null);
       setAddresses([]);
       if (value.client_name) {
@@ -204,14 +213,20 @@ export function ClientAddressPicker({
   const selectAddress = useCallback(
     (addr: ClientAddress) => {
       const full = [addr.address, addr.city, addr.postcode].filter(Boolean).join(", ");
-      emit({
+      const c = selectedClientRef.current;
+      const base = valueRef.current;
+      onChange({
+        ...base,
+        client_id: c?.id ?? base.client_id,
+        client_name: c?.full_name ?? base.client_name ?? "",
+        client_email: c?.email !== undefined && c?.email !== null ? c.email : base.client_email,
         client_address_id: addr.id,
         property_address: full || addr.address,
       });
       setAddingNewAddress(false);
       setNewAddressRaw("");
     },
-    [emit]
+    [onChange]
   );
 
   const handleNewAddressSelect = useCallback(
@@ -337,6 +352,7 @@ export function ClientAddressPicker({
   }, [createClientForm, createClientAddressParts, newSourceForm, selectClient, selectAddress]);
 
   const clearClient = useCallback(() => {
+    selectedClientRef.current = null;
     setSelectedClient(null);
     setClientSearch("");
     setAddresses([]);
@@ -349,6 +365,31 @@ export function ClientAddressPicker({
       property_address: "",
     });
   }, [onChange]);
+
+  /**
+   * When the user types a name but doesn’t click a row, `client_id` stays empty.
+   * Resolve a real client: single search result, or exact name/email match (fresh fetch avoids debounce races).
+   */
+  const resolveSearchToClient = useCallback(async () => {
+    if (selectedClient) return;
+    const q = clientSearch.trim();
+    if (!q) return;
+    try {
+      const res = await listClients({ search: q, pageSize: 25 });
+      const rows = res.data ?? [];
+      if (rows.length === 1) {
+        selectClient(rows[0]);
+        return;
+      }
+      const lower = q.toLowerCase();
+      const exact = rows.find(
+        (c) => c.full_name.toLowerCase() === lower || (c.email && c.email.toLowerCase() === lower)
+      );
+      if (exact) selectClient(exact);
+    } catch {
+      /* ignore */
+    }
+  }, [selectedClient, clientSearch, selectClient]);
 
   return (
     <div className={className} ref={containerRef}>
@@ -364,8 +405,22 @@ export function ClientAddressPicker({
                 if (!selectedClient) setClientDropdownOpen(true);
               }}
               onFocus={() => !selectedClient && setClientDropdownOpen(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void resolveSearchToClient();
+                }
+              }}
+              onBlur={(e) => {
+                const next = e.relatedTarget as Node | null;
+                if (next && containerRef.current?.contains(next)) return;
+                window.setTimeout(() => void resolveSearchToClient(), 0);
+              }}
               placeholder="Search by name or email..."
               className="w-full h-9 rounded-lg border border-border bg-card px-3 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30"
+              autoComplete="off"
+              aria-autocomplete="list"
+              aria-expanded={clientDropdownOpen}
             />
             <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
               {selectedClient ? (
@@ -381,7 +436,10 @@ export function ClientAddressPicker({
               )}
             </div>
             {clientDropdownOpen && !selectedClient && (
-              <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-border bg-card shadow-lg z-50 max-h-56 overflow-y-auto">
+              <div
+                className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-border bg-card shadow-lg z-50 max-h-56 overflow-y-auto"
+                onMouseDown={(e) => e.preventDefault()}
+              >
                 {clientLoading ? (
                   <div className="p-4 flex items-center justify-center gap-2 text-text-tertiary text-sm">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading...
@@ -409,6 +467,12 @@ export function ClientAddressPicker({
                   </>
                 )}
               </div>
+            )}
+            {!selectedClient && clientSearch.trim() && !clientLoading && (
+              <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                Click a client in the list, press <kbd className="px-1 rounded bg-surface-hover text-[10px]">Enter</kbd> to confirm, or
+                finish typing the exact name and tab away — only then the client is linked.
+              </p>
             )}
           </div>
         </div>

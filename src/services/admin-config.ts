@@ -2,12 +2,42 @@ import { getSupabase } from "./base";
 import type { NavGroup } from "@/lib/constants";
 import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
 
+/** Injected into stored navigation if missing (older admin_config rows). */
+const SERVICES_NAV_ITEM = {
+  label: "Services",
+  href: "/services",
+  icon: "wrench",
+  permission: "service_catalog" as const,
+};
+
+function ensureServicesNavItem(nav: NavGroup[]): NavGroup[] {
+  if (nav.some((g) => g.items.some((i) => i.href === "/services"))) return nav;
+  const next = nav.map((g) => ({ ...g, items: [...g.items] }));
+  const ops = next.find((g) => g.label === "Operations");
+  if (ops) {
+    const rIdx = ops.items.findIndex((i) => i.href === "/requests");
+    ops.items.splice(rIdx >= 0 ? rIdx + 1 : 0, 0, { ...SERVICES_NAV_ITEM });
+    return next;
+  }
+  return [{ label: "Operations", items: [{ ...SERVICES_NAV_ITEM }] }, ...next];
+}
+
+function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByRole {
+  const roles: RoleKey[] = ["admin", "manager", "operator"];
+  const out = { ...stored };
+  for (const role of roles) {
+    out[role] = { ...DEFAULT_PERMISSIONS[role], ...(stored[role] ?? {}) } as Record<PermissionKey, boolean>;
+  }
+  return out;
+}
+
 const DEFAULT_NAVIGATION: NavGroup[] = [
   { label: "Overview", items: [{ label: "Dashboard", href: "/", icon: "grid-2x2", permission: "dashboard" }] },
   {
     label: "Operations",
     items: [
       { label: "Requests", href: "/requests", icon: "inbox", permission: "requests" },
+      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
       { label: "Schedule", href: "/schedule", icon: "calendar", permission: "jobs" },
@@ -41,6 +71,7 @@ const DEFAULT_PERMISSIONS: PermissionsByRole = {
     requests: true,
     quotes: true,
     jobs: true,
+    service_catalog: true,
     partners: true,
     accounts: true,
     finance: true,
@@ -56,6 +87,7 @@ const DEFAULT_PERMISSIONS: PermissionsByRole = {
     requests: true,
     quotes: true,
     jobs: true,
+    service_catalog: false,
     partners: true,
     accounts: true,
     finance: true,
@@ -71,6 +103,7 @@ const DEFAULT_PERMISSIONS: PermissionsByRole = {
     requests: true,
     quotes: true,
     jobs: true,
+    service_catalog: false,
     partners: false,
     accounts: false,
     finance: false,
@@ -88,11 +121,15 @@ export async function getAdminConfig<K extends keyof { navigation: NavGroup[]; p
 ): Promise<K extends "navigation" ? NavGroup[] : K extends "permissions" ? PermissionsByRole : never> {
   const supabase = getSupabase();
   const { data, error } = await supabase.from("admin_config").select("value").eq("key", key).maybeSingle();
-  if (error || !data) {
-    if (key === "navigation") return DEFAULT_NAVIGATION as never;
-    return DEFAULT_PERMISSIONS as never;
+  if (key === "navigation") {
+    if (error || !data) return DEFAULT_NAVIGATION as never;
+    return ensureServicesNavItem(data.value as NavGroup[]) as never;
   }
-  return (data.value as unknown) as never;
+  if (key === "permissions") {
+    if (error || !data) return DEFAULT_PERMISSIONS as never;
+    return mergePermissionsWithDefaults(data.value as PermissionsByRole) as never;
+  }
+  return DEFAULT_PERMISSIONS as never;
 }
 
 export async function setAdminConfig(

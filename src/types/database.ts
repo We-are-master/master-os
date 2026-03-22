@@ -1,12 +1,40 @@
 import type { UserPermissionOverride } from "@/types/admin-config";
 
 export type RequestSource = "whatsapp" | "checkatrade" | "meta" | "website" | "b2b" | "manual";
+export type CatalogPricingMode = "fixed" | "hourly";
+
+/** Price book row: defaults for requests/quotes (always editable per record). */
+export interface CatalogService {
+  id: string;
+  name: string;
+  pricing_mode: CatalogPricingMode;
+  fixed_price: number;
+  hourly_rate: number;
+  default_hours: number;
+  default_description?: string | null;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+}
+
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
 export type JobStatus = "scheduled" | "in_progress_phase1" | "in_progress_phase2" | "in_progress_phase3" | "final_check" | "awaiting_payment" | "need_attention" | "completed";
 export type JobFinanceStatus = "unpaid" | "partial" | "paid";
 export type PartnerStatus = "active" | "inactive" | "on_break" | "onboarding";
 export type InvoiceStatus = "paid" | "pending" | "overdue" | "cancelled";
+
+/** Customer collection lifecycle for job-linked invoices (synced from job flags unless locked). */
+export type InvoiceCollectionStage =
+  | "awaiting_deposit"
+  | "deposit_collected"
+  | "awaiting_final"
+  | "completed";
+
+export type InvoiceKind = "deposit" | "final" | "combined" | "other";
 export type PipelineStage = "lead" | "qualified" | "meeting" | "proposal" | "negotiation" | "closed";
 
 export interface Profile {
@@ -18,7 +46,8 @@ export interface Profile {
   department?: string;
   job_title?: string;
   phone?: string;
-  is_active: boolean;
+  /** `null` / missing in DB is treated as active in the UI. */
+  is_active?: boolean | null;
   last_login_at?: string;
   /** Per-user permission overrides. Absent key = inherit from role. */
   custom_permissions?: UserPermissionOverride | null;
@@ -37,6 +66,8 @@ export interface ServiceRequest {
   client_phone?: string;
   property_address: string;
   postcode?: string;
+  /** When set, request was started from this catalog template (service_type/description/value may differ if customised). */
+  catalog_service_id?: string | null;
   service_type: string;
   description: string;
   status: RequestStatus;
@@ -72,6 +103,8 @@ export interface Quote {
   reference: string;
   title: string;
   request_id?: string;
+  /** Optional link to the catalog service used as template for line items. */
+  catalog_service_id?: string | null;
   client_id?: string;
   client_address_id?: string;
   client_name: string;
@@ -132,6 +165,8 @@ export interface Job {
   current_phase: number;
   total_phases: number;
   client_price: number;
+  /** Add-ons / upsells on top of client_price (included in revenue & margin). */
+  extras_amount?: number;
   partner_cost: number;
   materials_cost: number;
   margin_percent: number;
@@ -191,6 +226,8 @@ export interface JobPayment {
   amount: number;
   payment_date: string;
   note?: string;
+  /** When set, this row was created from a paid invoice (e.g. Stripe); dedupes webhook. */
+  source_invoice_id?: string | null;
   created_at: string;
   created_by?: string;
 }
@@ -226,6 +263,8 @@ export interface Account {
   status: "active" | "onboarding" | "inactive";
   credit_limit: number;
   payment_terms: string;
+  /** Optional logo image URL (HTTPS) for account header / listings */
+  logo_url?: string | null;
   total_revenue: number;
   active_jobs: number;
   created_at: string;
@@ -241,6 +280,9 @@ export interface Invoice {
   due_date: string;
   paid_date?: string;
   created_at: string;
+  collection_stage: InvoiceCollectionStage;
+  collection_stage_locked?: boolean;
+  invoice_kind?: InvoiceKind | null;
   stripe_payment_link_id?: string;
   stripe_payment_link_url?: string;
   stripe_payment_status?: "none" | "pending" | "paid" | "expired" | "failed";
@@ -307,7 +349,8 @@ export type TeamMemberStatus = "active" | "inactive";
 
 export interface TeamMember {
   id: string;
-  profile_id?: string;
+  /** Linked app user (profiles.id); null when explicitly unlinked in DB */
+  profile_id?: string | null;
   full_name: string;
   email?: string;
   phone?: string;
@@ -431,7 +474,8 @@ export interface ClientSourceAccount {
 
 export interface Client {
   id: string;
-  source_account_id?: string;
+  /** Corporate account (`accounts.id`). `null` in DB = not linked. */
+  source_account_id?: string | null;
   full_name: string;
   email?: string;
   phone?: string;

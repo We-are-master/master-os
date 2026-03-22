@@ -5,15 +5,17 @@ export interface AssignableUser {
   full_name: string;
   email?: string;
   role?: string;
+  /** false = user deactivated in Team; still listable so admins can assign commission owners. */
+  is_active?: boolean;
 }
 
+/**
+ * All internal profiles (admin/manager/operator), not only active ones.
+ * Inactive users were previously hidden from the Job owner dropdown — that looked like "missing" users.
+ */
 export async function listAssignableUsers(): Promise<AssignableUser[]> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, full_name, email, role, is_active")
-    .eq("is_active", true)
-    .order("full_name", { ascending: true });
+  const { data, error } = await supabase.from("profiles").select("id, full_name, email, role, is_active").order("full_name", { ascending: true });
 
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as Array<{
@@ -21,12 +23,21 @@ export async function listAssignableUsers(): Promise<AssignableUser[]> {
     full_name?: string | null;
     email?: string | null;
     role?: string | null;
+    is_active?: boolean | null;
   }>;
 
-  return rows.map((u) => ({
+  const mapped = rows.map((u) => ({
     id: u.id,
-    full_name: u.full_name ?? u.email ?? "User",
+    full_name: u.full_name?.trim() || u.email?.trim() || "User",
     email: u.email ?? undefined,
     role: u.role ?? undefined,
+    is_active: u.is_active !== false,
   }));
+
+  mapped.sort((a, b) => {
+    if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+    return a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" });
+  });
+
+  return mapped;
 }

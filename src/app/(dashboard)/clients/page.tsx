@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ import { toast } from "sonner";
 import type { Client, ClientType, ClientSource, ClientStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useProfile } from "@/hooks/use-profile";
-import { listClients, createClient, updateClient } from "@/services/clients";
+import { listClients, createClient, updateClient, getClient } from "@/services/clients";
 import { createClientAddress } from "@/services/client-addresses";
 import { listClientSourceAccounts, createClientSourceAccount } from "@/services/client-source-accounts";
 import { getStatusCounts, getSupabase } from "@/services/base";
@@ -57,7 +58,30 @@ const sourceLabels: Record<ClientSource, string> = {
   partner: "Partner", corporate: "Corporate", other: "Other",
 };
 
-export default function ClientsPage() {
+function OpenClientFromQuery({ setSelectedClient }: { setSelectedClient: (c: Client | null) => void }) {
+  const searchParams = useSearchParams();
+  const clientId = searchParams.get("clientId");
+
+  useEffect(() => {
+    if (!clientId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const row = await getClient(clientId);
+        if (!cancelled && row) setSelectedClient(row);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, setSelectedClient]);
+
+  return null;
+}
+
+function ClientsPageInner() {
   const {
     data, loading, page, totalPages, totalItems,
     setPage, search, setSearch, status, setStatus, refresh,
@@ -88,9 +112,19 @@ export default function ClientsPage() {
   }, []);
 
   useEffect(() => { loadCounts(); loadAggregates(); }, [loadCounts, loadAggregates]);
-  useEffect(() => {
-    listClientSourceAccounts().then((list) => setSourceAccounts(list.map((a) => ({ id: a.id, name: a.name })))).catch(() => {});
+  const loadSourceAccounts = useCallback(() => {
+    listClientSourceAccounts()
+      .then((list) => setSourceAccounts(list.map((a) => ({ id: a.id, name: a.name }))))
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    loadSourceAccounts();
+  }, [loadSourceAccounts]);
+
+  useEffect(() => {
+    if (createOpen) loadSourceAccounts();
+  }, [createOpen, loadSourceAccounts]);
 
   const tabs = [
     { id: "all", label: "All", count: statusCounts.all ?? 0 },
@@ -143,10 +177,12 @@ export default function ClientsPage() {
       });
       setCreateOpen(false);
       toast.success("Client created");
-      listClientSourceAccounts().then((list) => setSourceAccounts(list.map((a) => ({ id: a.id, name: a.name })))).catch(() => {});
+      loadSourceAccounts();
       refresh(); loadCounts(); loadAggregates();
-    } catch { toast.error("Failed to create client"); }
-  }, [refresh, loadCounts, loadAggregates, profile?.id, profile?.full_name]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create client");
+    }
+  }, [refresh, loadCounts, loadAggregates, profile?.id, profile?.full_name, loadSourceAccounts]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
@@ -203,8 +239,14 @@ export default function ClientsPage() {
     {
       key: "source_account_id", label: "Account",
       render: (item) => {
-        const name = item.source_account_id ? sourceAccounts.find((a) => a.id === item.source_account_id)?.name : null;
-        return <span className="text-xs text-text-secondary">{name ?? "—"}</span>;
+        const aid = item.source_account_id?.trim();
+        if (!aid) return <span className="text-xs text-text-tertiary">—</span>;
+        const name = sourceAccounts.find((a) => a.id === aid)?.name;
+        return (
+          <span className="text-xs text-text-secondary" title={aid}>
+            {name ?? `Linked (${aid.slice(0, 8)}…)`}
+          </span>
+        );
       },
     },
     {
@@ -248,6 +290,7 @@ export default function ClientsPage() {
 
   return (
     <PageTransition>
+      <OpenClientFromQuery setSelectedClient={setSelectedClient} />
       <div className="space-y-5">
         <PageHeader title="Clients" subtitle="Manage individual clients and their service history.">
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>Export</Button>
@@ -310,6 +353,14 @@ export default function ClientsPage() {
   );
 }
 
+export default function ClientsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ClientsPageInner />
+    </Suspense>
+  );
+}
+
 /* ============ DETAIL DRAWER ============ */
 function ClientDetailDrawer({
   client,
@@ -369,8 +420,9 @@ function ClientDetailDrawer({
       toast.success("Client updated");
       setEditing(false);
       onUpdate(updated);
-    } catch { toast.error("Failed to update"); }
-    finally { setSaving(false); }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update");
+    } finally { setSaving(false); }
   };
 
   const drawerTabs = [
@@ -623,9 +675,18 @@ function EditClientForm({
   client: Client;
   sourceAccounts: Array<{ id: string; name: string }>;
   saving: boolean;
-  onSave: (data: Partial<Client>) => void;
+  onSave: (data: Partial<Client>) => void | Promise<void>;
   onCancel: () => void;
 }) {
+  const linkedAccountSelectOptions = useMemo(() => {
+    const fromList = sourceAccounts.map((a) => ({ value: a.id, label: a.name }));
+    const cid = client.source_account_id?.trim();
+    if (cid && isUuid(cid) && !fromList.some((o) => o.value === cid)) {
+      return [{ value: cid, label: `Current link (${cid.slice(0, 8)}…)` }, ...fromList];
+    }
+    return fromList;
+  }, [sourceAccounts, client.source_account_id]);
+
   const [form, setForm] = useState({
     full_name: client.full_name,
     email: client.email ?? "",
@@ -639,6 +700,23 @@ function EditClientForm({
     status: client.status,
     notes: client.notes ?? "",
   });
+
+  useEffect(() => {
+    setForm({
+      full_name: client.full_name,
+      email: client.email ?? "",
+      phone: client.phone ?? "",
+      address: client.address ?? "",
+      city: client.city ?? "",
+      postcode: client.postcode ?? "",
+      client_type: client.client_type,
+      source_account_id: client.source_account_id ?? "",
+      source: client.source,
+      status: client.status,
+      notes: client.notes ?? "",
+    });
+  }, [client.id, client.updated_at]);
+
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
 
   return (
@@ -677,7 +755,7 @@ function EditClientForm({
         onChange={(e) => update("source_account_id", e.target.value)}
         options={[
           { value: "", label: "— Where did the client come from? —" },
-          ...sourceAccounts.map((a) => ({ value: a.id, label: a.name })),
+          ...linkedAccountSelectOptions,
         ]}
       />
       <AddressAutocomplete
@@ -735,7 +813,23 @@ function EditClientForm({
       </div>
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="outline" onClick={onCancel}>Cancel</Button>
-        <Button onClick={() => onSave({ ...form, source_account_id: form.source_account_id || undefined })} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}>
+        <Button
+          type="button"
+          onClick={() => {
+            const sid = form.source_account_id.trim();
+            if (sid !== "" && !isUuid(sid)) {
+              toast.error("Choose a valid account from the list under Accounts.");
+              return;
+            }
+            const { source_account_id: _drop, ...rest } = form;
+            onSave({
+              ...rest,
+              source_account_id: sid === "" ? null : sid,
+            });
+          }}
+          disabled={saving}
+          icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+        >
           {saving ? "Saving..." : "Save Changes"}
         </Button>
       </div>

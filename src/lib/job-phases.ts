@@ -13,6 +13,18 @@ import {
 export const JOB_PHASE_COUNT_MIN = 1;
 export const JOB_PHASE_COUNT_MAX = 3;
 
+/** DB statuses grouped under the "In progress" tab / column (phases + final check). */
+export const JOB_IN_PROGRESS_STATUSES: readonly Job["status"][] = [
+  "in_progress_phase1",
+  "in_progress_phase2",
+  "in_progress_phase3",
+  "final_check",
+] as const;
+
+export function isJobInProgressStatus(status: Job["status"]): boolean {
+  return (JOB_IN_PROGRESS_STATUSES as readonly string[]).includes(status);
+}
+
 /** Clamp to 1–3 (matches report_1…report_3 slots). */
 export function normalizeTotalPhases(n: number | undefined | null): 1 | 2 | 3 {
   const x = Math.floor(Number(n));
@@ -153,4 +165,100 @@ export function allConfiguredReportsApproved(job: Job): boolean {
     if (!uploaded || !approved) return false;
   }
   return true;
+}
+
+/** Monotonic workflow order for gating report actions (higher = further along). */
+export function jobStatusRank(status: Job["status"]): number {
+  switch (status) {
+    case "scheduled":
+      return 0;
+    case "in_progress_phase1":
+      return 10;
+    case "in_progress_phase2":
+      return 20;
+    case "in_progress_phase3":
+      return 30;
+    case "need_attention":
+      return 35;
+    case "final_check":
+      return 40;
+    case "awaiting_payment":
+      return 50;
+    case "completed":
+      return 100;
+    default:
+      return 0;
+  }
+}
+
+/** Minimum workflow rank required to record report slot N (aligned with phase 1 / 2 / 3). */
+export function minimumStatusRankForReportSlot(reportSlotIndex: number, totalPhases: number): number {
+  const tp = normalizeTotalPhases(totalPhases);
+  if (reportSlotIndex < 1 || reportSlotIndex > tp) return 999;
+  if (reportSlotIndex === 1) return 10; // in_progress_phase1+
+  if (reportSlotIndex === 2) return 20; // in_progress_phase2+
+  return 30; // in_progress_phase3+
+}
+
+export function canMarkReportUploaded(job: Job, reportSlotIndex: number): { ok: boolean; message?: string } {
+  if (job.status === "completed") {
+    return { ok: false, message: "Job is completed — reports are locked." };
+  }
+  const tp = normalizeTotalPhases(job.total_phases);
+  if (reportSlotIndex < 1 || reportSlotIndex > tp) {
+    return { ok: false, message: "Invalid report step." };
+  }
+  const minRank = minimumStatusRankForReportSlot(reportSlotIndex, tp);
+  if (jobStatusRank(job.status) < minRank) {
+    return {
+      ok: false,
+      message:
+        reportSlotIndex === 1
+          ? "Start Phase 1 before marking this report as uploaded."
+          : `Reach Phase ${reportSlotIndex} before recording this report.`,
+    };
+  }
+  if (reportSlotIndex > 1) {
+    const prevUploaded = job[`report_${reportSlotIndex - 1}_uploaded` as keyof Job] as boolean;
+    if (!prevUploaded) {
+      return { ok: false, message: `Mark report ${reportSlotIndex - 1} as uploaded first.` };
+    }
+  }
+  return { ok: true };
+}
+
+export function canApproveReport(job: Job, reportSlotIndex: number): { ok: boolean; message?: string } {
+  const gate = canMarkReportUploaded(job, reportSlotIndex);
+  if (!gate.ok) return gate;
+  const uploaded = job[`report_${reportSlotIndex}_uploaded` as keyof Job] as boolean;
+  if (!uploaded) {
+    return { ok: false, message: "The report must be uploaded before it can be approved." };
+  }
+  if (job[`report_${reportSlotIndex}_approved` as keyof Job] as boolean) {
+    return { ok: false, message: "This report is already approved." };
+  }
+  if (reportSlotIndex > 1) {
+    const prevApproved = job[`report_${reportSlotIndex - 1}_approved` as keyof Job] as boolean;
+    if (!prevApproved) {
+      return { ok: false, message: `Approve report ${reportSlotIndex - 1} first.` };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * After all reports are approved, customer / final payment step only from Final Check
+ * (avoids skipping on-site work while still on Scheduled).
+ */
+export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; message?: string } {
+  if (!allConfiguredReportsApproved(job)) {
+    return { ok: false, message: "All reports must be uploaded and approved first." };
+  }
+  if (job.status !== "final_check") {
+    return {
+      ok: false,
+      message: "Move the job to Final Check (header action) before sending the report and requesting final payment.",
+    };
+  }
+  return { ok: true };
 }

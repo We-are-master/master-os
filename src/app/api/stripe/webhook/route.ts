@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireStripe } from "@/lib/stripe";
 import { createServiceClient } from "@/lib/supabase/service";
+import { syncJobAfterStripeInvoicePaid } from "@/lib/stripe-job-sync";
 
 export async function POST(req: NextRequest) {
   const supabaseAdmin = createServiceClient();
@@ -37,17 +38,7 @@ export async function POST(req: NextRequest) {
         paid_date: new Date().toISOString().split("T")[0],
       }).eq("id", invoiceId);
 
-      // Mark job deposit as paid when this invoice is the job's deposit invoice
-      const { data: jobs } = await supabaseAdmin
-        .from("jobs")
-        .select("id")
-        .eq("invoice_id", invoiceId);
-      if (jobs?.length) {
-        await supabaseAdmin
-          .from("jobs")
-          .update({ customer_deposit_paid: true })
-          .eq("id", jobs[0].id);
-      }
+      await syncJobAfterStripeInvoicePaid(supabaseAdmin, invoiceId);
     }
   }
 

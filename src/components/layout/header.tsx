@@ -6,32 +6,23 @@ import { useProfile } from "@/hooks/use-profile";
 import { SearchInput } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, Settings, Menu, LogOut, Moon, Sun } from "lucide-react";
-import { signOut } from "@/services/auth";
-import { useRouter } from "next/navigation";
+import { Settings, Menu, LogOut, Moon, Sun } from "lucide-react";
+import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import Link from "next/link";
-import { toast } from "sonner";
 import { useTheme } from "@/hooks/use-theme";
 
 export function Header() {
   const { collapsed, toggleMobile } = useSidebar();
   const { profile } = useProfile();
   const { resolved, toggle: toggleTheme } = useTheme();
-  const router = useRouter();
-
   const displayName = profile?.full_name || "User";
   const displayRole = profile?.role
     ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1)
     : "";
 
-  const handleSignOut = async () => {
-    try {
-      await signOut();
-      router.push("/login");
-      router.refresh();
-    } catch {
-      toast.error("Failed to sign out");
-    }
+  /** Server route clears Supabase cookies — client-only signOut often leaves middleware still “logged in”. */
+  const handleSignOut = () => {
+    window.location.assign("/auth/sign-out");
   };
 
   return (
@@ -74,10 +65,7 @@ export function Header() {
             )}
           </AnimatePresence>
         </button>
-        <button className="relative h-9 w-9 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition-colors">
-          <Bell className="h-[18px] w-[18px]" />
-          <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-primary animate-pulse-dot" />
-        </button>
+        <NotificationsMenu />
         <Link href="/settings" className="h-9 w-9 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition-colors">
           <Settings className="h-[18px] w-[18px]" />
         </Link>
@@ -92,6 +80,7 @@ export function Header() {
           <Avatar name={displayName} size="sm" />
         </div>
         <button
+          type="button"
           onClick={handleSignOut}
           className="h-9 w-9 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-danger-light hover:text-red-500 transition-colors"
           title="Sign out"

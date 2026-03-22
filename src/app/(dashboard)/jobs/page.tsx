@@ -33,7 +33,7 @@ import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
-import { canAdvanceJob, normalizeTotalPhases } from "@/lib/job-phases";
+import { canAdvanceJob, isJobInProgressStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { jobScheduleYmd } from "@/lib/schedule-calendar";
 
 const JOB_STATUSES = ["scheduled", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
@@ -81,12 +81,23 @@ function JobsPageContent() {
   }, [data, filterPartner, filterScheduled]);
 
   const kanbanColumns = useMemo(() => {
-    const ids = ["scheduled", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"];
-    return ids.map((id) => ({
-      id, title: statusConfig[id]?.label ?? id,
-      color: id === "completed" ? "bg-emerald-500" : id === "need_attention" ? "bg-amber-500" : id === "awaiting_payment" ? "bg-amber-500" : "bg-primary",
-      items: filteredData.filter((j) => j.status === id),
-    }));
+    const ids = ["scheduled", "in_progress", "awaiting_payment", "need_attention", "completed"] as const;
+    return ids.map((id) => {
+      if (id === "in_progress") {
+        return {
+          id,
+          title: "In progress",
+          color: "bg-primary",
+          items: filteredData.filter((j) => isJobInProgressStatus(j.status)),
+        };
+      }
+      return {
+        id,
+        title: statusConfig[id]?.label ?? id,
+        color: id === "completed" ? "bg-emerald-500" : id === "need_attention" ? "bg-amber-500" : id === "awaiting_payment" ? "bg-amber-500" : "bg-primary",
+        items: filteredData.filter((j) => j.status === id),
+      };
+    });
   }, [filteredData]);
 
   const jobIdFromUrl = searchParams.get("jobId");
@@ -97,13 +108,16 @@ function JobsPageContent() {
   }, []);
   useEffect(() => { loadCounts(); }, [loadCounts]);
 
+  const inProgressTabCount =
+    (tabCounts.in_progress_phase1 ?? 0) +
+    (tabCounts.in_progress_phase2 ?? 0) +
+    (tabCounts.in_progress_phase3 ?? 0) +
+    (tabCounts.final_check ?? 0);
+
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0 },
     { id: "scheduled", label: "Scheduled", count: tabCounts.scheduled ?? 0 },
-    { id: "in_progress_phase1", label: "Phase 1", count: tabCounts.in_progress_phase1 ?? 0 },
-    { id: "in_progress_phase2", label: "Phase 2", count: tabCounts.in_progress_phase2 ?? 0 },
-    { id: "in_progress_phase3", label: "Phase 3", count: tabCounts.in_progress_phase3 ?? 0 },
-    { id: "final_check", label: "Final Check", count: tabCounts.final_check ?? 0 },
+    { id: "in_progress", label: "In progress", count: inProgressTabCount },
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
     { id: "need_attention", label: "Need attention", count: tabCounts.need_attention ?? 0 },
     { id: "completed", label: "Completed", count: tabCounts.completed ?? 0 },
@@ -113,7 +127,8 @@ function JobsPageContent() {
     const cp = formData.client_price ?? 0;
     const pc = formData.partner_cost ?? 0;
     const mc = formData.materials_cost ?? 0;
-    const margin = cp > 0 ? Math.round(((cp - pc - mc) / cp) * 1000) / 10 : 0;
+    const margin =
+      cp > 0 ? Math.round(((cp - pc - mc) / cp) * 1000) / 10 : 0;
     try {
       const result = await createJob({
         title: formData.title ?? "",
@@ -127,7 +142,11 @@ function JobsPageContent() {
         progress: 0,
         current_phase: 0,
         total_phases: normalizeTotalPhases(formData.total_phases),
-        client_price: cp, partner_cost: pc, materials_cost: mc, margin_percent: margin,
+        client_price: cp,
+        extras_amount: 0,
+        partner_cost: pc,
+        materials_cost: mc,
+        margin_percent: margin,
         scheduled_date: formData.scheduled_date, scheduled_start_at: formData.scheduled_start_at,
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
         partner_agreed_value: 0, finance_status: "unpaid", service_value: cp,
@@ -226,7 +245,7 @@ function JobsPageContent() {
         </PageHeader>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <KpiCard title="Active Jobs" value={(tabCounts.in_progress_phase1 ?? 0) + (tabCounts.in_progress_phase2 ?? 0) + (tabCounts.in_progress_phase3 ?? 0) + (tabCounts.scheduled ?? 0)} format="number" icon={Briefcase} accent="blue" />
+          <KpiCard title="Active Jobs" value={inProgressTabCount + (tabCounts.scheduled ?? 0)} format="number" icon={Briefcase} accent="blue" />
           <KpiCard title="Awaiting Payment" value={tabCounts.awaiting_payment ?? 0} format="number" icon={DollarSign} accent="amber" />
           <KpiCard title="Completed" value={tabCounts.completed ?? 0} format="number" icon={CheckCircle2} accent="emerald" />
         </StaggerContainer>
@@ -244,7 +263,7 @@ function JobsPageContent() {
             </div>
           </div>
           {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /></div>} />}
-          {viewMode === "kanban" && <div className="min-h-[400px]">{loading ? <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div> : <KanbanBoard columns={kanbanColumns} getCardId={(j) => j.id} onCardClick={(j) => router.push(`/jobs/${j.id}`)} renderCard={(j) => (<div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors cursor-pointer"><p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p><p className="text-xs text-text-tertiary truncate">{j.title}</p><p className="text-[11px] text-text-secondary mt-1">{j.client_name}</p><p className="text-xs font-medium text-primary mt-1">{formatCurrency(j.client_price)}</p></div>)} />}</div>}
+          {viewMode === "kanban" && <div className="min-h-[400px]">{loading ? <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div> : <KanbanBoard columns={kanbanColumns} getCardId={(j) => j.id} onCardClick={(j) => router.push(`/jobs/${j.id}`)} renderCard={(j) => { const sc = statusConfig[j.status] ?? { label: j.status }; return (<div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors cursor-pointer"><p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p><p className="text-xs text-text-tertiary truncate">{j.title}</p><p className="text-[10px] text-text-tertiary mt-1 truncate">{sc.label}</p><p className="text-[11px] text-text-secondary mt-0.5">{j.client_name}</p><p className="text-xs font-medium text-primary mt-1">{formatCurrency(j.client_price)}</p></div>); }} />}</div>}
           {viewMode === "calendar" && <JobsCalendarView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
           {viewMode === "map" && <JobsMapView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
         </motion.div>

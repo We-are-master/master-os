@@ -35,6 +35,12 @@ import { listPartners } from "@/services/partners";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { normalizeTotalPhases } from "@/lib/job-phases";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import type { CatalogService } from "@/types/database";
+import { estimatedValueFromCatalog, lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
+import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
+import { JobOwnerSelect } from "@/components/ui/job-owner-select";
+import { isUuid } from "@/lib/utils";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   new: { label: "New", variant: "primary" },
@@ -70,7 +76,14 @@ export default function RequestsPage() {
 
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [selectedRequest, setSelectedRequest] = useState<ServiceRequest | null>(null);
-  const [drawerPostcode, setDrawerPostcode] = useState("");
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
+  const [drawerFields, setDrawerFields] = useState({
+    postcode: "",
+    service_type: "",
+    description: "",
+    estimated_value: "",
+    catalog_service_id: "",
+  });
   const [drawerSaving, setDrawerSaving] = useState(false);
   const [drawerTab, setDrawerTab] = useState("details");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -123,16 +136,56 @@ export default function RequestsPage() {
   }, []);
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
+  useEffect(() => {
+    listCatalogServicesForPicker().then(setCatalogServices).catch(() => setCatalogServices([]));
+  }, []);
+
   useEffect(() => { setDrawerTab("details"); }, [selectedRequest?.id]);
   useEffect(() => {
-    setDrawerPostcode(selectedRequest?.postcode ?? "");
-  }, [selectedRequest?.id, selectedRequest?.postcode]);
+    if (!selectedRequest) return;
+    setDrawerFields({
+      postcode: selectedRequest.postcode ?? "",
+      service_type: selectedRequest.service_type ?? "",
+      description: selectedRequest.description ?? "",
+      estimated_value: selectedRequest.estimated_value != null ? String(selectedRequest.estimated_value) : "",
+      catalog_service_id: selectedRequest.catalog_service_id ?? "",
+    });
+  }, [
+    selectedRequest?.id,
+    selectedRequest?.postcode,
+    selectedRequest?.service_type,
+    selectedRequest?.description,
+    selectedRequest?.estimated_value,
+    selectedRequest?.catalog_service_id,
+  ]);
+
+  const serviceFilterOptions = useMemo(() => {
+    const legacy = [
+      "HVAC Installation",
+      "HVAC Maintenance",
+      "Electrical",
+      "Plumbing",
+      "Painting",
+      "Carpentry",
+      "General Maintenance",
+    ];
+    const fromCatalog = catalogServices.map((c) => c.name);
+    const fromRows = [...new Set(data.map((r) => r.service_type).filter(Boolean))] as string[];
+    return [...new Set([...legacy, ...fromCatalog, ...fromRows])].sort((a, b) => a.localeCompare(b));
+  }, [catalogServices, data]);
 
   const handleSaveRequestDetails = useCallback(async () => {
     if (!selectedRequest) return;
     setDrawerSaving(true);
     try {
-      const updated = await updateRequest(selectedRequest.id, { postcode: drawerPostcode.trim() || undefined });
+      const cid = drawerFields.catalog_service_id.trim();
+      const updated = await updateRequest(selectedRequest.id, {
+        postcode: drawerFields.postcode.trim() || undefined,
+        service_type: drawerFields.service_type.trim(),
+        description: drawerFields.description,
+        estimated_value: drawerFields.estimated_value.trim() ? Number(drawerFields.estimated_value) : undefined,
+        catalog_service_id: cid && isUuid(cid) ? cid : null,
+      });
       setSelectedRequest(updated);
       refreshSilent();
       toast.success("Request updated");
@@ -141,7 +194,7 @@ export default function RequestsPage() {
     } finally {
       setDrawerSaving(false);
     }
-  }, [selectedRequest, drawerPostcode, refreshSilent]);
+  }, [selectedRequest, drawerFields, refreshSilent]);
 
   const tabs = [
     { id: "all", label: "All Requests", count: statusCounts.all ?? 0 },
@@ -248,6 +301,9 @@ export default function RequestsPage() {
           owner_name: ownerName,
           assigned_to: formData.assigned_to,
           estimated_value: formData.estimated_value,
+          catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
+            ? String(formData.catalog_service_id).trim()
+            : null,
         });
         await logAudit({
           entityType: "request", entityId: result.id, entityRef: result.reference,
@@ -349,13 +405,9 @@ export default function RequestsPage() {
                 <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Service type</p>
                 <select value={filterService} onChange={(e) => setFilterService(e.target.value)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
                   <option value="all">All</option>
-                  <option value="HVAC Installation">HVAC Installation</option>
-                  <option value="HVAC Maintenance">HVAC Maintenance</option>
-                  <option value="Electrical">Electrical</option>
-                  <option value="Plumbing">Plumbing</option>
-                  <option value="Painting">Painting</option>
-                  <option value="Carpentry">Carpentry</option>
-                  <option value="General Maintenance">General Maintenance</option>
+                  {serviceFilterOptions.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
                 </select>
                 <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPriority("all"); setFilterService("all"); }}>Clear filters</Button>
               </div>
@@ -449,12 +501,13 @@ export default function RequestsPage() {
                   <div className="p-3 rounded-xl bg-surface-hover">
                     <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Owner (Commission)</label>
                     {isAdmin ? (
-                      <div className="mt-2 space-y-2">
-                        <select
-                          value={selectedRequest.owner_id ?? ""}
+                      <div className="mt-2">
+                        <JobOwnerSelect
+                          value={selectedRequest.owner_id}
+                          fallbackName={selectedRequest.owner_name}
+                          users={assignableUsers}
                           disabled={savingOwner}
-                          onChange={async (e) => {
-                            const ownerId = e.target.value || undefined;
+                          onChange={async (ownerId) => {
                             const owner = assignableUsers.find((u) => u.id === ownerId);
                             setSavingOwner(true);
                             try {
@@ -471,19 +524,7 @@ export default function RequestsPage() {
                               setSavingOwner(false);
                             }
                           }}
-                          className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
-                        >
-                          <option value="">No owner</option>
-                          {assignableUsers.map((u) => (
-                            <option key={u.id} value={u.id}>{u.full_name}</option>
-                          ))}
-                        </select>
-                        {selectedRequest.owner_name && (
-                          <div className="flex items-center gap-2.5">
-                            <Avatar name={selectedRequest.owner_name} size="sm" />
-                            <p className="text-sm font-semibold text-text-primary">{selectedRequest.owner_name}</p>
-                          </div>
-                        )}
+                        />
                       </div>
                     ) : selectedRequest.owner_name ? (
                       <div className="flex items-center gap-2.5 mt-2">
@@ -501,23 +542,66 @@ export default function RequestsPage() {
                       <p className="text-sm text-text-primary">{selectedRequest.property_address}</p>
                     </div>
                     <div className="mt-2 flex items-center gap-2">
-                      <Input value={drawerPostcode} onChange={(e) => setDrawerPostcode(e.target.value.toUpperCase())} placeholder="Postcode (required for Convert to Quote)" className="max-w-[140px]" />
-                      <Button variant="outline" size="sm" onClick={handleSaveRequestDetails} disabled={drawerSaving}>Save</Button>
+                      <Input
+                        value={drawerFields.postcode}
+                        onChange={(e) => setDrawerFields((f) => ({ ...f, postcode: e.target.value.toUpperCase() }))}
+                        placeholder="Postcode (required for Convert to Quote)"
+                        className="max-w-[140px]"
+                      />
                     </div>
                     <LocationMiniMap address={selectedRequest.property_address} className="mt-2" />
                   </div>
-                  <div>
-                    <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Description</label>
-                    <p className="text-sm text-text-secondary mt-1.5 leading-relaxed">{selectedRequest.description}</p>
-                  </div>
-                  {selectedRequest.estimated_value != null && selectedRequest.estimated_value > 0 && (
-                    <div className="p-4 rounded-xl bg-primary/[0.03] border border-primary/10">
-                      <label className="text-[10px] font-semibold text-primary uppercase tracking-wide">Estimated Value</label>
-                      <p className="text-2xl font-bold text-text-primary mt-1">
-                        ${selectedRequest.estimated_value.toLocaleString()}
-                      </p>
+
+                  <div className="rounded-xl border border-border bg-card/50 p-4 space-y-3">
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Service &amp; pricing</p>
+                    <ServiceCatalogSelect
+                      catalog={catalogServices}
+                      value={drawerFields.catalog_service_id}
+                      onChange={(id, svc) => {
+                        setDrawerFields((f) => ({
+                          ...f,
+                          catalog_service_id: id,
+                          ...(svc
+                            ? {
+                                service_type: svc.name,
+                                description: (svc.default_description?.trim() || f.description) ?? "",
+                                estimated_value: String(estimatedValueFromCatalog(svc)),
+                              }
+                            : {}),
+                        }));
+                      }}
+                    />
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Service name (on request)</label>
+                      <Input
+                        value={drawerFields.service_type}
+                        onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
+                        placeholder="e.g. Plumbing"
+                      />
                     </div>
-                  )}
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
+                      <textarea
+                        value={drawerFields.description}
+                        onChange={(e) => setDrawerFields((f) => ({ ...f, description: e.target.value }))}
+                        rows={4}
+                        className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Estimated value</label>
+                      <Input
+                        type="number"
+                        value={drawerFields.estimated_value}
+                        onChange={(e) => setDrawerFields((f) => ({ ...f, estimated_value: e.target.value }))}
+                        placeholder="0"
+                        className="max-w-[160px]"
+                      />
+                    </div>
+                    <Button variant="primary" size="sm" onClick={handleSaveRequestDetails} disabled={drawerSaving}>
+                      {drawerSaving ? "Saving…" : "Save service & postcode"}
+                    </Button>
+                  </div>
                   <div className="flex items-center gap-2 text-sm text-text-secondary">
                     <Mail className="h-4 w-4" />
                     {selectedRequest.client_email}
@@ -660,6 +744,7 @@ export default function RequestsPage() {
               client_name: clientAddress.client_name,
               client_email: clientAddress.client_email ?? req.client_email,
               request_id: req.id,
+              catalog_service_id: req.catalog_service_id ?? null,
               status: "bidding",
               total_value: req.estimated_value ?? 0,
               partner_quotes_count: partnerIds.length,
@@ -696,8 +781,9 @@ export default function RequestsPage() {
       {/* Manual Quote Modal */}
       <ManualQuoteModal
         request={manualQuoteOpen}
+        catalogServices={catalogServices}
         onClose={() => setManualQuoteOpen(null)}
-        onDone={async (req, lineItems, clientAddress) => {
+        onDone={async (req, lineItems, clientAddress, catalogServiceId) => {
           try {
             if (!clientAddress?.client_id || !clientAddress?.property_address?.trim()) {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
@@ -711,6 +797,7 @@ export default function RequestsPage() {
               client_name: clientAddress.client_name,
               client_email: clientAddress.client_email ?? req.client_email,
               request_id: req.id,
+              catalog_service_id: catalogServiceId ?? req.catalog_service_id ?? null,
               status: "draft",
               total_value: total,
               partner_quotes_count: 0,
@@ -780,6 +867,7 @@ export default function RequestsPage() {
               current_phase: 0,
               total_phases: normalizeTotalPhases(data.total_phases),
               client_price: clientPrice,
+              extras_amount: 0,
               partner_cost: partnerCost,
               materials_cost: 0,
               margin_percent: margin,
@@ -824,6 +912,7 @@ export default function RequestsPage() {
         onCreate={handleCreate}
         profileId={profile?.id}
         profileName={profile?.full_name}
+        catalogServices={catalogServices}
       />
     </PageTransition>
   );
@@ -951,18 +1040,29 @@ function InvitePartnerToQuote({
 }
 
 function ManualQuoteModal({
-  request, onClose, onDone,
+  request,
+  catalogServices,
+  onClose,
+  onDone,
 }: {
   request: ServiceRequest | null;
+  catalogServices: CatalogService[];
   onClose: () => void;
-  onDone: (req: ServiceRequest, lineItems: { description: string; quantity: number; unitPrice: number; vat: boolean }[], clientAddress: ClientAndAddressValue) => void;
+  onDone: (
+    req: ServiceRequest,
+    lineItems: { description: string; quantity: number; unitPrice: number; vat: boolean }[],
+    clientAddress: ClientAndAddressValue,
+    catalogServiceId?: string | null
+  ) => void;
 }) {
   const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", unitPrice: "0", vat: false }]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [vatPercent, setVatPercent] = useState(20);
+  const [catalogTemplateId, setCatalogTemplateId] = useState("");
 
   useEffect(() => {
     if (request) {
+      setCatalogTemplateId(request.catalog_service_id ?? "");
       setLineItems([{ description: request.service_type, quantity: "1", unitPrice: String(request.estimated_value ?? 0), vat: false }]);
       setClientAddress(serviceRequestToClientAddressValue(request));
       void Promise.resolve(
@@ -997,6 +1097,21 @@ function ManualQuoteModal({
             lockClient={!!request.client_id}
           />
         </div>
+        <ServiceCatalogSelect
+          label="Apply catalog template to first line (optional)"
+          catalog={catalogServices}
+          value={catalogTemplateId}
+          onChange={(id, svc) => {
+            setCatalogTemplateId(id);
+            if (!svc) return;
+            const line = lineItemDefaultsFromCatalog(svc);
+            setLineItems((prev) => {
+              const rest = prev.slice(1);
+              return [{ description: line.description, quantity: String(line.quantity), unitPrice: String(line.unitPrice), vat: prev[0]?.vat ?? false }, ...rest];
+            });
+          }}
+        />
+        <p className="text-[10px] text-text-tertiary -mt-2">Edit quantities and prices below — template is only a starting point.</p>
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Quote items</label>
@@ -1049,7 +1164,8 @@ function ManualQuoteModal({
                 const unitPriceInclVat = li.vat ? baseUnit * (1 + vatPercent / 100) : baseUnit;
                 return { description: li.description, quantity: qty, unitPrice: unitPriceInclVat, vat: li.vat };
               });
-              onDone(request, items, clientAddress);
+              const cid = catalogTemplateId.trim();
+              onDone(request, items, clientAddress, cid && isUuid(cid) ? cid : null);
             }}
           >
             Create quote
@@ -1170,19 +1286,22 @@ function CreateRequestModal({
   onCreate,
   profileId,
   profileName,
+  catalogServices,
 }: {
   open: boolean;
   onClose: () => void;
   onCreate: (data: Partial<ServiceRequest>) => void;
   profileId?: string;
   profileName?: string;
+  catalogServices: CatalogService[];
 }) {
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [postcode, setPostcode] = useState("");
   const [form, setForm] = useState({
     client_phone: "",
     source: "manual" as ServiceRequest["source"],
-    service_type: "HVAC Installation",
+    catalog_service_id: "",
+    service_type: "",
     description: "",
     priority: "medium",
     estimated_value: "",
@@ -1196,7 +1315,8 @@ function CreateRequestModal({
     setForm({
       client_phone: "",
       source: "manual",
-      service_type: "HVAC Installation",
+      catalog_service_id: "",
+      service_type: "",
       description: "",
       priority: "medium",
       estimated_value: "",
@@ -1212,7 +1332,9 @@ function CreateRequestModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientAddress.client_id) {
-      toast.error("Select a client from the search above or use “Create new client”. Typing only the address does not link a client.");
+      toast.error(
+        "The client must be linked: click their name in the list, press Enter, or tab away after typing the exact name. If you only typed text without confirming, the system has no client ID."
+      );
       return;
     }
     if (!clientAddress.property_address?.trim()) {
@@ -1224,6 +1346,11 @@ function CreateRequestModal({
       toast.error("Postcode is required — include it in the property address or type it below.");
       return;
     }
+    if (!form.service_type.trim()) {
+      toast.error("Enter a service name (or pick a catalog template).");
+      return;
+    }
+    const cid = form.catalog_service_id.trim();
     onCreate({
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
@@ -1233,7 +1360,8 @@ function CreateRequestModal({
       property_address: clientAddress.property_address,
       postcode: pc,
       source: form.source,
-      service_type: form.service_type,
+      catalog_service_id: cid && isUuid(cid) ? cid : null,
+      service_type: form.service_type.trim(),
       description: form.description,
       estimated_value: form.estimated_value ? Number(form.estimated_value) : undefined,
       priority: form.priority as ServiceRequest["priority"],
@@ -1272,17 +1400,40 @@ function CreateRequestModal({
           </div>
           <Select label="Source" value={form.source ?? "manual"} onChange={(e) => update("source", e.target.value)} options={REQUEST_SOURCES.map((s) => ({ value: s.value!, label: s.label }))} />
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <Select label="Service Type" value={form.service_type} onChange={(e) => update("service_type", e.target.value)} options={[
-            { value: "HVAC Installation", label: "HVAC Installation" }, { value: "HVAC Maintenance", label: "HVAC Maintenance" },
-            { value: "Electrical", label: "Electrical" }, { value: "Plumbing", label: "Plumbing" },
-            { value: "Painting", label: "Painting" }, { value: "Carpentry", label: "Carpentry" },
-            { value: "General Maintenance", label: "General Maintenance" },
-          ]} />
-          <Select label="Priority" value={form.priority} onChange={(e) => update("priority", e.target.value)} options={[
-            { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
-            { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
-          ]} />
+        <div className="space-y-3">
+          <ServiceCatalogSelect
+            catalog={catalogServices}
+            value={form.catalog_service_id}
+            onChange={(id, svc) => {
+              setForm((prev) => ({
+                ...prev,
+                catalog_service_id: id,
+                ...(svc
+                  ? {
+                      service_type: svc.name,
+                      description: (svc.default_description?.trim() || prev.description) ?? "",
+                      estimated_value: String(estimatedValueFromCatalog(svc)),
+                    }
+                  : {}),
+              }));
+            }}
+          />
+          <p className="text-[10px] text-text-tertiary">You can change name, description and value below — catalog is only a starting point.</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Service name *</label>
+              <Input
+                value={form.service_type}
+                onChange={(e) => update("service_type", e.target.value)}
+                placeholder="e.g. Plumbing repair"
+                required
+              />
+            </div>
+            <Select label="Priority" value={form.priority} onChange={(e) => update("priority", e.target.value)} options={[
+              { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
+              { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
+            ]} />
+          </div>
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>

@@ -7,6 +7,8 @@ export interface ListParams {
   pageSize?: number;
   search?: string;
   status?: string;
+  /** When set, filter with `.in("status", statusIn)` instead of a single `status` eq. */
+  statusIn?: string[];
   sortBy?: string;
   sortDir?: SortDirection;
 }
@@ -53,7 +55,9 @@ export async function queryList<T>(
 
   let query = supabase.from(table).select("*", { count: "exact" }).is("deleted_at", null);
 
-  if (params.status && params.status !== "all") {
+  if (params.statusIn && params.statusIn.length > 0) {
+    query = query.in("status", params.statusIn);
+  } else if (params.status && params.status !== "all") {
     query = query.eq("status", params.status);
   }
 

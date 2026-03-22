@@ -213,7 +213,7 @@ function ChartBuilder({ onAdd, onClose }: { onAdd: (w: WidgetConfig) => void; on
   const [title, setTitle] = useState("Custom Chart");
   const [size, setSize] = useState<WidgetSize>("two_thirds");
   const [opts, setOpts] = useState<CustomChartOptions>({
-    table: "jobs", date_field: "created_at", value_field: "revenue",
+    table: "jobs", date_field: "created_at", value_field: "client_price",
     aggregation: "sum", chart_type: "bar", period_months: 6, colour: "blue",
   });
 
