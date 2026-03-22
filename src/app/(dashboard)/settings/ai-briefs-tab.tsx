@@ -152,7 +152,9 @@ export function AiBriefsTab() {
         <p>
           <strong>Cron:</strong> set <code className="bg-card px-1 rounded">CRON_SECRET</code> in env and call{" "}
           <code className="bg-card px-1 rounded">GET /api/cron/daily-brief</code> with{" "}
-          <code className="bg-card px-1 rounded">Authorization: Bearer …</code> every 15 minutes (see{" "}
+          <code className="bg-card px-1 rounded">Authorization: Bearer …</code>. Default in repo is{" "}
+          <strong>once daily</strong> (Vercel Hobby). On <strong>Vercel Pro</strong> you can use{" "}
+          <code className="bg-card px-1 rounded">*/15 * * * *</code> so each brief lands near its time (see{" "}
           <code className="bg-card px-1 rounded">docs/MASTER_BRAIN.md</code>).
         </p>
       </div>
@@ -317,7 +319,9 @@ export function AiBriefsTab() {
               />
             </div>
             <p className="text-[11px] text-text-tertiary">
-              Times apply in the selected timezone. Cron should run at least every 15 minutes. Each slot sends at most once per calendar day.
+              Times apply in the selected timezone. Each slot sends at most once per calendar day. With a daily cron (Hobby), both
+              morning and evening can be sent in one run after both local times have passed. With a 15‑minute cron (Pro), briefs align
+              closer to the configured clock times.
               Requires <strong>RESEND_API_KEY</strong> and <strong>RESEND_FROM_EMAIL</strong> (same as quote e-mails).
             </p>
           </div>

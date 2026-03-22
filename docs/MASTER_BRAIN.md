@@ -25,16 +25,21 @@ Migration `044_master_brain_roles.sql` adds manager/operator toggles and instruc
 
 ## Cron
 
-The route `GET /api/cron/daily-brief` checks company timezone and sends at most one morning and one evening email per local calendar day (20-minute window after the configured time).
+The route `GET /api/cron/daily-brief` uses the company timezone. Each of morning and evening sends **at most once per local calendar day**. With **frequent cron** (e.g. every 15 minutes), a **20-minute window** after each configured time is used. With **once-daily cron** (Vercel Hobby), **catch-up** applies: if the local time for a slot has **already passed** today and that slot was not yet sent, it can be sent on the next run (so one daily run after both times may send **two** emails).
+
+### Vercel Hobby vs Pro
+
+- **Hobby:** Only **one** cron invocation per day is allowed. The repo default is `0 20 * * *` (20:00 UTC). Adjust UTC if your main timezone needs a different “digest” time.
+- **Pro:** Set `vercel.json` to `*/15 * * * *` so briefs go out near the configured morning/evening times.
 
 ### Vercel
 
 1. Add `CRON_SECRET` in Project → Settings → Environment Variables (Production).
-2. `vercel.json` includes a cron schedule (every 15 minutes). Vercel will call the route with `Authorization: Bearer CRON_SECRET` when that env is set.
+2. `vercel.json` defines the schedule. Vercel calls the route with `Authorization: Bearer CRON_SECRET` when that env is set.
 
 ### Manual / other hosts
 
-Call every **15 minutes**:
+For tight alignment with clock times, call every **15 minutes**. For a single daily run, call once after both local brief times.
 
 ```bash
 curl -sS -H "Authorization: Bearer YOUR_CRON_SECRET" \

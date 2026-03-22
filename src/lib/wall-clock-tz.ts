@@ -35,7 +35,7 @@ export function parseHHmm(s: string): number | null {
 
 /**
  * True if current zoned time is in [target, target + windowMinutes).
- * Used with cron every ~15 minutes.
+ * Used with frequent cron (e.g. every 15 minutes on Vercel Pro).
  */
 export function isInTimeWindow(
   wall: { hour: number; minute: number },
@@ -46,4 +46,18 @@ export function isInTimeWindow(
   if (target == null) return false;
   const cur = wall.hour * 60 + wall.minute;
   return cur >= target && cur < target + windowMinutes;
+}
+
+/**
+ * True if zoned wall-clock is at or after HH:mm today.
+ * Used when cron runs once per day (e.g. Vercel Hobby): send a slot if its scheduled time has passed and it was not yet sent.
+ */
+export function hasLocalTimeReachedSchedule(
+  wall: { hour: number; minute: number },
+  targetHHmm: string
+): boolean {
+  const target = parseHHmm(targetHHmm);
+  if (target == null) return false;
+  const cur = wall.hour * 60 + wall.minute;
+  return cur >= target;
 }
