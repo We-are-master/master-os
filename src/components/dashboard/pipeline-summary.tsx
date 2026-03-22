@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
@@ -56,21 +57,24 @@ export function PipelineSummary() {
   const totalValue = stages.reduce((acc, s) => acc + s.value, 0);
 
   return (
-    <Card padding="none">
-      <CardHeader className="px-5 pt-5">
+    <Card padding="none" className="flex flex-col max-h-[360px] overflow-hidden h-full">
+      <CardHeader className="px-5 pt-4 pb-3 mb-0 shrink-0 border-b border-border-light">
         <div>
           <CardTitle>Sales Pipeline</CardTitle>
           <p className="text-xs text-text-tertiary mt-0.5">
             {formatCurrency(totalValue)} total value
           </p>
         </div>
-        <button className="text-xs font-medium text-primary hover:text-primary-hover transition-colors">
+        <Link
+          href="/pipelines/corporate"
+          className="text-xs font-medium text-primary hover:text-primary-hover hover:underline transition-colors"
+        >
           View pipeline
-        </button>
+        </Link>
       </CardHeader>
 
       {totalValue > 0 && (
-        <div className="px-5 pb-2">
+        <div className="px-5 pb-2 shrink-0">
           <div className="flex h-2 rounded-full overflow-hidden gap-0.5">
             {stages.map((stage) => (
               <motion.div
@@ -89,7 +93,7 @@ export function PipelineSummary() {
         variants={staggerContainer}
         initial="hidden"
         animate="visible"
-        className="px-2 pb-3"
+        className="px-2 pb-3 flex-1 min-h-0 overflow-y-auto overscroll-contain"
       >
         {stages.length === 0 && (
           <div className="px-3 py-6 text-center">

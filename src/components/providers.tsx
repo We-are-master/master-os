@@ -1,10 +1,12 @@
 "use client";
 
 import { Toaster } from "sonner";
+import { DynamicFavicon } from "@/components/layout/dynamic-favicon";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <>
+      <DynamicFavicon />
       {children}
       <Toaster
         position="top-right"

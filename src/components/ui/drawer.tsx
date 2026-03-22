@@ -11,6 +11,8 @@ interface DrawerProps {
   title?: string;
   subtitle?: string;
   children: React.ReactNode;
+  /** Renders below the scroll area (e.g. sticky chat input). */
+  footer?: React.ReactNode;
   width?: string;
   className?: string;
 }
@@ -21,6 +23,7 @@ export function Drawer({
   title,
   subtitle,
   children,
+  footer,
   width = "w-[440px]",
   className,
 }: DrawerProps) {
@@ -42,13 +45,13 @@ export function Drawer({
             animate="visible"
             exit="exit"
             className={cn(
-              "fixed right-0 top-0 bottom-0 bg-surface border-l border-border shadow-modal z-50 flex flex-col",
+              "fixed right-0 top-0 bottom-0 max-h-[100dvh] bg-surface border-l border-border shadow-modal z-50 flex flex-col",
               width,
               className
             )}
           >
             {title && (
-              <div className="flex items-center justify-between px-6 py-4 border-b border-border-light">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-border-light shrink-0">
                 <div>
                   <h3 className="text-base font-semibold text-text-primary">{title}</h3>
                   {subtitle && <p className="text-xs text-text-tertiary mt-0.5">{subtitle}</p>}
@@ -61,8 +64,9 @@ export function Drawer({
                 </button>
               </div>
             )}
-            <div className="flex-1 overflow-y-auto">
-              {children}
+            <div className="flex flex-1 flex-col min-h-0">
+              <div className="flex-1 min-h-0 overflow-y-auto">{children}</div>
+              {footer != null ? <div className="shrink-0 border-t border-border-light bg-surface">{footer}</div> : null}
             </div>
           </motion.div>
         </>

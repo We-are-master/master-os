@@ -20,13 +20,14 @@ import {
   Plus, Download, Filter, Receipt, DollarSign, Clock, AlertTriangle,
   FileText, Send, Calendar, MapPin, User, Briefcase, ArrowRight,
   CheckCircle2, XCircle, CreditCard, Building2, Hash, TrendingUp,
-  Banknote, RotateCcw, Loader,
+  Banknote, RotateCcw, Loader, Lock,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Invoice, InvoiceStatus } from "@/types/database";
+import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listInvoices, createInvoice } from "@/services/invoices";
+import { listInvoices, createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
+import { syncInvoiceCollectionStagesForJob, COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
 import { getStatusCounts, getSupabase } from "@/services/base";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
@@ -41,6 +42,13 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 };
 
 const INVOICE_STATUSES: InvoiceStatus[] = ["paid", "pending", "overdue", "cancelled"];
+
+const COLLECTION_STAGE_OPTIONS: InvoiceCollectionStage[] = [
+  "awaiting_deposit",
+  "deposit_collected",
+  "awaiting_final",
+  "completed",
+];
 
 interface LinkedJob {
   id: string;
@@ -105,7 +113,12 @@ export default function InvoicesPage() {
   const handleStatusChange = useCallback(async (invoice: Invoice, newStatus: InvoiceStatus) => {
     const supabase = getSupabase();
     const updates: Record<string, unknown> = { status: newStatus };
-    if (newStatus === "paid") updates.paid_date = new Date().toISOString().split("T")[0];
+    if (newStatus === "paid") {
+      updates.paid_date = new Date().toISOString().split("T")[0];
+      updates.collection_stage = "completed";
+    } else if (invoice.status === "paid") {
+      updates.paid_date = null;
+    }
     try {
       const { error } = await supabase.from("invoices").update(updates).eq("id", invoice.id);
       if (error) throw error;
@@ -121,7 +134,26 @@ export default function InvoicesPage() {
         userName: profile?.full_name,
       });
       toast.success(`Invoice marked as ${newStatus}`);
-      setSelectedInvoice({ ...invoice, status: newStatus, paid_date: newStatus === "paid" ? new Date().toISOString().split("T")[0] : invoice.paid_date });
+      let paidDate: string | undefined;
+      if (newStatus === "paid") {
+        paidDate = new Date().toISOString().split("T")[0];
+      } else if (invoice.status === "paid") {
+        paidDate = undefined;
+      } else {
+        paidDate = invoice.paid_date;
+      }
+      const nextInv: Invoice = {
+        ...invoice,
+        status: newStatus,
+        paid_date: paidDate,
+        collection_stage: newStatus === "paid" ? "completed" : invoice.collection_stage,
+      };
+      setSelectedInvoice(nextInv);
+      if (invoice.job_reference?.trim()) {
+        const { data: jobRow } = await supabase.from("jobs").select("id").eq("reference", invoice.job_reference.trim()).maybeSingle();
+        const jid = (jobRow as { id?: string } | null)?.id;
+        if (jid) await syncInvoiceCollectionStagesForJob(supabase, jid);
+      }
       refresh();
       loadCounts();
       loadKpis();
@@ -145,7 +177,7 @@ export default function InvoicesPage() {
     } catch { toast.error("Failed to update invoices"); }
   };
 
-  const handleCreate = useCallback(async (formData: Omit<Invoice, "id" | "reference" | "created_at">) => {
+  const handleCreate = useCallback(async (formData: CreateInvoiceInput) => {
     try {
       const result = await createInvoice(formData);
       await logAudit({
@@ -224,6 +256,22 @@ export default function InvoicesPage() {
       render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(item.amount)}</span>,
     },
     {
+      key: "collection_stage", label: "Collection", width: "150px",
+      render: (item) =>
+        item.job_reference && item.collection_stage ? (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[11px] text-text-secondary leading-tight">{COLLECTION_STAGE_LABELS[item.collection_stage]}</span>
+            {item.collection_stage_locked ? (
+              <span className="text-[10px] text-amber-600 flex items-center gap-0.5">
+                <Lock className="h-2.5 w-2.5" /> Manual
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <span className="text-sm text-text-tertiary">—</span>
+        ),
+    },
+    {
       key: "status", label: "Status",
       render: (item) => {
         const sConf = statusConfig[item.status];
@@ -300,6 +348,10 @@ export default function InvoicesPage() {
         invoice={selectedInvoice}
         onClose={() => setSelectedInvoice(null)}
         onStatusChange={handleStatusChange}
+        onInvoiceUpdated={(inv) => {
+          setSelectedInvoice(inv);
+          refresh();
+        }}
       />
 
       <CreateInvoiceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
@@ -313,10 +365,12 @@ function InvoiceDetailDrawer({
   invoice,
   onClose,
   onStatusChange,
+  onInvoiceUpdated,
 }: {
   invoice: Invoice | null;
   onClose: () => void;
   onStatusChange: (invoice: Invoice, status: InvoiceStatus) => void;
+  onInvoiceUpdated?: (invoice: Invoice) => void;
 }) {
   const { profile } = useProfile();
   const [tab, setTab] = useState("details");
@@ -330,6 +384,9 @@ function InvoiceDetailDrawer({
     linkUrl?: string; linkId?: string; paymentStatus?: string; paidAt?: string; customerEmail?: string;
   }>({});
   const [linkCopied, setLinkCopied] = useState(false);
+  const [collStage, setCollStage] = useState<InvoiceCollectionStage>("awaiting_final");
+  const [collLocked, setCollLocked] = useState(false);
+  const [savingColl, setSavingColl] = useState(false);
 
   useEffect(() => {
     if (!invoice) return;
@@ -344,6 +401,8 @@ function InvoiceDetailDrawer({
       customerEmail: invoice.stripe_customer_email ?? undefined,
     });
     setLinkCopied(false);
+    setCollStage(invoice.collection_stage ?? "awaiting_final");
+    setCollLocked(!!invoice.collection_stage_locked);
 
     const supabase = getSupabase();
 
@@ -405,6 +464,23 @@ function InvoiceDetailDrawer({
       toast.error(err instanceof Error ? err.message : "Failed to check status");
     } finally {
       setCheckingStatus(false);
+    }
+  };
+
+  const saveCollectionStage = async () => {
+    if (!invoice || !onInvoiceUpdated) return;
+    setSavingColl(true);
+    try {
+      const updated = await updateInvoice(invoice.id, {
+        collection_stage: collStage,
+        collection_stage_locked: collLocked,
+      });
+      onInvoiceUpdated(updated);
+      toast.success("Collection settings saved");
+    } catch {
+      toast.error("Failed to save collection settings");
+    } finally {
+      setSavingColl(false);
     }
   };
 
@@ -486,6 +562,36 @@ function InvoiceDetailDrawer({
               {invoice.paid_date && <InfoRow icon={CheckCircle2} label="Paid Date" value={formatDate(invoice.paid_date)} />}
               {invoice.job_reference && <InfoRow icon={Briefcase} label="Job Reference" value={invoice.job_reference} />}
             </div>
+
+            {invoice.job_reference && onInvoiceUpdated && (
+              <div className="p-4 rounded-xl border border-border-light space-y-3">
+                <div className="flex items-center gap-2">
+                  <Lock className="h-4 w-4 text-text-tertiary" />
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Customer collection (job)</p>
+                </div>
+                <p className="text-[11px] text-text-tertiary">
+                  Stages follow deposit/final on the job when unlocked. Turn on <strong>Lock</strong> to keep this stage fixed (e.g. paid by bank transfer outside Stripe).
+                </p>
+                <Select
+                  label="Collection stage"
+                  value={collStage}
+                  onChange={(e) => setCollStage(e.target.value as InvoiceCollectionStage)}
+                  options={COLLECTION_STAGE_OPTIONS.map((v) => ({ value: v, label: COLLECTION_STAGE_LABELS[v] }))}
+                />
+                <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border"
+                    checked={collLocked}
+                    onChange={(e) => setCollLocked(e.target.checked)}
+                  />
+                  Lock stage (manual only)
+                </label>
+                <Button type="button" size="sm" onClick={saveCollectionStage} disabled={savingColl}>
+                  {savingColl ? "Saving…" : "Save collection"}
+                </Button>
+              </div>
+            )}
 
             {/* Financial Breakdown */}
             <div className="p-4 rounded-xl bg-surface-hover space-y-3">
@@ -984,7 +1090,7 @@ function CreateInvoiceModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate: (data: Omit<Invoice, "id" | "reference" | "created_at">) => void;
+  onCreate: (data: CreateInvoiceInput) => void;
 }) {
   const [form, setForm] = useState({ client_name: "", job_reference: "", amount: "", due_date: "", status: "pending" as InvoiceStatus });
   const [submitting, setSubmitting] = useState(false);

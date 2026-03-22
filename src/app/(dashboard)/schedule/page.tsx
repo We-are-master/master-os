@@ -20,6 +20,7 @@ import { formatCurrency } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import type { Job } from "@/types/database";
 import { formatJobScheduleLine, formatLocalYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
+import { isJobInProgressStatus } from "@/lib/job-phases";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -115,7 +116,7 @@ export default function SchedulePage() {
         total: allJobs.length,
         scheduled: withDate.length,
         unassigned: withoutDate.length,
-        active: allJobs.filter((j) => j.status === "in_progress_phase1" || j.status === "in_progress_phase2" || j.status === "in_progress_phase3").length,
+        active: allJobs.filter((j) => isJobInProgressStatus(j.status)).length,
       });
     } catch { /* cosmetic */ }
   }, []);

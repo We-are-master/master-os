@@ -27,7 +27,7 @@ export function MarginChart() {
         const startDate = new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString();
         const { data: jobs } = await supabase
           .from("jobs")
-          .select("revenue, cost, margin_percent, completed_date")
+          .select("client_price, partner_cost, materials_cost, margin_percent, completed_date")
           .eq("status", "completed")
           .not("completed_date", "is", null)
           .gte("completed_date", startDate);
@@ -38,8 +38,12 @@ export function MarginChart() {
           const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
           const label = MONTH_LABELS[d.getMonth()];
           const monthJobs = (jobs ?? []).filter((j: { completed_date?: string }) => j.completed_date?.startsWith(key));
-          const revenue = monthJobs.reduce((s: number, j: { revenue?: number }) => s + Number(j.revenue ?? 0), 0);
-          const cost = monthJobs.reduce((s: number, j: { cost?: number }) => s + Number(j.cost ?? 0), 0);
+          const revenue = monthJobs.reduce((s: number, j: { client_price?: number }) => s + Number(j.client_price ?? 0), 0);
+          const cost = monthJobs.reduce(
+            (s: number, j: { partner_cost?: number; materials_cost?: number }) =>
+              s + Number(j.partner_cost ?? 0) + Number(j.materials_cost ?? 0),
+            0
+          );
           const margin = revenue > 0 ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0;
           months.push({ label, margin, revenue, cost });
         }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireStripe } from "@/lib/stripe";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
+import { syncJobAfterStripeInvoicePaid } from "@/lib/stripe-job-sync";
 
 function getSupabaseAdmin() {
   return createClient(
@@ -56,6 +57,10 @@ export async function POST(req: NextRequest) {
         paid_date: paidAt ? new Date(paidAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
       } : {}),
     }).eq("id", invoiceId);
+
+    if (paymentStatus === "paid") {
+      await syncJobAfterStripeInvoicePaid(supabaseAdmin, invoiceId);
+    }
 
     return NextResponse.json({
       paymentStatus,

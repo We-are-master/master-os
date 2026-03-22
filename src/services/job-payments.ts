@@ -1,5 +1,7 @@
 import { getSupabase, softDeleteById } from "./base";
 import type { JobPayment, JobPaymentType } from "@/types/database";
+import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
+import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
 
 export interface CreateJobPaymentInput {
   job_id: string;
@@ -42,9 +44,20 @@ export async function createJobPayment(input: CreateJobPaymentInput): Promise<Jo
     .single();
 
   if (error) throw error;
+
+  await reconcileJobCustomerPaymentFlags(supabase, input.job_id);
+  await syncInvoiceCollectionStagesForJob(supabase, input.job_id);
+
   return data as JobPayment;
 }
 
 export async function deleteJobPayment(id: string): Promise<void> {
+  const supabase = getSupabase();
+  const { data: row } = await supabase.from("job_payments").select("job_id").eq("id", id).maybeSingle();
   await softDeleteById("job_payments", id);
+  const jobId = (row as { job_id?: string } | null)?.job_id;
+  if (jobId) {
+    await reconcileJobCustomerPaymentFlags(supabase, jobId);
+    await syncInvoiceCollectionStagesForJob(supabase, jobId);
+  }
 }

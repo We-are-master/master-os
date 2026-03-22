@@ -8,6 +8,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
+import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
@@ -27,10 +28,11 @@ import {
 import { useRouter } from "next/navigation";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Quote, Partner, Job } from "@/types/database";
+import type { Quote, Partner, Job, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
-import { createJob, getJobByQuoteId } from "@/services/jobs";
+import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
+import { createInvoice } from "@/services/invoices";
 import { listPartners } from "@/services/partners";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
@@ -41,6 +43,10 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { normalizeTotalPhases } from "@/lib/job-phases";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
+import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
+import { isUuid } from "@/lib/utils";
 
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
 
@@ -160,6 +166,9 @@ export default function QuotesPage() {
         client_address_id: formData.client_address_id,
         client_name: formData.client_name ?? "",
         client_email: formData.client_email ?? "",
+        catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
+          ? String(formData.catalog_service_id).trim()
+          : null,
         status: "draft",
         total_value: formData.total_value ?? 0,
         partner_quotes_count: 0,
@@ -198,6 +207,8 @@ export default function QuotesPage() {
       try {
         const margin = formData.client_price > 0 ? Math.round(((formData.client_price - formData.partner_cost - formData.materials_cost) / formData.client_price) * 1000) / 10 : 0;
         const noDeposit = !!formData.createWithoutDeposit;
+        const scheduledDeposit = noDeposit ? 0 : (quoteToConvert.deposit_required ?? 0);
+        const scheduledFinal = Math.max(0, formData.client_price - scheduledDeposit);
         const job = await createJob({
           title: formData.title,
           client_id: formData.client_id,
@@ -210,6 +221,7 @@ export default function QuotesPage() {
           status: "scheduled",
           progress: 0, current_phase: 0, total_phases: normalizeTotalPhases(formData.total_phases),
           client_price: formData.client_price,
+          extras_amount: 0,
           partner_cost: formData.partner_cost,
           materials_cost: formData.materials_cost,
           margin_percent: margin,
@@ -227,11 +239,47 @@ export default function QuotesPage() {
           partner_payment_1: 0, partner_payment_1_paid: false,
           partner_payment_2: 0, partner_payment_2_paid: false,
           partner_payment_3: 0, partner_payment_3_paid: false,
-          customer_deposit: noDeposit ? 0 : (quoteToConvert.deposit_required ?? 0),
+          customer_deposit: scheduledDeposit,
           customer_deposit_paid: noDeposit,
-          customer_final_payment: 0, customer_final_paid: false,
+          customer_final_payment: scheduledFinal,
+          customer_final_paid: false,
           scope: quoteToConvert.scope,
         });
+
+        const dueStr = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
+        let depositInvId: string | null = null;
+        let finalInvId: string | null = null;
+
+        if (scheduledDeposit > 0.01) {
+          const dep = await createInvoice({
+            client_name: formData.client_name,
+            job_reference: job.reference,
+            amount: scheduledDeposit,
+            status: "pending",
+            due_date: dueStr,
+            collection_stage: "awaiting_deposit",
+            invoice_kind: "deposit",
+          });
+          depositInvId = dep.id;
+        }
+        if (scheduledFinal > 0.01) {
+          const fin = await createInvoice({
+            client_name: formData.client_name,
+            job_reference: job.reference,
+            amount: scheduledFinal,
+            status: "pending",
+            due_date: dueStr,
+            collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
+            invoice_kind: "final",
+          });
+          finalInvId = fin.id;
+        }
+
+        const primaryInvoiceId = depositInvId ?? finalInvId;
+        if (primaryInvoiceId) {
+          await updateJob(job.id, { invoice_id: primaryInvoiceId });
+        }
+
         await updateQuote(quoteToConvert.id, { status: "converted_to_job" });
         await logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: { from_quote: quoteToConvert.reference }, userId: profile?.id, userName: profile?.full_name });
         setQuoteToConvert(null); setSelectedQuote(null);
@@ -700,12 +748,13 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
               <div className="p-4 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Owner</p>
                 {isAdmin ? (
-                  <div className="mt-2 space-y-2">
-                    <select
-                      value={quote.owner_id ?? ""}
+                  <div className="mt-2">
+                    <JobOwnerSelect
+                      value={quote.owner_id}
+                      fallbackName={quote.owner_name}
+                      users={assignableUsers}
                       disabled={savingOwner}
-                      onChange={async (e) => {
-                        const ownerId = e.target.value || undefined;
+                      onChange={async (ownerId) => {
                         const owner = assignableUsers.find((u) => u.id === ownerId);
                         setSavingOwner(true);
                         try {
@@ -721,14 +770,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                           setSavingOwner(false);
                         }
                       }}
-                      className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
-                    >
-                      <option value="">No owner</option>
-                      {assignableUsers.map((u) => (
-                        <option key={u.id} value={u.id}>{u.full_name}</option>
-                      ))}
-                    </select>
-                    {quote.owner_name && <p className="text-sm font-semibold text-text-primary">{quote.owner_name}</p>}
+                    />
                   </div>
                 ) : (
                   <p className="text-sm font-semibold text-text-primary mt-1">{quote.owner_name || "No owner"}</p>
@@ -1270,38 +1312,64 @@ function MarginCalculator({ cost, onSellPriceChange, onMarginChange }: { cost: n
 
 /* ========== CREATE QUOTE FORM ========== */
 function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>) => void; onCancel: () => void }) {
-  const [form, setForm] = useState({ title: "", total_value: "" });
+  const [form, setForm] = useState({ title: "", total_value: "", catalog_service_id: "" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", unitPrice: "0" }]);
+  const [catalogList, setCatalogList] = useState<CatalogService[]>([]);
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const [sellPrice, setSellPrice] = useState(0);
   const [marginPct, setMarginPct] = useState(0);
 
+  useEffect(() => {
+    listCatalogServicesForPicker().then(setCatalogList).catch(() => setCatalogList([]));
+  }, []);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
+    const cid = form.catalog_service_id.trim();
     onSubmit({
       ...form,
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
       client_email: clientAddress.client_email,
+      catalog_service_id: cid && isUuid(cid) ? cid : null,
       total_value: sellPrice > 0 ? sellPrice : lineTotal,
       cost: lineTotal,
       sell_price: sellPrice > 0 ? sellPrice : lineTotal,
       margin_percent: marginPct,
       quote_type: "internal",
     });
-    setForm({ title: "", total_value: "" });
+    setForm({ title: "", total_value: "", catalog_service_id: "" });
     setClientAddress({ client_name: "", property_address: "" });
+    setLineItems([{ description: "", quantity: "1", unitPrice: "0" }]);
   };
 
   return (
     <form onSubmit={handleSubmit} className="p-6 space-y-4">
       <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Quote title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="e.g. Commercial HVAC Refurbishment" required /></div>
       <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+      <ServiceCatalogSelect
+        catalog={catalogList}
+        value={form.catalog_service_id}
+        onChange={(id, svc) => {
+          setForm((p) => {
+            const next = { ...p, catalog_service_id: id };
+            if (svc && !p.title.trim()) next.title = `${svc.name} quote`;
+            return next;
+          });
+          if (!svc) return;
+          const line = lineItemDefaultsFromCatalog(svc);
+          setLineItems((prev) => {
+            const rest = prev.slice(1);
+            return [{ description: line.description, quantity: String(line.quantity), unitPrice: String(line.unitPrice) }, ...rest];
+          });
+        }}
+      />
+      <p className="text-[10px] text-text-tertiary -mt-2">Line items stay fully editable after applying a template.</p>
       <div>
         <div className="flex items-center justify-between mb-2">
           <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Line Items</label>

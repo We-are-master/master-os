@@ -62,7 +62,19 @@ export const TABLE_META: Record<CustomTable, { label: string; dateFields: string
   jobs: {
     label: "Jobs",
     dateFields:   ["created_at", "scheduled_start_at", "completed_date"],
-    numericFields:["revenue", "cost", "margin_percent", "commission"],
+    /** Real `jobs` columns (there is no `revenue` / `cost` in the schema). */
+    numericFields: [
+      "client_price",
+      "partner_cost",
+      "materials_cost",
+      "margin_percent",
+      "commission",
+      "service_value",
+      "partner_agreed_value",
+      "cash_in",
+      "cash_out",
+      "expenses",
+    ],
     textFields:   ["reference", "title", "status", "partner_name", "finance_status"],
     statusField:  "status",
   },
@@ -102,6 +114,40 @@ export const TABLE_META: Record<CustomTable, { label: string; dateFields: string
     statusField:  "status",
   },
 };
+
+/**
+ * Legacy custom widgets used `revenue` / `cost`, which are not columns on `jobs`.
+ * Map to real columns so saved dashboards keep working.
+ */
+export function resolveJobsNumericField(field: string): string {
+  if (field === "revenue") return "client_price";
+  /** Approximate “direct cost” for charts that summed a single legacy column */
+  if (field === "cost") return "partner_cost";
+  return field;
+}
+
+const JOB_CURRENCY_FIELDS = new Set([
+  "client_price",
+  "partner_cost",
+  "materials_cost",
+  "commission",
+  "service_value",
+  "partner_agreed_value",
+  "cash_in",
+  "cash_out",
+  "expenses",
+  "customer_deposit",
+  "customer_final_payment",
+  "partner_payment_1",
+  "partner_payment_2",
+  "partner_payment_3",
+  "revenue",
+  "cost",
+]);
+
+export function isJobsCurrencyField(field: string): boolean {
+  return JOB_CURRENCY_FIELDS.has(field);
+}
 
 export const COLOUR_MAP: Record<CustomColour, { bg: string; text: string; fill: string }> = {
   emerald: { bg: "bg-emerald-50",  text: "text-emerald-600", fill: "#34d399" },

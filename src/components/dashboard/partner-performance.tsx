@@ -24,15 +24,15 @@ export function PartnerPerformance() {
       try {
         const { data: jobs } = await supabase
           .from("jobs")
-          .select("partner_name, revenue, margin_percent, status")
+          .select("partner_name, client_price, margin_percent, status")
           .not("partner_name", "is", null);
 
         const map = new Map<string, PartnerStat>();
-        for (const j of (jobs ?? []) as { partner_name: string; revenue?: number; margin_percent?: number; status: string }[]) {
+        for (const j of (jobs ?? []) as { partner_name: string; client_price?: number; margin_percent?: number; status: string }[]) {
           const name = j.partner_name;
           const existing = map.get(name) ?? { name, jobCount: 0, revenue: 0, avgMargin: 0, completedCount: 0 };
           existing.jobCount++;
-          existing.revenue += Number(j.revenue ?? 0);
+          existing.revenue += Number(j.client_price ?? 0);
           existing.avgMargin += Number(j.margin_percent ?? 0);
           if (j.status === "completed") existing.completedCount++;
           map.set(name, existing);
