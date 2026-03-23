@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { AuditLog } from "@/types/database";
 import { buildAuditTitle, buildAuditDescription } from "@/lib/audit-display";
+import { useDashboardDateRangeOptional } from "@/hooks/use-dashboard-date-range";
 
 /** Max card height ~ Sales Pipeline widget (header + ~6 compact rows). */
 const CARD_MAX_HEIGHT = "max-h-[360px]";
@@ -75,6 +76,10 @@ function getActionBadge(action: string): { label: string; variant: "primary" | "
 }
 
 export function ActivityFeed() {
+  const dateCtx = useDashboardDateRangeOptional();
+  const bounds = dateCtx?.bounds ?? null;
+  const boundsKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
+
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -82,12 +87,17 @@ export function ActivityFeed() {
   useEffect(() => {
     async function load() {
       const supabase = getSupabase();
+      setLoading(true);
       try {
-        const { data } = await supabase
+        let q = supabase
           .from("audit_logs")
           .select("*")
           .order("created_at", { ascending: false })
           .limit(PREVIEW_FETCH);
+        if (bounds) {
+          q = q.gte("created_at", bounds.fromIso).lte("created_at", bounds.toIso);
+        }
+        const { data } = await q;
         const rows = (data ?? []) as AuditLog[];
         setHasMore(rows.length > PREVIEW_SHOW);
         setLogs(rows.slice(0, PREVIEW_SHOW));
@@ -97,8 +107,8 @@ export function ActivityFeed() {
         setLoading(false);
       }
     }
-    load();
-  }, []);
+    void load();
+  }, [boundsKey]);
 
   return (
     <Card

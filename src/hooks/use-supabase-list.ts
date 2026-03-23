@@ -7,6 +7,8 @@ import { createClient } from "@/lib/supabase/client";
 interface UseSupabaseListOptions<T> {
   fetcher: (params: ListParams) => Promise<ListResult<T>>;
   pageSize?: number;
+  /** Initial status filter (e.g. `pipeline` when fetcher maps to statusIn). */
+  initialStatus?: string;
   /** Subscribe to Postgres changes and soft-refresh the list (enable Realtime on this table in Supabase). */
   realtimeTable?: string;
 }
@@ -30,7 +32,7 @@ interface UseSupabaseListReturn<T> {
 }
 
 export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupabaseListReturn<T> {
-  const { fetcher, pageSize = 10, realtimeTable } = options;
+  const { fetcher, pageSize = 10, realtimeTable, initialStatus = "all" } = options;
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
@@ -41,7 +43,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
   const [search, setSearchRaw] = useState("");
-  const [status, setStatusRaw] = useState("all");
+  const [status, setStatusRaw] = useState(initialStatus);
   const [tick, setTick] = useState(0);
   const skipLoadingRef = useRef(false);
 

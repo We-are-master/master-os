@@ -9,14 +9,18 @@ import { motion } from "framer-motion";
 import { staggerItem } from "@/lib/motion";
 import { useProfile } from "@/hooks/use-profile";
 import { getSupabase } from "@/services/base";
-import { useRouter } from "next/navigation";
 import { DashboardConfigProvider, useDashboardConfig } from "@/hooks/use-dashboard-config";
+import {
+  DashboardDateRangeProvider,
+  useDashboardDateRange,
+} from "@/hooks/use-dashboard-date-range";
+import { DashboardDateToolbar } from "@/components/dashboard/dashboard-date-toolbar";
 import { WidgetRenderer } from "@/components/dashboard/widget-renderer";
 import { DashboardViewEditor } from "@/components/dashboard/dashboard-view-editor";
 import type { DashboardView, WidgetConfig } from "@/types/dashboard-config";
 import {
   LayoutDashboard, DollarSign, Briefcase, BarChart2, PieChart,
-  Activity, Users, Settings, Layers, Plus, Pencil, ChevronRight, SlidersHorizontal,
+  Activity, Users, Settings, Layers, Plus, Pencil, SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -57,8 +61,9 @@ function getColSpanClass(size: WidgetConfig["size"]): string {
 function DashboardInner() {
   const { profile } = useProfile();
   const firstName = profile?.full_name?.split(" ")[0] || "there";
-  const router = useRouter();
   const { visibleViews, loading: viewsLoading, canEdit } = useDashboardConfig();
+  const { bounds } = useDashboardDateRange();
+  const boundsKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
 
   const [activeFilters, setActiveFilters] = useState<Set<DashboardFilter>>(new Set());
   const [filterCounts, setFilterCounts] = useState<Record<string, number>>({});
@@ -90,8 +95,14 @@ function DashboardInner() {
   const loadFilterCounts = useCallback(async () => {
     const supabase = getSupabase();
     try {
+      let jobsQuery = supabase
+        .from("jobs")
+        .select("id, status, partner_id, partner_name, quote_id, margin_percent, finance_status, report_submitted, commission, created_at");
+      if (bounds) {
+        jobsQuery = jobsQuery.gte("created_at", bounds.fromIso).lte("created_at", bounds.toIso);
+      }
       const [jobsRes, invoicesRes] = await Promise.all([
-        supabase.from("jobs").select("id, status, partner_id, partner_name, quote_id, margin_percent, finance_status, report_submitted, commission"),
+        jobsQuery,
         supabase.from("invoices").select("id, job_reference"),
       ]);
       const jobs = (jobsRes.data ?? []) as {
@@ -112,9 +123,9 @@ function DashboardInner() {
         financial_status:   jobs.filter((j) => j.finance_status !== "paid" && !["completed", "scheduled"].includes(j.status)).length,
       });
     } catch { /* non-critical */ }
-  }, []);
+  }, [boundsKey]);
 
-  useEffect(() => { loadFilterCounts(); }, [loadFilterCounts]);
+  useEffect(() => { void loadFilterCounts(); }, [loadFilterCounts]);
 
   const greeting = getGreeting();
 
@@ -194,6 +205,8 @@ function DashboardInner() {
         {activeView?.description && (
           <p className="text-xs text-text-tertiary -mt-1">{activeView.description}</p>
         )}
+
+        <DashboardDateToolbar />
 
         {/* ── Filter chips ─────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-2">
@@ -283,7 +296,9 @@ function DashboardInner() {
 export default function DashboardPage() {
   return (
     <DashboardConfigProvider>
-      <DashboardInner />
+      <DashboardDateRangeProvider>
+        <DashboardInner />
+      </DashboardDateRangeProvider>
     </DashboardConfigProvider>
   );
 }

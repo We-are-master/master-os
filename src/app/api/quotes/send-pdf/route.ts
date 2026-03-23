@@ -16,12 +16,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { quoteId, recipientEmail, recipientName, notes, items, customMessage } = body as {
+    const { quoteId, recipientEmail, recipientName, notes, items, customMessage, scope } = body as {
       quoteId: string;
       recipientEmail?: string;
       recipientName?: string;
       notes?: string;
       customMessage?: string;
+      scope?: string;
       items?: { description: string; quantity: number; unitPrice: number; total: number }[];
     };
 
@@ -94,7 +95,12 @@ export async function POST(req: NextRequest) {
       items: lineItemsForPdf,
       notes: notes ?? settings?.quote_footer_notes ?? undefined,
       depositRequired: Number(quote.deposit_required ?? 0) || undefined,
-      scope: typeof quote.scope === "string" && quote.scope.trim() ? quote.scope.trim() : undefined,
+      scope:
+        typeof scope === "string" && scope.trim()
+          ? scope.trim()
+          : typeof quote.scope === "string" && quote.scope.trim()
+            ? quote.scope.trim()
+            : undefined,
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

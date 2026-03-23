@@ -22,11 +22,12 @@ import {
   Plus, Filter, Download, List, LayoutGrid, Calendar, Map,
   FileText, BarChart3, Clock, ArrowRight,
   Send, CheckCircle2, RotateCcw, XCircle,
-  Mail, DollarSign, Building2,
+  Mail, Building2,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal,
+  ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Quote, Partner, Job, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -37,7 +38,7 @@ import { listPartners } from "@/services/partners";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
-import { getStatusCounts, getAggregates, getSupabase } from "@/services/base";
+import { getStatusCounts, getAggregates, getSupabase, type ListParams, type ListResult } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
@@ -72,21 +73,115 @@ const statusConfig: Record<string, { variant: "default" | "primary" | "success" 
 
 const statusSteps = ["Draft", "In Survey", "Bidding", "Awaiting Customer", "Accepted"];
 
-function QuoteStatusProgress({ status }: { status: string }) {
-  const stepMap: Record<string, number> = { draft: 0, in_survey: 1, bidding: 2, awaiting_customer: 3, accepted: 4, rejected: -1, converted_to_job: 5 };
-  const currentStep = stepMap[status] ?? 0;
-  if (currentStep === -1) return <Badge variant="danger" size="sm">Rejected</Badge>;
-  if (currentStep === 5) return <Badge variant="success" size="sm">Converted to Job</Badge>;
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-1 w-32">
-        {statusSteps.map((_, i) => (
-          <div key={i} className={`h-1.5 flex-1 rounded-full transition-colors ${i <= currentStep ? "bg-primary" : "bg-border"}`} />
-        ))}
+/** Open pipeline: every status that still needs internal/customer work before job conversion. */
+const PIPELINE_STATUS_IN = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"] as const;
+
+async function listQuotesForPage(params: ListParams): Promise<ListResult<Quote>> {
+  const { status, ...rest } = params;
+  if (status === "pipeline") {
+    return listQuotes({
+      ...rest,
+      status: undefined,
+      statusIn: [...PIPELINE_STATUS_IN],
+    });
+  }
+  return listQuotes({ ...params });
+}
+
+const STAGE_META: { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
+  { id: "draft", label: "Draft", short: "Draft", icon: ClipboardList },
+  { id: "in_survey", label: "Survey", short: "Survey", icon: MapPin },
+  { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
+  { id: "awaiting_customer", label: "Customer", short: "Customer", icon: UserRound },
+  { id: "accepted", label: "Accepted", short: "Won", icon: CheckCircle2 },
+];
+
+function QuoteStageColumn({ status }: { status: string }) {
+  const stepMap: Record<string, number> = {
+    draft: 0, in_survey: 1, bidding: 2, awaiting_customer: 3, accepted: 4, rejected: -1, converted_to_job: 5,
+  };
+  const current = stepMap[status] ?? 0;
+  if (current === -1) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <Badge variant="danger" size="sm" className="w-fit">Rejected</Badge>
+        <span className="text-[10px] text-text-tertiary">Closed</span>
       </div>
-      <p className="text-[11px] text-text-tertiary">{statusLabels[status] ?? status}</p>
+    );
+  }
+  if (current === 5) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <Badge variant="success" size="sm" className="w-fit">Job</Badge>
+        <span className="text-[10px] text-text-tertiary">Converted</span>
+      </div>
+    );
+  }
+  const meta = STAGE_META[current] ?? STAGE_META[0];
+  const Icon = meta.icon;
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <div
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+        title={statusLabels[status] ?? status}
+      >
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[10px] font-semibold text-text-tertiary leading-none">Stage {current + 1}/5</p>
+        <p className="text-xs font-semibold text-text-primary truncate">{meta.label}</p>
+      </div>
     </div>
   );
+}
+
+function getStageGuidance(status: string): {
+  headline: string;
+  detail: string;
+  goToTab?: "overview" | "bids" | "send" | "history";
+  goToLabel?: string;
+} {
+  switch (status) {
+    case "draft":
+      return {
+        headline: "Fill client, property & price",
+        detail: "You can Send to Customer as soon as figures are set — bidding is optional if you already have partner cost / sell price.",
+        goToTab: "send",
+        goToLabel: "Open email",
+      };
+    case "in_survey":
+      return {
+        headline: "Site survey in progress",
+        detail: "When ready, send to the customer or open Bidding for partner quotes — both are valid; bids are not required if you use your own numbers.",
+        goToTab: "send",
+        goToLabel: "Open email",
+      };
+    case "bidding":
+      return {
+        headline: "Bids or your own figures",
+        detail: "Partner bids are optional. If Overview already has the right partner cost and sell price, go straight to Send to Customer.",
+        goToTab: "send",
+        goToLabel: "Open email",
+      };
+    case "awaiting_customer":
+      return {
+        headline: "Waiting on the customer",
+        detail: "Use Send to Customer to email the PDF and accept/reject links if you have not yet.",
+        goToTab: "send",
+        goToLabel: "Open email",
+      };
+    case "accepted":
+      return {
+        headline: "Ready to convert",
+        detail: "Create a job from this quote when you are ready to schedule work.",
+      };
+    case "rejected":
+      return { headline: "Quote closed", detail: "You can reactivate from Draft or leave as lost." };
+    case "converted_to_job":
+      return { headline: "Converted to job", detail: "This quote is linked to a job in Jobs." };
+    default:
+      return { headline: "Quote", detail: "" };
+  }
 }
 
 export default function QuotesPage() {
@@ -94,7 +189,11 @@ export default function QuotesPage() {
   const {
     data, loading, page, totalPages, totalItems,
     setPage, search, setSearch, status, setStatus, refresh,
-  } = useSupabaseList<Quote>({ fetcher: listQuotes, realtimeTable: "quotes" });
+  } = useSupabaseList<Quote>({
+    fetcher: listQuotesForPage,
+    realtimeTable: "quotes",
+    initialStatus: "pipeline",
+  });
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { profile } = useProfile();
@@ -148,15 +247,12 @@ export default function QuotesPage() {
 
   useEffect(() => { loadCounts(); loadAggregates(); }, [loadCounts, loadAggregates]);
 
-  const tabs = [
-    { id: "all", label: "All", count: statusCounts.all ?? 0 },
-    { id: "draft", label: "Draft", count: statusCounts.draft ?? 0 },
-    { id: "in_survey", label: "In Survey", count: statusCounts.in_survey ?? 0 },
-    { id: "bidding", label: "Bidding", count: statusCounts.bidding ?? 0 },
-    { id: "awaiting_customer", label: "Awaiting Customer", count: statusCounts.awaiting_customer ?? 0 },
-    { id: "accepted", label: "Accepted", count: statusCounts.accepted ?? 0 },
-    { id: "rejected", label: "Rejected", count: statusCounts.rejected ?? 0 },
-  ];
+  const pipelineCount =
+    (statusCounts.draft ?? 0) +
+    (statusCounts.in_survey ?? 0) +
+    (statusCounts.bidding ?? 0) +
+    (statusCounts.awaiting_customer ?? 0) +
+    (statusCounts.accepted ?? 0);
 
   const handleCreate = useCallback(async (formData: Partial<Quote>) => {
     try {
@@ -371,8 +467,8 @@ export default function QuotesPage() {
       ),
     },
     {
-      key: "status", label: "Status",
-      render: (item) => <QuoteStatusProgress status={item.status} />,
+      key: "status", label: "Stage",
+      render: (item) => <QuoteStageColumn status={item.status} />,
     },
     {
       key: "total_value", label: "Value", align: "right" as const,
@@ -395,7 +491,10 @@ export default function QuotesPage() {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Quotes" subtitle="Quote lifecycle management with margin optimization.">
+        <PageHeader
+          title="Quotes"
+          subtitle="Work one stage at a time: Draft → Survey → Bidding → Customer → Accepted. Use Active pipeline to see open quotes only."
+        >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>Export</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={handleNewQuoteClick}>New Quote</Button>
         </PageHeader>
@@ -408,9 +507,88 @@ export default function QuotesPage() {
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
+          <div className="rounded-2xl border border-border-light bg-card/70 p-4 mb-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <Sparkles className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-text-primary">Pick a stage to focus the list</p>
+                <p className="text-[11px] text-text-tertiary mt-0.5">
+                  <strong className="text-text-secondary">Active pipeline</strong> shows quotes still in play (not rejected or converted).
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setStatus("pipeline")}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all",
+                  status === "pipeline"
+                    ? "border-primary bg-primary text-white shadow-sm"
+                    : "border-border-light bg-surface-hover hover:border-primary/40 text-text-secondary"
+                )}
+              >
+                <span className="text-xs font-bold">Active pipeline</span>
+                <span className={cn("text-[11px] font-bold tabular-nums", status === "pipeline" ? "text-white/90" : "text-text-tertiary")}>
+                  {pipelineCount}
+                </span>
+              </button>
+              {STAGE_META.map((s) => {
+                const c = statusCounts[s.id] ?? 0;
+                const active = status === s.id;
+                const Icon = s.icon;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setStatus(s.id)}
+                    className={cn(
+                      "inline-flex items-center gap-2 rounded-xl border px-3 py-2 transition-all min-w-[7rem]",
+                      active
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border-light bg-card hover:border-primary/30 text-text-secondary"
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                    <span className="text-xs font-semibold truncate">{s.label}</span>
+                    <span className={cn("ml-auto text-[11px] font-bold tabular-nums", active ? "text-primary" : "text-text-tertiary")}>{c}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 border-t border-border-light/80">
+              <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">More</span>
+              {[
+                { id: "all", label: "All quotes" },
+                { id: "rejected", label: "Rejected" },
+                { id: "converted_to_job", label: "Converted" },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setStatus(t.id)}
+                  className={cn(
+                    "text-xs font-medium rounded-lg px-2 py-1 transition-colors",
+                    status === t.id ? "bg-surface-tertiary text-text-primary" : "text-text-tertiary hover:text-primary"
+                  )}
+                >
+                  {t.label}
+                  <span className="text-[10px] text-text-tertiary ml-1 tabular-nums">
+                    ({t.id === "all" ? statusCounts.all ?? 0 : statusCounts[t.id] ?? 0})
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between mb-4">
-            <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
-            <div className="flex items-center gap-2">
+            <p className="text-xs text-text-tertiary hidden sm:block">
+              {status === "pipeline" && "Showing: draft through accepted · "}
+              {status !== "pipeline" && status !== "all" && `Filtered by: ${statusLabels[status] ?? status} · `}
+              {status === "all" && "Showing every quote · "}
+              Use the view toggles for list, board, or calendar.
+            </p>
+            <div className="flex items-center gap-2 sm:ml-auto">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
                 {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: Map }].map(({ id, icon: Icon }) => (
                   <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}>
@@ -510,6 +688,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [sendEmail, setSendEmail] = useState("");
   const [lineItems, setLineItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([]);
+  const [scopeText, setScopeText] = useState("");
   const [convertedJob, setConvertedJob] = useState<Job | null>(null);
   const [invitePartnerOpen, setInvitePartnerOpen] = useState(false);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -521,7 +700,17 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   const [panelSaving, setPanelSaving] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
+  const [pricingOpen, setPricingOpen] = useState(false);
   const isAdmin = profile?.role === "admin";
+
+  useEffect(() => {
+    setTab("overview");
+  }, [quote?.id]);
+
+  useEffect(() => {
+    if (!quote) return;
+    setPricingOpen(["draft", "in_survey", "bidding"].includes(quote.status));
+  }, [quote?.id, quote?.status]);
 
   // Send to customer fields
   const [depositRequired, setDepositRequired] = useState("");
@@ -537,6 +726,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
       setSendEmail(quote.client_email ?? "");
       setSendState("idle");
       setLineItems([{ description: quote.title ?? "", quantity: "1", unitPrice: String(quote.total_value ?? 0) }]);
+      setScopeText(quote.scope ?? "");
       setDepositRequired(String(quote.deposit_required ?? 0));
       setStartDate1(quote.start_date_option_1 ?? "");
       setStartDate2(quote.start_date_option_2 ?? "");
@@ -554,24 +744,41 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
 
   useEffect(() => {
     if (tab !== "send" || !quote?.id) return;
-    setPreviewLoading(true);
-    const recipientName = quote.client_name ?? "";
-    const params = new URLSearchParams({ quoteId: quote.id, recipientName });
-    if (customMessage.trim()) params.set("customMessage", customMessage.trim());
-    Promise.all([
-      fetch(`/api/quotes/preview-links?quoteId=${encodeURIComponent(quote.id)}`).then((r) => r.ok ? r.json() : null),
-      fetch(`/api/quotes/email-preview?${params}`).then((r) => r.ok ? r.text() : null),
-    ])
-      .then(([links, html]) => {
-        setPreviewLinks(links ?? null);
-        setEmailPreviewHtml(html ?? null);
-      })
-      .catch(() => {
-        setPreviewLinks(null);
-        setEmailPreviewHtml(null);
-      })
-      .finally(() => setPreviewLoading(false));
-  }, [tab, quote?.id, quote?.client_name, customMessage]);
+    const timer = setTimeout(() => {
+      setPreviewLoading(true);
+      const recipientName = quote.client_name ?? "";
+      const items = lineItems.map((li) => {
+        const qty = Number(li.quantity) || 1;
+        const unit = Number(li.unitPrice) || 0;
+        return { description: li.description, quantity: qty, unitPrice: unit, total: qty * unit };
+      });
+      Promise.all([
+        fetch(`/api/quotes/preview-links?quoteId=${encodeURIComponent(quote.id)}`).then((r) => r.ok ? r.json() : null),
+        fetch("/api/quotes/email-preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            quoteId: quote.id,
+            recipientName,
+            customMessage: customMessage.trim() || undefined,
+            items,
+            depositRequired: Number(depositRequired) || 0,
+            scope: scopeText.trim() || undefined,
+          }),
+        }).then((r) => r.ok ? r.text() : null),
+      ])
+        .then(([links, html]) => {
+          setPreviewLinks(links ?? null);
+          setEmailPreviewHtml(html ?? null);
+        })
+        .catch(() => {
+          setPreviewLinks(null);
+          setEmailPreviewHtml(null);
+        })
+        .finally(() => setPreviewLoading(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [tab, quote?.id, quote?.client_name, customMessage, lineItems, depositRequired, scopeText]);
 
   const loadLineItems = async (quoteId: string) => {
     const supabase = getSupabase();
@@ -620,11 +827,13 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
 
   const drawerTabs = [
-    { id: "overview", label: "Status & Details" },
+    { id: "overview", label: "Overview" },
     { id: "bids", label: "Bids" },
-    { id: "send", label: "Send to Customer" },
+    { id: "send", label: "Email" },
     { id: "history", label: "History" },
   ];
+
+  const guidance = getStageGuidance(quote.status);
 
   const addLineItem = () => setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0" }]);
   const removeLineItem = (idx: number) => setLineItems((prev) => prev.filter((_, i) => i !== idx));
@@ -635,7 +844,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
     await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
     const items = lineItems.map((li, i) => ({ quote_id: quote.id, description: li.description, quantity: Number(li.quantity) || 1, unit_price: Number(li.unitPrice) || 0, sort_order: i }));
     if (items.length > 0) await supabase.from("quote_line_items").insert(items);
-    await updateQuote(quote.id, { total_value: lineTotal });
+    await updateQuote(quote.id, { total_value: lineTotal, scope: scopeText.trim() || undefined });
     toast.success("Line items saved");
   };
 
@@ -647,7 +856,13 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
         deposit_required: Number(depositRequired) || 0,
         start_date_option_1: startDate1 || undefined,
         start_date_option_2: startDate2 || undefined,
+        scope: scopeText.trim() || undefined,
+        total_value: lineTotal,
       });
+      const supabase = getSupabase();
+      await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
+      const dbItems = lineItems.map((li, i) => ({ quote_id: quote.id, description: li.description, quantity: Number(li.quantity) || 1, unit_price: Number(li.unitPrice) || 0, sort_order: i }));
+      if (dbItems.length > 0) await supabase.from("quote_line_items").insert(dbItems);
       const items = lineItems.map((li) => {
         const qty = Number(li.quantity) || 1;
         const unit = Number(li.unitPrice) || 0;
@@ -662,6 +877,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
           recipientName: quote.client_name,
           customMessage: customMessage.trim() || undefined,
           items: items.length ? items : undefined,
+          scope: scopeText.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -688,39 +904,63 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
     <Drawer open={!!quote} onClose={onClose} title={quote.reference} subtitle={quote.title} width="w-[540px]">
       <div className="flex flex-col h-full">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} className="px-6 pt-2" />
+        {guidance.headline && (
+          <div className="mx-6 mt-3 rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 to-transparent px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex gap-3 min-w-0">
+              <Sparkles className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-text-primary">{guidance.headline}</p>
+                {guidance.detail ? <p className="text-xs text-text-tertiary mt-0.5">{guidance.detail}</p> : null}
+              </div>
+            </div>
+            {guidance.goToTab && guidance.goToLabel && tab !== guidance.goToTab && (
+              <Button size="sm" variant="outline" className="shrink-0" onClick={() => setTab(guidance.goToTab!)}>
+                {guidance.goToLabel}
+              </Button>
+            )}
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto">
 
           {/* OVERVIEW TAB: Status + Details together */}
           {tab === "overview" && (
             <div className="p-6 space-y-6">
-              {/* Status block */}
-              <div className="text-center">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1">Current status</p>
-                <Badge variant={config.variant} dot={config.dot} size="md" className="text-base px-4 py-2">
-                  {statusLabels[quote.status] ?? quote.status}
-                </Badge>
-              </div>
-              <div className="p-5 rounded-2xl bg-surface-hover border border-border-light">
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-4 block">Quote pipeline</label>
-                <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-light bg-surface-hover/80 px-4 py-3">
+                <div>
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Current stage</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <Badge variant={config.variant} dot={config.dot} size="sm">
+                      {statusLabels[quote.status] ?? quote.status}
+                    </Badge>
+                    {currentStep >= 0 && currentStep < 5 && (
+                      <span className="text-[11px] text-text-tertiary">Step {Math.min(currentStep + 1, 5)} of 5</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-1">
                   {statusSteps.map((step, i) => {
-                    const isActive = i === currentStep && currentStep >= 0;
-                    const isPast = i < currentStep && currentStep >= 0;
+                    const isActive = i === currentStep && currentStep >= 0 && currentStep < 5;
+                    const isPast = i < currentStep && currentStep >= 0 && currentStep < 5;
                     return (
-                      <div key={step} className="flex items-center gap-4">
-                        <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${isActive ? "bg-primary text-white" : isPast ? "bg-primary/20 text-primary" : "bg-border text-text-tertiary"}`}>
-                          {isPast ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
-                        </div>
-                        <div className="flex-1">
-                          <p className={`text-sm font-semibold ${isActive ? "text-primary" : isPast ? "text-text-primary" : "text-text-tertiary"}`}>{step}</p>
-                          {isActive && <p className="text-xs text-text-tertiary mt-0.5">Current stage</p>}
-                        </div>
-                      </div>
+                      <div
+                        key={step}
+                        title={step}
+                        className={cn(
+                          "h-2 w-6 rounded-full transition-colors",
+                          isActive ? "bg-primary" : isPast ? "bg-primary/40" : "bg-border"
+                        )}
+                      />
                     );
                   })}
+                </div>
+              </div>
+              {(quote.status === "rejected" || quote.status === "converted_to_job") && (
+                <div className="rounded-xl border border-border-light p-4 space-y-2">
                   {quote.status === "rejected" && (
-                    <div className="flex items-center gap-4">
-                      <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-red-100 text-red-600"><XCircle className="h-4 w-4" /></div>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600">
+                        <XCircle className="h-4 w-4" />
+                      </div>
                       <div>
                         <p className="text-sm font-semibold text-red-600">Rejected</p>
                         {quote.rejection_reason && <p className="text-xs text-text-tertiary mt-1">{quote.rejection_reason}</p>}
@@ -728,13 +968,15 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                     </div>
                   )}
                   {quote.status === "converted_to_job" && (
-                    <div className="flex items-center gap-4">
-                      <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-emerald-100 text-emerald-600"><Briefcase className="h-4 w-4" /></div>
-                      <p className="text-sm font-semibold text-emerald-600">Converted to Job</p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                        <Briefcase className="h-4 w-4" />
+                      </div>
+                      <p className="text-sm font-semibold text-emerald-600">Converted to job</p>
                     </div>
                   )}
                 </div>
-              </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-4 rounded-xl bg-surface-hover">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total value</p>
@@ -777,13 +1019,23 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                 )}
               </div>
 
-              {/* Details block: Editable margin panel, Client, Actions */}
-              <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light">
-                <div className="flex items-center gap-2 mb-3">
-                  <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
-                  <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Quote Select Panel</label>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
+              {/* Pricing & margin — collapsed by default so the drawer feels guided, not overwhelming */}
+              <details
+                key={`pricing-${quote.id}`}
+                className="group rounded-xl border border-border-light bg-gradient-to-br from-stone-50 to-stone-100/50 open:shadow-sm"
+                open={pricingOpen}
+                onToggle={(e) => setPricingOpen(e.currentTarget.open)}
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <SlidersHorizontal className="h-4 w-4 shrink-0 text-text-tertiary" />
+                    <span className="text-xs font-semibold text-text-secondary">Pricing & margin</span>
+                    <span className="text-[10px] text-text-tertiary truncate">Partner cost, sell price, save</span>
+                  </div>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="border-t border-border-light px-4 pb-4 space-y-3">
+                <div className="grid grid-cols-3 gap-3 pt-1">
                   <div>
                     <p className="text-[10px] text-text-tertiary uppercase mb-1">Partner Cost</p>
                     <Input
@@ -870,7 +1122,8 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                 >
                   {panelSaving ? "Saving..." : "Save quote figures"}
                 </Button>
-              </div>
+                </div>
+              </details>
 
               <div>
                 <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
@@ -896,12 +1149,18 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                 </div>
               )}
 
-              <div className="flex flex-wrap gap-2 pt-4 border-t border-border-light">
-                {actions.map((action) => (
-                  <Button key={action.status} variant={action.primary ? "primary" : "outline"} size="sm" icon={<action.icon className="h-3.5 w-3.5" />} onClick={() => onStatusChange(quote, action.status)}>
-                    {action.label}
-                  </Button>
-                ))}
+              <div className="space-y-2 pt-4 border-t border-border-light">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Move this quote</p>
+                <p className="text-[11px] text-text-tertiary -mt-1 mb-1">
+                  Bidding is optional: you can go to <strong className="text-text-secondary">Send to Customer</strong> from Draft or Survey if client details and total value are set. Required fields are still enforced.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {actions.map((action) => (
+                    <Button key={action.status} variant={action.primary ? "primary" : "outline"} size="sm" icon={<action.icon className="h-3.5 w-3.5" />} onClick={() => onStatusChange(quote, action.status)}>
+                      {action.label}
+                    </Button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -911,12 +1170,17 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
             <div className="p-6 space-y-5">
               <div className="p-4 rounded-xl bg-surface-hover border border-border-light">
                 <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Approve a bid to assign this quote to that partner. Then you can move to Accepted and Convert to Job.</p>
+                <p className="text-xs text-text-tertiary mt-0.5">
+                  Optional: when partners bid from the app, approve one to set partner and cost. If you already use your own figures on Overview, you can skip bids and use{" "}
+                  <strong className="text-text-secondary">Send to Customer</strong> from the pipeline actions.
+                </p>
               </div>
               {bidsLoading ? (
                 <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
               ) : bids.length === 0 ? (
-                <p className="text-sm text-text-tertiary">No bids yet. Partners submit bids from the app when the quote is in Bidding.</p>
+                <p className="text-sm text-text-tertiary">
+                  No partner bids yet — that&apos;s fine. Set partner cost and sell price on Overview, then move to <strong className="text-text-secondary">Awaiting Customer</strong> and send the email.
+                </p>
               ) : (
                 <div className="space-y-3">
                   {bids.map((bid) => (
@@ -986,6 +1250,17 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                 <div className="flex justify-end mt-2 pt-2 border-t border-border-light">
                   <span className="text-sm font-bold text-text-primary">Total: {formatCurrency(lineTotal)}</span>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Scope of Work (for email/PDF)</label>
+                <textarea
+                  value={scopeText}
+                  onChange={(e) => setScopeText(e.target.value)}
+                  placeholder="Describe scope, inclusions and exclusions..."
+                  rows={4}
+                  className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+                />
               </div>
 
               {/* Start Date Options (2 dates) */}
@@ -1127,14 +1402,29 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   );
 }
 
-/** Step-by-step: cannot skip steps. Each phase must be complete before advancing. */
+/** Required fields before leaving draft/survey; bidding is optional — you can go straight to awaiting_customer with your own figures. */
+function quoteBasicsForPipeline(quote: Quote): { ok: boolean; message?: string } {
+  if (!quote.client_name?.trim()) return { ok: false, message: "Fill client name (Step 1: Job details)." };
+  if (!quote.client_email?.trim()) return { ok: false, message: "Fill client email (Step 1: Job details)." };
+  if (!quote.property_address?.trim()) return { ok: false, message: "Fill property address (Step 1: Job details)." };
+  if (!quote.title?.trim()) return { ok: false, message: "Fill job title / service (Step 1: Job details)." };
+  if (Number(quote.total_value) <= 0 && Number(quote.cost) <= 0) {
+    return { ok: false, message: "Set price or add line items before advancing." };
+  }
+  return { ok: true };
+}
+
 function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; message?: string } {
   if (quote.status === "draft" && (nextStatus === "in_survey" || nextStatus === "bidding")) {
-    if (!quote.client_name?.trim()) return { ok: false, message: "Fill client name (Step 1: Job details)." };
-    if (!quote.client_email?.trim()) return { ok: false, message: "Fill client email (Step 1: Job details)." };
-    if (!quote.property_address?.trim()) return { ok: false, message: "Fill property address (Step 1: Job details)." };
-    if (!quote.title?.trim()) return { ok: false, message: "Fill job title / service (Step 1: Job details)." };
-    if (Number(quote.total_value) <= 0 && Number(quote.cost) <= 0) return { ok: false, message: "Set price or add line items (Step 3: Get price) before advancing." };
+    return quoteBasicsForPipeline(quote);
+  }
+  if ((quote.status === "draft" || quote.status === "in_survey") && nextStatus === "awaiting_customer") {
+    const basics = quoteBasicsForPipeline(quote);
+    if (!basics.ok) return basics;
+    if (Number(quote.total_value) <= 0) {
+      return { ok: false, message: "Set total value (sell price) before sending to customer — use Overview pricing or line items." };
+    }
+    return { ok: true };
   }
   if (quote.status === "bidding" && nextStatus === "awaiting_customer") {
     if (Number(quote.total_value) <= 0) return { ok: false, message: "Set total value before sending to customer (Step 4: Margin & PDF)." };
@@ -1146,18 +1436,20 @@ function getQuoteActions(currentStatus: string) {
   switch (currentStatus) {
     case "draft":
       return [
-        { label: "Start Bidding", status: "bidding", icon: Send, primary: true },
+        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
+        { label: "Start Bidding", status: "bidding", icon: Send, primary: false },
         { label: "In Survey", status: "in_survey", icon: Eye, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "in_survey":
       return [
-        { label: "Start Bidding", status: "bidding", icon: Send, primary: true },
+        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
+        { label: "Start Bidding", status: "bidding", icon: Send, primary: false },
         { label: "Back to Draft", status: "draft", icon: RotateCcw, primary: false },
       ];
     case "bidding":
       return [
-        { label: "Send to Customer", status: "awaiting_customer", icon: Send, primary: true },
+        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
         { label: "Back to Draft", status: "draft", icon: RotateCcw, primary: false },
       ];
     case "awaiting_customer":

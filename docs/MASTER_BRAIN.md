@@ -48,7 +48,12 @@ curl -sS -H "Authorization: Bearer YOUR_CRON_SECRET" \
 
 ## Database
 
-Migration `043_master_brain_daily_brief.sql` adds columns to `company_settings`.
+Apply migrations on `company_settings` in order:
+
+1. **`043_master_brain_daily_brief.sql`** — `master_brain_enabled`, daily brief columns.
+2. **`044_master_brain_manager_operator.sql`** — `master_brain_manager_enabled`, `master_brain_operator_enabled`, instruction text fields.
+
+If you see **“Could not find the 'master_brain_manager_enabled' column … in the schema cache”**, run **`044`** in the Supabase SQL Editor, then **reload the API schema**: Dashboard → **Project Settings** → **API** → **Reload schema** (or wait ~1 minute). PostgREST caches table columns until refreshed.
 
 ## Troubleshooting
 

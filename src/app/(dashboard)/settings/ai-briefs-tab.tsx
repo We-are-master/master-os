@@ -22,11 +22,23 @@ const TIMEZONES = [
   "Australia/Sydney",
 ];
 
+function formatSettingsSaveError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/column|does not exist|42703/i.test(msg)) {
+    return "Database is missing AI columns. Run supabase/migrations/043_master_brain_daily_brief.sql then 044_master_brain_manager_operator.sql in the Supabase SQL Editor, then Settings → API → Reload schema.";
+  }
+  if (/permission denied|RLS|42501/i.test(msg)) {
+    return "No permission to update company settings. You must be signed in as an admin.";
+  }
+  return msg || "Failed to save";
+}
+
 export function AiBriefsTab() {
   const { canEditConfig } = useAdminConfig();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [apiStatus, setApiStatus] = useState<{ openaiConfigured: boolean; model: string } | null>(null);
 
   const [form, setForm] = useState({
@@ -48,24 +60,35 @@ export function AiBriefsTab() {
     let cancelled = false;
     (async () => {
       const supabase = getSupabase();
-      const { data } = await supabase.from("company_settings").select("*").limit(1).single();
+      const { data, error } = await supabase.from("company_settings").select("*").limit(1).maybeSingle();
       if (cancelled) return;
-      if (data) {
-        setSettingsId(data.id);
-        const r = data as Record<string, unknown>;
-        setForm({
-          master_brain_enabled: Boolean(r.master_brain_enabled),
-          master_brain_manager_enabled: Boolean(r.master_brain_manager_enabled),
-          master_brain_operator_enabled: Boolean(r.master_brain_operator_enabled),
-          master_brain_manager_instructions: String(r.master_brain_manager_instructions ?? ""),
-          master_brain_operator_instructions: String(r.master_brain_operator_instructions ?? ""),
-          daily_brief_enabled: Boolean(r.daily_brief_enabled),
-          daily_brief_morning_time: String(r.daily_brief_morning_time ?? "08:00"),
-          daily_brief_evening_time: String(r.daily_brief_evening_time ?? "18:00"),
-          daily_brief_timezone: String(r.daily_brief_timezone ?? "Europe/London"),
-          daily_brief_emails: String(r.daily_brief_emails ?? ""),
-        });
+      if (error) {
+        setLoadError(formatSettingsSaveError(error));
+        setSettingsId(null);
+        setLoading(false);
+        return;
       }
+      if (!data) {
+        setLoadError("No company_settings row found. Add one in Supabase or run seeds.");
+        setSettingsId(null);
+        setLoading(false);
+        return;
+      }
+      setLoadError(null);
+      setSettingsId(data.id);
+      const r = data as Record<string, unknown>;
+      setForm({
+        master_brain_enabled: Boolean(r.master_brain_enabled),
+        master_brain_manager_enabled: Boolean(r.master_brain_manager_enabled),
+        master_brain_operator_enabled: Boolean(r.master_brain_operator_enabled),
+        master_brain_manager_instructions: String(r.master_brain_manager_instructions ?? ""),
+        master_brain_operator_instructions: String(r.master_brain_operator_instructions ?? ""),
+        daily_brief_enabled: Boolean(r.daily_brief_enabled),
+        daily_brief_morning_time: String(r.daily_brief_morning_time ?? "08:00"),
+        daily_brief_evening_time: String(r.daily_brief_evening_time ?? "18:00"),
+        daily_brief_timezone: String(r.daily_brief_timezone ?? "Europe/London"),
+        daily_brief_emails: String(r.daily_brief_emails ?? ""),
+      });
       setLoading(false);
     })();
     return () => {
@@ -88,8 +111,12 @@ export function AiBriefsTab() {
   }, []);
 
   const handleSave = async () => {
-    if (!canEditConfig || !settingsId) {
-      toast.error("Cannot save");
+    if (!canEditConfig) {
+      toast.error("Only admins can change these settings.");
+      return;
+    }
+    if (!settingsId) {
+      toast.error(loadError ?? "Company settings could not be loaded. Check the message above or run DB migrations.");
       return;
     }
     setSaving(true);
@@ -114,7 +141,7 @@ export function AiBriefsTab() {
       toast.success("AI & brief settings saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save");
+      toast.error(formatSettingsSaveError(e));
     } finally {
       setSaving(false);
     }
@@ -130,6 +157,17 @@ export function AiBriefsTab() {
 
   return (
     <div className="space-y-6">
+      {loadError && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+          <p className="font-semibold">Could not load company settings</p>
+          <p className="mt-1 text-amber-800 dark:text-amber-200/90">{loadError}</p>
+        </div>
+      )}
+      {!loadError && canEditConfig && (
+        <p className="text-xs text-text-tertiary">
+          Tick the options below, then click <strong>Save AI &amp; brief settings</strong> at the bottom to apply.
+        </p>
+      )}
       <div>
         <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
           <Sparkles className="h-5 w-5 text-primary" />
