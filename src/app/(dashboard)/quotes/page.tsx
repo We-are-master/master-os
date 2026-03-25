@@ -1589,7 +1589,7 @@ function MarginCalculator({ cost, initialMarginPct, onSellPriceChange, onMarginC
   useEffect(() => { onSellPriceChange(sellPrice); onMarginChange(marginPct); }, [marginPct, sellPrice, onSellPriceChange, onMarginChange]);
 
   return (
-    <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light">
+    <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light dark:from-stone-950/40 dark:to-stone-900/20 dark:border-border-light/70">
       <div className="flex items-center gap-2 mb-3">
         <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
         <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Margin Calculator</label>
@@ -1604,9 +1604,22 @@ function MarginCalculator({ cost, initialMarginPct, onSellPriceChange, onMarginC
           <span className="text-xs text-text-tertiary">Margin %</span>
           <span className={`text-xs font-bold ${marginPct >= 40 ? "text-primary" : marginPct >= 10 ? "text-amber-600" : "text-red-500"}`}>{marginPct}%</span>
         </div>
-        <input type="range" min={5} max={60} step={0.5} value={marginPct} onChange={(e) => setMarginPct(Number(e.target.value))} className="w-full h-2 bg-border rounded-full appearance-none cursor-pointer accent-primary" />
-        <div className="flex justify-between text-[10px] text-text-tertiary"><span>5%</span><span className="text-amber-600 font-medium">10% min</span><span className="text-primary font-medium">40% default</span><span>60%</span></div>
-        {marginPct < 40 && <p className="text-[11px] text-amber-600 font-medium mt-1">Below standard margin (40%)</p>}
+        <input
+          type="range"
+          min={5}
+          max={60}
+          step={0.5}
+          value={marginPct}
+          onChange={(e) => setMarginPct(Number(e.target.value))}
+          className="w-full h-2 bg-border rounded-full appearance-none cursor-pointer accent-primary"
+        />
+        <div className="flex justify-between text-[10px] text-text-tertiary">
+          <span>5%</span>
+          <span className="text-amber-600 dark:text-amber-400 font-medium">10% min</span>
+          <span className="text-primary font-medium">40% default</span>
+          <span>60%</span>
+        </div>
+        {marginPct < 40 && <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">Below standard margin (40%)</p>}
       </div>
     </div>
   );
