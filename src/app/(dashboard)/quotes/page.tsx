@@ -260,7 +260,7 @@ export default function QuotesPage() {
           : null,
         status: formData.status ?? "draft",
         total_value: formData.total_value ?? 0,
-        partner_quotes_count: 0,
+        partner_quotes_count: formData.partner_quotes_count ?? 0,
         cost: formData.cost ?? 0,
         sell_price: formData.sell_price ?? formData.total_value ?? 0,
         margin_percent: formData.margin_percent ?? 0,
@@ -1620,7 +1620,8 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", unitPrice: "0" }]);
   const [catalogList, setCatalogList] = useState<CatalogService[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
-  const [partnerId, setPartnerId] = useState("");
+  const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
+  const [partnerDescription, setPartnerDescription] = useState("");
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const [sellPrice, setSellPrice] = useState(0);
@@ -1632,20 +1633,32 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
 
   useEffect(() => {
     if (quoteType !== "partner") return;
-    listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? [])).catch(() => setPartners([]));
+    listPartners({ pageSize: 200, status: "all" })
+      .then((r) => setPartners(r.data ?? []))
+      .catch(() => setPartners([]));
   }, [quoteType]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
-    if (quoteType === "partner" && !partnerId) { toast.error("Please select a partner"); return; }
     const cid = form.catalog_service_id.trim();
-    const selectedPartner = partners.find((p) => p.id === partnerId);
     const scopeFromLineItems = lineItems
       .map((li) => li.description.trim())
       .filter(Boolean)
       .join("\n");
+
+    if (quoteType === "partner") {
+      if (selectedPartnerIds.size === 0) {
+        toast.error("Please select at least one partner");
+        return;
+      }
+      if (!partnerDescription.trim()) {
+        toast.error("Please enter a service description");
+        return;
+      }
+    }
+
     onSubmit({
       ...form,
       client_id: clientAddress.client_id,
@@ -1653,23 +1666,27 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       client_name: clientAddress.client_name,
       client_email: clientAddress.client_email,
       property_address: clientAddress.property_address,
-      catalog_service_id: cid && isUuid(cid) ? cid : null,
-      total_value: sellPrice > 0 ? sellPrice : lineTotal,
-      cost: lineTotal,
-      sell_price: sellPrice > 0 ? sellPrice : lineTotal,
-      margin_percent: marginPct,
+      catalog_service_id: quoteType === "internal" ? (cid && isUuid(cid) ? cid : null) : null,
+      total_value: quoteType === "internal" ? (sellPrice > 0 ? sellPrice : lineTotal) : 0,
+      cost: quoteType === "internal" ? lineTotal : 0,
+      sell_price: quoteType === "internal" ? (sellPrice > 0 ? sellPrice : lineTotal) : 0,
+      margin_percent: quoteType === "internal" ? marginPct : 0,
       quote_type: quoteType,
       status: quoteType === "partner" ? "bidding" : "draft",
-      partner_id: quoteType === "partner" ? partnerId : undefined,
-      partner_name: quoteType === "partner" ? selectedPartner?.company_name : undefined,
-      scope: scopeFromLineItems.trim() ? scopeFromLineItems.trim() : undefined,
+      partner_id: quoteType === "partner" ? undefined : undefined,
+      partner_name: quoteType === "partner" ? undefined : undefined,
+      partner_quotes_count: quoteType === "partner" ? selectedPartnerIds.size : undefined,
+      scope: quoteType === "partner"
+        ? partnerDescription.trim()
+        : (scopeFromLineItems.trim() ? scopeFromLineItems.trim() : undefined),
     });
     setForm({ title: "", total_value: "", catalog_service_id: "" });
     setClientAddress({ client_name: "", property_address: "" });
     setLineItems([{ description: "", quantity: "1", unitPrice: "0" }]);
     setQuoteType("internal");
     setPartners([]);
-    setPartnerId("");
+    setSelectedPartnerIds(new Set());
+    setPartnerDescription("");
   };
 
   return (
@@ -1684,61 +1701,124 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
         ]}
       />
       {quoteType === "partner" && (
-        <Select
-          label="Partner"
-          value={partnerId}
-          onChange={(e) => setPartnerId(e.target.value)}
-          options={[
-            { value: "", label: partners.length ? "Select a partner" : "Loading partners..." },
-            ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name })),
-          ]}
-        />
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Partners *</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="text-[11px] font-medium text-primary hover:underline"
+                onClick={() => setSelectedPartnerIds(new Set(partners.map((p) => p.id)))}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                className="text-[11px] font-medium text-text-tertiary hover:underline"
+                onClick={() => setSelectedPartnerIds(new Set())}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+            {partners.length === 0 ? (
+              <p className="text-sm text-text-tertiary text-center py-6">Loading partners...</p>
+            ) : (
+              partners.map((p) => {
+                const isSelected = selectedPartnerIds.has(p.id);
+                return (
+                  <label
+                    key={p.id}
+                    className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                      isSelected ? "border-primary bg-primary/5" : "border-border hover:border-primary/30 hover:bg-surface-hover"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => {
+                        const next = new Set(selectedPartnerIds);
+                        if (e.target.checked) next.add(p.id);
+                        else next.delete(p.id);
+                        setSelectedPartnerIds(next);
+                      }}
+                      className="h-4 w-4 rounded border-border text-primary"
+                    />
+                    <Avatar name={p.company_name} size="md" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
+                      <p className="text-xs text-text-tertiary">{p.trade} — {p.location}</p>
+                    </div>
+                  </label>
+                );
+              })
+            )}
+          </div>
+          <p className="text-[11px] text-text-tertiary mt-2">{selectedPartnerIds.size} selected</p>
+        </div>
       )}
+
       <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Quote title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="e.g. Commercial HVAC Refurbishment" required /></div>
       <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-      <ServiceCatalogSelect
-        catalog={catalogList}
-        value={form.catalog_service_id}
-        onChange={(id, svc) => {
-          setForm((p) => {
-            const next = { ...p, catalog_service_id: id };
-            if (svc && !p.title.trim()) next.title = `${svc.name} quote`;
-            return next;
-          });
-          if (!svc) return;
-          const line = lineItemDefaultsFromCatalog(svc);
-          setLineItems((prev) => {
-            const rest = prev.slice(1);
-            return [{ description: line.description, quantity: String(line.quantity), unitPrice: String(line.unitPrice) }, ...rest];
-          });
-        }}
-      />
-      <p className="text-[10px] text-text-tertiary -mt-2">Line items stay fully editable after applying a template.</p>
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Line Items</label>
-          <button type="button" onClick={() => setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0" }])} className="text-[11px] font-medium text-primary hover:underline">+ Add Item</button>
-        </div>
-        <div className="space-y-2">
-          {lineItems.map((item, idx) => (
-            <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
-              <div className="flex-1">
-                <Input placeholder="Service / Description" value={item.description} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], description: e.target.value }; setLineItems(n); }} className="text-xs mb-1.5" />
-                <div className="flex gap-2">
-                  <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], quantity: e.target.value }; setLineItems(n); }} className="text-xs w-20" />
-                  <Input type="number" placeholder="Price" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1" />
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-1 pt-1">
-                <span className="text-xs font-semibold text-text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
-                {lineItems.length > 1 && <button type="button" onClick={() => setLineItems((prev) => prev.filter((_, i) => i !== idx))} className="text-text-tertiary hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>}
-              </div>
+      {quoteType === "internal" ? (
+        <>
+          <ServiceCatalogSelect
+            catalog={catalogList}
+            value={form.catalog_service_id}
+            onChange={(id, svc) => {
+              setForm((p) => {
+                const next = { ...p, catalog_service_id: id };
+                if (svc && !p.title.trim()) next.title = `${svc.name} quote`;
+                return next;
+              });
+              if (!svc) return;
+              const line = lineItemDefaultsFromCatalog(svc);
+              setLineItems((prev) => {
+                const rest = prev.slice(1);
+                return [{ description: line.description, quantity: String(line.quantity), unitPrice: String(line.unitPrice) }, ...rest];
+              });
+            }}
+          />
+          <p className="text-[10px] text-text-tertiary -mt-2">Line items stay fully editable after applying a template.</p>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Line Items</label>
+              <button type="button" onClick={() => setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0" }])} className="text-[11px] font-medium text-primary hover:underline">+ Add Item</button>
             </div>
-          ))}
+            <div className="space-y-2">
+              {lineItems.map((item, idx) => (
+                <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
+                  <div className="flex-1">
+                    <Input placeholder="Service / Description" value={item.description} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], description: e.target.value }; setLineItems(n); }} className="text-xs mb-1.5" />
+                    <div className="flex gap-2">
+                      <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], quantity: e.target.value }; setLineItems(n); }} className="text-xs w-20" />
+                      <Input type="number" placeholder="Price" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 pt-1">
+                    <span className="text-xs font-semibold text-text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
+                    {lineItems.length > 1 && <button type="button" onClick={() => setLineItems((prev) => prev.filter((_, i) => i !== idx))} className="text-text-tertiary hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end mt-2 pt-2 border-t border-border-light"><span className="text-sm font-bold text-text-primary">Total: {formatCurrency(lineTotal)}</span></div>
+          </div>
+          {lineTotal > 0 && <MarginCalculator cost={lineTotal} onSellPriceChange={setSellPrice} onMarginChange={setMarginPct} />}
+        </>
+      ) : (
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description *</label>
+          <textarea
+            value={partnerDescription}
+            onChange={(e) => setPartnerDescription(e.target.value)}
+            placeholder="Describe scope, inclusions and exclusions... (used for partner bids)"
+            rows={5}
+            className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none"
+          />
         </div>
-        <div className="flex justify-end mt-2 pt-2 border-t border-border-light"><span className="text-sm font-bold text-text-primary">Total: {formatCurrency(lineTotal)}</span></div>
-      </div>
-      {lineTotal > 0 && <MarginCalculator cost={lineTotal} onSellPriceChange={setSellPrice} onMarginChange={setMarginPct} />}
+      )}
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="outline" onClick={onCancel} type="button">Cancel</Button>
         <Button type="submit">Create Quote</Button>
