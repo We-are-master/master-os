@@ -45,7 +45,7 @@ import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { normalizeTotalPhases } from "@/lib/job-phases";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
-import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
+import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { isUuid } from "@/lib/utils";
 
@@ -1581,8 +1581,8 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
 }
 
 /* ========== MARGIN CALCULATOR ========== */
-function MarginCalculator({ cost, onSellPriceChange, onMarginChange }: { cost: number; onSellPriceChange: (v: number) => void; onMarginChange: (v: number) => void }) {
-  const [marginPct, setMarginPct] = useState(40);
+function MarginCalculator({ cost, initialMarginPct, onSellPriceChange, onMarginChange }: { cost: number; initialMarginPct?: number; onSellPriceChange: (v: number) => void; onMarginChange: (v: number) => void }) {
+  const [marginPct, setMarginPct] = useState(initialMarginPct ?? 40);
   const sellPrice = cost > 0 ? Math.round((cost / (1 - marginPct / 100)) * 100) / 100 : 0;
   const marginValue = sellPrice - cost;
 
@@ -1595,7 +1595,7 @@ function MarginCalculator({ cost, onSellPriceChange, onMarginChange }: { cost: n
         <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Margin Calculator</label>
       </div>
       <div className="grid grid-cols-3 gap-3 mb-3">
-        <div><p className="text-[10px] text-text-tertiary uppercase">Cost</p><p className="text-sm font-bold text-text-primary">{formatCurrency(cost)}</p></div>
+        <div><p className="text-[10px] text-text-tertiary uppercase">Partner cost</p><p className="text-sm font-bold text-text-primary">{formatCurrency(cost)}</p></div>
         <div><p className="text-[10px] text-text-tertiary uppercase">Sell Price</p><p className="text-sm font-bold text-primary">{formatCurrency(sellPrice)}</p></div>
         <div><p className="text-[10px] text-text-tertiary uppercase">Margin</p><p className="text-sm font-bold text-emerald-600">{formatCurrency(marginValue)}</p></div>
       </div>
@@ -1622,6 +1622,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
   const [partnerDescription, setPartnerDescription] = useState("");
+  const [templateInitialMarginPct, setTemplateInitialMarginPct] = useState(40);
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const [sellPrice, setSellPrice] = useState(0);
@@ -1773,10 +1774,19 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                 return next;
               });
               if (!svc) return;
-              const line = lineItemDefaultsFromCatalog(svc);
+              const partnerCostTotal = Number(svc.partner_cost ?? 0);
+              const sellTotal = estimatedValueFromCatalog(svc);
+              const computedMarginPct = sellTotal > 0 ? Math.round(((sellTotal - partnerCostTotal) / sellTotal) * 1000) / 10 : 0;
+
+              const isFixed = svc.pricing_mode === "fixed";
+              const qty = isFixed ? 1 : Math.max(0.25, Number(svc.default_hours) || 1);
+              const unitCost = qty > 0 ? partnerCostTotal / qty : 0;
+              const description = svc.default_description?.trim() || (isFixed ? svc.name : `${svc.name} (labour)`);
+
+              setTemplateInitialMarginPct(computedMarginPct);
               setLineItems((prev) => {
                 const rest = prev.slice(1);
-                return [{ description: line.description, quantity: String(line.quantity), unitPrice: String(line.unitPrice) }, ...rest];
+                return [{ description, quantity: String(qty), unitPrice: String(unitCost) }, ...rest];
               });
             }}
           />
@@ -1793,7 +1803,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                     <Input placeholder="Service / Description" value={item.description} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], description: e.target.value }; setLineItems(n); }} className="text-xs mb-1.5" />
                     <div className="flex gap-2">
                       <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], quantity: e.target.value }; setLineItems(n); }} className="text-xs w-20" />
-                      <Input type="number" placeholder="Price" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1" />
+                    <Input type="number" placeholder="Partner cost" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1" />
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1 pt-1">
@@ -1803,9 +1813,17 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                 </div>
               ))}
             </div>
-            <div className="flex justify-end mt-2 pt-2 border-t border-border-light"><span className="text-sm font-bold text-text-primary">Total: {formatCurrency(lineTotal)}</span></div>
+            <div className="flex justify-end mt-2 pt-2 border-t border-border-light"><span className="text-sm font-bold text-text-primary">Partner cost total: {formatCurrency(lineTotal)}</span></div>
           </div>
-          {lineTotal > 0 && <MarginCalculator cost={lineTotal} onSellPriceChange={setSellPrice} onMarginChange={setMarginPct} />}
+          {lineTotal >= 0 && (
+            <MarginCalculator
+              key={`margin-${templateInitialMarginPct}`}
+              cost={lineTotal}
+              initialMarginPct={templateInitialMarginPct}
+              onSellPriceChange={setSellPrice}
+              onMarginChange={setMarginPct}
+            />
+          )}
         </>
       ) : (
         <div>
