@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getCompanySettings } from "@/services/company";
+import { setAppCurrencyCode } from "@/lib/utils";
 
 export type CompanyLogosState = {
   loading: boolean;
@@ -33,9 +34,11 @@ export function useCompanyLogos(): CompanyLogosState {
         const s = await getCompanySettings();
         if (!alive) return;
         if (!s) {
+          setAppCurrencyCode("GBP");
           setState({ loading: false, companyName: "", logoUrl: undefined, logoLightThemeUrl: undefined, logoDarkThemeUrl: undefined });
           return;
         }
+        setAppCurrencyCode(s.currency ?? "GBP");
         setState({
           loading: false,
           companyName: s.company_name ?? "",
@@ -45,6 +48,7 @@ export function useCompanyLogos(): CompanyLogosState {
         });
       } catch {
         if (!alive) return;
+        setAppCurrencyCode("GBP");
         setState({ loading: false, companyName: "", logoUrl: undefined, logoLightThemeUrl: undefined, logoDarkThemeUrl: undefined });
       }
     };

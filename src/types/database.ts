@@ -11,6 +11,8 @@ export interface CatalogService {
   fixed_price: number;
   hourly_rate: number;
   default_hours: number;
+  /** What we pay the partner (fixed total, or total for default hours bundle in hourly mode). */
+  partner_cost?: number | null;
   default_description?: string | null;
   sort_order: number;
   is_active: boolean;
@@ -252,6 +254,8 @@ export interface Partner {
   joined_at: string;
   /** When set, this partner is the app user (jobs.partner_id, location in user_locations) */
   auth_user_id?: string | null;
+  /** Public photo URL (company-assets bucket). */
+  avatar_url?: string | null;
 }
 
 export interface Account {

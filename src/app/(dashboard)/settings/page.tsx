@@ -25,7 +25,7 @@ import { useProfile } from "@/hooks/use-profile";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { getSupabase } from "@/services/base";
 import { listCommissionTiers, listCommissionPoolShares, updateCommissionTier, updateCommissionPoolShare, getCurrentMonthRevenue } from "@/services/tiers";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, setAppCurrencyCode } from "@/lib/utils";
 import type { Profile, CommissionTier, CommissionPoolShare } from "@/types/database";
 import type { NavGroup } from "@/lib/constants";
 import type { PermissionKey, RoleKey, PermissionsByRole, UserPermissionOverride } from "@/types/admin-config";
@@ -1323,6 +1323,7 @@ function SystemTab() {
     logo_dark_theme_url: "",
     favicon_url: "",
     quote_footer_notes: "",
+    currency: "GBP",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
@@ -1332,6 +1333,7 @@ function SystemTab() {
       const { data } = await supabase.from("company_settings").select("*").limit(1).single();
       if (data) {
         setSettingsId(data.id);
+        const row = data as typeof data & { currency?: string | null };
         setForm({
           company_name: data.company_name ?? "",
           email: data.email ?? "",
@@ -1347,6 +1349,7 @@ function SystemTab() {
           logo_dark_theme_url: (data as { logo_dark_theme_url?: string | null }).logo_dark_theme_url ?? "",
           favicon_url: (data as { favicon_url?: string | null }).favicon_url ?? "",
           quote_footer_notes: data.quote_footer_notes ?? "",
+          currency: row.currency && ["GBP", "USD", "EUR", "BRL"].includes(row.currency) ? row.currency : "GBP",
         });
       }
       setLoading(false);
@@ -1362,6 +1365,7 @@ function SystemTab() {
       const payload = {
         ...form,
         vat_percent: Number(form.vat_percent) || 20,
+        currency: ["GBP", "USD", "EUR", "BRL"].includes(form.currency) ? form.currency : "GBP",
         logo_light_theme_url: form.logo_light_theme_url.trim() || null,
         logo_dark_theme_url: form.logo_dark_theme_url.trim() || null,
         favicon_url: form.favicon_url.trim() || null,
@@ -1374,6 +1378,7 @@ function SystemTab() {
         if (error) throw error;
         setSettingsId(data.id);
       }
+      setAppCurrencyCode(payload.currency);
       toast.success("Company settings saved");
       window.dispatchEvent(new Event("master-os-company-settings"));
     } catch (err) {
@@ -1596,7 +1601,8 @@ function SystemTab() {
           <div className="p-6 space-y-4">
             <Select
               label="Currency"
-              defaultValue="GBP"
+              value={form.currency}
+              onChange={(e) => update("currency", e.target.value)}
               options={[
                 { value: "GBP", label: "GBP (£)" },
                 { value: "USD", label: "USD ($)" },

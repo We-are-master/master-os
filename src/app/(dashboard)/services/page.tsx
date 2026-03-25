@@ -23,6 +23,7 @@ import {
   updateCatalogService,
   deleteCatalogService,
 } from "@/services/catalog-services";
+import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
 import { getSupabase } from "@/services/base";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 
@@ -32,6 +33,7 @@ const emptyForm = {
   fixed_price: "",
   hourly_rate: "",
   default_hours: "1",
+  partner_cost: "",
   default_description: "",
   sort_order: "0",
   is_active: true,
@@ -117,6 +119,7 @@ export default function ServicesCatalogPage() {
       fixed_price: String(row.fixed_price ?? 0),
       hourly_rate: String(row.hourly_rate ?? 0),
       default_hours: String(row.default_hours ?? 1),
+      partner_cost: String(row.partner_cost ?? 0),
       default_description: row.default_description ?? "",
       sort_order: String(row.sort_order ?? 0),
       is_active: row.is_active,
@@ -129,6 +132,7 @@ export default function ServicesCatalogPage() {
     fixed_price: Number(form.fixed_price) || 0,
     hourly_rate: Number(form.hourly_rate) || 0,
     default_hours: Math.max(0.25, Number(form.default_hours) || 1),
+    partner_cost: Math.max(0, Number(form.partner_cost) || 0),
     default_description: form.default_description.trim() || null,
     sort_order: Math.floor(Number(form.sort_order) || 0),
     is_active: form.is_active,
@@ -215,6 +219,22 @@ export default function ServicesCatalogPage() {
         </div>
       ),
     },
+    {
+      key: "margin",
+      label: "Margin",
+      render: (item) => {
+        const sell = estimatedValueFromCatalog(item);
+        const pc = Number(item.partner_cost) || 0;
+        const m = sell - pc;
+        const pct = sell > 0 ? (m / sell) * 100 : 0;
+        return (
+          <div className="text-xs">
+            <p className={`font-medium tabular-nums ${m >= 0 ? "text-emerald-600" : "text-red-600"}`}>{formatCurrency(m)}</p>
+            <p className="text-[10px] text-text-tertiary">{pct.toFixed(0)}% of sell</p>
+          </div>
+        );
+      },
+    },
     { key: "sort_order", label: "Order", render: (item) => <span className="text-sm text-text-secondary">{item.sort_order}</span> },
     {
       key: "is_active",
@@ -242,6 +262,17 @@ export default function ServicesCatalogPage() {
     },
   ];
 
+  const sellerTotal =
+    form.pricing_mode === "fixed"
+      ? Number(form.fixed_price) || 0
+      : (() => {
+          const h = Math.max(0.25, Number(form.default_hours) || 1);
+          return (Number(form.hourly_rate) || 0) * h;
+        })();
+  const partnerCostNum = Math.max(0, Number(form.partner_cost) || 0);
+  const marginValue = sellerTotal - partnerCostNum;
+  const marginPercent = sellerTotal > 0 ? (marginValue / sellerTotal) * 100 : 0;
+
   const FormFields = (
     <>
       <div>
@@ -257,39 +288,83 @@ export default function ServicesCatalogPage() {
           { value: "hourly", label: "Per hour" },
         ]}
       />
-      <div className="grid grid-cols-2 gap-3">
+      {form.pricing_mode === "fixed" ? (
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Fixed price</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Seller price *</label>
           <Input
             type="number"
             step="0.01"
+            min={0}
             value={form.fixed_price}
             onChange={(e) => setForm((f) => ({ ...f, fixed_price: e.target.value }))}
             placeholder="0"
           />
+          <p className="text-[10px] text-text-tertiary mt-1">Price to the customer for this service.</p>
         </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Hourly rate</label>
-          <Input
-            type="number"
-            step="0.01"
-            value={form.hourly_rate}
-            onChange={(e) => setForm((f) => ({ ...f, hourly_rate: e.target.value }))}
-            placeholder="0"
-          />
-        </div>
-      </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Seller hourly rate *</label>
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={form.hourly_rate}
+                onChange={(e) => setForm((f) => ({ ...f, hourly_rate: e.target.value }))}
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Default hours *</label>
+              <Input
+                type="number"
+                step="0.25"
+                min={0.25}
+                value={form.default_hours}
+                onChange={(e) => setForm((f) => ({ ...f, default_hours: e.target.value }))}
+                placeholder="1"
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-text-tertiary -mt-2">Seller total = rate × hours (used for margin and quote defaults).</p>
+        </>
+      )}
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Default hours (hourly mode)</label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost</label>
         <Input
           type="number"
-          step="0.25"
-          min={0.25}
-          value={form.default_hours}
-          onChange={(e) => setForm((f) => ({ ...f, default_hours: e.target.value }))}
-          placeholder="1"
+          step="0.01"
+          min={0}
+          value={form.partner_cost}
+          onChange={(e) => setForm((f) => ({ ...f, partner_cost: e.target.value }))}
+          placeholder="0"
         />
-        <p className="text-[10px] text-text-tertiary mt-1">Used to suggest totals on requests and line qty on quotes.</p>
+        <p className="text-[10px] text-text-tertiary mt-1">
+          {form.pricing_mode === "fixed"
+            ? "What you pay the partner to deliver this job."
+            : "Total partner cost for the default hours bundle (same scope as seller total)."}
+        </p>
+      </div>
+      <div className="p-4 rounded-xl border border-border bg-surface-hover">
+        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Margin (profit)</p>
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <div>
+            <span className="text-text-tertiary">Seller total</span>
+            <p className="font-semibold text-text-primary tabular-nums">{formatCurrency(sellerTotal)}</p>
+          </div>
+          <div>
+            <span className="text-text-tertiary">Partner cost</span>
+            <p className="font-semibold text-text-primary tabular-nums">{formatCurrency(partnerCostNum)}</p>
+          </div>
+        </div>
+        <div className="mt-3 pt-3 border-t border-border-light">
+          <p className="text-xs text-text-tertiary">Seller total − partner cost</p>
+          <p className={`text-lg font-bold tabular-nums ${marginValue >= 0 ? "text-emerald-600" : "text-red-600"}`}>{formatCurrency(marginValue)}</p>
+          <p className="text-[11px] text-text-secondary mt-0.5">
+            {sellerTotal > 0 ? `${marginPercent.toFixed(1)}% margin on seller price` : "—"}
+          </p>
+        </div>
       </div>
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">Default description (optional)</label>

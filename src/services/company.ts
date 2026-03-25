@@ -33,6 +33,8 @@ export interface CompanySettings {
   daily_brief_evening_time?: string;
   daily_brief_timezone?: string;
   daily_brief_emails?: string;
+  /** ISO 4217 — KPIs and UI amounts (Settings → Preferences). */
+  currency?: string | null;
   updated_at: string;
 }
 
