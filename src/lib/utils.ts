@@ -10,19 +10,50 @@ export function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 }
 
-export function formatCurrency(value: number, currency = "USD"): string {
-  return new Intl.NumberFormat("en-US", {
+/** Default until company_settings loads (dashboard shell syncs from DB). */
+let appCurrencyCode = "GBP";
+
+export function setAppCurrencyCode(code: string | null | undefined): void {
+  if (code && /^[A-Z]{3}$/i.test(code.trim())) {
+    appCurrencyCode = code.trim().toUpperCase();
+  } else {
+    appCurrencyCode = "GBP";
+  }
+}
+
+export function getAppCurrencyCode(): string {
+  return appCurrencyCode;
+}
+
+function localeForCurrency(code: string): string {
+  switch (code) {
+    case "GBP":
+      return "en-GB";
+    case "EUR":
+      return "en-GB";
+    case "BRL":
+      return "pt-BR";
+    case "USD":
+    default:
+      return "en-US";
+  }
+}
+
+export function formatCurrency(value: number, currency?: string): string {
+  const code = currency ?? appCurrencyCode;
+  return new Intl.NumberFormat(localeForCurrency(code), {
     style: "currency",
-    currency,
+    currency: code,
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(value);
 }
 
-export function formatCurrencyPrecise(value: number, currency = "USD"): string {
-  return new Intl.NumberFormat("en-US", {
+export function formatCurrencyPrecise(value: number, currency?: string): string {
+  const code = currency ?? appCurrencyCode;
+  return new Intl.NumberFormat(localeForCurrency(code), {
     style: "currency",
-    currency,
+    currency: code,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);

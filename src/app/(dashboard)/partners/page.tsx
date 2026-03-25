@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,8 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
-import { SearchInput, Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { SearchInput, Input } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
@@ -27,6 +27,13 @@ import { toast } from "sonner";
 import type { Partner, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, createPartner, updatePartner } from "@/services/partners";
+import {
+  uploadPartnerDocumentFile,
+  uploadPartnerDocumentPreview,
+  removeStorageObjects,
+  getPartnerDocumentSignedUrl,
+} from "@/services/partner-documents-storage";
+import { uploadPartnerAvatar } from "@/services/partner-avatar-storage";
 import { getStatusCounts } from "@/services/base";
 import { getSupabase } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
@@ -244,7 +251,7 @@ export default function PartnersPage() {
       key: "company_name", label: "Partner",
       render: (item) => (
         <div className="flex items-center gap-3">
-          <Avatar name={item.company_name} size="md" />
+          <Avatar name={item.company_name} size="md" src={item.avatar_url ?? undefined} />
           <div>
             <div className="flex items-center gap-1.5">
               <p className="text-sm font-semibold text-text-primary">{item.company_name}</p>
@@ -489,6 +496,9 @@ interface PartnerDoc {
   doc_type: string;
   status: string;
   file_name?: string;
+  /** Path inside `partner-documents` bucket */
+  file_path?: string | null;
+  preview_image_path?: string | null;
   expires_at?: string;
   notes?: string;
   created_at: string;
@@ -517,6 +527,119 @@ const docStatusConfig: Record<string, { label: string; variant: "default" | "suc
   rejected: { label: "Rejected", variant: "danger" },
   expired: { label: "Expired", variant: "default" },
 };
+
+function PartnerDocPreviewThumb({ path }: { path: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getPartnerDocumentSignedUrl(path, 3600)
+      .then((u) => {
+        if (!cancelled) setSrc(u);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+  if (!src) {
+    return <div className="h-10 w-10 rounded-xl bg-surface-tertiary animate-pulse shrink-0" />;
+  }
+  return (
+    <img src={src} alt="" className="h-10 w-10 rounded-xl object-cover border border-border shrink-0" />
+  );
+}
+
+function AddPartnerDocumentModal({
+  open,
+  onClose,
+  submitting,
+  onSubmit,
+}: {
+  open: boolean;
+  onClose: () => void;
+  submitting: boolean;
+  onSubmit: (docType: string, name: string, file: File, preview: File | null) => Promise<void>;
+}) {
+  const [docType, setDocType] = useState("insurance");
+  const [name, setName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<File | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setName("");
+      setFile(null);
+      setPreview(null);
+      setDocType("insurance");
+    }
+  }, [open]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      toast.error("Enter a document name");
+      return;
+    }
+    if (!file) {
+      toast.error("Choose a document file");
+      return;
+    }
+    void onSubmit(docType, name.trim(), file, preview);
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Add document" subtitle="Stored in partner-documents — optional preview image" size="md">
+      <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
+          <select
+            value={docType}
+            onChange={(e) => setDocType(e.target.value)}
+            className="w-full h-9 px-3 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/15"
+          >
+            {Object.entries(docTypeLabels).map(([key, { label }]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Name *</label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Public liability 2025" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Document file *</label>
+          <input
+            type="file"
+            accept=".pdf,.doc,.docx,image/*"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="block w-full text-xs text-text-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-surface-hover file:text-text-primary"
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">PDF, Word, or image — max 10 MB.</p>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Preview image (optional)</label>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            onChange={(e) => setPreview(e.target.files?.[0] ?? null)}
+            className="block w-full text-xs text-text-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-surface-hover file:text-text-primary"
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">Thumbnail shown in the list — JPEG, PNG, WebP, GIF.</p>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={submitting}>
+            {submitting ? "Uploading…" : "Upload"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
 function PartnerDetailDrawer({
   partner,
@@ -556,6 +679,10 @@ function PartnerDetailDrawer({
   const [actionEmail, setActionEmail] = useState("");
   const [actionSubmitting, setActionSubmitting] = useState(false);
   const [partnerLocation, setPartnerLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
+  const [addDocOpen, setAddDocOpen] = useState(false);
+  const [addDocSubmitting, setAddDocSubmitting] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const partnerAvatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (teamMember) {
@@ -616,14 +743,62 @@ function PartnerDetailDrawer({
     }
   }, [partner, loadAll]);
 
-  const handleAddDocument = async (docType: string, name: string) => {
+  const handleAddDocument = async (docType: string, name: string, file: File, previewFile: File | null) => {
     if (!partner) return;
     const supabase = getSupabase();
+    setAddDocSubmitting(true);
     try {
-      await supabase.from("partner_documents").insert({ partner_id: partner.id, name, doc_type: docType, status: "pending", uploaded_by: profile?.full_name });
-      toast.success("Document added");
+      const { data: row, error: insErr } = await supabase
+        .from("partner_documents")
+        .insert({
+          partner_id: partner.id,
+          name,
+          doc_type: docType,
+          status: "pending",
+          uploaded_by: profile?.full_name,
+        })
+        .select()
+        .single();
+      if (insErr) throw new Error(insErr.message);
+      if (!row?.id) throw new Error("No document row");
+
+      try {
+        const main = await uploadPartnerDocumentFile(partner.id, row.id, file);
+        let previewPath: string | null = null;
+        if (previewFile) {
+          const prev = await uploadPartnerDocumentPreview(partner.id, row.id, previewFile);
+          previewPath = prev.path;
+        }
+        const { error: upErr } = await supabase
+          .from("partner_documents")
+          .update({
+            file_path: main.path,
+            file_name: main.fileName,
+            preview_image_path: previewPath,
+          })
+          .eq("id", row.id);
+        if (upErr) throw new Error(upErr.message);
+      } catch (uploadErr) {
+        try {
+          const folder = `${partner.id}/${row.id}`;
+          const { data: list } = await supabase.storage.from("partner-documents").list(folder);
+          const paths = (list ?? []).map((f) => `${folder}/${f.name}`);
+          if (paths.length > 0) await removeStorageObjects(paths);
+        } catch {
+          /* ignore */
+        }
+        await supabase.from("partner_documents").delete().eq("id", row.id);
+        throw uploadErr;
+      }
+
+      toast.success("Document uploaded");
+      setAddDocOpen(false);
       supabase.from("partner_documents").select("*").eq("partner_id", partner.id).order("created_at", { ascending: false }).then(({ data }) => setDocuments((data ?? []) as PartnerDoc[]));
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setAddDocSubmitting(false);
+    }
   };
 
   const handleDocStatusChange = async (docId: string, newStatus: string) => {
@@ -638,12 +813,23 @@ function PartnerDetailDrawer({
 
   const handleDeleteDoc = async (docId: string) => {
     if (!partner) return;
+    const doc = documents.find((d) => d.id === docId);
     const supabase = getSupabase();
     try {
+      const paths = [doc?.file_path, doc?.preview_image_path].filter(Boolean) as string[];
+      if (paths.length > 0) {
+        try {
+          await removeStorageObjects(paths);
+        } catch {
+          /* still remove DB row */
+        }
+      }
       await supabase.from("partner_documents").delete().eq("id", docId);
       toast.success("Document removed");
       supabase.from("partner_documents").select("*").eq("partner_id", partner.id).order("created_at", { ascending: false }).then(({ data }) => setDocuments((data ?? []) as PartnerDoc[]));
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    }
   };
 
   const handleAddNote = async () => {
@@ -835,8 +1021,42 @@ function PartnerDetailDrawer({
         {/* ========== OVERVIEW ========== */}
         {tab === "overview" && (
           <div className="p-6 space-y-5">
-            <div className="flex items-center gap-4">
-              <Avatar name={partner.company_name} size="xl" />
+            <div className="flex items-start gap-4">
+              <div className="flex flex-col items-center gap-2 shrink-0">
+                <Avatar name={partner.company_name} size="xl" src={partner.avatar_url ?? undefined} />
+                <input
+                  ref={partnerAvatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (!f || !partner) return;
+                    setUploadingAvatar(true);
+                    try {
+                      const url = await uploadPartnerAvatar(partner.id, f);
+                      const updated = await updatePartner(partner.id, { avatar_url: url });
+                      onPartnerUpdate?.(updated);
+                      toast.success("Photo saved");
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Upload failed");
+                    } finally {
+                      setUploadingAvatar(false);
+                      e.target.value = "";
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-[11px] h-8"
+                  disabled={uploadingAvatar}
+                  onClick={() => partnerAvatarInputRef.current?.click()}
+                >
+                  {uploadingAvatar ? "…" : "Photo"}
+                </Button>
+              </div>
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <h3 className="text-lg font-bold text-text-primary">{partner.company_name}</h3>
@@ -1133,8 +1353,16 @@ function PartnerDetailDrawer({
           <div className="p-6 space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-sm font-semibold text-text-primary">{documents.length} Documents</p>
-              <AddDocumentButton onAdd={handleAddDocument} />
+              <Button size="sm" variant="outline" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => setAddDocOpen(true)}>
+                Add document
+              </Button>
             </div>
+            <AddPartnerDocumentModal
+              open={addDocOpen}
+              onClose={() => setAddDocOpen(false)}
+              submitting={addDocSubmitting}
+              onSubmit={handleAddDocument}
+            />
             {loadingDocs && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}</div>}
             {!loadingDocs && documents.length === 0 && (
               <div className="py-12 text-center">
@@ -1151,7 +1379,13 @@ function PartnerDetailDrawer({
               return (
                 <motion.div key={doc.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
                   <div className="flex items-start gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-surface-tertiary flex items-center justify-center shrink-0"><Icon className="h-5 w-5 text-text-secondary" /></div>
+                    {doc.preview_image_path ? (
+                      <PartnerDocPreviewThumb path={doc.preview_image_path} />
+                    ) : (
+                      <div className="h-10 w-10 rounded-xl bg-surface-tertiary flex items-center justify-center shrink-0">
+                        <Icon className="h-5 w-5 text-text-secondary" />
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-semibold text-text-primary truncate">{doc.name}</p>
@@ -1159,9 +1393,49 @@ function PartnerDetailDrawer({
                         {isExpired && <Badge variant="danger" size="sm">Expired</Badge>}
                       </div>
                       <p className="text-xs text-text-tertiary mt-0.5">{typeConfig.label}</p>
+                      {doc.file_name && <p className="text-[10px] text-text-tertiary mt-0.5 truncate">{doc.file_name}</p>}
                       {doc.expires_at && <p className={`text-xs mt-0.5 ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>Expires: {new Date(doc.expires_at).toLocaleDateString()}</p>}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
+                      {doc.file_path && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const u = await getPartnerDocumentSignedUrl(doc.file_path!);
+                                window.open(u, "_blank", "noopener,noreferrer");
+                              } catch (err) {
+                                toast.error(err instanceof Error ? err.message : "Could not open file");
+                              }
+                            }}
+                            className="h-7 w-7 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-primary transition-colors"
+                            title="Open file"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const u = await getPartnerDocumentSignedUrl(doc.file_path!);
+                                const a = document.createElement("a");
+                                a.href = u;
+                                a.download = doc.file_name || "document";
+                                a.target = "_blank";
+                                a.rel = "noopener noreferrer";
+                                a.click();
+                              } catch (err) {
+                                toast.error(err instanceof Error ? err.message : "Download failed");
+                              }
+                            }}
+                            className="h-7 w-7 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-primary transition-colors"
+                            title="Download"
+                          >
+                            <Download className="h-4 w-4" />
+                          </button>
+                        </>
+                      )}
                       {doc.status === "pending" && (
                         <>
                           <button onClick={() => handleDocStatusChange(doc.id, "approved")} className="h-7 w-7 rounded-lg flex items-center justify-center text-emerald-600 hover:bg-emerald-50 dark:bg-emerald-950/30 transition-colors" title="Approve"><CheckCircle2 className="h-4 w-4" /></button>
@@ -1270,55 +1544,6 @@ function InternalProfileTab({ partner, onUpdate }: { partner: Partner; onUpdate:
       <Button onClick={() => onUpdate({ internal_notes: internalNotes, role, permission })} className="w-full">
         Save Internal Profile
       </Button>
-    </div>
-  );
-}
-
-function AddDocumentButton({ onAdd }: { onAdd: (type: string, name: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [docType, setDocType] = useState("insurance");
-  const [name, setName] = useState("");
-
-  const handleAdd = () => {
-    if (!name.trim()) { toast.error("Enter a document name"); return; }
-    onAdd(docType, name.trim());
-    setName("");
-    setOpen(false);
-  };
-
-  if (!open) {
-    return (
-      <Button size="sm" variant="outline" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => setOpen(true)}>
-        Add Document
-      </Button>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <select
-        value={docType}
-        onChange={(e) => setDocType(e.target.value)}
-        className="h-8 px-2 text-xs rounded-lg border border-border bg-card focus:outline-none"
-      >
-        {Object.entries(docTypeLabels).map(([key, { label }]) => (
-          <option key={key} value={key}>{label}</option>
-        ))}
-      </select>
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="Document name"
-        className="h-8 px-2 text-xs rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/15 w-36"
-        onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); }}
-        autoFocus
-      />
-      <button onClick={handleAdd} className="h-8 w-8 rounded-lg bg-primary text-white flex items-center justify-center hover:bg-primary-hover transition-colors">
-        <CheckCircle2 className="h-3.5 w-3.5" />
-      </button>
-      <button onClick={() => setOpen(false)} className="h-8 w-8 rounded-lg text-text-tertiary hover:bg-surface-tertiary flex items-center justify-center transition-colors">
-        <XCircle className="h-3.5 w-3.5" />
-      </button>
     </div>
   );
 }

@@ -145,23 +145,17 @@ function getStageGuidance(status: string): {
     case "draft":
       return {
         headline: "Fill client, property & price",
-        detail: "You can Send to Customer as soon as figures are set — bidding is optional if you already have partner cost / sell price.",
-        goToTab: "send",
-        goToLabel: "Open email",
+        detail: "Use the pipeline actions to move to Awaiting Customer. Bidding is optional if you already have partner cost / sell price.",
       };
     case "in_survey":
       return {
         headline: "Site survey in progress",
-        detail: "When ready, send to the customer or open Bidding for partner quotes — both are valid; bids are not required if you use your own numbers.",
-        goToTab: "send",
-        goToLabel: "Open email",
+        detail: "When ready, use the pipeline actions to move to Awaiting Customer. You can also start Bidding if you want partner figures.",
       };
     case "bidding":
       return {
         headline: "Bids or your own figures",
-        detail: "Partner bids are optional. If Overview already has the right partner cost and sell price, go straight to Send to Customer.",
-        goToTab: "send",
-        goToLabel: "Open email",
+        detail: "Partner bids are optional. If Overview already has the right partner cost and sell price, move to Awaiting Customer and send the email.",
       };
     case "awaiting_customer":
       return {
@@ -206,7 +200,6 @@ export default function QuotesPage() {
   const [filterQuoteType, setFilterQuoteType] = useState<"all" | "internal" | "partner">("all");
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
-  const [quoteTypePopup, setQuoteTypePopup] = useState<{ open: boolean; onChoose?: (type: "internal" | "partner") => void }>({ open: false });
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -265,7 +258,7 @@ export default function QuotesPage() {
         catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
           ? String(formData.catalog_service_id).trim()
           : null,
-        status: "draft",
+        status: formData.status ?? "draft",
         total_value: formData.total_value ?? 0,
         partner_quotes_count: 0,
         cost: formData.cost ?? 0,
@@ -275,7 +268,11 @@ export default function QuotesPage() {
         deposit_required: 0,
         customer_accepted: false,
         customer_deposit_paid: false,
-        partner_cost: 0,
+        partner_id: formData.partner_id,
+        partner_name: formData.partner_name,
+        property_address: formData.property_address,
+        scope: formData.scope,
+        partner_cost: formData.partner_cost ?? 0,
       });
       await logAudit({ entityType: "quote", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
@@ -424,20 +421,7 @@ export default function QuotesPage() {
     toast.success("Quotes exported to CSV");
   }, [data]);
 
-  const handleNewQuoteClick = () => {
-    setQuoteTypePopup({
-      open: true,
-      onChoose: (type) => {
-        setQuoteTypePopup({ open: false });
-        if (type === "partner") {
-          handleCreate({ title: "", client_name: "", client_email: "", total_value: 0, quote_type: "partner" });
-          toast.info("Partner quote created. Invite partners from the quote card.");
-        } else {
-          setCreateOpen(true);
-        }
-      },
-    });
-  };
+  const handleNewQuoteClick = () => setCreateOpen(true);
 
   const columns: Column<Quote>[] = [
     {
@@ -649,32 +633,9 @@ export default function QuotesPage() {
         </motion.div>
       </div>
 
-      <Modal open={quoteTypePopup.open} onClose={() => setQuoteTypePopup({ open: false })} title="Create Quote" subtitle="How would you like to quote this?">
-        <div className="p-6 space-y-4">
-          <button onClick={() => quoteTypePopup.onChoose?.("internal")} className="w-full p-5 rounded-xl border-2 border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-left group">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center"><FileText className="h-6 w-6 text-blue-600" /></div>
-              <div>
-                <p className="text-sm font-bold text-text-primary group-hover:text-primary">Quote Internally</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Add line items, calculate total, set margin</p>
-              </div>
-            </div>
-          </button>
-          <button onClick={() => quoteTypePopup.onChoose?.("partner")} className="w-full p-5 rounded-xl border-2 border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-left group">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-amber-50 dark:bg-amber-950/30 flex items-center justify-center"><Users className="h-6 w-6 text-amber-600" /></div>
-              <div>
-                <p className="text-sm font-bold text-text-primary group-hover:text-primary">Invite Partner</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Send quote request to partners</p>
-              </div>
-            </div>
-          </button>
-        </div>
-      </Modal>
-
       <QuoteDetailDrawer quote={selectedQuote} onClose={() => setSelectedQuote(null)} onStatusChange={handleStatusChange} onQuoteUpdate={(q) => { setSelectedQuote(q); refresh(); }} />
       <CreateJobFromQuoteModal quote={quoteToConvert} onClose={() => setQuoteToConvert(null)} onSubmit={handleConfirmCreateJob} />
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Quote Internally" subtitle="Add line items and calculate total" size="lg">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create Quote" subtitle="Add line items and optionally request partner bids" size="lg">
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
     </PageTransition>
@@ -826,10 +787,20 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   const currentStep = stepMap[quote.status] ?? 0;
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
 
+  // Email flow step-by-step (only relevant when quote.status === "awaiting_customer")
+  const sendStep1Ready = scopeText.trim().length > 0 || lineItems.some((li) => li.description.trim().length > 0);
+  const sendStep2Ready = !!startDate1 || !!startDate2;
+  const sendDepositNumber = Number(depositRequired);
+  const sendStep3Ready =
+    sendDepositNumber >= 0 &&
+    !Number.isNaN(sendDepositNumber) &&
+    sendEmail.trim().includes("@");
+  const sendCurrentStep = !sendStep1Ready ? 1 : !sendStep2Ready ? 2 : !sendStep3Ready ? 3 : 4;
+
   const drawerTabs = [
     { id: "overview", label: "Overview" },
     { id: "bids", label: "Bids" },
-    { id: "send", label: "Email" },
+    ...(quote.status === "awaiting_customer" ? [{ id: "send", label: "Email" }] : []),
     { id: "history", label: "History" },
   ];
 
@@ -1214,11 +1185,45 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
           )}
 
           {/* SEND TO CUSTOMER TAB */}
-          {tab === "send" && (
+          {tab === "send" && quote.status === "awaiting_customer" && (
             <div className="p-6 space-y-5">
-              <div className="p-4 rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/10">
-                <p className="text-sm font-semibold text-text-primary">Send to Customer</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Email with scope, start date options, total price, and deposit required.</p>
+              <div className="p-4 rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/10 space-y-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">Send to Customer</p>
+                    <p className="text-xs text-text-tertiary mt-0.5">Step {sendCurrentStep} of 4</p>
+                  </div>
+                  <div className="flex gap-1 pt-0.5">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div
+                        key={i}
+                        className={cn(
+                          "h-2 w-8 rounded-full",
+                          i < sendCurrentStep ? "bg-primary/50" : i === sendCurrentStep ? "bg-primary" : "bg-border"
+                        )}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-[11px]">
+                  <div className="flex items-center justify-between">
+                    <span className={cn("font-medium", sendStep1Ready ? "text-primary" : "text-text-tertiary")}>Step 1: Scope / line items</span>
+                    <span className="text-text-tertiary">{sendStep1Ready ? "Ready" : "Pending"}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className={cn("font-medium", sendStep2Ready ? "text-primary" : "text-text-tertiary")}>Step 2: Start date options</span>
+                    <span className="text-text-tertiary">{sendStep2Ready ? "Ready" : "Pending"}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className={cn("font-medium", sendStep3Ready ? "text-primary" : "text-text-tertiary")}>Step 3: Deposit & customer email</span>
+                    <span className="text-text-tertiary">{sendStep3Ready ? "Ready" : "Pending"}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className={cn("font-medium", sendStep3Ready ? "text-primary" : "text-text-tertiary")}>Step 4: Preview & send</span>
+                    <span className="text-text-tertiary">{sendStep3Ready ? "Ready when preview loads" : "Complete step 3 first"}</span>
+                  </div>
+                </div>
               </div>
 
               {/* Line Items */}
@@ -1351,7 +1356,12 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                 </div>
               )}
 
-              <Button onClick={handleSendToCustomer} disabled={sendState === "sending" || sendState === "sent"} icon={sendState === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} className="w-full">
+              <Button
+                onClick={handleSendToCustomer}
+                disabled={sendState === "sending" || sendState === "sent" || !sendStep3Ready}
+                icon={sendState === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                className="w-full"
+              >
                 {sendState === "sending" ? "Sending..." : sendState === "sent" ? "Sent" : "Send to Customer"}
               </Button>
             </div>
@@ -1604,10 +1614,13 @@ function MarginCalculator({ cost, onSellPriceChange, onMarginChange }: { cost: n
 
 /* ========== CREATE QUOTE FORM ========== */
 function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>) => void; onCancel: () => void }) {
+  const [quoteType, setQuoteType] = useState<"internal" | "partner">("internal");
   const [form, setForm] = useState({ title: "", total_value: "", catalog_service_id: "" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", unitPrice: "0" }]);
   const [catalogList, setCatalogList] = useState<CatalogService[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [partnerId, setPartnerId] = useState("");
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const [sellPrice, setSellPrice] = useState(0);
@@ -1617,31 +1630,70 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
     listCatalogServicesForPicker().then(setCatalogList).catch(() => setCatalogList([]));
   }, []);
 
+  useEffect(() => {
+    if (quoteType !== "partner") return;
+    listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? [])).catch(() => setPartners([]));
+  }, [quoteType]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
+    if (quoteType === "partner" && !partnerId) { toast.error("Please select a partner"); return; }
     const cid = form.catalog_service_id.trim();
+    const selectedPartner = partners.find((p) => p.id === partnerId);
+    const scopeFromLineItems = lineItems
+      .map((li) => li.description.trim())
+      .filter(Boolean)
+      .join("\n");
     onSubmit({
       ...form,
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
       client_email: clientAddress.client_email,
+      property_address: clientAddress.property_address,
       catalog_service_id: cid && isUuid(cid) ? cid : null,
       total_value: sellPrice > 0 ? sellPrice : lineTotal,
       cost: lineTotal,
       sell_price: sellPrice > 0 ? sellPrice : lineTotal,
       margin_percent: marginPct,
-      quote_type: "internal",
+      quote_type: quoteType,
+      status: quoteType === "partner" ? "bidding" : "draft",
+      partner_id: quoteType === "partner" ? partnerId : undefined,
+      partner_name: quoteType === "partner" ? selectedPartner?.company_name : undefined,
+      scope: scopeFromLineItems.trim() ? scopeFromLineItems.trim() : undefined,
     });
     setForm({ title: "", total_value: "", catalog_service_id: "" });
     setClientAddress({ client_name: "", property_address: "" });
     setLineItems([{ description: "", quantity: "1", unitPrice: "0" }]);
+    setQuoteType("internal");
+    setPartners([]);
+    setPartnerId("");
   };
 
   return (
     <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      <Select
+        label="Quote type"
+        value={quoteType}
+        onChange={(e) => setQuoteType(e.target.value as "internal" | "partner")}
+        options={[
+          { value: "internal", label: "Internal quote" },
+          { value: "partner", label: "Bid for partner" },
+        ]}
+      />
+      {quoteType === "partner" && (
+        <Select
+          label="Partner"
+          value={partnerId}
+          onChange={(e) => setPartnerId(e.target.value)}
+          options={[
+            { value: "", label: partners.length ? "Select a partner" : "Loading partners..." },
+            ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name })),
+          ]}
+        />
+      )}
       <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Quote title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="e.g. Commercial HVAC Refurbishment" required /></div>
       <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
       <ServiceCatalogSelect
