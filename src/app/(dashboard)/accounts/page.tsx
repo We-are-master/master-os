@@ -98,6 +98,9 @@ const emptyForm = {
   company_name: "",
   contact_name: "",
   email: "",
+  address: "",
+  crn: "",
+  contact_number: "",
   industry: INDUSTRY_OPTIONS[0].value,
   credit_limit: "",
   payment_terms: PAYMENT_TERMS_OPTIONS[1].value,
@@ -164,6 +167,9 @@ export default function AccountsPage() {
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
         email: form.email.trim(),
+        address: form.address.trim() || null,
+        crn: form.crn.trim() || null,
+        contact_number: form.contact_number.trim() || null,
         industry: form.industry,
         status: "onboarding",
         credit_limit: Number(form.credit_limit) || 0,
@@ -366,6 +372,34 @@ export default function AccountsPage() {
             />
           </div>
 
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Address</label>
+            <Input
+              value={form.address}
+              onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+              placeholder="123 High Street, London"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">CRN</label>
+              <Input
+                value={form.crn}
+                onChange={(e) => setForm((f) => ({ ...f, crn: e.target.value }))}
+                placeholder="Company registration number"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Contact Number</label>
+              <Input
+                value={form.contact_number}
+                onChange={(e) => setForm((f) => ({ ...f, contact_number: e.target.value }))}
+                placeholder="+44 7700 900123"
+              />
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Select
               label="Industry"
@@ -430,6 +464,9 @@ function AccountDetailDrawer({
     company_name: "",
     contact_name: "",
     email: "",
+    address: "",
+    crn: "",
+    contact_number: "",
     industry: "",
     status: "onboarding" as Account["status"],
     credit_limit: "",
@@ -443,6 +480,9 @@ function AccountDetailDrawer({
       company_name: account.company_name,
       contact_name: account.contact_name,
       email: account.email,
+      address: account.address ?? "",
+      crn: account.crn ?? "",
+      contact_number: account.contact_number ?? "",
       industry: account.industry,
       status: account.status,
       credit_limit: String(account.credit_limit ?? 0),
@@ -547,6 +587,9 @@ function AccountDetailDrawer({
         company_name: edit.company_name.trim(),
         contact_name: edit.contact_name.trim(),
         email: edit.email.trim(),
+        address: edit.address.trim() || null,
+        crn: edit.crn.trim() || null,
+        contact_number: edit.contact_number.trim() || null,
         industry: edit.industry,
         status: edit.status,
         credit_limit: Number(edit.credit_limit) || 0,
@@ -652,6 +695,20 @@ function AccountDetailDrawer({
                 <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Email</label>
                   <Input type="email" value={edit.email} onChange={(e) => setEdit((p) => ({ ...p, email: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Address</label>
+                  <Input value={edit.address} onChange={(e) => setEdit((p) => ({ ...p, address: e.target.value }))} />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">CRN</label>
+                    <Input value={edit.crn} onChange={(e) => setEdit((p) => ({ ...p, crn: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contact number</label>
+                    <Input value={edit.contact_number} onChange={(e) => setEdit((p) => ({ ...p, contact_number: e.target.value }))} />
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Logo</label>
@@ -761,6 +818,9 @@ function AccountDetailDrawer({
                 <DetailRow icon={Mail} label="Email">
                   <a href={`mailto:${account.email}`} className="text-primary hover:underline break-all">{account.email}</a>
                 </DetailRow>
+                <DetailRow label="Contact number">{account.contact_number || "—"}</DetailRow>
+                <DetailRow label="CRN">{account.crn || "—"}</DetailRow>
+                <DetailRow label="Address">{account.address || "—"}</DetailRow>
                 <DetailRow icon={Building} label="Industry">{account.industry}</DetailRow>
                 <DetailRow label="Status"><Badge variant={st.variant} dot>{st.label}</Badge></DetailRow>
               </div>

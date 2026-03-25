@@ -9,6 +9,9 @@ function normalizeAccountInsert(input: AccountInsert): AccountInsert {
     email: input.email.trim().toLowerCase(),
     company_name: input.company_name.trim(),
     contact_name: input.contact_name.trim(),
+    address: input.address?.trim() || null,
+    crn: input.crn?.trim() || null,
+    contact_number: input.contact_number?.trim() || null,
   };
 }
 
@@ -17,6 +20,9 @@ function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
   if (next.email !== undefined) next.email = next.email.trim().toLowerCase();
   if (next.company_name !== undefined) next.company_name = next.company_name.trim();
   if (next.contact_name !== undefined) next.contact_name = next.contact_name.trim();
+  if (next.address !== undefined) next.address = next.address?.trim() || null;
+  if (next.crn !== undefined) next.crn = next.crn?.trim() || null;
+  if (next.contact_number !== undefined) next.contact_number = next.contact_number?.trim() || null;
   if (next.logo_url !== undefined) {
     const t = typeof next.logo_url === "string" ? next.logo_url.trim() : "";
     next.logo_url = t.length > 0 ? t : null;

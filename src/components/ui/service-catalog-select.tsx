@@ -2,6 +2,7 @@
 
 import { Select } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/utils";
+import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
 import type { CatalogService } from "@/types/database";
 
 type Props = {
@@ -33,10 +34,10 @@ export function ServiceCatalogSelect({
         { value: "", label: "— Custom only (no template) —" },
         ...catalog.map((c) => ({
           value: c.id,
-          label: `${c.name} — ${
-            c.pricing_mode === "fixed"
-              ? formatCurrency(c.fixed_price)
-              : `${formatCurrency(c.hourly_rate)}/h × ${Number(c.default_hours) || 1}h`
+          label: `${c.name} — Sell: ${formatCurrency(estimatedValueFromCatalog(c))}${
+            c.pricing_mode === "hourly"
+              ? ` (${formatCurrency(c.hourly_rate)}/h × ${Number(c.default_hours) || 1}h)`
+              : ""
           }`,
         })),
       ]}
