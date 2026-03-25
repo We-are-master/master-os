@@ -272,7 +272,7 @@ export default function QuotesPage() {
         partner_name: formData.partner_name,
         property_address: formData.property_address,
         scope: formData.scope,
-        partner_cost: formData.partner_cost ?? 0,
+        partner_cost: formData.partner_cost ?? formData.cost ?? 0,
       });
       await logAudit({ entityType: "quote", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
@@ -1787,16 +1787,19 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                 return next;
               });
               if (!svc) return;
-              const partnerCostTotal = Number(svc.partner_cost ?? 0);
+              const partnerCostTotalRaw = Number(svc.partner_cost ?? 0);
               const sellTotal = estimatedValueFromCatalog(svc);
-              const computedMarginPct = sellTotal > 0 ? Math.round(((sellTotal - partnerCostTotal) / sellTotal) * 1000) / 10 : 0;
+              // Backward-compat: if partner_cost wasn't configured yet, fall back to template value.
+              const partnerCostTotal = partnerCostTotalRaw > 0 ? partnerCostTotalRaw : sellTotal;
+              const computedMarginPct = sellTotal > 0 ? Math.round(((sellTotal - partnerCostTotalRaw) / sellTotal) * 1000) / 10 : 0;
 
               const isFixed = svc.pricing_mode === "fixed";
               const qty = isFixed ? 1 : Math.max(0.25, Number(svc.default_hours) || 1);
               const unitCost = qty > 0 ? partnerCostTotal / qty : 0;
               const description = svc.default_description?.trim() || (isFixed ? svc.name : `${svc.name} (labour)`);
 
-              setTemplateInitialMarginPct(computedMarginPct);
+              // Keep 40% default margin if partner_cost wasn't set (raw == 0).
+              setTemplateInitialMarginPct(partnerCostTotalRaw > 0 ? computedMarginPct : 40);
               setLineItems((prev) => {
                 const rest = prev.slice(1);
                 return [{ description, quantity: String(qty), unitPrice: String(unitCost) }, ...rest];
