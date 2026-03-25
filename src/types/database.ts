@@ -263,6 +263,9 @@ export interface Account {
   company_name: string;
   contact_name: string;
   email: string;
+  address?: string | null;
+  crn?: string | null;
+  contact_number?: string | null;
   industry: string;
   status: "active" | "onboarding" | "inactive";
   credit_limit: number;

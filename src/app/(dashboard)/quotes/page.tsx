@@ -1823,13 +1823,28 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-1 pt-1">
-                    <span className="text-xs font-semibold text-text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
+                    {(() => {
+                      const partnerLine = (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0);
+                      const ratio = lineTotal > 0 ? partnerLine / lineTotal : 0;
+                      const sellLine = (Number(sellPrice) || 0) * ratio;
+                      return (
+                        <>
+                          <span className="text-[10px] text-text-tertiary">Partner: <span className="font-semibold text-text-primary">{formatCurrency(partnerLine)}</span></span>
+                          <span className="text-[10px] text-text-tertiary">Sell: <span className="font-semibold text-primary">{formatCurrency(sellLine)}</span></span>
+                        </>
+                      );
+                    })()}
                     {lineItems.length > 1 && <button type="button" onClick={() => setLineItems((prev) => prev.filter((_, i) => i !== idx))} className="text-text-tertiary hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>}
                   </div>
                 </div>
               ))}
             </div>
-            <div className="flex justify-end mt-2 pt-2 border-t border-border-light"><span className="text-sm font-bold text-text-primary">Partner cost total: {formatCurrency(lineTotal)}</span></div>
+            <div className="flex justify-end mt-2 pt-2 border-t border-border-light">
+              <div className="text-right space-y-0.5">
+                <p className="text-sm font-bold text-text-primary">Partner cost total: {formatCurrency(lineTotal)}</p>
+                <p className="text-sm font-bold text-primary">Sell price total: {formatCurrency(sellPrice)}</p>
+              </div>
+            </div>
           </div>
           {lineTotal >= 0 && (
             <MarginCalculator

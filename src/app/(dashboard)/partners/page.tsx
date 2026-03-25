@@ -495,6 +495,7 @@ interface PartnerDoc {
   name: string;
   doc_type: string;
   status: string;
+  uploaded_by?: string;
   file_name?: string;
   /** Path inside `partner-documents` bucket */
   file_path?: string | null;
@@ -648,6 +649,126 @@ function AddPartnerDocumentModal({
   );
 }
 
+function PartnerDocumentDetailModal({
+  doc,
+  onClose,
+}: {
+  doc: PartnerDoc | null;
+  onClose: () => void;
+}) {
+  const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [loadingUrls, setLoadingUrls] = useState(false);
+
+  useEffect(() => {
+    if (!doc) return;
+    let cancelled = false;
+    setLoadingUrls(true);
+    Promise.all([
+      doc.file_path ? getPartnerDocumentSignedUrl(doc.file_path) : Promise.resolve(null),
+      doc.preview_image_path ? getPartnerDocumentSignedUrl(doc.preview_image_path) : Promise.resolve(null),
+    ])
+      .then(([f, p]) => {
+        if (cancelled) return;
+        setFileUrl(f);
+        setPreviewUrl(p);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFileUrl(null);
+        setPreviewUrl(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingUrls(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [doc?.id, doc?.file_path, doc?.preview_image_path]);
+
+  if (!doc) return null;
+  const typeConfig = docTypeLabels[doc.doc_type] || docTypeLabels.other;
+  const statusCfg = docStatusConfig[doc.status] || docStatusConfig.pending;
+  const isExpired = !!(doc.expires_at && new Date(doc.expires_at) < new Date());
+
+  return (
+    <Modal open={!!doc} onClose={onClose} title={doc.name} subtitle="Document details" size="md">
+      <div className="px-6 py-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Badge variant={statusCfg.variant} size="sm">{statusCfg.label}</Badge>
+          {isExpired && <Badge variant="danger" size="sm">Expired</Badge>}
+          <span className="text-xs text-text-tertiary">{typeConfig.label}</span>
+        </div>
+
+        {previewUrl && (
+          <div className="rounded-xl border border-border-light overflow-hidden">
+            <img src={previewUrl} alt={doc.name} className="w-full max-h-64 object-contain bg-surface-hover" />
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <div className="rounded-lg bg-surface-hover p-3">
+            <p className="text-text-tertiary">File</p>
+            <p className="text-text-primary font-medium truncate mt-0.5">{doc.file_name ?? "—"}</p>
+          </div>
+          <div className="rounded-lg bg-surface-hover p-3">
+            <p className="text-text-tertiary">Uploaded</p>
+            <p className="text-text-primary font-medium mt-0.5">{new Date(doc.created_at).toLocaleString()}</p>
+          </div>
+          <div className="rounded-lg bg-surface-hover p-3">
+            <p className="text-text-tertiary">Expiration date</p>
+            <p className={`font-medium mt-0.5 ${isExpired ? "text-red-500" : "text-text-primary"}`}>
+              {doc.expires_at ? new Date(doc.expires_at).toLocaleDateString() : "No expiry"}
+            </p>
+          </div>
+          <div className="rounded-lg bg-surface-hover p-3">
+            <p className="text-text-tertiary">Uploaded by</p>
+            <p className="text-text-primary font-medium mt-0.5">{doc.uploaded_by ?? "—"}</p>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button type="button" variant="outline" size="sm" onClick={onClose}>Close</Button>
+          {doc.file_path && (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={loadingUrls || !fileUrl}
+                onClick={() => {
+                  if (!fileUrl) return;
+                  window.open(fileUrl, "_blank", "noopener,noreferrer");
+                }}
+                icon={<Eye className="h-3.5 w-3.5" />}
+              >
+                Open file
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={loadingUrls || !fileUrl}
+                onClick={() => {
+                  if (!fileUrl) return;
+                  const a = document.createElement("a");
+                  a.href = fileUrl;
+                  a.download = doc.file_name || "document";
+                  a.target = "_blank";
+                  a.rel = "noopener noreferrer";
+                  a.click();
+                }}
+                icon={<Download className="h-3.5 w-3.5" />}
+              >
+                Download
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function PartnerDetailDrawer({
   partner,
   teamMember,
@@ -690,6 +811,18 @@ function PartnerDetailDrawer({
   const [addDocSubmitting, setAddDocSubmitting] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const partnerAvatarInputRef = useRef<HTMLInputElement>(null);
+  const [selectedDoc, setSelectedDoc] = useState<PartnerDoc | null>(null);
+  const [editingOverview, setEditingOverview] = useState(false);
+  const [overviewForm, setOverviewForm] = useState({
+    company_name: "",
+    contact_name: "",
+    email: "",
+    phone: "",
+    trade: TRADES[0],
+    location: "",
+    rating: "",
+    compliance_score: "",
+  });
 
   useEffect(() => {
     if (teamMember) {
@@ -746,9 +879,56 @@ function PartnerDetailDrawer({
   useEffect(() => {
     if (partner) {
       setTab("overview");
+      setSelectedDoc(null);
       loadAll(partner);
+      setEditingOverview(false);
+      setOverviewForm({
+        company_name: partner.company_name ?? "",
+        contact_name: partner.contact_name ?? "",
+        email: partner.email ?? "",
+        phone: partner.phone ?? "",
+        trade: partner.trade ?? TRADES[0],
+        location: partner.location ?? "",
+        rating: String(partner.rating ?? 0),
+        compliance_score: String(partner.compliance_score ?? 0),
+      });
     }
   }, [partner, loadAll]);
+
+  const handleSaveOverview = useCallback(async () => {
+    if (!partner) return;
+    if (!overviewForm.company_name.trim() || !overviewForm.contact_name.trim() || !overviewForm.email.trim()) {
+      toast.error("Company name, contact name and email are required.");
+      return;
+    }
+    const rating = Number(overviewForm.rating || "0");
+    const compliance = Number(overviewForm.compliance_score || "0");
+    if (Number.isNaN(rating) || rating < 0 || rating > 5) {
+      toast.error("Rating must be between 0 and 5.");
+      return;
+    }
+    if (Number.isNaN(compliance) || compliance < 0 || compliance > 100) {
+      toast.error("Compliance must be between 0 and 100.");
+      return;
+    }
+    try {
+      const updated = await updatePartner(partner.id, {
+        company_name: overviewForm.company_name.trim(),
+        contact_name: overviewForm.contact_name.trim(),
+        email: overviewForm.email.trim(),
+        phone: overviewForm.phone.trim() || undefined,
+        trade: overviewForm.trade,
+        location: overviewForm.location.trim(),
+        rating,
+        compliance_score: compliance,
+      });
+      onPartnerUpdate?.(updated);
+      setEditingOverview(false);
+      toast.success("Partner updated");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update");
+    }
+  }, [partner, overviewForm, onPartnerUpdate]);
 
   const handleAddDocument = async (docType: string, name: string, file: File, previewFile: File | null, expiresAt?: string) => {
     if (!partner) return;
@@ -1008,6 +1188,66 @@ function PartnerDetailDrawer({
   const totalJobValue = partnerJobs.reduce((s, j) => s + Number(j.client_price || 0), 0);
   const totalPaidOut = selfBills.filter((s) => s.status === "paid").reduce((s, sb) => s + Number(sb.net_payout), 0);
   const pendingPayout = selfBills.filter((s) => s.status === "awaiting_payment" || s.status === "ready_to_pay").reduce((s, sb) => s + Number(sb.net_payout), 0);
+  const now = new Date();
+  const in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const expiredDocs = documents.filter((d) => d.expires_at && new Date(d.expires_at) < now);
+  const expiringSoonDocs = documents.filter((d) => d.expires_at && new Date(d.expires_at) >= now && new Date(d.expires_at) <= in30Days);
+  const auditRequiredBills = selfBills.filter((s) => s.status === "audit_required");
+  const pendingBills = selfBills.filter((s) => s.status === "awaiting_payment" || s.status === "ready_to_pay");
+  const overduePendingBills = pendingBills.filter((s) => {
+    const created = new Date(s.created_at);
+    const ageMs = now.getTime() - created.getTime();
+    return ageMs > 14 * 24 * 60 * 60 * 1000;
+  });
+  const overviewAlerts: { key: string; level: "danger" | "warning"; text: string }[] = [];
+  if (expiredDocs.length > 0) {
+    overviewAlerts.push({
+      key: "docs-expired",
+      level: "danger",
+      text: `${expiredDocs.length} document(s) expired and require renewal.`,
+    });
+  }
+  if (expiringSoonDocs.length > 0) {
+    overviewAlerts.push({
+      key: "docs-expiring",
+      level: "warning",
+      text: `${expiringSoonDocs.length} document(s) will expire in the next 30 days.`,
+    });
+  }
+  if (Number(partner.rating ?? 0) > 0 && Number(partner.rating ?? 0) < 3) {
+    overviewAlerts.push({
+      key: "low-rating",
+      level: "warning",
+      text: `Low rating (${partner.rating}/5). Review service quality and feedback.`,
+    });
+  }
+  if (Number(partner.compliance_score ?? 0) < 70) {
+    overviewAlerts.push({
+      key: "low-compliance",
+      level: "warning",
+      text: `Compliance score is ${partner.compliance_score}%. Follow up on missing requirements.`,
+    });
+  }
+  if (overduePendingBills.length > 0) {
+    overviewAlerts.push({
+      key: "overdue-payments",
+      level: "danger",
+      text: `${overduePendingBills.length} payment(s) overdue (>14 days) in self-bills.`,
+    });
+  } else if (pendingBills.length > 0) {
+    overviewAlerts.push({
+      key: "pending-payments",
+      level: "warning",
+      text: `${pendingBills.length} payment(s) pending in self-bills.`,
+    });
+  }
+  if (auditRequiredBills.length > 0) {
+    overviewAlerts.push({
+      key: "audit-required",
+      level: "danger",
+      text: `${auditRequiredBills.length} self-bill(s) require audit.`,
+    });
+  }
 
   const drawerTabs = [
     { id: "overview", label: "Overview" },
@@ -1030,6 +1270,22 @@ function PartnerDetailDrawer({
         {/* ========== OVERVIEW ========== */}
         {tab === "overview" && (
           <div className="p-6 space-y-5">
+            {overviewAlerts.length > 0 && (
+              <div className="rounded-xl border border-amber-200/60 dark:border-amber-900/50 bg-amber-50/70 dark:bg-amber-950/20 p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  <p className="text-sm font-semibold text-text-primary">Attention alerts</p>
+                </div>
+                <div className="space-y-1.5">
+                  {overviewAlerts.map((a) => (
+                    <div key={a.key} className="flex items-start gap-2">
+                      <span className={`mt-1 h-1.5 w-1.5 rounded-full ${a.level === "danger" ? "bg-red-500" : "bg-amber-500"}`} />
+                      <p className={`text-xs ${a.level === "danger" ? "text-red-600 dark:text-red-400" : "text-amber-700 dark:text-amber-300"}`}>{a.text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex items-start gap-4">
               <div className="flex flex-col items-center gap-2 shrink-0">
                 <Avatar name={partner.company_name} size="xl" src={partner.avatar_url ?? undefined} />
@@ -1067,22 +1323,104 @@ function PartnerDetailDrawer({
                 </Button>
               </div>
               <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-lg font-bold text-text-primary">{partner.company_name}</h3>
+                <div className="flex items-center justify-between gap-2">
+                  {editingOverview ? (
+                    <Input
+                      value={overviewForm.company_name}
+                      onChange={(e) => setOverviewForm((p) => ({ ...p, company_name: e.target.value }))}
+                      className="h-9"
+                    />
+                  ) : (
+                    <h3 className="text-lg font-bold text-text-primary">{partner.company_name}</h3>
+                  )}
                   {partner.verified && <ShieldCheck className="h-4 w-4 text-emerald-500" />}
+                  {isAdmin && (
+                    <Button
+                      size="sm"
+                      variant={editingOverview ? "outline" : "ghost"}
+                      onClick={() => {
+                        if (editingOverview) {
+                          setEditingOverview(false);
+                          setOverviewForm({
+                            company_name: partner.company_name ?? "",
+                            contact_name: partner.contact_name ?? "",
+                            email: partner.email ?? "",
+                            phone: partner.phone ?? "",
+                            trade: partner.trade ?? TRADES[0],
+                            location: partner.location ?? "",
+                            rating: String(partner.rating ?? 0),
+                            compliance_score: String(partner.compliance_score ?? 0),
+                          });
+                        } else {
+                          setEditingOverview(true);
+                        }
+                      }}
+                    >
+                      {editingOverview ? "Cancel" : "Edit"}
+                    </Button>
+                  )}
                 </div>
-                <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
+                {editingOverview ? (
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <Input
+                      value={overviewForm.contact_name}
+                      onChange={(e) => setOverviewForm((p) => ({ ...p, contact_name: e.target.value }))}
+                      placeholder="Contact name"
+                    />
+                    <select
+                      value={overviewForm.trade}
+                      onChange={(e) => setOverviewForm((p) => ({ ...p, trade: e.target.value }))}
+                      className="h-9 px-3 rounded-lg border border-border text-sm text-text-secondary bg-card focus:outline-none focus:ring-2 focus:ring-primary/15"
+                    >
+                      {TRADES.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                ) : (
+                  <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
+                )}
                 <div className="flex items-center gap-2 mt-1">
                   <Badge variant={config.variant} dot size="md">{config.label}</Badge>
-                  <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[partner.trade] || "bg-surface-tertiary text-text-primary"}`}>{partner.trade}</span>
+                  <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[editingOverview ? overviewForm.trade : partner.trade] || "bg-surface-tertiary text-text-primary"}`}>
+                    {editingOverview ? overviewForm.trade : partner.trade}
+                  </span>
                 </div>
               </div>
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm text-text-secondary"><Mail className="h-4 w-4 text-text-tertiary" />{partner.email}</div>
-              {partner.phone && <div className="flex items-center gap-2 text-sm text-text-secondary"><Phone className="h-4 w-4 text-text-tertiary" />{partner.phone}</div>}
-              <div className="flex items-center gap-2 text-sm text-text-secondary"><MapPin className="h-4 w-4 text-text-tertiary" />{partner.location}</div>
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <Mail className="h-4 w-4 text-text-tertiary" />
+                {editingOverview ? (
+                  <Input
+                    type="email"
+                    value={overviewForm.email}
+                    onChange={(e) => setOverviewForm((p) => ({ ...p, email: e.target.value }))}
+                    className="h-8"
+                  />
+                ) : partner.email}
+              </div>
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <Phone className="h-4 w-4 text-text-tertiary" />
+                {editingOverview ? (
+                  <Input
+                    type="tel"
+                    value={overviewForm.phone}
+                    onChange={(e) => setOverviewForm((p) => ({ ...p, phone: e.target.value }))}
+                    placeholder="Phone"
+                    className="h-8"
+                  />
+                ) : (partner.phone || "—")}
+              </div>
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <MapPin className="h-4 w-4 text-text-tertiary" />
+                {editingOverview ? (
+                  <Input
+                    value={overviewForm.location}
+                    onChange={(e) => setOverviewForm((p) => ({ ...p, location: e.target.value }))}
+                    className="h-8"
+                  />
+                ) : partner.location}
+              </div>
               <div className="flex items-center gap-2 text-sm text-text-secondary"><Calendar className="h-4 w-4 text-text-tertiary" />Joined {new Date(partner.joined_at).toLocaleDateString()}</div>
             </div>
 
@@ -1109,18 +1447,72 @@ function PartnerDetailDrawer({
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
                 <div className="flex items-center gap-1.5 mt-1">
                   <Star className="h-4 w-4 text-amber-400 fill-amber-400" />
-                  <span className="text-xl font-bold text-text-primary">{partner.rating}</span>
+                  {editingOverview ? (
+                    <Input
+                      type="number"
+                      min={0}
+                      max={5}
+                      step="0.1"
+                      value={overviewForm.rating}
+                      onChange={(e) => setOverviewForm((p) => ({ ...p, rating: e.target.value }))}
+                      className="h-8 w-24"
+                    />
+                  ) : (
+                    <span className="text-xl font-bold text-text-primary">{partner.rating}</span>
+                  )}
                   <span className="text-xs text-text-tertiary">/5.0</span>
                 </div>
               </div>
               <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Compliance</p>
                 <div className="mt-1">
-                  <span className="text-xl font-bold text-text-primary">{partner.compliance_score}%</span>
-                  <Progress value={partner.compliance_score} size="sm" color={partner.compliance_score >= 90 ? "emerald" : partner.compliance_score >= 70 ? "primary" : "amber"} className="mt-1" />
+                  {editingOverview ? (
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="1"
+                      value={overviewForm.compliance_score}
+                      onChange={(e) => setOverviewForm((p) => ({ ...p, compliance_score: e.target.value }))}
+                      className="h-8 w-24"
+                    />
+                  ) : (
+                    <span className="text-xl font-bold text-text-primary">{partner.compliance_score}%</span>
+                  )}
+                  <Progress
+                    value={editingOverview ? Number(overviewForm.compliance_score || 0) : partner.compliance_score}
+                    size="sm"
+                    color={(editingOverview ? Number(overviewForm.compliance_score || 0) : partner.compliance_score) >= 90 ? "emerald" : (editingOverview ? Number(overviewForm.compliance_score || 0) : partner.compliance_score) >= 70 ? "primary" : "amber"}
+                    className="mt-1"
+                  />
                 </div>
               </div>
             </div>
+            {isAdmin && editingOverview && (
+              <div className="flex gap-2">
+                <Button size="sm" className="flex-1" onClick={handleSaveOverview}>Save changes</Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setEditingOverview(false);
+                    setOverviewForm({
+                      company_name: partner.company_name ?? "",
+                      contact_name: partner.contact_name ?? "",
+                      email: partner.email ?? "",
+                      phone: partner.phone ?? "",
+                      trade: partner.trade ?? TRADES[0],
+                      location: partner.location ?? "",
+                      rating: String(partner.rating ?? 0),
+                      compliance_score: String(partner.compliance_score ?? 0),
+                    });
+                  }}
+                >
+                  Discard
+                </Button>
+              </div>
+            )}
 
             <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light">
               <div className="flex items-center justify-between">
@@ -1372,6 +1764,7 @@ function PartnerDetailDrawer({
               submitting={addDocSubmitting}
               onSubmit={handleAddDocument}
             />
+            <PartnerDocumentDetailModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
             {loadingDocs && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}</div>}
             {!loadingDocs && documents.length === 0 && (
               <div className="py-12 text-center">
@@ -1386,7 +1779,12 @@ function PartnerDetailDrawer({
               const Icon = typeConfig.icon;
               const isExpired = doc.expires_at && new Date(doc.expires_at) < new Date();
               return (
-                <motion.div key={doc.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
+                <motion.div
+                  key={doc.id}
+                  variants={staggerItem}
+                  className="p-4 rounded-xl border border-border-light hover:border-border transition-colors cursor-pointer"
+                  onClick={() => setSelectedDoc(doc)}
+                >
                   <div className="flex items-start gap-3">
                     {doc.preview_image_path ? (
                       <PartnerDocPreviewThumb path={doc.preview_image_path} />
@@ -1410,7 +1808,8 @@ function PartnerDetailDrawer({
                         <>
                           <button
                             type="button"
-                            onClick={async () => {
+                            onClick={async (e) => {
+                              e.stopPropagation();
                               try {
                                 const u = await getPartnerDocumentSignedUrl(doc.file_path!);
                                 window.open(u, "_blank", "noopener,noreferrer");
@@ -1425,7 +1824,8 @@ function PartnerDetailDrawer({
                           </button>
                           <button
                             type="button"
-                            onClick={async () => {
+                            onClick={async (e) => {
+                              e.stopPropagation();
                               try {
                                 const u = await getPartnerDocumentSignedUrl(doc.file_path!);
                                 const a = document.createElement("a");
@@ -1447,11 +1847,11 @@ function PartnerDetailDrawer({
                       )}
                       {doc.status === "pending" && (
                         <>
-                          <button onClick={() => handleDocStatusChange(doc.id, "approved")} className="h-7 w-7 rounded-lg flex items-center justify-center text-emerald-600 hover:bg-emerald-50 dark:bg-emerald-950/30 transition-colors" title="Approve"><CheckCircle2 className="h-4 w-4" /></button>
-                          <button onClick={() => handleDocStatusChange(doc.id, "rejected")} className="h-7 w-7 rounded-lg flex items-center justify-center text-red-500 hover:bg-red-50 dark:bg-red-950/30 transition-colors" title="Reject"><XCircle className="h-4 w-4" /></button>
+                          <button onClick={(e) => { e.stopPropagation(); handleDocStatusChange(doc.id, "approved"); }} className="h-7 w-7 rounded-lg flex items-center justify-center text-emerald-600 hover:bg-emerald-50 dark:bg-emerald-950/30 transition-colors" title="Approve"><CheckCircle2 className="h-4 w-4" /></button>
+                          <button onClick={(e) => { e.stopPropagation(); handleDocStatusChange(doc.id, "rejected"); }} className="h-7 w-7 rounded-lg flex items-center justify-center text-red-500 hover:bg-red-50 dark:bg-red-950/30 transition-colors" title="Reject"><XCircle className="h-4 w-4" /></button>
                         </>
                       )}
-                      <button onClick={() => handleDeleteDoc(doc.id)} className="h-7 w-7 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-red-500 transition-colors" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDeleteDoc(doc.id); }} className="h-7 w-7 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-red-500 transition-colors" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>
                   </div>
                 </motion.div>
