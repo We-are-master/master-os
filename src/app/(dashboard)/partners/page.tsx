@@ -558,18 +558,20 @@ function AddPartnerDocumentModal({
   open: boolean;
   onClose: () => void;
   submitting: boolean;
-  onSubmit: (docType: string, name: string, file: File, preview: File | null) => Promise<void>;
+  onSubmit: (docType: string, name: string, file: File, preview: File | null, expiresAt?: string) => Promise<void>;
 }) {
   const [docType, setDocType] = useState("insurance");
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<File | null>(null);
+  const [expiresAt, setExpiresAt] = useState("");
 
   useEffect(() => {
     if (!open) {
       setName("");
       setFile(null);
       setPreview(null);
+      setExpiresAt("");
       setDocType("insurance");
     }
   }, [open]);
@@ -584,7 +586,7 @@ function AddPartnerDocumentModal({
       toast.error("Choose a document file");
       return;
     }
-    void onSubmit(docType, name.trim(), file, preview);
+    void onSubmit(docType, name.trim(), file, preview, expiresAt.trim() ? expiresAt.trim() : undefined);
   };
 
   return (
@@ -607,6 +609,11 @@ function AddPartnerDocumentModal({
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Name *</label>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Public liability 2025" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Expiration date (optional)</label>
+          <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
+          <p className="text-[10px] text-text-tertiary mt-1">Used to mark documents as Expired automatically.</p>
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Document file *</label>
@@ -743,11 +750,12 @@ function PartnerDetailDrawer({
     }
   }, [partner, loadAll]);
 
-  const handleAddDocument = async (docType: string, name: string, file: File, previewFile: File | null) => {
+  const handleAddDocument = async (docType: string, name: string, file: File, previewFile: File | null, expiresAt?: string) => {
     if (!partner) return;
     const supabase = getSupabase();
     setAddDocSubmitting(true);
     try {
+      const expiresIso = expiresAt && expiresAt.trim() ? new Date(expiresAt).toISOString() : null;
       const { data: row, error: insErr } = await supabase
         .from("partner_documents")
         .insert({
@@ -756,6 +764,7 @@ function PartnerDetailDrawer({
           doc_type: docType,
           status: "pending",
           uploaded_by: profile?.full_name,
+          expires_at: expiresIso,
         })
         .select()
         .single();
