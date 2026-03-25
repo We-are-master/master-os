@@ -23,7 +23,7 @@ import {
   FileText, BarChart3, Clock, ArrowRight,
   Send, CheckCircle2, RotateCcw, XCircle,
   Mail, Building2,
-  Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal,
+  Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
   ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -385,15 +385,20 @@ export default function QuotesPage() {
   );
 
   const handleStatusChange = useCallback(
-    async (quote: Quote, newStatus: string) => {
-      if (newStatus === "create_job") { setQuoteToConvert(quote); return; }
+    async (quote: Quote, newStatus: string): Promise<boolean> => {
+      if (newStatus === "create_job") {
+        setQuoteToConvert(quote);
+        return true;
+      }
       const check = canAdvanceQuote(quote, newStatus);
       if (!check.ok) {
         toast.error(check.message ?? "Complete the current step before advancing.");
-        return;
+        return false;
       }
       if (newStatus === "awaiting_customer" && (quote.margin_percent ?? 0) < 25 && (quote.margin_percent ?? 0) > 0) {
-        if (typeof window !== "undefined" && !window.confirm("Margin is below 25%. Send quote to customer anyway?")) return;
+        if (typeof window !== "undefined" && !window.confirm("Margin is below 25%. Send quote to customer anyway?")) {
+          return false;
+        }
       }
       try {
         const updated = await updateQuote(quote.id, { status: newStatus as Quote["status"] });
@@ -401,10 +406,12 @@ export default function QuotesPage() {
         setSelectedQuote(updated);
         toast.success(`Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
         refresh(); loadCounts();
+        return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to update quote";
         toast.error(message);
         console.error("Quote status update failed:", err);
+        return false;
       }
     },
     [refresh, loadCounts, profile?.id, profile?.full_name]
@@ -643,7 +650,12 @@ export default function QuotesPage() {
 }
 
 /* ========== QUOTE DETAIL DRAWER ========== */
-function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { quote: Quote | null; onClose: () => void; onStatusChange: (quote: Quote, status: string) => void; onQuoteUpdate?: (updated: Quote) => void }) {
+function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
+  quote: Quote | null;
+  onClose: () => void;
+  onStatusChange: (quote: Quote, status: string) => void | Promise<boolean>;
+  onQuoteUpdate?: (updated: Quote) => void;
+}) {
   const { profile } = useProfile();
   const [tab, setTab] = useState("overview");
   const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
@@ -659,14 +671,16 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   const [panelPartnerCost, setPanelPartnerCost] = useState("");
   const [panelSellPrice, setPanelSellPrice] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
+  const [proposalSaving, setProposalSaving] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
   const isAdmin = profile?.role === "admin";
 
   useEffect(() => {
-    setTab("overview");
-  }, [quote?.id]);
+    if (!quote) return;
+    setTab(quote.quote_type === "partner" ? "bids" : "overview");
+  }, [quote?.id, quote?.quote_type]);
 
   useEffect(() => {
     if (!quote) return;
@@ -691,6 +705,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
       setDepositRequired(String(quote.deposit_required ?? 0));
       setStartDate1(quote.start_date_option_1 ?? "");
       setStartDate2(quote.start_date_option_2 ?? "");
+      setCustomMessage(quote.email_custom_message ?? "");
       setPanelPartnerCost(String(quote.partner_cost ?? quote.cost ?? 0));
       setPanelSellPrice(String(quote.sell_price ?? quote.total_value ?? 0));
       loadLineItems(quote.id);
@@ -779,6 +794,20 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
     listAssignableUsers().then(setAssignableUsers).catch(() => {});
   }, [isAdmin]);
 
+  const handleDrawerSellFromMargin = useCallback((v: number) => {
+    setPanelSellPrice(String(v));
+  }, []);
+
+  const handleDrawerMarginPct = useCallback(() => {}, []);
+
+  const drawerInitialMarginPct = useMemo(() => {
+    if (!quote) return 40;
+    const sp = Number(quote.sell_price ?? quote.total_value ?? 0);
+    const pc = Number(quote.partner_cost ?? quote.cost ?? 0);
+    const raw = sp > 0 ? Math.round(((sp - pc) / sp) * 1000) / 10 : 40;
+    return Math.min(60, Math.max(5, raw));
+  }, [quote]);
+
   if (!quote) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
@@ -810,30 +839,48 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
   const removeLineItem = (idx: number) => setLineItems((prev) => prev.filter((_, i) => i !== idx));
   const updateLineItem = (idx: number, field: string, value: string) => setLineItems((prev) => prev.map((item, i) => i === idx ? { ...item, [field]: value } : item));
 
-  const saveLineItems = async () => {
+  const persistProposalToQuote = async (): Promise<Quote> => {
     const supabase = getSupabase();
     await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
-    const items = lineItems.map((li, i) => ({ quote_id: quote.id, description: li.description, quantity: Number(li.quantity) || 1, unit_price: Number(li.unitPrice) || 0, sort_order: i }));
-    if (items.length > 0) await supabase.from("quote_line_items").insert(items);
-    await updateQuote(quote.id, { total_value: lineTotal, scope: scopeText.trim() || undefined });
-    toast.success("Line items saved");
+    const rows = lineItems.map((li, i) => ({
+      quote_id: quote.id,
+      description: li.description,
+      quantity: Number(li.quantity) || 1,
+      unit_price: Number(li.unitPrice) || 0,
+      sort_order: i,
+    }));
+    if (rows.length > 0) await supabase.from("quote_line_items").insert(rows);
+    return updateQuote(quote.id, {
+      total_value: lineTotal,
+      scope: scopeText.trim() || undefined,
+      deposit_required: Number(depositRequired) || 0,
+      start_date_option_1: startDate1 || undefined,
+      start_date_option_2: startDate2 || undefined,
+      client_email: sendEmail.trim(),
+      email_custom_message: customMessage.trim() || null,
+    });
   };
+
+  const saveProposalDraft = async () => {
+    setProposalSaving(true);
+    try {
+      const updated = await persistProposalToQuote();
+      onQuoteUpdate?.(updated);
+      toast.success("Proposal saved on this quote");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save proposal");
+    } finally {
+      setProposalSaving(false);
+    }
+  };
+
+  const saveLineItems = saveProposalDraft;
 
   const handleSendToCustomer = async () => {
     if (!sendEmail) { toast.error("Enter a recipient email"); return; }
     setSendState("sending");
     try {
-      await updateQuote(quote.id, {
-        deposit_required: Number(depositRequired) || 0,
-        start_date_option_1: startDate1 || undefined,
-        start_date_option_2: startDate2 || undefined,
-        scope: scopeText.trim() || undefined,
-        total_value: lineTotal,
-      });
-      const supabase = getSupabase();
-      await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
-      const dbItems = lineItems.map((li, i) => ({ quote_id: quote.id, description: li.description, quantity: Number(li.quantity) || 1, unit_price: Number(li.unitPrice) || 0, sort_order: i }));
-      if (dbItems.length > 0) await supabase.from("quote_line_items").insert(dbItems);
+      await persistProposalToQuote();
       const items = lineItems.map((li) => {
         const qty = Number(li.quantity) || 1;
         const unit = Number(li.unitPrice) || 0;
@@ -1001,60 +1048,29 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                   <div className="flex items-center gap-2 min-w-0">
                     <SlidersHorizontal className="h-4 w-4 shrink-0 text-text-tertiary" />
                     <span className="text-xs font-semibold text-text-secondary">Pricing & margin</span>
-                    <span className="text-[10px] text-text-tertiary truncate">Partner cost, sell price, save</span>
+                    <span className="text-[10px] text-text-tertiary truncate">Partner cost, margin slider, save</span>
                   </div>
                   <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="border-t border-border-light px-4 pb-4 space-y-3">
-                <div className="grid grid-cols-3 gap-3 pt-1">
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase mb-1">Partner Cost</p>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={panelPartnerCost}
-                      onChange={(e) => setPanelPartnerCost(e.target.value)}
-                      className="text-sm font-semibold h-9"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase mb-1">Sell Price</p>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={panelSellPrice}
-                      onChange={(e) => setPanelSellPrice(e.target.value)}
-                      className="text-sm font-semibold h-9 text-primary"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase mb-1">Margin %</p>
-                    <p className="text-sm font-bold h-9 flex items-center">
-                      {(() => {
-                        const sp = Number(panelSellPrice) || 0;
-                        const pc = Number(panelPartnerCost) || 0;
-                        const marginPct = sp > 0 ? Math.round(((sp - pc) / sp) * 1000) / 10 : 0;
-                        return (
-                          <span className={marginPct >= 40 ? "text-emerald-600" : marginPct >= 10 ? "text-amber-600" : "text-red-500"}>
-                            {marginPct}%
-                          </span>
-                        );
-                      })()}
-                    </p>
-                  </div>
+                <div className="pt-1">
+                  <p className="text-[10px] text-text-tertiary uppercase mb-1">Partner cost</p>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={panelPartnerCost}
+                    onChange={(e) => setPanelPartnerCost(e.target.value)}
+                    className="text-sm font-semibold h-9 max-w-[200px]"
+                  />
                 </div>
-                {(() => {
-                  const sp = Number(panelSellPrice) || 0;
-                  const pc = Number(panelPartnerCost) || 0;
-                  const marginPct = sp > 0 ? ((sp - pc) / sp) * 100 : 0;
-                  return marginPct < 40 && marginPct > 0 ? (
-                    <div className="mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200">
-                      <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">Below standard margin (40%)</p>
-                    </div>
-                  ) : null;
-                })()}
+                <MarginCalculator
+                  key={`margin-drawer-${quote.id}-${quote.updated_at}`}
+                  cost={Number(panelPartnerCost) || 0}
+                  initialMarginPct={drawerInitialMarginPct}
+                  onSellPriceChange={handleDrawerSellFromMargin}
+                  onMarginChange={handleDrawerMarginPct}
+                />
                 <Button
                   size="sm"
                   variant="primary"
@@ -1120,14 +1136,147 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: { 
                 </div>
               )}
 
+              {["draft", "in_survey", "bidding"].includes(quote.status) && (
+                <div className="rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-4 space-y-4">
+                  <div>
+                    <p className="text-xs font-semibold text-text-primary">Customer proposal (required before Send to Customer)</p>
+                    <p className="text-[11px] text-text-tertiary mt-0.5">
+                      Fill scope, line items, dates, deposit and email here first. Then use <strong className="text-text-secondary">Send to Customer</strong> below to move to Awaiting Customer and open the Email tab to preview and send.
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope / line items</label>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={addLineItem} className="text-[11px] font-medium text-primary hover:underline">+ Add item</button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {lineItems.map((item, idx) => (
+                        <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
+                          <div className="flex-1">
+                            <Input placeholder="Service / description" value={item.description} onChange={(e) => updateLineItem(idx, "description", e.target.value)} className="text-xs mb-1.5" />
+                            <div className="flex gap-2">
+                              <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => updateLineItem(idx, "quantity", e.target.value)} className="text-xs w-20" />
+                              <Input type="number" placeholder="Unit price" value={item.unitPrice} onChange={(e) => updateLineItem(idx, "unitPrice", e.target.value)} className="text-xs flex-1" />
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1 pt-1">
+                            <span className="text-xs font-semibold text-text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
+                            {lineItems.length > 1 && (
+                              <button type="button" onClick={() => removeLineItem(idx)} className="text-text-tertiary hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-end mt-2 pt-2 border-t border-border-light">
+                      <span className="text-sm font-bold text-text-primary">Total: {formatCurrency(lineTotal)}</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Scope of work (for email / PDF)</label>
+                    <textarea
+                      value={scopeText}
+                      onChange={(e) => setScopeText(e.target.value)}
+                      placeholder="Describe scope, inclusions and exclusions..."
+                      rows={4}
+                      className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 1</label>
+                      <Input type="date" value={startDate1} onChange={(e) => setStartDate1(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 2</label>
+                      <Input type="date" value={startDate2} onChange={(e) => setStartDate2(e.target.value)} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Deposit required</label>
+                    <Input type="number" value={depositRequired} onChange={(e) => setDepositRequired(e.target.value)} placeholder="0.00" min={0} step="0.01" />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Customer email</label>
+                    <Input type="email" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} placeholder="client@company.com" />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Personal message (optional)</label>
+                    <textarea
+                      value={customMessage}
+                      onChange={(e) => setCustomMessage(e.target.value)}
+                      placeholder="Add a short message that will appear in the email before the Accept/Reject buttons..."
+                      rows={3}
+                      className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={proposalSaving}
+                      onClick={() => void saveProposalDraft()}
+                      icon={proposalSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                    >
+                      {proposalSaving ? "Saving…" : "Save proposal"}
+                    </Button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <span className={cn("rounded-md px-2 py-0.5", sendStep1Ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-surface-hover text-text-tertiary")}>1 Scope / items</span>
+                    <span className={cn("rounded-md px-2 py-0.5", sendStep2Ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-surface-hover text-text-tertiary")}>2 Start dates</span>
+                    <span className={cn("rounded-md px-2 py-0.5", sendStep3Ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-surface-hover text-text-tertiary")}>3 Deposit & email</span>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2 pt-4 border-t border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Move this quote</p>
                 <p className="text-[11px] text-text-tertiary -mt-1 mb-1">
-                  Bidding is optional: you can go to <strong className="text-text-secondary">Send to Customer</strong> from Draft or Survey if client details and total value are set. Required fields are still enforced.
+                  After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer — the Email tab opens to preview and send the PDF.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {actions.map((action) => (
-                    <Button key={action.status} variant={action.primary ? "primary" : "outline"} size="sm" icon={<action.icon className="h-3.5 w-3.5" />} onClick={() => onStatusChange(quote, action.status)}>
+                    <Button
+                      key={action.status}
+                      variant={action.primary ? "primary" : "outline"}
+                      size="sm"
+                      disabled={proposalSaving}
+                      icon={<action.icon className="h-3.5 w-3.5" />}
+                      onClick={async () => {
+                        if (action.status !== "awaiting_customer") {
+                          const result = await Promise.resolve(onStatusChange(quote, action.status));
+                          if (result === false) return;
+                          return;
+                        }
+                        if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
+                          toast.error("Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).");
+                          return;
+                        }
+                        setProposalSaving(true);
+                        try {
+                          const updated = await persistProposalToQuote();
+                          onQuoteUpdate?.(updated);
+                          const result = await Promise.resolve(onStatusChange(updated, "awaiting_customer"));
+                          if (result === false) return;
+                          setTab("send");
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Failed to save proposal");
+                        } finally {
+                          setProposalSaving(false);
+                        }
+                      }}
+                    >
                       {action.label}
                     </Button>
                   ))}
@@ -1424,6 +1573,27 @@ function quoteBasicsForPipeline(quote: Quote): { ok: boolean; message?: string }
   return { ok: true };
 }
 
+/** Scope/line total, dates, deposit and email must be on the quote before moving to Awaiting Customer. */
+function proposalFieldsReadyForQuote(quote: Quote): { ok: boolean; message?: string } {
+  const hasScope = !!(quote.scope && quote.scope.trim());
+  const hasValue = Number(quote.total_value) > 0;
+  if (!hasScope && !hasValue) {
+    return { ok: false, message: "Add scope of work or line items with a total before sending to customer." };
+  }
+  if (!quote.start_date_option_1 && !quote.start_date_option_2) {
+    return { ok: false, message: "Set at least one proposed start date before sending to customer." };
+  }
+  const dep = Number(quote.deposit_required);
+  if (Number.isNaN(dep) || dep < 0) {
+    return { ok: false, message: "Set the deposit required (use 0 if none)." };
+  }
+  const email = (quote.client_email ?? "").trim();
+  if (!email.includes("@")) {
+    return { ok: false, message: "Set a valid customer email before sending to customer." };
+  }
+  return { ok: true };
+}
+
 function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; message?: string } {
   if (quote.status === "draft" && (nextStatus === "in_survey" || nextStatus === "bidding")) {
     return quoteBasicsForPipeline(quote);
@@ -1434,10 +1604,11 @@ function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; messa
     if (Number(quote.total_value) <= 0) {
       return { ok: false, message: "Set total value (sell price) before sending to customer — use Overview pricing or line items." };
     }
-    return { ok: true };
+    return proposalFieldsReadyForQuote(quote);
   }
   if (quote.status === "bidding" && nextStatus === "awaiting_customer") {
     if (Number(quote.total_value) <= 0) return { ok: false, message: "Set total value before sending to customer (Step 4: Margin & PDF)." };
+    return proposalFieldsReadyForQuote(quote);
   }
   return { ok: true };
 }

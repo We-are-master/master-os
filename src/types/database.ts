@@ -128,6 +128,8 @@ export interface Quote {
   customer_accepted: boolean;
   customer_deposit_paid: boolean;
   scope?: string;
+  /** Optional intro text for the customer email (saved on quote before send). */
+  email_custom_message?: string | null;
   property_address?: string;
   partner_id?: string;
   partner_name?: string;
