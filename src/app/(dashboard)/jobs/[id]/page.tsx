@@ -767,10 +767,9 @@ export default function JobDetailPage() {
           {/* ═══ LEFT — operational column ═══ */}
           <div className="lg:col-span-2 space-y-5">
 
-            {/* Job figures — flat strip above client card (no box) */}
-            <div className="w-full min-w-0 pb-1">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job figures</p>
-              <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-3 min-[480px]:grid-cols-4">
+            {/* Job amount / margin strip; px matches client card inner padding (p-4) */}
+            <div className="w-full min-w-0 px-4 pb-1">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 min-[480px]:grid-cols-4">
                 <div className="min-w-0">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
                   <p className="text-sm font-bold text-text-primary mt-1 tabular-nums truncate">{formatCurrency(billableRevenue)}</p>

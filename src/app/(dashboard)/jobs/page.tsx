@@ -47,7 +47,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
   in_progress_phase2: { label: "In Progress", variant: "primary", dot: true },
   in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
-  final_check: { label: "Final checks", variant: "warning", dot: true },
+  final_check: { label: "Final Checks", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
   need_attention: { label: "Needs attention", variant: "warning", dot: true },
   completed: { label: "Completed", variant: "success", dot: true },
@@ -97,7 +97,7 @@ function JobsPageContent() {
           items: filteredData.filter((j) => isJobWorkPhaseStatus(j.status)),
         };
       }
-      const title = id === "final_check" ? "Final checks" : (statusConfig[id]?.label ?? id);
+      const title = id === "final_check" ? "Final Checks" : (statusConfig[id]?.label ?? id);
       return {
         id,
         title,
@@ -156,7 +156,7 @@ function JobsPageContent() {
     { id: "scheduled", label: "Scheduled", count: tabCounts.scheduled ?? 0 },
     { id: "late", label: "Late", count: tabCounts.late ?? 0 },
     { id: "in_progress", label: "In progress", count: workPhaseTabCount },
-    { id: "final_check", label: "Final checks", count: tabCounts.final_check ?? 0 },
+    { id: "final_check", label: "Final Checks", count: tabCounts.final_check ?? 0 },
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
     { id: "need_attention", label: "Needs attention", count: tabCounts.need_attention ?? 0 },
     { id: "completed", label: "Completed", count: tabCounts.completed ?? 0 },
@@ -355,7 +355,7 @@ function JobsPageContent() {
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
         </PageHeader>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch [&>*]:min-w-0">
           <KpiCard title="Active Jobs" value={activeJobsKpi} format="number" icon={Briefcase} accent="blue" />
           <KpiCard title="Awaiting Payment" value={tabCounts.awaiting_payment ?? 0} format="number" icon={DollarSign} accent="amber" />
           <KpiCard title="Completed" value={tabCounts.completed ?? 0} format="number" icon={CheckCircle2} accent="emerald" />
