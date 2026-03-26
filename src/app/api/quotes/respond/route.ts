@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
           status: "scheduled",
           progress: 0,
           current_phase: 0,
-          total_phases: 3,
+          total_phases: 2,
           job_type: "fixed",
           client_price: totalValue,
           extras_amount: 0,

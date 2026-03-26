@@ -68,9 +68,9 @@ import {
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
-  in_progress_phase1: { label: "Phase 1", variant: "primary", dot: true },
-  in_progress_phase2: { label: "Phase 2", variant: "primary", dot: true },
-  in_progress_phase3: { label: "Phase 3", variant: "primary", dot: true },
+  in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
+  in_progress_phase2: { label: "In Progress", variant: "primary", dot: true },
+  in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
   final_check: { label: "Final Check", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
   need_attention: { label: "Need attention", variant: "warning", dot: true },
@@ -625,6 +625,7 @@ export default function JobDetailPage() {
 
   const statusActions = getJobStatusActions(job);
   const phaseCount = normalizeTotalPhases(job.total_phases);
+  const displayPhase = phaseCount === 2 ? (job.report_2_uploaded ? 2 : 1) : 1;
   const sendReportFinalCheck = canSendReportAndRequestFinalPayment(job);
 
   return (
@@ -695,7 +696,7 @@ export default function JobDetailPage() {
                     <p className="text-sm text-text-primary mt-1">
                       {scheduleDate || "No date set"} {scheduleTime ? `· ${scheduleTime}` : ""}
                     </p>
-                    <p className="text-xs text-text-tertiary mt-1">Phase {job.current_phase} / {phaseCount}</p>
+                    <p className="text-xs text-text-tertiary mt-1">Phase {displayPhase} / {phaseCount}</p>
                   </div>
                 </div>
 
@@ -970,7 +971,7 @@ export default function JobDetailPage() {
             <Section title="Reports">
               <p className="text-xs text-text-tertiary mb-3">
                 Partner uploads reports after each work phase. Ops approves them before payment. You cannot record reports while the job is still <strong className="text-text-secondary">Scheduled</strong> — use{" "}
-                <strong className="text-text-secondary">Start Phase 1</strong> first.
+                    <strong className="text-text-secondary">Start Job</strong> first.
               </p>
               <div className="space-y-3">
                 {reportPhaseIndices(job.total_phases).map((n) => {

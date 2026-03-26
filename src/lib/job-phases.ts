@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 export const JOB_PHASE_COUNT_MIN = 1;
-export const JOB_PHASE_COUNT_MAX = 3;
+export const JOB_PHASE_COUNT_MAX = 2;
 
 /** DB statuses grouped under the "In progress" tab / column (phases + final check). */
 export const JOB_IN_PROGRESS_STATUSES: readonly Job["status"][] = [
@@ -25,18 +25,17 @@ export function isJobInProgressStatus(status: Job["status"]): boolean {
   return (JOB_IN_PROGRESS_STATUSES as readonly string[]).includes(status);
 }
 
-/** Clamp to 1–3 (matches report_1…report_3 slots). */
-export function normalizeTotalPhases(n: number | undefined | null): 1 | 2 | 3 {
+/** Clamp to 1–2 (matches report_1…report_2 slots). */
+export function normalizeTotalPhases(n: number | undefined | null): 1 | 2 {
   const x = Math.floor(Number(n));
-  if (!Number.isFinite(x)) return 3;
-  return Math.min(JOB_PHASE_COUNT_MAX, Math.max(JOB_PHASE_COUNT_MIN, x)) as 1 | 2 | 3;
+  if (!Number.isFinite(x)) return 2;
+  return Math.min(JOB_PHASE_COUNT_MAX, Math.max(JOB_PHASE_COUNT_MIN, x)) as 1 | 2;
 }
 
 export function lastInProgressStatusForTotal(totalPhases: number): Job["status"] {
-  const tp = normalizeTotalPhases(totalPhases);
-  if (tp <= 1) return "in_progress_phase1";
-  if (tp === 2) return "in_progress_phase2";
-  return "in_progress_phase3";
+  // With the new model, the workflow stays "In progress" while reports are collected.
+  // So we always go back to Phase 1 (the in-progress work state).
+  return "in_progress_phase1";
 }
 
 export type JobStatusAction = {
@@ -54,36 +53,24 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
   switch (job.status) {
     case "scheduled":
     case "late":
-      return [{ label: "Start Phase 1", status: "in_progress_phase1", icon: Play, primary: true }];
+      return [{ label: "Start Job", status: "in_progress_phase1", icon: Play, primary: true }];
     case "in_progress_phase1":
-      if (tp <= 1) {
-        return [
-          { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
-          { label: "Pause", status: "scheduled", icon: Pause, primary: false },
-        ];
-      }
       return [
-        { label: "Advance to Phase 2", status: "in_progress_phase2", icon: TrendingUp, primary: true },
+        { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
         { label: "Pause", status: "scheduled", icon: Pause, primary: false },
       ];
     case "in_progress_phase2":
-      if (tp <= 2) {
-        return [
-          { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
-          { label: "Back to Phase 1", status: "in_progress_phase1", icon: RotateCcw, primary: false },
-        ];
-      }
       return [
-        { label: "Advance to Phase 3", status: "in_progress_phase3", icon: TrendingUp, primary: true },
-        { label: "Back to Phase 1", status: "in_progress_phase1", icon: RotateCcw, primary: false },
+        { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
+        { label: "Pause", status: "scheduled", icon: Pause, primary: false },
       ];
     case "in_progress_phase3":
       return [
         { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
-        { label: "Back to Phase 2", status: "in_progress_phase2", icon: RotateCcw, primary: false },
+        { label: "Pause", status: "scheduled", icon: Pause, primary: false },
       ];
     case "final_check": {
-      const backLabel = tp === 1 ? "Back to Phase 1" : tp === 2 ? "Back to Phase 2" : "Back to Phase 3";
+      const backLabel = "Back to Phase 1";
       return [
         { label: "Awaiting Payment", status: "awaiting_payment", icon: CreditCard, primary: true },
         { label: backLabel, status: last, icon: RotateCcw, primary: false },
@@ -95,7 +82,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
       return [
         { label: "Validate & complete", status: "completed", icon: ShieldCheck, primary: true },
         {
-          label: tp === 1 ? "Back to Phase 1" : tp === 2 ? "Back to Phase 2" : "Back to Phase 3",
+          label: "Back to Phase 1",
           status: last,
           icon: RotateCcw,
           primary: false,
@@ -123,24 +110,18 @@ export function canAdvanceJob(job: Job, nextStatus: string): { ok: boolean; mess
     if (!job.scheduled_date && !job.scheduled_start_at) return { ok: false, message: "Set scheduled date before starting the job." };
   }
   if (nextStatus === "final_check") {
-    let hasReport = false;
+    let allUploaded = true;
     for (let n = 1; n <= tp; n++) {
-      if (job[`report_${n}_uploaded` as keyof Job]) {
-        hasReport = true;
-        break;
-      }
+      if (!job[`report_${n}_uploaded` as keyof Job]) { allUploaded = false; break; }
     }
-    if (!hasReport) return { ok: false, message: "Upload at least one post-job report/photo before Final Check." };
+    if (!allUploaded) return { ok: false, message: `Upload all ${tp} post-job report${tp > 1 ? "s" : ""} before Final Check.` };
   }
   if (nextStatus === "awaiting_payment") {
-    let approved = false;
+    let allApproved = true;
     for (let n = 1; n <= tp; n++) {
-      if (job[`report_${n}_approved` as keyof Job]) {
-        approved = true;
-        break;
-      }
+      if (!job[`report_${n}_approved` as keyof Job]) { allApproved = false; break; }
     }
-    if (!approved) return { ok: false, message: "Ops must approve at least one report before Awaiting Payment." };
+    if (!allApproved) return { ok: false, message: "Ops must approve all reports before Awaiting Payment." };
   }
   return { ok: true };
 }
@@ -154,8 +135,7 @@ export function reportPhaseLabel(phaseIndex: number, totalPhases: number): strin
   const tp = normalizeTotalPhases(totalPhases);
   if (tp === 1) return "Report — job complete";
   if (phaseIndex === 1) return "Report 1 — Start & progress";
-  if (phaseIndex === 2) return tp === 2 ? "Report 2 — job complete" : "Report 2 — Mid progress";
-  return "Report 3 — Final";
+  return "Report 2 — job complete";
 }
 
 export function allConfiguredReportsApproved(job: Job): boolean {
@@ -193,13 +173,13 @@ export function jobStatusRank(status: Job["status"]): number {
   }
 }
 
-/** Minimum workflow rank required to record report slot N (aligned with phase 1 / 2 / 3). */
+/** Minimum workflow rank required to record report slot N (aligned with start/end). */
 export function minimumStatusRankForReportSlot(reportSlotIndex: number, totalPhases: number): number {
   const tp = normalizeTotalPhases(totalPhases);
   if (reportSlotIndex < 1 || reportSlotIndex > tp) return 999;
   if (reportSlotIndex === 1) return 10; // in_progress_phase1+
-  if (reportSlotIndex === 2) return 20; // in_progress_phase2+
-  return 30; // in_progress_phase3+
+  if (reportSlotIndex === 2) return 10; // report_2 is also allowed while job stays in in_progress_phase1
+  return 30;
 }
 
 export function canMarkReportUploaded(job: Job, reportSlotIndex: number): { ok: boolean; message?: string } {
@@ -214,10 +194,7 @@ export function canMarkReportUploaded(job: Job, reportSlotIndex: number): { ok: 
   if (jobStatusRank(job.status) < minRank) {
     return {
       ok: false,
-      message:
-        reportSlotIndex === 1
-          ? "Start Phase 1 before marking this report as uploaded."
-          : `Reach Phase ${reportSlotIndex} before recording this report.`,
+      message: "Start Job before marking this report as uploaded.",
     };
   }
   if (reportSlotIndex > 1) {

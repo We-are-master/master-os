@@ -1,10 +1,10 @@
 "use client";
 
 import { CalendarRange } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { PRESET_OPTIONS } from "@/lib/dashboard-date-range";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 
 export function DashboardDateToolbar() {
   const {
@@ -24,21 +24,13 @@ export function DashboardDateToolbar() {
           <CalendarRange className="h-3.5 w-3.5" />
           Date range
         </span>
-        {PRESET_OPTIONS.map((opt) => (
-          <button
-            key={opt.id}
-            type="button"
-            onClick={() => setPreset(opt.id)}
-            className={cn(
-              "px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors",
-              preset === opt.id
-                ? "bg-primary text-white border-primary"
-                : "bg-surface-hover text-text-secondary border-border hover:border-primary/40"
-            )}
-          >
-            {opt.label}
-          </button>
-        ))}
+        <div className="w-52">
+          <Select
+            value={preset}
+            onChange={(e) => setPreset(e.target.value as typeof preset)}
+            options={PRESET_OPTIONS.map((opt) => ({ value: opt.id, label: opt.label }))}
+          />
+        </div>
       </div>
       {preset === "custom" && (
         <div className="flex flex-wrap items-end gap-3">

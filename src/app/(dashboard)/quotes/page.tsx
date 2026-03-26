@@ -1694,7 +1694,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
   onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => void;
 }) {
-  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "3", job_type: "fixed" });
+  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "2", job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
@@ -1703,7 +1703,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     setForm({
       title: quote.title ?? "", partner_id: quote.partner_id ?? "",
       client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
-      materials_cost: "0", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "3", job_type: "fixed",
+      materials_cost: "0", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "2", job_type: "fixed",
     });
     setClientAddress({
       client_id: quote.client_id,
@@ -1757,12 +1757,10 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
           value={form.total_phases}
           onChange={(e) => update("total_phases", e.target.value)}
           options={[
-            { value: "1", label: "1 phase — straight to final check after Phase 1" },
-            { value: "2", label: "2 phases — Phase 1 → Phase 2 → final check" },
-            { value: "3", label: "3 phases — full progress (default)" },
+            { value: "2", label: "2 phases — start & final (reports 1 & 2)" },
           ]}
         />
-        <p className="text-[10px] text-text-tertiary -mt-2">Each phase can have one partner report (photos / completion).</p>
+        <p className="text-[10px] text-text-tertiary -mt-2">Report 1 is for start day; Report 2 unlocks the final step.</p>
         <Select
           label="Job type"
           value={form.job_type}

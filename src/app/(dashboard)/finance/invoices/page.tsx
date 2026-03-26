@@ -509,6 +509,9 @@ function InvoiceDetailDrawer({
     { id: "history", label: "History" },
   ];
 
+  const linkedJobTotalCost = linkedJob ? linkedJob.partner_cost + linkedJob.materials_cost : 0;
+  const linkedJobMarginAmount = linkedJob ? linkedJob.client_price - linkedJobTotalCost : 0;
+
   return (
     <Drawer open={!!invoice} onClose={onClose} title={invoice.reference} subtitle={invoice.client_name} width="w-[580px]">
       <div className="px-6 pt-3 pb-0 border-b border-border-light">
@@ -889,7 +892,45 @@ function InvoiceDetailDrawer({
                   <div className="flex items-center gap-3 mt-3">
                     <Progress value={linkedJob.progress} size="sm" color={linkedJob.progress === 100 ? "emerald" : "primary"} className="flex-1" />
                     <span className="text-xs font-medium text-text-tertiary">{linkedJob.progress}%</span>
-                    <span className="text-[10px] text-text-tertiary">Phase {linkedJob.current_phase}/{linkedJob.total_phases}</span>
+                    <span className="text-[10px] text-text-tertiary">Phase {Math.min(linkedJob.current_phase, 2)}/{Math.min(linkedJob.total_phases, 2)}</span>
+                  </div>
+                </div>
+
+                {/* Mini Dashboard (Job Amount / Total Cost / Margin) */}
+                <div className="p-4 rounded-xl bg-surface-hover space-y-3">
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Job Financial Snapshot</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-xl bg-card border border-border-light">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Job Amount</p>
+                      <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJob.client_price)}</p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-card border border-border-light">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Total Cost</p>
+                      <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJobTotalCost)}</p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-card border border-border-light">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Margin</p>
+                      <p
+                        className={`text-lg font-bold mt-0.5 ${
+                          linkedJobMarginAmount >= 0 ? "text-emerald-600" : "text-red-500"
+                        }`}
+                      >
+                        {formatCurrency(linkedJobMarginAmount)}
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-card border border-border-light">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Margin %</p>
+                      <p
+                        className={`text-lg font-bold mt-0.5 ${
+                          linkedJob.margin_percent >= 0 ? "text-emerald-600" : "text-red-500"
+                        }`}
+                      >
+                        {linkedJob.margin_percent.toFixed(1)}%
+                      </p>
+                    </div>
                   </div>
                 </div>
 
@@ -905,31 +946,6 @@ function InvoiceDetailDrawer({
                     {linkedJob.completed_date && <InfoRow icon={CheckCircle2} label="Completed" value={formatDate(linkedJob.completed_date)} />}
                   </div>
                   <LocationMiniMap address={linkedJob.property_address} className="mt-3" />
-                </div>
-
-                {/* Job Financials */}
-                <div className="p-4 rounded-xl bg-surface-hover space-y-3">
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Job Financial Breakdown</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="p-3 rounded-xl bg-card border border-border-light">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Client Price</p>
-                      <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJob.client_price)}</p>
-                    </div>
-                    <div className="p-3 rounded-xl bg-card border border-border-light">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Partner Cost</p>
-                      <p className="text-lg font-bold text-emerald-600 mt-0.5">{formatCurrency(linkedJob.partner_cost)}</p>
-                    </div>
-                    <div className="p-3 rounded-xl bg-card border border-border-light">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Materials</p>
-                      <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJob.materials_cost)}</p>
-                    </div>
-                    <div className="p-3 rounded-xl bg-card border border-border-light">
-                      <p className="text-[10px] font-semibold text-emerald-700 uppercase">Gross Margin</p>
-                      <p className={`text-lg font-bold mt-0.5 ${linkedJob.margin_percent >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                        {linkedJob.margin_percent.toFixed(1)}%
-                      </p>
-                    </div>
-                  </div>
                 </div>
 
                 {/* Invoiced vs Job Value comparison */}

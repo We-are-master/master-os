@@ -42,9 +42,9 @@ const JOB_STATUSES = ["scheduled", "late", "in_progress_phase1", "in_progress_ph
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
-  in_progress_phase1: { label: "In Progress — Phase 1", variant: "primary", dot: true },
-  in_progress_phase2: { label: "In Progress — Phase 2", variant: "primary", dot: true },
-  in_progress_phase3: { label: "In Progress — Phase 3", variant: "primary", dot: true },
+  in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
+  in_progress_phase2: { label: "In Progress", variant: "primary", dot: true },
+  in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
   final_check: { label: "Final Check", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
   need_attention: { label: "Need attention", variant: "warning", dot: true },
@@ -355,7 +355,7 @@ export default function JobsPage() {
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
   const [form, setForm] = useState({
-    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "3", job_type: "fixed",
+    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "2", job_type: "fixed",
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -392,7 +392,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       scheduled_start_at,
       total_phases: normalizeTotalPhases(Number(form.total_phases)),
     });
-    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "3", job_type: "fixed" });
+    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "2", job_type: "fixed" });
     setClientAddress({ client_name: "", property_address: "" });
   };
 
@@ -405,12 +405,10 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           value={form.total_phases}
           onChange={(e) => update("total_phases", e.target.value)}
           options={[
-            { value: "1", label: "1 phase — straight to final check after Phase 1" },
-            { value: "2", label: "2 phases — Phase 1 → Phase 2 → final check" },
-            { value: "3", label: "3 phases — full progress (default)" },
+            { value: "2", label: "2 phases — start & final (reports 1 & 2)" },
           ]}
         />
-        <p className="text-[10px] text-text-tertiary -mt-2">Each phase can have one partner report (photos / completion).</p>
+        <p className="text-[10px] text-text-tertiary -mt-2">Report 1 is for start day; Report 2 unlocks the final step.</p>
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
