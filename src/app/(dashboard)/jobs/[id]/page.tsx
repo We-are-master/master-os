@@ -104,6 +104,8 @@ export default function JobDetailPage() {
   const [addPaymentNote, setAddPaymentNote] = useState("");
   const [addPaymentBankRef, setAddPaymentBankRef] = useState("");
   const [addingPayment, setAddingPayment] = useState(false);
+  const [deletePaymentTarget, setDeletePaymentTarget] = useState<{ id: string; amount: number; type: string } | null>(null);
+  const [deletingPayment, setDeletingPayment] = useState(false);
   const [propertyEdit, setPropertyEdit] = useState<ClientAndAddressValue | null>(null);
   const [savingProperty, setSavingProperty] = useState(false);
   const [unlinkedAddressDraft, setUnlinkedAddressDraft] = useState("");
@@ -558,26 +560,28 @@ export default function JobDetailPage() {
     customerPayments,
   ]);
 
-  const handleDeletePayment = useCallback(async (paymentId: string, amount?: number, type?: string) => {
-    if (!confirm("Remove this payment record?")) return;
+  const confirmDeletePayment = useCallback(async () => {
+    if (!deletePaymentTarget || !job) return;
+    setDeletingPayment(true);
     try {
-      await deleteJobPayment(paymentId);
-      if (job) {
-        await logAudit({
-          entityType: "job", entityId: job.id, entityRef: job.reference,
-          action: "deleted",
-          fieldName: "payment",
-          oldValue: amount != null ? formatCurrency(amount) : undefined,
-          userId: profile?.id, userName: profile?.full_name,
-          metadata: { payment_type: type },
-        });
-      }
+      await deleteJobPayment(deletePaymentTarget.id);
+      await logAudit({
+        entityType: "job", entityId: job.id, entityRef: job.reference,
+        action: "deleted",
+        fieldName: "payment",
+        oldValue: formatCurrency(deletePaymentTarget.amount),
+        userId: profile?.id, userName: profile?.full_name,
+        metadata: { payment_type: deletePaymentTarget.type },
+      });
       await refreshJobFinance();
       toast.success("Payment removed");
     } catch {
       toast.error("Failed to remove payment");
+    } finally {
+      setDeletingPayment(false);
+      setDeletePaymentTarget(null);
     }
-  }, [job, profile?.id, profile?.full_name, refreshJobFinance]);
+  }, [deletePaymentTarget, job, profile?.id, profile?.full_name, refreshJobFinance]);
 
   useEffect(() => {
     if (!job?.id || !profile?.id) return;
@@ -707,9 +711,8 @@ export default function JobDetailPage() {
   const maxCustomerFinalPay = Math.max(0, (job.customer_final_payment ?? 0) - customerFinalPaidSum);
   const scheduledCustomerTotal = customerScheduledTotal(job);
   const customerScheduleMismatch = Math.abs(billableRevenue - scheduledCustomerTotal) > 0.02;
-  const customerPaidTotal =
-    (job.customer_deposit_paid ? Number(job.customer_deposit ?? 0) : 0) +
-    (job.customer_final_paid ? Number(job.customer_final_payment ?? 0) : 0);
+  // Use actual payment records sum — not boolean flags — so the UI stays live without a page reload.
+  const customerPaidTotal = customerDepositPaid + customerFinalPaidSum;
   const amountDue = Math.max(0, billableRevenue - customerPaidTotal);
 
   const paymentAmountMax =
@@ -1223,7 +1226,7 @@ export default function JobDetailPage() {
                           <div className="flex items-center gap-1.5 shrink-0">
                             <span className="text-sm font-semibold tabular-nums text-emerald-600">+{formatCurrency(Number(p.amount))}</span>
                             {isAdmin && (
-                              <button onClick={() => void handleDeletePayment(p.id, Number(p.amount), p.type)} className="text-text-tertiary hover:text-red-500 transition-colors">
+                              <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
                                 <X className="h-3 w-3" />
                               </button>
                             )}
@@ -1297,7 +1300,7 @@ export default function JobDetailPage() {
                           <div className="flex items-center gap-1.5 shrink-0">
                             <span className="text-sm font-semibold tabular-nums text-emerald-600">+{formatCurrency(Number(p.amount))}</span>
                             {isAdmin && (
-                              <button onClick={() => void handleDeletePayment(p.id, Number(p.amount), p.type)} className="text-text-tertiary hover:text-red-500 transition-colors">
+                              <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
                                 <X className="h-3 w-3" />
                               </button>
                             )}
@@ -1380,6 +1383,34 @@ export default function JobDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* DELETE PAYMENT CONFIRMATION MODAL */}
+      <Modal
+        open={!!deletePaymentTarget}
+        onClose={() => setDeletePaymentTarget(null)}
+        title="Remove payment"
+      >
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-text-secondary">
+            Are you sure you want to remove this payment record?
+          </p>
+          {deletePaymentTarget && (
+            <div className="rounded-xl border border-border-light bg-surface-hover/40 px-4 py-3 space-y-1">
+              <p className="text-xs text-text-tertiary capitalize">
+                {deletePaymentTarget.type === "customer_deposit" ? "Customer deposit" : deletePaymentTarget.type === "customer_final" ? "Customer final" : "Partner payment"}
+              </p>
+              <p className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(deletePaymentTarget.amount)}</p>
+            </div>
+          )}
+          <p className="text-xs text-text-tertiary">This will update the Amount due immediately.</p>
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="ghost" size="sm" onClick={() => setDeletePaymentTarget(null)}>Cancel</Button>
+            <Button variant="danger" size="sm" loading={deletingPayment} onClick={() => void confirmDeletePayment()}>
+              Remove payment
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={addPaymentOpen}
