@@ -19,7 +19,7 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import type { Job } from "@/types/database";
-import { formatJobScheduleLine, formatLocalYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
+import { formatJobScheduleLine, formatLocalYmd, jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
 import { isJobInProgressStatus } from "@/lib/job-phases";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -68,7 +68,7 @@ export default function SchedulePage() {
       const monthStartInstant = new Date(year, month, 1, 0, 0, 0, 0).toISOString();
       const nextMonthStartInstant = new Date(year, month + 1, 1, 0, 0, 0, 0).toISOString();
 
-      const [byScheduledDate, byStartAt] = await Promise.all([
+      const [byScheduledDate, byStartAt, byEndAt] = await Promise.all([
         supabase
           .from("jobs")
           .select("*")
@@ -82,10 +82,17 @@ export default function SchedulePage() {
           .gte("scheduled_start_at", monthStartInstant)
           .lt("scheduled_start_at", nextMonthStartInstant)
           .order("scheduled_start_at", { ascending: true }),
+        supabase
+          .from("jobs")
+          .select("*")
+          .not("scheduled_end_at", "is", null)
+          .gte("scheduled_end_at", monthStartInstant)
+          .lt("scheduled_end_at", nextMonthStartInstant)
+          .order("scheduled_end_at", { ascending: true }),
       ]);
 
       const merged = new Map<string, Job>();
-      for (const row of [...(byScheduledDate.data ?? []), ...(byStartAt.data ?? [])]) {
+      for (const row of [...(byScheduledDate.data ?? []), ...(byStartAt.data ?? []), ...(byEndAt.data ?? [])]) {
         merged.set(row.id, row as Job);
       }
       const list = Array.from(merged.values()).filter((j) => {
@@ -161,13 +168,35 @@ export default function SchedulePage() {
   }, [firstDayOfWeek, daysInMonth]);
 
   const jobsByDay = useMemo(() => {
-    const map: Record<number, Job[]> = {};
+    const map: Record<number, Array<{ job: Job; kind: "start" | "end" | "span" }>> = {};
     for (const job of jobs) {
-      const ymd = jobScheduleYmd(job);
-      if (!ymd || ymd.y !== year || ymd.m !== month + 1) continue;
-      const day = ymd.d;
-      if (!map[day]) map[day] = [];
-      map[day].push(job);
+      const start = jobScheduleYmd(job);
+      if (!start) continue;
+      const finish = jobFinishYmd(job);
+      const startsThisMonth = start.y === year && start.m === month + 1;
+      const finishesThisMonth = !!finish && finish.y === year && finish.m === month + 1;
+
+      if (startsThisMonth) {
+        if (!map[start.d]) map[start.d] = [];
+        map[start.d].push({ job, kind: "start" });
+      }
+      if (finishesThisMonth) {
+        if (!map[finish!.d]) map[finish!.d] = [];
+        map[finish!.d].push({ job, kind: "end" });
+      }
+
+      if (!finish) continue;
+      const cursor = new Date(start.y, start.m - 1, start.d);
+      const endDate = new Date(finish.y, finish.m - 1, finish.d);
+      cursor.setDate(cursor.getDate() + 1);
+      while (cursor < endDate) {
+        if (cursor.getFullYear() === year && cursor.getMonth() === month) {
+          const d = cursor.getDate();
+          if (!map[d]) map[d] = [];
+          map[d].push({ job, kind: "span" });
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
     }
     return map;
   }, [jobs, year, month]);
@@ -261,15 +290,21 @@ export default function SchedulePage() {
                           )}
                         </div>
                         <div className="space-y-0.5">
-                          {dayJobs.slice(0, 3).map((job) => (
+                          {dayJobs.slice(0, 3).map(({ job, kind }, idx) => (
                             <motion.div
-                              key={job.id}
+                              key={`${job.id}-${kind}-${idx}`}
                               whileHover={{ scale: 1.02 }}
                               whileTap={{ scale: 0.98 }}
                               onClick={() => setSelectedJob(job)}
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-medium border truncate cursor-pointer hover:opacity-80 transition-opacity ${getJobColor(job.title)}`}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-medium border truncate cursor-pointer hover:opacity-80 transition-opacity ${
+                                kind === "start"
+                                  ? `${getJobColor(job.title)}`
+                                  : kind === "end"
+                                    ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                                    : "bg-amber-100 text-amber-700 border-amber-200"
+                              }`}
                             >
-                              {job.title}
+                              {kind === "start" ? "Start" : kind === "end" ? "Finish" : "In progress"} · {job.title}
                               {!job.partner_name && <span className="italic opacity-70"> (unasgn.)</span>}
                             </motion.div>
                           ))}

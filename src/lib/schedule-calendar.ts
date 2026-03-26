@@ -22,6 +22,7 @@ export function parseIsoDateOnlyPrefix(s: string): { y: number; m: number; d: nu
 export function jobScheduleYmd(job: {
   scheduled_date?: string | null;
   scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
 }): { y: number; m: number; d: number } | null {
   if (job.scheduled_date) {
     const p = parseIsoDateOnlyPrefix(job.scheduled_date);
@@ -35,11 +36,27 @@ export function jobScheduleYmd(job: {
   return null;
 }
 
+export function jobFinishYmd(job: {
+  scheduled_end_at?: string | null;
+}): { y: number; m: number; d: number } | null {
+  if (!job.scheduled_end_at) return null;
+  const dt = new Date(job.scheduled_end_at);
+  if (Number.isNaN(dt.getTime())) return null;
+  return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
+}
+
 /** Format date + optional time for schedule drawer / lists (local). */
 export function formatJobScheduleLine(job: {
   scheduled_date?: string | null;
   scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
 }): string | null {
+  if (job.scheduled_start_at && job.scheduled_end_at) {
+    const start = new Date(job.scheduled_start_at);
+    const end = new Date(job.scheduled_end_at);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+    return `${start.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} - ${end.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
+  }
   if (job.scheduled_start_at) {
     const dt = new Date(job.scheduled_start_at);
     if (Number.isNaN(dt.getTime())) return null;

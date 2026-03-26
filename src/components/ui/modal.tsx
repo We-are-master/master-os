@@ -13,6 +13,7 @@ interface ModalProps {
   children: React.ReactNode;
   size?: "sm" | "md" | "lg";
   className?: string;
+  scrollBody?: boolean;
 }
 
 const sizeStyles = {
@@ -29,6 +30,7 @@ export function Modal({
   children,
   size = "md",
   className,
+  scrollBody = true,
 }: ModalProps) {
   return (
     <AnimatePresence>
@@ -66,7 +68,7 @@ export function Modal({
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="max-h-[70vh] overflow-y-auto">
+            <div className={cn(scrollBody ? "max-h-[70vh] overflow-y-auto" : "overflow-visible")}>
               {children}
             </div>
           </motion.div>

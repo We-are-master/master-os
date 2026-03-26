@@ -35,6 +35,7 @@ import {
   listInvoicesForJobReferences,
 } from "@/services/accounts";
 import { uploadAccountLogo, removeAccountLogoFromStorage } from "@/services/account-logo-storage";
+import { uploadAccountContract, removeAccountContractFromStorage } from "@/services/account-contract-storage";
 import { getSupabase } from "@/services/base";
 
 const INDUSTRY_OPTIONS = [
@@ -104,7 +105,6 @@ const emptyForm = {
   industry: INDUSTRY_OPTIONS[0].value,
   credit_limit: "",
   payment_terms: PAYMENT_TERMS_OPTIONS[1].value,
-  contract_url: "",
 };
 
 export default function AccountsPage() {
@@ -175,7 +175,7 @@ export default function AccountsPage() {
         status: "onboarding",
         credit_limit: Number(form.credit_limit) || 0,
         payment_terms: form.payment_terms,
-        contract_url: form.contract_url.trim() || null,
+        contract_url: null,
       });
       setCreateOpen(false);
       setForm(emptyForm);
@@ -426,14 +426,9 @@ export default function AccountsPage() {
               placeholder="100000"
             />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Contract URL</label>
-            <Input
-              value={form.contract_url}
-              onChange={(e) => setForm((f) => ({ ...f, contract_url: e.target.value }))}
-              placeholder="https://.../contract.pdf"
-            />
-          </div>
+          <p className="text-xs text-text-tertiary">
+            Contract upload is available after creating the account (inside the account drawer).
+          </p>
 
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -469,7 +464,9 @@ function AccountDetailDrawer({
   const [loadingExtras, setLoadingExtras] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingContract, setUploadingContract] = useState(false);
   const logoFileRef = useRef<HTMLInputElement>(null);
+  const contractFileRef = useRef<HTMLInputElement>(null);
   const [edit, setEdit] = useState({
     company_name: "",
     contact_name: "",
@@ -706,12 +703,96 @@ function AccountDetailDrawer({
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contract URL</label>
-                  <Input
-                    value={edit.contract_url}
-                    onChange={(e) => setEdit((p) => ({ ...p, contract_url: e.target.value }))}
-                    placeholder="https://.../contract.pdf"
+                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contract</label>
+                  <input
+                    ref={contractFileRef}
+                    type="file"
+                    accept="application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    className="hidden"
+                    onChange={async (ev) => {
+                      const file = ev.target.files?.[0];
+                      ev.target.value = "";
+                      if (!file || !account || !isAdmin) return;
+                      setUploadingContract(true);
+                      try {
+                        const url = await uploadAccountContract(account.id, file);
+                        const updated = await updateAccount(account.id, { contract_url: url });
+                        const fresh = await getAccount(account.id);
+                        const next = fresh ?? updated;
+                        onAccountUpdated(next);
+                        setEdit((p) => ({ ...p, contract_url: url }));
+                        toast.success("Contract uploaded and saved");
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Contract upload failed");
+                      } finally {
+                        setUploadingContract(false);
+                      }
+                    }}
                   />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={uploadingContract || saving}
+                      onClick={() => contractFileRef.current?.click()}
+                      icon={
+                        uploadingContract ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )
+                      }
+                    >
+                      {uploadingContract ? "Uploading…" : "Upload contract"}
+                    </Button>
+                    {edit.contract_url.trim() && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => window.open(edit.contract_url, "_blank", "noopener,noreferrer")}
+                          icon={<ExternalLink className="h-3.5 w-3.5" />}
+                        >
+                          Preview
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={uploadingContract || saving}
+                          onClick={async () => {
+                            if (!account || !isAdmin) return;
+                            setUploadingContract(true);
+                            try {
+                              try {
+                                await removeAccountContractFromStorage(account.id);
+                              } catch {
+                                /* ignore storage cleanup issue, still clear DB value */
+                              }
+                              const updated = await updateAccount(account.id, { contract_url: null });
+                              const fresh = await getAccount(account.id);
+                              const next = fresh ?? updated;
+                              onAccountUpdated(next);
+                              setEdit((p) => ({ ...p, contract_url: "" }));
+                              toast.success("Contract removed");
+                            } catch (err) {
+                              toast.error(err instanceof Error ? err.message : "Failed to remove contract");
+                            } finally {
+                              setUploadingContract(false);
+                            }
+                          }}
+                          icon={<Trash2 className="h-3.5 w-3.5" />}
+                        >
+                          Remove
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-text-tertiary mt-1.5">
+                    Saves to bucket <code className="text-[10px]">company-assets</code> at <code className="text-[10px]">accounts/&lt;id&gt;/contract.*</code> (PDF/DOC/DOCX, max 10 MB).
+                  </p>
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Email</label>
