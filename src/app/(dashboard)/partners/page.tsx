@@ -61,9 +61,16 @@ const tradeColors: Record<string, string> = {
   Plumbing: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 ring-teal-200/50",
   Painting: "bg-amber-50 dark:bg-amber-950/30 text-amber-700 ring-amber-200/50",
   Carpentry: "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 ring-emerald-200/50",
+  Handyman: "bg-orange-50 dark:bg-orange-950/30 text-orange-700 ring-orange-200/50",
+  Cleaning: "bg-cyan-50 dark:bg-cyan-950/30 text-cyan-700 ring-cyan-200/50",
+  Builder: "bg-stone-50 dark:bg-stone-950/30 text-stone-700 ring-stone-200/50",
+  Painter: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 ring-yellow-200/50",
 };
 
-const TRADES = ["HVAC", "Electrical", "Plumbing", "Painting", "Carpentry"];
+const TRADES = [
+  "HVAC", "Electrical", "Plumbing", "Painting", "Carpentry",
+  "Handyman", "Cleaning", "Builder", "Painter",
+];
 
 interface PartnerJobRow {
   id: string;

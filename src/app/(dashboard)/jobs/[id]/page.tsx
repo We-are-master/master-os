@@ -33,12 +33,12 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
-import { listJobPayments, createJobPayment } from "@/services/job-payments";
+import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
 import { uploadManualJobReport } from "@/services/job-report-storage";
 import { useProfile } from "@/hooks/use-profile";
-import { logAudit } from "@/services/audit";
+import { logAudit, logFieldChanges } from "@/services/audit";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
@@ -383,19 +383,18 @@ export default function JobDetailPage() {
       const partner_agreed_value = r2(finForm.partner_agreed_value);
       const customer_deposit = r2(finForm.customer_deposit);
       const customer_final_payment = r2(finForm.customer_final_payment);
-      await handleJobUpdate(job.id, {
-        client_price,
-        extras_amount,
-        partner_cost,
-        materials_cost,
-        partner_agreed_value,
-        customer_deposit,
-        customer_final_payment,
-      });
+      const newFields = { client_price, extras_amount, partner_cost, materials_cost, partner_agreed_value, customer_deposit, customer_final_payment };
+      await handleJobUpdate(job.id, newFields);
+      await logFieldChanges(
+        "job", job.id, job.reference,
+        job as unknown as Record<string, unknown>,
+        newFields as Record<string, unknown>,
+        profile?.id, profile?.full_name,
+      );
     } finally {
       setSavingFin(false);
     }
-  }, [job, finForm, handleJobUpdate]);
+  }, [job, finForm, handleJobUpdate, profile?.id, profile?.full_name]);
 
   const handleSaveLinkedProperty = useCallback(async () => {
     if (!job || !propertyEdit?.property_address?.trim()) {
@@ -519,6 +518,21 @@ export default function JobDetailPage() {
         payment_method: addPaymentMethod,
         bank_reference: addPaymentBankRef.trim() || undefined,
       });
+      const typeLabel = addPaymentType === "customer_deposit" ? "Customer deposit" : addPaymentType === "customer_final" ? "Customer final" : "Partner payment";
+      await logAudit({
+        entityType: "job", entityId: job.id, entityRef: job.reference,
+        action: "payment",
+        fieldName: addPaymentType,
+        newValue: formatCurrency(amount),
+        userId: profile?.id, userName: profile?.full_name,
+        metadata: {
+          type_label: typeLabel,
+          method: addPaymentMethod,
+          date: addPaymentDate,
+          ...(addPaymentBankRef.trim() ? { bank_reference: addPaymentBankRef.trim() } : {}),
+          ...(addPaymentNote.trim() ? { note: addPaymentNote.trim() } : {}),
+        },
+      });
       toast.success("Payment registered");
       setAddPaymentOpen(false);
       setAddPaymentAmount("");
@@ -543,6 +557,27 @@ export default function JobDetailPage() {
     partnerPayments,
     customerPayments,
   ]);
+
+  const handleDeletePayment = useCallback(async (paymentId: string, amount?: number, type?: string) => {
+    if (!confirm("Remove this payment record?")) return;
+    try {
+      await deleteJobPayment(paymentId);
+      if (job) {
+        await logAudit({
+          entityType: "job", entityId: job.id, entityRef: job.reference,
+          action: "deleted",
+          fieldName: "payment",
+          oldValue: amount != null ? formatCurrency(amount) : undefined,
+          userId: profile?.id, userName: profile?.full_name,
+          metadata: { payment_type: type },
+        });
+      }
+      await refreshJobFinance();
+      toast.success("Payment removed");
+    } catch {
+      toast.error("Failed to remove payment");
+    }
+  }, [job, profile?.id, profile?.full_name, refreshJobFinance]);
 
   useEffect(() => {
     if (!job?.id || !profile?.id) return;
@@ -1164,10 +1199,37 @@ export default function JobDetailPage() {
                       <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_final_payment ?? 0)}</span>
                     </div>
                   )}
-                  {customerPaidTotal > 0 && (
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-text-tertiary">Paid so far</span>
-                      <span className="tabular-nums text-emerald-600 font-medium">{formatCurrency(customerPaidTotal)}</span>
+                  {/* Payment history */}
+                  {customerPayments.length > 0 && (
+                    <div className="mt-1 space-y-1">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
+                      {customerPayments.map((p) => (
+                        <div key={p.id} className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] font-semibold text-text-tertiary uppercase">
+                                {p.type === "customer_deposit" ? "Deposit" : "Final"}
+                              </span>
+                              {p.payment_method && (
+                                <span className="text-[10px] text-text-tertiary">· {p.payment_method === "bank_transfer" ? "Bank" : "Stripe"}</span>
+                              )}
+                              <span className="text-[10px] text-text-tertiary">
+                                · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                              </span>
+                            </div>
+                            {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
+                            {p.note && <p className="text-[10px] text-text-tertiary truncate">{p.note}</p>}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-sm font-semibold tabular-nums text-emerald-600">+{formatCurrency(Number(p.amount))}</span>
+                            {isAdmin && (
+                              <button onClick={() => void handleDeletePayment(p.id, Number(p.amount), p.type)} className="text-text-tertiary hover:text-red-500 transition-colors">
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                   <div className="flex items-center justify-between pt-1.5 border-t border-border-light">
@@ -1214,10 +1276,34 @@ export default function JobDetailPage() {
                     </div>
                     <span className="text-sm font-semibold tabular-nums">{formatCurrency(partnerCap)}</span>
                   </div>
-                  {partnerPaidTotal > 0 && (
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-text-tertiary">Paid so far</span>
-                      <span className="tabular-nums text-emerald-600 font-medium">{formatCurrency(partnerPaidTotal)}</span>
+                  {/* Partner payment history */}
+                  {partnerPayments.length > 0 && (
+                    <div className="mt-1 space-y-1">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
+                      {partnerPayments.map((p) => (
+                        <div key={p.id} className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {p.payment_method && (
+                                <span className="text-[10px] text-text-tertiary">{p.payment_method === "bank_transfer" ? "Bank" : "Stripe"}</span>
+                              )}
+                              <span className="text-[10px] text-text-tertiary">
+                                · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                              </span>
+                            </div>
+                            {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
+                            {p.note && <p className="text-[10px] text-text-tertiary truncate">{p.note}</p>}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-sm font-semibold tabular-nums text-emerald-600">+{formatCurrency(Number(p.amount))}</span>
+                            {isAdmin && (
+                              <button onClick={() => void handleDeletePayment(p.id, Number(p.amount), p.type)} className="text-text-tertiary hover:text-red-500 transition-colors">
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                   {partnerCap > 0 && (
