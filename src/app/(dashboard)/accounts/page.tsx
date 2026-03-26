@@ -125,7 +125,7 @@ export default function AccountsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const { profile } = useProfile();
+  useProfile();
 
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [totalJobs, setTotalJobs] = useState(0);
@@ -557,7 +557,7 @@ function AccountDetailDrawer({
     } finally {
       setClientsLoading(false);
     }
-  }, [CLIENTS_PAGE_SIZE]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // CLIENTS_PAGE_SIZE is a module-level constant, no runtime dep needed // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load clients page eagerly when account opens (so count shows in header/tab badge immediately)
   // Also triggered when clients tab is activated for subsequent pages
@@ -967,6 +967,7 @@ function AccountDetailDrawer({
                     placeholder="https://example.com/logo.png"
                   />
                   {(edit.logo_url.trim() || account.logo_url) ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={(edit.logo_url.trim() || account.logo_url) ?? ""}
                       alt=""
