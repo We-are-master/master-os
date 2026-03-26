@@ -1,6 +1,26 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
 import { JOB_IN_PROGRESS_STATUSES } from "@/lib/job-phases";
+import { jobBillableRevenue } from "@/lib/job-financials";
+
+/** Scheduled, Late, and In progress (phases + final check) — matches Jobs tabs. */
+const REVENUE_BOOKED_STATUSES: Job["status"][] = [
+  "scheduled",
+  "late",
+  ...JOB_IN_PROGRESS_STATUSES,
+];
+
+/** Sum of job amount (client_price + extras) for pipeline jobs; not limited to the current list page. */
+export async function getTotalRevenueBookedPipeline(): Promise<number> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("client_price, extras_amount")
+    .in("status", REVENUE_BOOKED_STATUSES)
+    .is("deleted_at", null);
+  if (error || !data) return 0;
+  return data.reduce((sum, row) => sum + jobBillableRevenue(row as Pick<Job, "client_price" | "extras_amount">), 0);
+}
 
 // Throttle: mark-late runs at most once every 5 minutes per server instance
 // to avoid write contention on every paginated list request.

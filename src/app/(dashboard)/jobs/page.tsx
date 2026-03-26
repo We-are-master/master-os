@@ -25,7 +25,7 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listJobs, createJob, updateJob, getJob } from "@/services/jobs";
+import { listJobs, createJob, updateJob, getJob, getTotalRevenueBookedPipeline } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
@@ -65,6 +65,7 @@ function JobsPageContent() {
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
+  const [revenueBookedPipeline, setRevenueBookedPipeline] = useState(0);
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -108,7 +109,16 @@ function JobsPageContent() {
   useEffect(() => { if (jobIdFromUrl) router.replace(`/jobs/${jobIdFromUrl}`); }, [jobIdFromUrl, router]);
 
   const loadCounts = useCallback(async () => {
-    try { const counts = await getStatusCounts("jobs", [...JOB_STATUSES]); setTabCounts(counts); } catch { /* cosmetic */ }
+    try {
+      const [counts, revenueBooked] = await Promise.all([
+        getStatusCounts("jobs", [...JOB_STATUSES]),
+        getTotalRevenueBookedPipeline(),
+      ]);
+      setTabCounts(counts);
+      setRevenueBookedPipeline(revenueBooked);
+    } catch {
+      /* cosmetic */
+    }
   }, []);
   useEffect(() => { loadCounts(); }, [loadCounts]);
 
@@ -320,10 +330,18 @@ function JobsPageContent() {
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
         </PageHeader>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Active Jobs" value={inProgressTabCount + (tabCounts.scheduled ?? 0)} format="number" icon={Briefcase} accent="blue" />
           <KpiCard title="Awaiting Payment" value={tabCounts.awaiting_payment ?? 0} format="number" icon={DollarSign} accent="amber" />
           <KpiCard title="Completed" value={tabCounts.completed ?? 0} format="number" icon={CheckCircle2} accent="emerald" />
+          <KpiCard
+            title="Total Revenue Booked"
+            value={revenueBookedPipeline}
+            format="currency"
+            description="Scheduled, late & in progress"
+            icon={TrendingUp}
+            accent="primary"
+          />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
