@@ -1,0 +1,133 @@
+-- =============================================================================
+-- Master OS — importar clientes a partir de CSV com colunas:
+--   CONTACT_NAME | EMAIL | PHONE | ACCOUNT | ADDRESS | POSTCODE | LAST_ACTIVITY
+--
+-- Fluxo:
+--   1) Rode o bloco "1) Staging" uma vez.
+--   2) Importe o CSV no Supabase (Table Editor → _import_clients_staging → Import)
+--      e mapeie as colunas do ficheiro para: contact_name, email, phone, account,
+--      address, postcode, last_activity.
+--   3) Rode o bloco "2) Insert em clients".
+--   4) Opcional: DROP TABLE public._import_clients_staging;
+--
+-- ACCOUNT (texto do CSV) -> UUID fixo: Checkatrade, Checkatrade Express->Express,
+--          Master Services (sem conta na BD = NULL), Housekeep. Ver também generate_clients_import_sql.py.
+-- LAST_ACTIVITY: texto vazio = NULL. Tente ISO (YYYY-MM-DD) ou timestamp; se usar
+--                datas tipo DD/MM/YYYY, descomente a linha `uk_date` em baixo.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- 1) Staging (executar uma vez)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public._import_clients_staging (
+  contact_name text,
+  email text,
+  phone text,
+  account text,
+  address text,
+  postcode text,
+  last_activity text
+);
+
+COMMENT ON TABLE public._import_clients_staging IS 'Temporária para import CSV; apagar após import.';
+
+-- -----------------------------------------------------------------------------
+-- 2) Insert em public.clients
+-- -----------------------------------------------------------------------------
+INSERT INTO public.clients (
+  full_name,
+  email,
+  phone,
+  address,
+  city,
+  postcode,
+  client_type,
+  source,
+  status,
+  notes,
+  tags,
+  total_spent,
+  jobs_count,
+  last_job_date,
+  source_account_id,
+  deleted_at
+)
+SELECT
+  trim(s.contact_name) AS full_name,
+  NULLIF(lower(trim(s.email)), '') AS email,
+  NULLIF(trim(s.phone), '') AS phone,
+  NULLIF(trim(s.address), '') AS address,
+  NULL::text AS city,
+  NULLIF(trim(s.postcode), '') AS postcode,
+  'residential'::text AS client_type,
+  'direct'::text AS source,
+  'active'::text AS status,
+  NULL::text AS notes,
+  '{}'::text[] AS tags,
+  0::numeric AS total_spent,
+  0::integer AS jobs_count,
+  -- last_job_date: ajuste o formato se o CSV não for ISO
+  CASE
+    WHEN NULLIF(trim(s.last_activity), '') IS NULL THEN NULL
+    ELSE (
+      -- Preferência: ISO / timestamp reconhecível por Postgres
+      NULLIF(trim(s.last_activity), '')::timestamp with time zone
+    )
+  END AS last_job_date,
+  -- ACCOUNT (texto do CSV) -> source_account_id (UUIDs reais em public.accounts)
+  CASE regexp_replace(lower(trim(COALESCE(s.account, ''))), '\s+', ' ', 'g')
+    WHEN '' THEN NULL
+    WHEN 'checkatrade' THEN '38b48520-f116-4263-90e5-8cd5a7d39ecf'::uuid
+    WHEN 'checkatrade express' THEN '8060fcf3-a538-4e5a-9318-1b49ee59f432'::uuid
+    WHEN 'master services' THEN NULL
+    WHEN 'housekeep' THEN '9659bbfb-eb56-4a31-9773-7f5e1335d0b4'::uuid
+    ELSE NULL
+  END AS source_account_id,
+  NULL::timestamptz AS deleted_at
+FROM public._import_clients_staging s
+WHERE NULLIF(trim(s.contact_name), '') IS NOT NULL;
+
+-- -----------------------------------------------------------------------------
+-- Alternativa LAST_ACTIVITY para datas UK (DD/MM/YYYY) — substitua o CASE acima
+-- pelo seguinte no SELECT se precisar:
+--
+--   CASE
+--     WHEN NULLIF(trim(s.last_activity), '') IS NULL THEN NULL
+--     ELSE to_date(trim(s.last_activity), 'DD/MM/YYYY')::timestamp with time zone
+--   END AS last_job_date,
+-- -----------------------------------------------------------------------------
+
+-- -----------------------------------------------------------------------------
+-- 3) Limpeza (opcional)
+-- -----------------------------------------------------------------------------
+-- TRUNCATE public._import_clients_staging;
+-- DROP TABLE public._import_clients_staging;
+
+-- -----------------------------------------------------------------------------
+-- Inserção manual (poucas linhas) — copie e edite os VALUES
+-- -----------------------------------------------------------------------------
+/*
+INSERT INTO public.clients (
+  full_name, email, phone, address, city, postcode,
+  client_type, source, status, notes, tags, total_spent, jobs_count,
+  last_job_date, source_account_id, deleted_at
+) VALUES
+  (
+    'Nome Exemplo',
+    'email@exemplo.com',
+    '+44 7700 900000',
+    '1 Example Street',
+    NULL,
+    'SW1A 1AA',
+    'residential',
+    'direct',
+    'active',
+    NULL,
+    '{}'::text[],
+    0,
+    0,
+    '2024-06-01'::timestamptz,
+    NULL,
+    NULL
+  );
+*/

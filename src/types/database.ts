@@ -177,6 +177,7 @@ export interface Job {
   margin_percent: number;
   scheduled_date?: string;
   scheduled_start_at?: string;
+  scheduled_end_at?: string;
   job_type?: "fixed" | "hourly";
   completed_date?: string;
   cash_in: number;
