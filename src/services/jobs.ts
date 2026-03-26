@@ -1,7 +1,7 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
 import { JOB_IN_PROGRESS_STATUSES, JOB_WORK_PHASE_STATUSES } from "@/lib/job-phases";
-import { jobBillableRevenue } from "@/lib/job-financials";
+import { jobBillableRevenue, jobProfit } from "@/lib/job-financials";
 
 /** Draft through final check — booked revenue before collection (matches Jobs KPI). */
 const REVENUE_BOOKED_STATUSES: Job["status"][] = [
@@ -21,6 +21,27 @@ export async function getTotalRevenueBookedPipeline(): Promise<number> {
     .is("deleted_at", null);
   if (error || !data) return 0;
   return data.reduce((sum, row) => sum + jobBillableRevenue(row as Pick<Job, "client_price" | "extras_amount">), 0);
+}
+
+/** Revenue-weighted average margin % for pipeline jobs (same scope as total revenue booked). */
+export async function getAverageMarginPercentPipeline(): Promise<number> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("client_price, extras_amount, partner_cost, materials_cost")
+    .in("status", REVENUE_BOOKED_STATUSES)
+    .is("deleted_at", null);
+  if (error || !data?.length) return 0;
+  let rev = 0;
+  let profit = 0;
+  for (const row of data) {
+    const j = row as Pick<Job, "client_price" | "extras_amount" | "partner_cost" | "materials_cost">;
+    const r = jobBillableRevenue(j);
+    if (r <= 0) continue;
+    rev += r;
+    profit += jobProfit(j);
+  }
+  return rev > 0 ? Math.round((profit / rev) * 1000) / 10 : 0;
 }
 
 // Throttle: mark-late runs at most once every 5 minutes per server instance

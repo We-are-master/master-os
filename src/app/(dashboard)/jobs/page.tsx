@@ -19,13 +19,13 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon,
   ArrowRight, Briefcase, DollarSign, Clock,
-  MapPin, Building2, TrendingUp,
-  CheckCircle2, AlertTriangle, XCircle,
+  MapPin, Building2, TrendingUp, Percent,
+  AlertTriangle, XCircle,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listJobs, createJob, updateJob, getJob, getTotalRevenueBookedPipeline } from "@/services/jobs";
+import { listJobs, createJob, updateJob, getJob, getTotalRevenueBookedPipeline, getAverageMarginPercentPipeline } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
@@ -67,6 +67,7 @@ function JobsPageContent() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
   const [revenueBookedPipeline, setRevenueBookedPipeline] = useState(0);
+  const [avgMarginPipeline, setAvgMarginPipeline] = useState(0);
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -125,12 +126,14 @@ function JobsPageContent() {
 
   const loadCounts = useCallback(async () => {
     try {
-      const [counts, revenueBooked] = await Promise.all([
+      const [counts, revenueBooked, avgMargin] = await Promise.all([
         getStatusCounts("jobs", [...JOB_STATUSES]),
         getTotalRevenueBookedPipeline(),
+        getAverageMarginPercentPipeline(),
       ]);
       setTabCounts(counts);
       setRevenueBookedPipeline(revenueBooked);
+      setAvgMarginPipeline(avgMargin);
     } catch {
       /* cosmetic */
     }
@@ -358,7 +361,14 @@ function JobsPageContent() {
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch [&>*]:min-w-0">
           <KpiCard title="Active Jobs" value={activeJobsKpi} format="number" icon={Briefcase} accent="blue" />
           <KpiCard title="Awaiting Payment" value={tabCounts.awaiting_payment ?? 0} format="number" icon={DollarSign} accent="amber" />
-          <KpiCard title="Completed" value={tabCounts.completed ?? 0} format="number" icon={CheckCircle2} accent="emerald" />
+          <KpiCard
+            title="Average % margin"
+            value={avgMarginPipeline}
+            format="percent"
+            description="Weighted — pipeline jobs (same as revenue)"
+            icon={Percent}
+            accent="emerald"
+          />
           <KpiCard
             title="Total Revenue Booked"
             value={revenueBookedPipeline}
