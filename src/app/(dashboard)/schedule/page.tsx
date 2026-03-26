@@ -409,7 +409,9 @@ export default function SchedulePage() {
               {selectedScheduleLine && (
                 <span>Scheduled: {selectedScheduleLine}</span>
               )}
-              <span>Phase {selectedJob.current_phase}/{selectedJob.total_phases}</span>
+              <span>
+                Phase {Math.min(selectedJob.total_phases, 2) === 2 ? (selectedJob.report_2_uploaded ? 2 : 1) : 1}/{Math.min(selectedJob.total_phases, 2)}
+              </span>
             </div>
 
             <div className="pt-4 border-t border-border-light">

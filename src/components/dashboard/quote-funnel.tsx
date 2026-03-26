@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabase } from "@/services/base";
 import { motion } from "framer-motion";
+import { useDashboardDateRangeOptional } from "@/hooks/use-dashboard-date-range";
 
 interface FunnelStep {
   label: string;
@@ -12,32 +13,115 @@ interface FunnelStep {
   pct: number;
 }
 
+const JOB_STATUS_LABELS: Record<string, string> = {
+  scheduled: "Scheduled",
+  late: "Late",
+  in_progress_phase1: "In progress (P1)",
+  in_progress_phase2: "In progress (P2)",
+  in_progress_phase3: "In progress (P3)",
+  final_check: "Final check",
+  awaiting_payment: "Awaiting payment",
+  need_attention: "Need attention",
+  completed: "Completed",
+};
+
 export function QuoteFunnel() {
   const [steps, setSteps] = useState<FunnelStep[]>([]);
+  const [meta, setMeta] = useState({
+    requests: 0,
+    quotes: 0,
+    quotesConverted: 0,
+    jobs: 0,
+    jobsFromQuotes: 0,
+    quoteToJobRate: 0,
+    requestsToJobsRate: 0,
+  });
+  const [jobStatusBreakdown, setJobStatusBreakdown] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+
+  const dateCtx = useDashboardDateRangeOptional();
+  const boundsKey = useMemo(() => {
+    const b = dateCtx?.bounds ?? null;
+    return b ? `${b.fromIso}|${b.toIso}` : "all";
+  }, [dateCtx]);
 
   useEffect(() => {
     async function load() {
       const supabase = getSupabase();
+      setLoading(true);
       try {
-        const [reqRes, quoteRes, jobRes] = await Promise.all([
-          supabase.from("service_requests").select("id", { count: "exact" }),
-          supabase.from("quotes").select("id, status"),
-          supabase.from("jobs").select("id", { count: "exact" }),
-        ]);
+        const bounds = dateCtx?.bounds ?? null;
+        const fromIso = bounds?.fromIso;
+        const toIso = bounds?.toIso;
+
+        let reqQ = supabase.from("service_requests").select("id", { count: "exact" });
+        let quotesQ = supabase.from("quotes").select("id", { count: "exact" });
+        let jobsQ = supabase.from("jobs").select("id", { count: "exact" });
+
+        let quotesConvertedQ = supabase
+          .from("quotes")
+          .select("id", { count: "exact" })
+          .eq("status", "converted_to_job");
+
+        let jobsFromQuotesQ = supabase
+          .from("jobs")
+          .select("id", { count: "exact" })
+          .not("quote_id", "is", null);
+
+        let jobsFromQuotesStatusesQ = supabase
+          .from("jobs")
+          .select("status")
+          .not("quote_id", "is", null);
+
+        if (fromIso && toIso) {
+          reqQ = reqQ.gte("created_at", fromIso).lte("created_at", toIso);
+          quotesQ = quotesQ.gte("created_at", fromIso).lte("created_at", toIso);
+          jobsQ = jobsQ.gte("created_at", fromIso).lte("created_at", toIso);
+          quotesConvertedQ = quotesConvertedQ.gte("updated_at", fromIso).lte("updated_at", toIso);
+          jobsFromQuotesQ = jobsFromQuotesQ.gte("created_at", fromIso).lte("created_at", toIso);
+          jobsFromQuotesStatusesQ = jobsFromQuotesStatusesQ.gte("created_at", fromIso).lte("created_at", toIso);
+        }
+
+        const [
+          reqRes,
+          quotesRes,
+          quotesConvertedRes,
+          jobsRes,
+          jobsFromQuotesRes,
+          jobsFromQuotesStatusesRes,
+        ] = await Promise.all([reqQ, quotesQ, quotesConvertedQ, jobsQ, jobsFromQuotesQ, jobsFromQuotesStatusesQ]);
 
         const requests = reqRes.count ?? 0;
-        const quotes = (quoteRes.data ?? []).length;
-        const approvedQuotes = (quoteRes.data ?? []).filter((q: { status: string }) => ["approved", "in_progress"].includes(q.status)).length;
-        const jobs = jobRes.count ?? 0;
+        const quotes = quotesRes.count ?? 0;
+        const quotesConverted = quotesConvertedRes.count ?? 0;
+        const jobs = jobsRes.count ?? 0;
+        const jobsFromQuotes = jobsFromQuotesRes.count ?? 0;
 
         const top = Math.max(requests, 1);
         setSteps([
-          { label: "Requests",        count: requests,       color: "bg-blue-400",    pct: 100 },
-          { label: "Quotes",          count: quotes,         color: "bg-violet-400",  pct: Math.round((quotes / top) * 100) },
-          { label: "Quotes Approved", count: approvedQuotes, color: "bg-amber-400",   pct: Math.round((approvedQuotes / top) * 100) },
-          { label: "Jobs",            count: jobs,           color: "bg-emerald-400", pct: Math.round((jobs / top) * 100) },
+          { label: "Requests", count: requests, color: "bg-blue-400", pct: 100 },
+          { label: "Quotes", count: quotes, color: "bg-violet-400", pct: Math.round((quotes / top) * 100) },
+          { label: "Quotes → Jobs", count: quotesConverted, color: "bg-amber-400", pct: Math.round((quotesConverted / top) * 100) },
+          { label: "Jobs", count: jobs, color: "bg-emerald-400", pct: Math.round((jobs / top) * 100) },
         ]);
+
+        const quoteToJobRate = quotes > 0 ? Math.round((jobsFromQuotes / quotes) * 1000) / 10 : 0;
+        const requestsToJobsRate = requests > 0 ? Math.round((jobs / requests) * 1000) / 10 : 0;
+
+        const statusRows = (jobsFromQuotesStatusesRes.data ?? []) as { status: string }[];
+        const breakdown: Record<string, number> = {};
+        for (const r of statusRows) breakdown[r.status] = (breakdown[r.status] ?? 0) + 1;
+        setJobStatusBreakdown(breakdown);
+
+        setMeta({
+          requests,
+          quotes,
+          quotesConverted,
+          jobs,
+          jobsFromQuotes,
+          quoteToJobRate,
+          requestsToJobsRate,
+        });
       } catch {
         // non-critical
       } finally {
@@ -45,7 +129,7 @@ export function QuoteFunnel() {
       }
     }
     load();
-  }, []);
+  }, [boundsKey]);
 
   return (
     <Card padding="none" className="h-full">
@@ -85,12 +169,38 @@ export function QuoteFunnel() {
         {!loading && steps.length > 0 && (
           <div className="pt-2 border-t border-border-light">
             <p className="text-[10px] text-text-tertiary">
-              Overall conversion:{" "}
-              <span className="font-bold text-text-primary">
-                {steps[0].count > 0 ? Math.round(((steps[3]?.count ?? 0) / steps[0].count) * 100) : 0}%
-              </span>
-              {" "}of requests become jobs.
+              Requests → Jobs:{" "}
+              <span className="font-bold text-text-primary">{meta.requestsToJobsRate}%</span> of requests become jobs.
             </p>
+            <p className="text-[10px] text-text-tertiary mt-1">
+              Quotes → Jobs:{" "}
+              <span className="font-bold text-text-primary">{meta.quoteToJobRate}%</span> ({meta.jobsFromQuotes}/{meta.quotes}).
+            </p>
+
+            {meta.jobsFromQuotes > 0 && Object.keys(jobStatusBreakdown).length > 0 && (
+              <div className="mt-3">
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-2">Jobs from quotes by status</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(jobStatusBreakdown)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 6)
+                    .map(([status, count]) => {
+                      const pct = Math.round((count / meta.jobsFromQuotes) * 100);
+                      return (
+                        <div key={status} className="p-2 rounded-xl bg-surface-hover">
+                          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide truncate">
+                            {JOB_STATUS_LABELS[status] ?? status}
+                          </p>
+                          <div className="flex items-center justify-between mt-1">
+                            <p className="text-sm font-bold text-text-primary">{count}</p>
+                            <p className="text-[10px] text-text-tertiary">{pct}%</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

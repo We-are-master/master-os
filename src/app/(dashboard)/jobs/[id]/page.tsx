@@ -71,9 +71,9 @@ import {
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
-  in_progress_phase1: { label: "Phase 1", variant: "primary", dot: true },
-  in_progress_phase2: { label: "Phase 2", variant: "primary", dot: true },
-  in_progress_phase3: { label: "Phase 3", variant: "primary", dot: true },
+  in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
+  in_progress_phase2: { label: "In Progress", variant: "primary", dot: true },
+  in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
   final_check: { label: "Final Check", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
   need_attention: { label: "Need attention", variant: "warning", dot: true },
@@ -723,6 +723,7 @@ export default function JobDetailPage() {
 
   const statusActions = getJobStatusActions(job);
   const phaseCount = normalizeTotalPhases(job.total_phases);
+  const displayPhase = phaseCount === 2 ? (job.report_2_uploaded ? 2 : 1) : 1;
   const sendReportFinalCheck = canSendReportAndRequestFinalPayment(job);
 
   return (
