@@ -1138,31 +1138,72 @@ export default function JobDetailPage() {
 
               {/* CLIENT cash in */}
               <div>
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client (cash in)</p>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-text-primary">Upfront deposit</span>
-                      <Badge variant={job.customer_deposit_paid ? "success" : "warning"} size="sm">{job.customer_deposit_paid ? "Paid" : "Pending"}</Badge>
-                    </div>
-                    <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_deposit ?? 0)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-text-primary">Final balance</span>
-                      <Badge variant={job.customer_final_paid ? "success" : "default"} size="sm">{job.customer_final_paid ? "Paid" : "Pending"}</Badge>
-                    </div>
-                    <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_final_payment ?? 0)}</span>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client (cash in)</p>
+                  <div className="text-right">
+                    <p className="text-[10px] text-text-tertiary">Total job value</p>
+                    <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(billableRevenue)}</p>
                   </div>
                 </div>
-                <Button size="sm" variant="outline" className="mt-3 w-full" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setAddPaymentType("customer_deposit"); setAddPaymentOpen(true); }}>
+                <div className="space-y-2">
+                  {(job.customer_deposit ?? 0) > 0 && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-text-primary">Upfront deposit</span>
+                        <Badge variant={job.customer_deposit_paid ? "success" : "warning"} size="sm">{job.customer_deposit_paid ? "Paid" : "Pending"}</Badge>
+                      </div>
+                      <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_deposit ?? 0)}</span>
+                    </div>
+                  )}
+                  {(job.customer_final_payment ?? 0) > 0 && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-text-primary">Final balance</span>
+                        <Badge variant={job.customer_final_paid ? "success" : "default"} size="sm">{job.customer_final_paid ? "Paid" : "Pending"}</Badge>
+                      </div>
+                      <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_final_payment ?? 0)}</span>
+                    </div>
+                  )}
+                  {customerPaidTotal > 0 && (
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-text-tertiary">Paid so far</span>
+                      <span className="tabular-nums text-emerald-600 font-medium">{formatCurrency(customerPaidTotal)}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-1.5 border-t border-border-light">
+                    <span className={`text-xs font-semibold ${amountDue > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                      {amountDue > 0 ? "Amount due" : "Fully collected"}
+                    </span>
+                    <span className={`text-sm font-bold tabular-nums ${amountDue > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                      {amountDue > 0 ? formatCurrency(amountDue) : formatCurrency(billableRevenue)}
+                    </span>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3 w-full"
+                  disabled={maxCustomerDepositPay <= 0 && maxCustomerFinalPay <= 0}
+                  icon={<Plus className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    const type = maxCustomerDepositPay > 0 ? "customer_deposit" : "customer_final";
+                    setAddPaymentType(type);
+                    setAddPaymentOpen(true);
+                  }}
+                >
                   Register customer payment
                 </Button>
               </div>
 
               {/* PARTNER cash out */}
               <div className="pt-3 border-t border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Partner (cash out)</p>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner (cash out)</p>
+                  <div className="text-right">
+                    <p className="text-[10px] text-text-tertiary">Total to pay</p>
+                    <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(partnerCap)}</p>
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -1174,9 +1215,19 @@ export default function JobDetailPage() {
                     <span className="text-sm font-semibold tabular-nums">{formatCurrency(partnerCap)}</span>
                   </div>
                   {partnerPaidTotal > 0 && (
-                    <div className="flex items-center justify-between text-[11px] text-text-tertiary">
-                      <span>Paid so far</span>
-                      <span className="tabular-nums text-emerald-600">{formatCurrency(partnerPaidTotal)}</span>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-text-tertiary">Paid so far</span>
+                      <span className="tabular-nums text-emerald-600 font-medium">{formatCurrency(partnerPaidTotal)}</span>
+                    </div>
+                  )}
+                  {partnerCap > 0 && (
+                    <div className="flex items-center justify-between pt-1.5 border-t border-border-light">
+                      <span className={`text-xs font-semibold ${partnerPayRemaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                        {partnerPayRemaining > 0 ? "Amount due" : "Fully paid out"}
+                      </span>
+                      <span className={`text-sm font-bold tabular-nums ${partnerPayRemaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                        {partnerPayRemaining > 0 ? formatCurrency(partnerPayRemaining) : formatCurrency(partnerCap)}
+                      </span>
                     </div>
                   )}
                 </div>

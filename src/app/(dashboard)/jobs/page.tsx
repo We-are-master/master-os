@@ -194,7 +194,7 @@ function JobsPageContent() {
         partner_payment_2: 0, partner_payment_2_paid: false,
         partner_payment_3: 0, partner_payment_3_paid: false,
         customer_deposit: 0, customer_deposit_paid: false,
-        customer_final_payment: 0, customer_final_paid: false,
+        customer_final_payment: cp, customer_final_paid: false,
       });
       await logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
