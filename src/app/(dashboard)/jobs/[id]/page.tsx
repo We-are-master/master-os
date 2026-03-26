@@ -769,22 +769,22 @@ export default function JobDetailPage() {
 
             {/* Job figures — same card shell as Client identity below */}
             <div className="w-full min-w-0 rounded-xl border border-border-light bg-card p-4">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 min-[480px]:grid-cols-4">
-                <div className="min-w-0">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
-                  <p className="text-sm font-bold text-text-primary mt-1 tabular-nums truncate">{formatCurrency(billableRevenue)}</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-4 min-[480px]:grid-cols-4 min-[480px]:gap-y-0 items-start justify-items-stretch">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide leading-none text-text-tertiary whitespace-nowrap">Job amount</p>
+                  <p className="min-w-0 truncate text-sm font-bold leading-none tabular-nums text-text-primary">{formatCurrency(billableRevenue)}</p>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total cost</p>
-                  <p className="text-sm font-bold text-red-600 mt-1 tabular-nums truncate">{formatCurrency(directCost)}</p>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide leading-none text-text-tertiary whitespace-nowrap">Total cost</p>
+                  <p className="min-w-0 truncate text-sm font-bold leading-none tabular-nums text-red-600">{formatCurrency(directCost)}</p>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Margin</p>
-                  <p className={`text-sm font-bold mt-1 tabular-nums truncate ${profit >= 0 ? "text-blue-700" : "text-red-600"}`}>{formatCurrency(profit)}</p>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide leading-none text-text-tertiary whitespace-nowrap">Margin</p>
+                  <p className={`min-w-0 truncate text-sm font-bold leading-none tabular-nums ${profit >= 0 ? "text-blue-700" : "text-red-600"}`}>{formatCurrency(profit)}</p>
                 </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Margin %</p>
-                  <p className={`text-sm font-bold mt-1 tabular-nums ${marginPct >= 20 ? "text-amber-700" : "text-red-600"}`}>{marginPct}%</p>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide leading-none text-text-tertiary whitespace-nowrap">Margin %</p>
+                  <p className={`text-sm font-bold leading-none tabular-nums ${marginPct >= 20 ? "text-amber-700" : "text-red-600"}`}>{marginPct}%</p>
                 </div>
               </div>
             </div>
