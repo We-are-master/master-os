@@ -18,7 +18,8 @@ export async function listPartners(params: PartnerListParams): Promise<ListResul
     query = query.eq("status", params.status);
   }
   if (params.trade && params.trade !== "all") {
-    query = query.eq("trade", params.trade);
+    // Match against either the legacy `trade` column or the `trades` array.
+    query = query.or(`trade.eq.${params.trade},trades.cs.{${params.trade}}`);
   }
   if (params.search) {
     query = query.or(

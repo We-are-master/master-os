@@ -1,5 +1,5 @@
 import { getSupabase, softDeleteById } from "./base";
-import type { JobPayment, JobPaymentType } from "@/types/database";
+import type { JobPayment, JobPaymentMethod, JobPaymentType } from "@/types/database";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
 
@@ -9,6 +9,8 @@ export interface CreateJobPaymentInput {
   amount: number;
   payment_date: string;
   note?: string;
+  payment_method?: JobPaymentMethod;
+  bank_reference?: string;
   created_by?: string;
 }
 
@@ -38,6 +40,8 @@ export async function createJobPayment(input: CreateJobPaymentInput): Promise<Jo
       amount: input.amount,
       payment_date: input.payment_date,
       note: input.note ?? null,
+      payment_method: input.payment_method ?? "bank_transfer",
+      bank_reference: input.bank_reference ?? null,
       created_by: input.created_by ?? null,
     })
     .select()
