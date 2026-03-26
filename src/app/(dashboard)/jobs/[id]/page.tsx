@@ -766,33 +766,34 @@ export default function JobDetailPage() {
           {/* ═══ LEFT — operational column ═══ */}
           <div className="lg:col-span-2 space-y-5">
 
+            {/* Job figures — flat strip above client card (no box) */}
+            <div className="w-full min-w-0 pb-1">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job figures</p>
+              <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-3 min-[480px]:grid-cols-4">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
+                  <p className="text-sm font-bold text-text-primary mt-1 tabular-nums truncate">{formatCurrency(billableRevenue)}</p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total cost</p>
+                  <p className="text-sm font-bold text-red-600 mt-1 tabular-nums truncate">{formatCurrency(directCost)}</p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Margin</p>
+                  <p className={`text-sm font-bold mt-1 tabular-nums truncate ${profit >= 0 ? "text-blue-700" : "text-red-600"}`}>{formatCurrency(profit)}</p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Margin %</p>
+                  <p className={`text-sm font-bold mt-1 tabular-nums ${marginPct >= 20 ? "text-amber-700" : "text-red-600"}`}>{marginPct}%</p>
+                </div>
+              </div>
+            </div>
+
             {/* CLIENT IDENTITY + MAP */}
             <div className="rounded-xl border border-border-light bg-card overflow-hidden">
               <div className="grid grid-cols-1 sm:grid-cols-2">
                 {/* client info */}
                 <div className="p-4 space-y-3">
-                  {/* Job figures */}
-                  <div className="rounded-xl bg-surface-hover/40 border border-border-light p-3">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job figures</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
-                      <div>
-                        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
-                        <p className="text-sm font-bold text-text-primary mt-1 tabular-nums">{formatCurrency(billableRevenue)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total cost</p>
-                        <p className="text-sm font-bold text-red-600 mt-1 tabular-nums">{formatCurrency(directCost)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Margin</p>
-                        <p className={`text-sm font-bold mt-1 tabular-nums ${profit >= 0 ? "text-blue-700" : "text-red-600"}`}>{formatCurrency(profit)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Margin %</p>
-                        <p className={`text-sm font-bold mt-1 tabular-nums ${marginPct >= 20 ? "text-amber-700" : "text-red-600"}`}>{marginPct}%</p>
-                      </div>
-                    </div>
-                  </div>
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
                     <Building2 className="h-3.5 w-3.5" /> Client identity
                   </p>
