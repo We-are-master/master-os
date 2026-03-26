@@ -55,9 +55,9 @@ export function KpiCard({
   const isPositive = change !== undefined && change >= 0;
 
   return (
-    <motion.div variants={staggerItem}>
-      <Card className={cn("relative overflow-hidden group", className)}>
-        <div className="flex items-start justify-between">
+    <motion.div variants={staggerItem} className="h-full min-w-0 w-full">
+      <Card className={cn("relative overflow-hidden group h-full flex flex-col", className)}>
+        <div className="flex items-start justify-between gap-3 flex-1 min-h-0">
           <div className="space-y-2 flex-1 min-w-0">
             <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">
               {title}
@@ -86,9 +86,9 @@ export function KpiCard({
                 )}
               </div>
             )}
-            {description && (
-              <p className="text-xs text-text-tertiary">{description}</p>
-            )}
+            {description ? (
+              <p className="text-xs text-text-tertiary line-clamp-2">{description}</p>
+            ) : null}
           </div>
           {Icon && (
             <div

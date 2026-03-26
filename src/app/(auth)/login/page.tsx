@@ -1,14 +1,86 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Layers, Mail, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
 import { signIn } from "@/services/auth";
 import { toast } from "sonner";
+import { APP_NAME } from "@/lib/constants";
+import { resolveAppLogoUrl } from "@/hooks/use-company-logos";
+import { getCompanySettings } from "@/services/company";
+
+type LoginBranding = {
+  loading: boolean;
+  companyName: string;
+  logoUrl?: string;
+  logoLightThemeUrl?: string;
+  logoDarkThemeUrl?: string;
+};
 
 export default function LoginPage() {
   const router = useRouter();
+  const [branding, setBranding] = useState<LoginBranding>({
+    loading: true,
+    companyName: "",
+    logoUrl: undefined,
+    logoLightThemeUrl: undefined,
+    logoDarkThemeUrl: undefined,
+  });
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/public/company-branding");
+        const data = (await res.json()) as LoginBranding & { loading?: boolean };
+        if (!alive) return;
+        const hasAny =
+          (data.companyName && String(data.companyName).trim()) ||
+          data.logoUrl ||
+          data.logoLightThemeUrl ||
+          data.logoDarkThemeUrl;
+        if (hasAny) {
+          setBranding({
+            loading: false,
+            companyName: data.companyName ?? "",
+            logoUrl: data.logoUrl ?? undefined,
+            logoLightThemeUrl: data.logoLightThemeUrl ?? undefined,
+            logoDarkThemeUrl: data.logoDarkThemeUrl ?? undefined,
+          });
+          return;
+        }
+        const s = await getCompanySettings();
+        if (!alive) return;
+        if (s) {
+          setBranding({
+            loading: false,
+            companyName: s.company_name ?? "",
+            logoUrl: s.logo_url ?? undefined,
+            logoLightThemeUrl: s.logo_light_theme_url ?? undefined,
+            logoDarkThemeUrl: s.logo_dark_theme_url ?? undefined,
+          });
+        } else {
+          setBranding((b) => ({ ...b, loading: false }));
+        }
+      } catch {
+        if (alive) setBranding((b) => ({ ...b, loading: false }));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** Login screen uses dark chrome (same as sidebar). */
+  const logoSrc = !branding.loading ? resolveAppLogoUrl("dark", branding) : undefined;
+  const displayName = branding.companyName?.trim() || APP_NAME;
+  const [imgErr, setImgErr] = useState(false);
+
+  useEffect(() => {
+    setImgErr(false);
+  }, [logoSrc]);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -49,11 +121,22 @@ export default function LoginPage() {
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ delay: 0.1, type: "spring", damping: 15 }}
-            className="inline-flex items-center justify-center h-14 w-14 rounded-2xl bg-primary mb-4"
+            className="inline-flex items-center justify-center mb-4"
           >
-            <Layers className="h-7 w-7 text-white" />
+            {logoSrc && !imgErr ? (
+              <img
+                src={logoSrc}
+                alt={displayName}
+                className="h-14 max-h-14 w-auto max-w-[220px] object-contain object-center"
+                onError={() => setImgErr(true)}
+              />
+            ) : (
+              <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary">
+                <Layers className="h-7 w-7 text-white" />
+              </div>
+            )}
           </motion.div>
-          <h1 className="text-2xl font-bold text-white">Master OS</h1>
+          <h1 className="text-2xl font-bold text-white">{displayName}</h1>
           <p className="text-sm text-stone-400 mt-1">
             Sign in to your operations center
           </p>
@@ -119,10 +202,6 @@ export default function LoginPage() {
               </>
             )}
           </motion.button>
-
-          <p className="text-center text-[11px] text-stone-500">
-            Internal use only. Contact your admin for access.
-          </p>
         </motion.form>
       </motion.div>
     </div>

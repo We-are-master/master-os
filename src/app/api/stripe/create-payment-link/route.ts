@@ -10,19 +10,46 @@ export async function POST(req: NextRequest) {
   try {
     const stripe = requireStripe();
     const supabaseAdmin = createServiceClient();
-    const { invoiceId, amount, clientName, reference, customerEmail } = await req.json();
+    const { invoiceId, clientName, customerEmail } = await req.json();
 
-    if (!invoiceId || !amount || !clientName || !reference) {
+    if (!invoiceId || !clientName) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
     if (!isValidUUID(invoiceId)) {
       return NextResponse.json({ error: "Invalid invoiceId" }, { status: 400 });
     }
 
+    // Load invoice server-side — never trust client-supplied amount or reference.
+    const { data: invRow, error: invErr } = await supabaseAdmin
+      .from("invoices")
+      .select("amount, reference, job_reference")
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    if (invErr || !invRow) {
+      return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+    }
+
+    const amount: number = invRow.amount;
+    const reference: string = invRow.reference;
+
+    let jobIdMeta = "";
+    if (invRow.job_reference) {
+      const { data: jobRow } = await supabaseAdmin
+        .from("jobs")
+        .select("id")
+        .eq("reference", invRow.job_reference)
+        .maybeSingle();
+      if (jobRow?.id) jobIdMeta = jobRow.id;
+    }
+
+    const stripeMeta: Record<string, string> = { invoice_id: invoiceId, reference };
+    if (jobIdMeta) stripeMeta.job_id = jobIdMeta;
+
     const product = await stripe.products.create({
       name: `Invoice ${reference}`,
       description: `Payment for ${clientName} — ${reference}`,
-      metadata: { invoice_id: invoiceId, reference },
+      metadata: stripeMeta,
     });
 
     const price = await stripe.prices.create({
@@ -33,7 +60,7 @@ export async function POST(req: NextRequest) {
 
     const paymentLink = await stripe.paymentLinks.create({
       line_items: [{ price: price.id, quantity: 1 }],
-      metadata: { invoice_id: invoiceId, reference },
+      metadata: stripeMeta,
       after_completion: {
         type: "redirect",
         redirect: { url: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/payment-success?ref=${reference}` },

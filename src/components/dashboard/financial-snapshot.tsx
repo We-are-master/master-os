@@ -4,8 +4,19 @@ import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabase } from "@/services/base";
 import { formatCurrency } from "@/lib/utils";
+import { useDashboardDateRangeOptional } from "@/hooks/use-dashboard-date-range";
+import type { DashboardDateBounds } from "@/lib/dashboard-date-range";
+
+function inDateRange(iso: string | null | undefined, bounds: DashboardDateBounds): boolean {
+  if (!iso) return false;
+  return iso >= bounds.fromIso && iso <= bounds.toIso;
+}
 
 export function FinancialSnapshot() {
+  const dateCtx = useDashboardDateRangeOptional();
+  const bounds = dateCtx?.bounds ?? null;
+  const boundsKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
+
   const [data, setData] = useState({
     receivable: 0, payable: 0, overdue: 0, overdueCount: 0,
     paidTotal: 0, pendingTotal: 0, pendingCount: 0,
@@ -17,18 +28,46 @@ export function FinancialSnapshot() {
       const supabase = getSupabase();
       try {
         const [invRes, sbRes] = await Promise.all([
-          supabase.from("invoices").select("amount, status"),
-          supabase.from("self_bills").select("net_payout, status"),
+          supabase.from("invoices").select("amount, status, paid_date, created_at"),
+          supabase.from("self_bills").select("net_payout, status, created_at"),
         ]);
-        const invoices = (invRes.data ?? []) as { amount: number; status: string }[];
-        const selfBills = (sbRes.data ?? []) as { net_payout: number; status: string }[];
-        const pending = invoices.filter((i) => i.status === "pending");
-        const overdue = invoices.filter((i) => i.status === "overdue");
-        const paid = invoices.filter((i) => i.status === "paid");
-        const partnerDue = selfBills.filter((s) => s.status === "awaiting_payment" || s.status === "ready_to_pay");
+        const invoices = (invRes.data ?? []) as {
+          amount: number;
+          status: string;
+          paid_date?: string | null;
+          created_at: string;
+        }[];
+        const selfBills = (sbRes.data ?? []) as {
+          net_payout: number;
+          status: string;
+          created_at: string;
+        }[];
+
+        const pendingRaw = invoices.filter((i) => i.status === "pending");
+        const overdueRaw = invoices.filter((i) => i.status === "overdue");
+        const paidRaw = invoices.filter((i) => i.status === "paid");
+
+        const pending = bounds
+          ? pendingRaw.filter((i) => inDateRange(i.created_at, bounds))
+          : pendingRaw;
+        const overdue = bounds
+          ? overdueRaw.filter((i) => inDateRange(i.created_at, bounds))
+          : overdueRaw;
+        const paid = bounds
+          ? paidRaw.filter((i) => {
+              const ref = i.paid_date || i.created_at;
+              return inDateRange(ref, bounds);
+            })
+          : paidRaw;
+
+        const selfBillsScoped = bounds
+          ? selfBills.filter((s) => inDateRange(s.created_at, bounds))
+          : selfBills;
+
+        const partnerDue = selfBillsScoped.filter((s) => s.status === "awaiting_payment" || s.status === "ready_to_pay");
         setData({
           receivable: [...pending, ...overdue].reduce((s, i) => s + Number(i.amount), 0),
-          payable: selfBills.reduce((s, sb) => s + Number(sb.net_payout), 0),
+          payable: selfBillsScoped.reduce((s, sb) => s + Number(sb.net_payout), 0),
           overdue: overdue.reduce((s, i) => s + Number(i.amount), 0),
           overdueCount: overdue.length,
           paidTotal: paid.reduce((s, i) => s + Number(i.amount), 0),
@@ -39,8 +78,8 @@ export function FinancialSnapshot() {
         });
       } catch { /* non-critical */ }
     }
-    load();
-  }, []);
+    void load();
+  }, [boundsKey]);
 
   const items = [
     { label: "Accounts Receivable",  value: data.receivable,    trend: `${data.pendingCount + data.overdueCount} invoices`, positive: true },
@@ -56,7 +95,9 @@ export function FinancialSnapshot() {
       <CardHeader className="px-5 pt-5">
         <div>
           <CardTitle>Financial Snapshot</CardTitle>
-          <p className="text-xs text-text-tertiary mt-0.5">Current financial position</p>
+          <p className="text-xs text-text-tertiary mt-0.5">
+            {bounds ? "Figures for the selected date range" : "Current financial position"}
+          </p>
         </div>
         <button className="text-xs font-medium text-primary hover:text-primary-hover transition-colors">
           Full Report

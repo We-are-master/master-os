@@ -3,8 +3,8 @@ import type { ClientSourceAccount } from "@/types/database";
 import { createAccount } from "./accounts";
 
 /**
- * Accounts corporativos para vincular o cliente (`clients.source_account_id` → `accounts.id`).
- * Mantém o tipo ClientSourceAccount como { id, name } para os dropdowns.
+ * Corporate accounts for linking a client (`clients.source_account_id` → `accounts.id`).
+ * Keeps `ClientSourceAccount` as `{ id, name }` for dropdowns.
  */
 export async function listClientSourceAccounts(): Promise<ClientSourceAccount[]> {
   const supabase = getSupabase();

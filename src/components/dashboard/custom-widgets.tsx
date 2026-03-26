@@ -12,7 +12,12 @@ import type {
   WidgetConfig, CustomMetricOptions, CustomChartOptions, CustomTableOptions,
   CustomTable,
 } from "@/types/dashboard-config";
-import { COLOUR_MAP, TABLE_META } from "@/types/dashboard-config";
+import {
+  COLOUR_MAP,
+  TABLE_META,
+  resolveJobsNumericField,
+  isJobsCurrencyField,
+} from "@/types/dashboard-config";
 import * as LucideIcons from "lucide-react";
 import { AlertCircle } from "lucide-react";
 
@@ -31,6 +36,15 @@ function getIcon(name: string): React.ElementType {
   return icons[name] ?? LucideIcons.Hash;
 }
 
+function customChartValueIsCurrency(opts: CustomChartOptions): boolean {
+  if (opts.aggregation === "count") return false;
+  const vf = opts.value_field;
+  if (vf === "amount" || vf === "total_amount" || vf === "net_payout" || vf === "gross_amount") return true;
+  if (vf === "revenue" || vf === "cost") return true;
+  if (opts.table === "jobs" && isJobsCurrencyField(vf)) return true;
+  return false;
+}
+
 // ─── Custom Metric ─────────────────────────────────────────────────────────
 
 export function CustomMetricWidget({ widget }: { widget: WidgetConfig }) {
@@ -46,9 +60,13 @@ export function CustomMetricWidget({ widget }: { widget: WidgetConfig }) {
       setError(null);
       try {
         const supabase = getSupabase();
-        let query = supabase.from(opts!.table as CustomTable).select(
-          opts!.aggregation === "count" ? "id" : (opts!.field ?? "id")
-        );
+        const selectField =
+          opts!.aggregation === "count"
+            ? "id"
+            : opts!.table === "jobs"
+              ? resolveJobsNumericField(opts!.field ?? "id")
+              : (opts!.field ?? "id");
+        let query = supabase.from(opts!.table as CustomTable).select(selectField);
         if (opts!.filter_field && opts!.filter_value) {
           query = query.eq(opts!.filter_field, opts!.filter_value);
         }
@@ -59,10 +77,10 @@ export function CustomMetricWidget({ widget }: { widget: WidgetConfig }) {
         if (opts!.aggregation === "count") {
           result = rows.length;
         } else if (opts!.aggregation === "sum") {
-          result = rows.reduce((s: number, r: Record<string, unknown>) => s + Number(r[opts!.field!] ?? 0), 0);
+          result = rows.reduce((s: number, r: Record<string, unknown>) => s + Number(r[selectField] ?? 0), 0);
         } else {
           result = rows.length > 0
-            ? rows.reduce((s: number, r: Record<string, unknown>) => s + Number(r[opts!.field!] ?? 0), 0) / rows.length
+            ? rows.reduce((s: number, r: Record<string, unknown>) => s + Number(r[selectField] ?? 0), 0) / rows.length
             : 0;
           result = Math.round(result * 100) / 100;
         }
@@ -125,9 +143,16 @@ export function CustomChartWidget({ widget }: { widget: WidgetConfig }) {
         const now = new Date();
         const startDate = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1).toISOString();
 
-        const fields = opts!.aggregation === "count"
-          ? `${opts!.date_field}`
-          : `${opts!.date_field},${opts!.value_field}`;
+        const valueField =
+          opts!.aggregation === "count"
+            ? ""
+            : opts!.table === "jobs"
+              ? resolveJobsNumericField(opts!.value_field)
+              : opts!.value_field;
+        const fields =
+          opts!.aggregation === "count"
+            ? `${opts!.date_field}`
+            : `${opts!.date_field},${valueField}`;
 
         let query = supabase.from(opts!.table).select(fields).gte(opts!.date_field, startDate);
         if (opts!.filter_field && opts!.filter_value) {
@@ -147,7 +172,7 @@ export function CustomChartWidget({ widget }: { widget: WidgetConfig }) {
           );
           const value = opts!.aggregation === "count"
             ? monthRows.length
-            : monthRows.reduce((s: number, r: Record<string, unknown>) => s + Number(r[opts!.value_field] ?? 0), 0);
+            : monthRows.reduce((s: number, r: Record<string, unknown>) => s + Number(r[valueField] ?? 0), 0);
           monthData.push({ label, value });
         }
         setData(monthData);
@@ -195,7 +220,17 @@ export function CustomChartWidget({ widget }: { widget: WidgetConfig }) {
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
               <Tooltip
-                formatter={(v) => [formatValue(Number(v ?? 0), opts?.aggregation === "count" ? undefined : opts?.value_field === "amount" || opts?.value_field === "revenue" ? "£" : undefined), widget.title]}
+                formatter={(v) => [
+                  formatValue(
+                    Number(v ?? 0),
+                    opts?.aggregation === "count"
+                      ? undefined
+                      : customChartValueIsCurrency(opts!)
+                        ? "£"
+                        : undefined
+                  ),
+                  widget.title,
+                ]}
                 contentStyle={{ borderRadius: 10, fontSize: 12, border: "1px solid #e5e7eb" }}
               />
               {chartType === "bar" && (
@@ -219,13 +254,23 @@ export function CustomChartWidget({ widget }: { widget: WidgetConfig }) {
 
 type RowData = Record<string, unknown>;
 
-function formatCell(value: unknown, field: string): string {
+function formatCell(value: unknown, field: string, table?: CustomTable): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "string" && value.match(/^\d{4}-\d{2}-\d{2}/)) {
     return new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   }
-  if ((field === "revenue" || field === "cost" || field === "amount" || field === "net_payout" || field === "gross_amount") && typeof value === "number") {
-    return formatCurrency(value);
+  const resolved = table === "jobs" ? resolveJobsNumericField(field) : field;
+  const num = typeof value === "number" ? value : Number(value);
+  const isMoney =
+    field === "revenue" ||
+    field === "cost" ||
+    field === "amount" ||
+    field === "total_amount" ||
+    field === "net_payout" ||
+    field === "gross_amount" ||
+    (table === "jobs" && isJobsCurrencyField(resolved));
+  if (isMoney && !Number.isNaN(num)) {
+    return formatCurrency(num);
   }
   return String(value);
 }
@@ -243,7 +288,13 @@ export function CustomTableWidget({ widget }: { widget: WidgetConfig }) {
       setError(null);
       try {
         const supabase = getSupabase();
-        const selectFields = opts!.columns.map((c) => c.field).join(",");
+        const selectFields = [
+          ...new Set(
+            opts!.columns.map((c) =>
+              opts!.table === "jobs" ? resolveJobsNumericField(c.field) : c.field
+            )
+          ),
+        ].join(",");
         let query = supabase
           .from(opts!.table)
           .select(selectFields)
@@ -254,7 +305,22 @@ export function CustomTableWidget({ widget }: { widget: WidgetConfig }) {
         }
         const { data, error: err } = await query;
         if (err) throw new Error(err.message);
-        setRows(((data ?? []) as unknown) as RowData[]);
+        let rows = ((data ?? []) as unknown) as RowData[];
+        if (opts!.table === "jobs") {
+          rows = rows.map((r) => {
+            const row = { ...r };
+            for (const c of opts!.columns) {
+              if (c.field === "revenue" && row.client_price !== undefined && row.client_price !== null) {
+                (row as Record<string, unknown>).revenue = row.client_price;
+              }
+              if (c.field === "cost" && row.partner_cost !== undefined && row.partner_cost !== null) {
+                (row as Record<string, unknown>).cost = row.partner_cost;
+              }
+            }
+            return row;
+          });
+        }
+        setRows(rows);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error");
       } finally {
@@ -310,7 +376,7 @@ export function CustomTableWidget({ widget }: { widget: WidgetConfig }) {
                           {String(row[col.field] ?? "—").replace(/_/g, " ")}
                         </span>
                       ) : (
-                        formatCell(row[col.field], col.field)
+                        formatCell(row[col.field], col.field, opts?.table)
                       )}
                     </td>
                   ))}

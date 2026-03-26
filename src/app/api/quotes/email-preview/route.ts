@@ -16,14 +16,24 @@ function getServiceSupabase() {
  * GET /api/quotes/email-preview?quoteId=xxx&recipientName=...&customMessage=...
  * Returns the HTML body of the email that will be sent (for preview in the dashboard).
  */
-export async function GET(req: NextRequest) {
+async function buildPreview(req: NextRequest, payload?: {
+  quoteId?: string;
+  recipientName?: string;
+  customMessage?: string;
+  scope?: string;
+  depositRequired?: number;
+  items?: { description: string; quantity: number; unitPrice: number; total: number }[];
+}) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const quoteId = req.nextUrl.searchParams.get("quoteId");
-    const recipientName = req.nextUrl.searchParams.get("recipientName") ?? undefined;
-    const customMessage = req.nextUrl.searchParams.get("customMessage") ?? undefined;
+    const quoteId = payload?.quoteId ?? req.nextUrl.searchParams.get("quoteId") ?? undefined;
+    const recipientName = payload?.recipientName ?? req.nextUrl.searchParams.get("recipientName") ?? undefined;
+    const customMessage = payload?.customMessage ?? req.nextUrl.searchParams.get("customMessage") ?? undefined;
+    const scopeOverride = payload?.scope;
+    const depositOverride = payload?.depositRequired;
+    const itemsOverride = payload?.items;
 
     if (!quoteId || !isValidUUID(quoteId)) {
       return NextResponse.json({ error: "Valid quoteId is required" }, { status: 400 });
@@ -40,36 +50,42 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Quote not found" }, { status: 404 });
     }
 
-    const { data: lineItemRows } = await supabase
-      .from("quote_line_items")
-      .select("description, quantity, unit_price")
-      .eq("quote_id", quoteId)
-      .order("sort_order", { ascending: true });
-    const items =
-      lineItemRows?.map((r: { description: string; quantity: number; unit_price: number }) => ({
+    // Fetch line items (if not pre-provided) and company settings in parallel.
+    const [lineItemResult, settingsResult] = await Promise.all([
+      itemsOverride?.length
+        ? Promise.resolve(null)
+        : supabase
+            .from("quote_line_items")
+            .select("description, quantity, unit_price")
+            .eq("quote_id", quoteId)
+            .order("sort_order", { ascending: true }),
+      supabase.from("company_settings").select("*").limit(1).single(),
+    ]);
+
+    let items = itemsOverride;
+    if (!items?.length && lineItemResult) {
+      const lineItemRows = (lineItemResult as { data: { description: string; quantity: number; unit_price: number }[] | null }).data;
+      items = lineItemRows?.map((r) => ({
         description: r.description,
         quantity: Number(r.quantity) || 1,
         unitPrice: Number(r.unit_price) || 0,
         total: (Number(r.quantity) || 1) * (Number(r.unit_price) || 0),
       })) ?? undefined;
+    }
 
-    const { data: settings } = await supabase
-      .from("company_settings")
-      .select("*")
-      .limit(1)
-      .single();
+    const { data: settings } = settingsResult as { data: Record<string, unknown> | null };
 
     const branding: CompanyBranding = settings
       ? {
-          companyName: settings.company_name,
-          logoUrl: settings.logo_url ?? undefined,
-          address: settings.address ?? "",
-          phone: settings.phone ?? "",
-          email: settings.email ?? "",
-          website: settings.website ?? undefined,
-          vatNumber: settings.vat_number ?? undefined,
-          primaryColor: settings.primary_color ?? "#F97316",
-          tagline: settings.tagline ?? undefined,
+          companyName: String(settings.company_name ?? ""),
+          logoUrl: settings.logo_url ? String(settings.logo_url) : undefined,
+          address: String(settings.address ?? ""),
+          phone: String(settings.phone ?? ""),
+          email: String(settings.email ?? ""),
+          website: settings.website ? String(settings.website) : undefined,
+          vatNumber: settings.vat_number ? String(settings.vat_number) : undefined,
+          primaryColor: String(settings.primary_color ?? "#F97316"),
+          tagline: settings.tagline ? String(settings.tagline) : undefined,
         }
       : {
           companyName: "Master Group",
@@ -90,9 +106,14 @@ export async function GET(req: NextRequest) {
       expiresAt: quote.expires_at ?? undefined,
       ownerName: quote.owner_name ?? undefined,
       items,
-      notes: settings?.quote_footer_notes ?? undefined,
-      depositRequired: Number(quote.deposit_required ?? 0) || undefined,
-      scope: typeof quote.scope === "string" && quote.scope.trim() ? quote.scope.trim() : undefined,
+      notes: settings?.quote_footer_notes ? String(settings.quote_footer_notes) : undefined,
+      depositRequired: Number(depositOverride ?? quote.deposit_required ?? 0) || undefined,
+      scope:
+        typeof scopeOverride === "string" && scopeOverride.trim()
+          ? scopeOverride.trim()
+          : typeof quote.scope === "string" && quote.scope.trim()
+            ? quote.scope.trim()
+            : undefined,
     };
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
@@ -115,5 +136,25 @@ export async function GET(req: NextRequest) {
       { error: err instanceof Error ? err.message : "Internal error" },
       { status: 500 },
     );
+  }
+}
+
+export async function GET(req: NextRequest) {
+  return buildPreview(req);
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const payload = (await req.json()) as {
+      quoteId?: string;
+      recipientName?: string;
+      customMessage?: string;
+      scope?: string;
+      depositRequired?: number;
+      items?: { description: string; quantity: number; unitPrice: number; total: number }[];
+    };
+    return buildPreview(req, payload);
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 }

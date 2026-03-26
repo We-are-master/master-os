@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
+import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
 
 function getServiceSupabase() {
   return createClient(
@@ -117,6 +118,9 @@ export async function POST(req: NextRequest) {
       const { data: invRefRow } = await supabase.rpc("next_invoice_ref");
       const invoiceReference = (invRefRow as string) ?? `INV-${Date.now()}`;
 
+      const totalValue = Number(quote.total_value ?? 0);
+      const finalBalance = Math.max(0, totalValue - depositRequired);
+
       const now = new Date().toISOString();
       const dueDate = new Date();
       dueDate.setDate(dueDate.getDate() + 14);
@@ -135,14 +139,16 @@ export async function POST(req: NextRequest) {
           status: "scheduled",
           progress: 0,
           current_phase: 0,
-          total_phases: 3,
-          client_price: Number(quote.total_value ?? 0),
+          total_phases: 2,
+          job_type: "fixed",
+          client_price: totalValue,
+          extras_amount: 0,
           partner_cost: Number(quote.partner_cost ?? 0),
           materials_cost: 0,
           margin_percent: 0,
           partner_agreed_value: Number(quote.partner_cost ?? 0),
           finance_status: "unpaid",
-          service_value: Number(quote.total_value ?? 0),
+          service_value: totalValue,
           report_submitted: false,
           report_1_uploaded: false,
           report_1_approved: false,
@@ -158,7 +164,7 @@ export async function POST(req: NextRequest) {
           partner_payment_3_paid: false,
           customer_deposit: depositRequired,
           customer_deposit_paid: false,
-          customer_final_payment: 0,
+          customer_final_payment: finalBalance,
           customer_final_paid: false,
           cash_in: 0,
           cash_out: 0,
@@ -184,6 +190,9 @@ export async function POST(req: NextRequest) {
           amount: depositRequired,
           status: "pending",
           due_date: dueDateStr,
+          collection_stage: "awaiting_deposit",
+          collection_stage_locked: false,
+          invoice_kind: "deposit",
         })
         .select("id")
         .single();
@@ -200,7 +209,12 @@ export async function POST(req: NextRequest) {
       const product = await stripe.products.create({
         name: `Deposit — ${quote.reference}`,
         description: `Deposit for ${quote.client_name ?? "Client"} — ${quote.reference}`,
-        metadata: { invoice_id: invoice.id, reference: invoiceReference, quote_id: quoteId },
+        metadata: {
+          invoice_id: invoice.id,
+          reference: invoiceReference,
+          quote_id: quoteId,
+          job_id: job.id,
+        },
       });
 
       const price = await stripe.prices.create({
@@ -211,7 +225,7 @@ export async function POST(req: NextRequest) {
 
       const paymentLink = await stripe.paymentLinks.create({
         line_items: [{ price: price.id, quantity: 1 }],
-        metadata: { invoice_id: invoice.id, reference: invoiceReference },
+        metadata: { invoice_id: invoice.id, reference: invoiceReference, job_id: job.id },
         after_completion: {
           type: "redirect",
           redirect: { url: `${baseUrl()}/payment-success?ref=${encodeURIComponent(quote.reference)}&from=quote` },
@@ -229,6 +243,27 @@ export async function POST(req: NextRequest) {
         .eq("id", invoice.id);
 
       await supabase.from("jobs").update({ invoice_id: invoice.id }).eq("id", job.id);
+
+      if (finalBalance > 0.01) {
+        const { data: finRefRow } = await supabase.rpc("next_invoice_ref");
+        const finalRef = (finRefRow as string) ?? `INV-F-${Date.now()}`;
+        const { error: finInvErr } = await supabase.from("invoices").insert({
+          reference: finalRef,
+          client_name: quote.client_name ?? "",
+          job_reference: job.reference,
+          amount: finalBalance,
+          status: "pending",
+          due_date: dueDateStr,
+          collection_stage: "awaiting_deposit",
+          collection_stage_locked: false,
+          invoice_kind: "final",
+        });
+        if (finInvErr) {
+          console.error("Quote accept: final invoice creation failed", finInvErr);
+        }
+      }
+
+      await syncInvoiceCollectionStagesForJob(supabase, job.id);
 
       const { error: quoteUpdateErr } = await supabase
         .from("quotes")
@@ -297,9 +332,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error("Quote respond error:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Internal error" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }

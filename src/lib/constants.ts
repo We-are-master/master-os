@@ -20,6 +20,7 @@ export const NAVIGATION: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/", icon: "grid-2x2" },
+      { label: "Activity", href: "/activity", icon: "history" },
     ],
   },
   {
@@ -54,6 +55,7 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Bills", href: "/finance/bills", icon: "file-check" },
       { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign" },
       { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock" },
+      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
     ],
   },
   { label: "Team", items: [{ label: "Team", href: "/team", icon: "users-2" }] },

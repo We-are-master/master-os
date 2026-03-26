@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,8 @@ import {
   DollarSign, Briefcase, ArrowRight, MapPin,
   Mail, Phone, Calendar, Tag, Edit3, Trash2,
   Home, Building2, Key, UserCheck, Ban, Crown,
-  FileText, CheckCircle2, Clock, Loader2,
+  FileText, CheckCircle2, Clock, Loader2, PlusCircle, Star as StarIcon,
+  ChevronDown, ChevronRight, ExternalLink,
 } from "lucide-react";
 import { formatCurrency, formatDate, formatRelativeTime, isUuid } from "@/lib/utils";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
@@ -29,8 +31,14 @@ import { toast } from "sonner";
 import type { Client, ClientType, ClientSource, ClientStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useProfile } from "@/hooks/use-profile";
-import { listClients, createClient, updateClient } from "@/services/clients";
-import { createClientAddress } from "@/services/client-addresses";
+import { listClients, createClient, updateClient, getClient } from "@/services/clients";
+import {
+  createClientAddress,
+  listAddressesByClient,
+  setDefaultClientAddress,
+  deleteClientAddress,
+} from "@/services/client-addresses";
+import type { ClientAddress } from "@/types/database";
 import { listClientSourceAccounts, createClientSourceAccount } from "@/services/client-source-accounts";
 import { getStatusCounts, getSupabase } from "@/services/base";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -57,7 +65,30 @@ const sourceLabels: Record<ClientSource, string> = {
   partner: "Partner", corporate: "Corporate", other: "Other",
 };
 
-export default function ClientsPage() {
+function OpenClientFromQuery({ setSelectedClient }: { setSelectedClient: (c: Client | null) => void }) {
+  const searchParams = useSearchParams();
+  const clientId = searchParams.get("clientId");
+
+  useEffect(() => {
+    if (!clientId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const row = await getClient(clientId);
+        if (!cancelled && row) setSelectedClient(row);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, setSelectedClient]);
+
+  return null;
+}
+
+function ClientsPageInner() {
   const {
     data, loading, page, totalPages, totalItems,
     setPage, search, setSearch, status, setStatus, refresh,
@@ -88,9 +119,19 @@ export default function ClientsPage() {
   }, []);
 
   useEffect(() => { loadCounts(); loadAggregates(); }, [loadCounts, loadAggregates]);
-  useEffect(() => {
-    listClientSourceAccounts().then((list) => setSourceAccounts(list.map((a) => ({ id: a.id, name: a.name })))).catch(() => {});
+  const loadSourceAccounts = useCallback(() => {
+    listClientSourceAccounts()
+      .then((list) => setSourceAccounts(list.map((a) => ({ id: a.id, name: a.name }))))
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    loadSourceAccounts();
+  }, [loadSourceAccounts]);
+
+  useEffect(() => {
+    if (createOpen) loadSourceAccounts();
+  }, [createOpen, loadSourceAccounts]);
 
   const tabs = [
     { id: "all", label: "All", count: statusCounts.all ?? 0 },
@@ -109,27 +150,34 @@ export default function ClientsPage() {
         );
         return;
       }
+      // If the user filled the "Property address" section but left the main address
+      // blank, backfill the client record so it doesn't appear empty in the edit form.
+      const parts = formData.property_address_parts;
+      const mainAddress = formData.address?.trim() || parts?.address || parts?.full_address || undefined;
+      const mainCity = formData.city?.trim() || parts?.city || undefined;
+      const mainPostcode = formData.postcode?.trim() || parts?.postcode || undefined;
+
       const result = await createClient({
         source_account_id: sid,
         full_name: formData.full_name ?? "",
         email: formData.email ?? undefined,
         phone: formData.phone ?? undefined,
-        address: formData.address ?? undefined,
-        city: formData.city ?? undefined,
-        postcode: formData.postcode ?? undefined,
+        address: mainAddress,
+        city: mainCity,
+        postcode: mainPostcode,
         client_type: formData.client_type ?? "residential",
         source: formData.source ?? "direct",
         status: "active",
         notes: formData.notes ?? undefined,
         tags: [],
       });
-      if (formData.property_address_parts) {
+      if (parts) {
         await createClientAddress({
           client_id: result.id,
-          address: formData.property_address_parts.address || formData.property_address_parts.full_address,
-          city: formData.property_address_parts.city,
-          postcode: formData.property_address_parts.postcode,
-          country: formData.property_address_parts.country || "gb",
+          address: parts.address || parts.full_address,
+          city: parts.city,
+          postcode: parts.postcode,
+          country: parts.country || "gb",
           is_default: true,
         });
       }
@@ -143,10 +191,12 @@ export default function ClientsPage() {
       });
       setCreateOpen(false);
       toast.success("Client created");
-      listClientSourceAccounts().then((list) => setSourceAccounts(list.map((a) => ({ id: a.id, name: a.name })))).catch(() => {});
+      loadSourceAccounts();
       refresh(); loadCounts(); loadAggregates();
-    } catch { toast.error("Failed to create client"); }
-  }, [refresh, loadCounts, loadAggregates, profile?.id, profile?.full_name]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create client");
+    }
+  }, [refresh, loadCounts, loadAggregates, profile?.id, profile?.full_name, loadSourceAccounts]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
@@ -203,8 +253,14 @@ export default function ClientsPage() {
     {
       key: "source_account_id", label: "Account",
       render: (item) => {
-        const name = item.source_account_id ? sourceAccounts.find((a) => a.id === item.source_account_id)?.name : null;
-        return <span className="text-xs text-text-secondary">{name ?? "—"}</span>;
+        const aid = item.source_account_id?.trim();
+        if (!aid) return <span className="text-xs text-text-tertiary">—</span>;
+        const name = sourceAccounts.find((a) => a.id === aid)?.name;
+        return (
+          <span className="text-xs text-text-secondary" title={aid}>
+            {name ?? `Linked (${aid.slice(0, 8)}…)`}
+          </span>
+        );
       },
     },
     {
@@ -248,6 +304,7 @@ export default function ClientsPage() {
 
   return (
     <PageTransition>
+      <OpenClientFromQuery setSelectedClient={setSelectedClient} />
       <div className="space-y-5">
         <PageHeader title="Clients" subtitle="Manage individual clients and their service history.">
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>Export</Button>
@@ -310,6 +367,314 @@ export default function ClientsPage() {
   );
 }
 
+export default function ClientsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ClientsPageInner />
+    </Suspense>
+  );
+}
+
+/* ============ JOB HISTORY CARD ============ */
+function JobHistoryCard({ job }: {
+  job: { id: string; reference: string; title: string; status: string; client_price: number; customer_deposit_paid?: boolean; customer_final_payment?: number; scheduled_date?: string; property_address?: string; partner_name?: string; job_type?: string };
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const statusVariant =
+    job.status === "completed" ? "success" :
+    job.status === "in_progress" || job.status === "in_progress_phase1" || job.status === "in_progress_phase2" ? "info" :
+    job.status === "late" ? "danger" :
+    job.status === "scheduled" ? "warning" : "default";
+
+  return (
+    <motion.div variants={staggerItem} className="rounded-xl border border-border bg-card overflow-hidden">
+      {/* Row */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-3 p-3 hover:bg-surface-hover transition-colors text-left"
+      >
+        <div className="h-8 w-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 flex items-center justify-center shrink-0">
+          <Briefcase className="h-4 w-4 text-emerald-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-text-primary">{job.reference}</p>
+          <p className="text-[11px] text-text-tertiary truncate">{job.title}</p>
+        </div>
+        <div className="text-right shrink-0 mr-1">
+          <p className="text-sm font-semibold text-text-primary">{formatCurrency(job.client_price)}</p>
+          <Badge variant={statusVariant} size="sm">{job.status.replace(/_/g, " ")}</Badge>
+        </div>
+        {expanded ? (
+          <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" />
+        ) : (
+          <ChevronRight className="h-4 w-4 text-text-tertiary shrink-0" />
+        )}
+      </button>
+
+      {/* Expanded details */}
+      {expanded && (
+        <div className="border-t border-border-light px-3 py-3 bg-surface-hover/40 space-y-2">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+            {job.scheduled_date && (
+              <>
+                <span className="text-text-tertiary flex items-center gap-1">
+                  <Calendar className="h-3 w-3" /> Scheduled
+                </span>
+                <span className="text-text-secondary font-medium">
+                  {new Date(job.scheduled_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                </span>
+              </>
+            )}
+            {job.partner_name && (
+              <>
+                <span className="text-text-tertiary">Partner</span>
+                <span className="text-text-secondary font-medium">{job.partner_name}</span>
+              </>
+            )}
+            {job.job_type && (
+              <>
+                <span className="text-text-tertiary">Type</span>
+                <span className="text-text-secondary font-medium capitalize">{job.job_type}</span>
+              </>
+            )}
+            {job.property_address && (
+              <>
+                <span className="text-text-tertiary flex items-center gap-1">
+                  <MapPin className="h-3 w-3" /> Address
+                </span>
+                <span className="text-text-secondary font-medium truncate">{job.property_address}</span>
+              </>
+            )}
+            {(() => {
+              const total = job.customer_final_payment ?? job.client_price ?? 0;
+              const amountDue = job.status === "completed" ? 0 : total;
+              return amountDue > 0 ? (
+                <>
+                  <span className="text-text-tertiary">Amount due</span>
+                  <span className="text-amber-500 font-semibold">{formatCurrency(amountDue)}</span>
+                </>
+              ) : null;
+            })()}
+          </div>
+          <div className="pt-1">
+            <a
+              href={`/jobs/${job.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 px-3 py-1.5 text-xs font-medium text-primary transition-colors"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open job card
+            </a>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+/* ============ ADDRESSES TAB ============ */
+function AddressesTab({ client }: { client: Client }) {
+  const [addresses, setAddresses] = useState<ClientAddress[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [newForm, setNewForm] = useState({ label: "", address: "", city: "", postcode: "" });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setAddresses(await listAddressesByClient(client.id));
+    } finally {
+      setLoading(false);
+    }
+  }, [client.id]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const handleAdd = async () => {
+    if (!newForm.address.trim()) { toast.error("Address is required"); return; }
+    setSaving(true);
+    try {
+      await createClientAddress({
+        client_id: client.id,
+        label: newForm.label.trim() || undefined,
+        address: newForm.address.trim(),
+        city: newForm.city.trim() || undefined,
+        postcode: newForm.postcode.trim() || undefined,
+        country: "gb",
+        is_default: addresses.length === 0,
+      });
+      setNewForm({ label: "", address: "", city: "", postcode: "" });
+      setAdding(false);
+      toast.success("Address saved");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSetDefault = async (id: string) => {
+    try {
+      await setDefaultClientAddress(client.id, id);
+      toast.success("Default address updated");
+      await load();
+    } catch {
+      toast.error("Failed to update default");
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      await deleteClientAddress(id);
+      toast.success("Address removed");
+      await load();
+    } catch {
+      toast.error("Failed to remove address");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 space-y-3">
+        {[1, 2].map((i) => <div key={i} className="h-16 rounded-xl bg-surface-tertiary animate-pulse" />)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-3">
+      {addresses.length === 0 && !adding && (
+        <div className="rounded-xl border border-dashed border-border bg-surface-hover/50 px-4 py-6 text-center">
+          <MapPin className="h-6 w-6 mx-auto text-text-tertiary mb-2" />
+          <p className="text-sm text-text-secondary font-medium">No addresses yet</p>
+          <p className="text-xs text-text-tertiary mt-0.5">Add the first address for this client</p>
+        </div>
+      )}
+
+      {addresses.map((addr) => (
+        <div
+          key={addr.id}
+          className="rounded-xl border border-border bg-card px-4 py-3 flex items-start gap-3"
+        >
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+            <MapPin className="h-3.5 w-3.5 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              {addr.label && (
+                <span className="text-xs font-semibold text-text-primary">{addr.label}</span>
+              )}
+              {addr.is_default && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                  <StarIcon className="h-2.5 w-2.5" /> Default
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-text-secondary mt-0.5 truncate">{addr.address}</p>
+            {(addr.city || addr.postcode) && (
+              <p className="text-xs text-text-tertiary">
+                {[addr.city, addr.postcode].filter(Boolean).join(", ")}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {!addr.is_default && (
+              <button
+                type="button"
+                onClick={() => handleSetDefault(addr.id)}
+                title="Set as default"
+                className="rounded-lg p-1.5 text-text-tertiary hover:bg-surface-hover hover:text-primary transition-colors"
+              >
+                <StarIcon className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => handleDelete(addr.id)}
+              disabled={deletingId === addr.id}
+              title="Remove address"
+              className="rounded-lg p-1.5 text-text-tertiary hover:bg-surface-hover hover:text-red-500 transition-colors disabled:opacity-50"
+            >
+              {deletingId === addr.id ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {adding ? (
+        <div className="rounded-xl border border-primary/30 bg-card px-4 py-4 space-y-3">
+          <p className="text-xs font-semibold text-text-primary">New address</p>
+          <Input
+            placeholder="Label (e.g. Home, Office, Property 1)"
+            value={newForm.label}
+            onChange={(e) => setNewForm((p) => ({ ...p, label: e.target.value }))}
+          />
+          <AddressAutocomplete
+            label=""
+            placeholder="Start typing address or postcode..."
+            value={newForm.address}
+            onChange={(v) => setNewForm((p) => ({ ...p, address: v }))}
+            onSelect={(parts) =>
+              setNewForm((p) => ({
+                ...p,
+                address: parts.address || parts.full_address,
+                city: parts.city || p.city,
+                postcode: parts.postcode || p.postcode,
+              }))
+            }
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              placeholder="City"
+              value={newForm.city}
+              onChange={(e) => setNewForm((p) => ({ ...p, city: e.target.value }))}
+            />
+            <Input
+              placeholder="Postcode"
+              value={newForm.postcode}
+              onChange={(e) => setNewForm((p) => ({ ...p, postcode: e.target.value }))}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setAdding(false); setNewForm({ label: "", address: "", city: "", postcode: "" }); }}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleAdd} disabled={saving}>
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save address"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-surface-hover/40 py-3 text-sm text-text-secondary hover:border-primary/40 hover:text-text-primary transition-colors"
+        >
+          <PlusCircle className="h-4 w-4" />
+          Add address
+        </button>
+      )}
+    </div>
+  );
+}
+
 /* ============ DETAIL DRAWER ============ */
 function ClientDetailDrawer({
   client,
@@ -325,7 +690,7 @@ function ClientDetailDrawer({
   const [tab, setTab] = useState("overview");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [jobs, setJobs] = useState<{ id: string; reference: string; title: string; status: string; client_price: number; scheduled_date?: string }[]>([]);
+  const [jobs, setJobs] = useState<{ id: string; reference: string; title: string; status: string; client_price: number; customer_deposit_paid?: boolean; customer_final_payment?: number; scheduled_date?: string; property_address?: string; partner_name?: string; job_type?: string }[]>([]);
   const [quotes, setQuotes] = useState<{ id: string; reference: string; title: string; status: string; total_value: number }[]>([]);
   const [requests, setRequests] = useState<{ id: string; reference: string; service_type: string; status: string; created_at: string }[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -338,14 +703,25 @@ function ClientDetailDrawer({
     setLoadingHistory(true);
 
     const supabase = getSupabase();
+    const jobFields = "id, reference, title, status, client_price, customer_deposit_paid, customer_final_payment, scheduled_date, property_address, partner_name, job_type";
+
+    // Two queries per entity: by client_id (reliable FK) + by client_name (legacy/fallback).
+    // Merged and deduplicated client-side to avoid PostgREST OR filter issues with names
+    // that contain spaces or special characters.
     Promise.all([
-      supabase.from("jobs").select("id, reference, title, status, client_price, scheduled_date").ilike("client_name", `%${client.full_name}%`).order("created_at", { ascending: false }).limit(20),
-      supabase.from("quotes").select("id, reference, title, status, total_value").ilike("client_name", `%${client.full_name}%`).order("created_at", { ascending: false }).limit(20),
-      supabase.from("service_requests").select("id, reference, service_type, status, created_at").ilike("client_name", `%${client.full_name}%`).order("created_at", { ascending: false }).limit(20),
-    ]).then(([jobsRes, quotesRes, reqsRes]) => {
-      setJobs((jobsRes.data ?? []) as typeof jobs);
-      setQuotes((quotesRes.data ?? []) as typeof quotes);
-      setRequests((reqsRes.data ?? []) as typeof requests);
+      supabase.from("jobs").select(jobFields).eq("client_id", client.id).is("deleted_at", null).order("created_at", { ascending: false }).limit(50),
+      supabase.from("jobs").select(jobFields).ilike("client_name", `%${client.full_name}%`).is("deleted_at", null).order("created_at", { ascending: false }).limit(50),
+      supabase.from("quotes").select("id, reference, title, status, total_value").eq("client_id", client.id).is("deleted_at", null).order("created_at", { ascending: false }).limit(50),
+      supabase.from("quotes").select("id, reference, title, status, total_value").ilike("client_name", `%${client.full_name}%`).is("deleted_at", null).order("created_at", { ascending: false }).limit(50),
+      supabase.from("service_requests").select("id, reference, service_type, status, created_at").eq("client_id", client.id).is("deleted_at", null).order("created_at", { ascending: false }).limit(50),
+      supabase.from("service_requests").select("id, reference, service_type, status, created_at").ilike("client_name", `%${client.full_name}%`).is("deleted_at", null).order("created_at", { ascending: false }).limit(50),
+    ]).then(([jobsById, jobsByName, quotesById, quotesByName, reqsById, reqsByName]) => {
+      const mergeById = <T extends { id: string }>(a: T[], b: T[]) =>
+        Array.from(new Map([...a, ...b].map((x) => [x.id, x])).values());
+
+      setJobs(mergeById((jobsById.data ?? []) as typeof jobs, (jobsByName.data ?? []) as typeof jobs));
+      setQuotes(mergeById((quotesById.data ?? []) as typeof quotes, (quotesByName.data ?? []) as typeof quotes));
+      setRequests(mergeById((reqsById.data ?? []) as typeof requests, (reqsByName.data ?? []) as typeof requests));
     }).finally(() => setLoadingHistory(false));
   }, [client]);
 
@@ -369,13 +745,15 @@ function ClientDetailDrawer({
       toast.success("Client updated");
       setEditing(false);
       onUpdate(updated);
-    } catch { toast.error("Failed to update"); }
-    finally { setSaving(false); }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update");
+    } finally { setSaving(false); }
   };
 
   const drawerTabs = [
     { id: "overview", label: "Overview" },
     { id: "history", label: `History (${jobs.length + quotes.length + requests.length})` },
+    { id: "addresses", label: "Addresses" },
     { id: "edit", label: "Edit" },
   ];
 
@@ -503,23 +881,7 @@ function ClientDetailDrawer({
                       </p>
                       <div className="space-y-1.5">
                         {jobs.map((job) => (
-                          <motion.div key={job.id} variants={staggerItem} className="flex items-center justify-between p-3 rounded-xl bg-surface-hover hover:bg-surface-tertiary transition-colors">
-                            <div className="flex items-center gap-3">
-                              <div className="h-8 w-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 flex items-center justify-center">
-                                <Briefcase className="h-4 w-4 text-emerald-600" />
-                              </div>
-                              <div>
-                                <p className="text-sm font-medium text-text-primary">{job.reference}</p>
-                                <p className="text-[11px] text-text-tertiary truncate max-w-[200px]">{job.title}</p>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-sm font-semibold text-text-primary">{formatCurrency(job.client_price)}</p>
-                              <Badge variant={job.status === "completed" ? "success" : job.status === "in_progress" ? "info" : "default"} size="sm">
-                                {job.status.replace(/_/g, " ")}
-                              </Badge>
-                            </div>
-                          </motion.div>
+                          <JobHistoryCard key={job.id} job={job} />
                         ))}
                       </div>
                     </div>
@@ -597,6 +959,10 @@ function ClientDetailDrawer({
             </div>
           )}
 
+          {tab === "addresses" && (
+            <AddressesTab client={client} />
+          )}
+
           {tab === "edit" && (
             <EditClientForm
               client={client}
@@ -623,9 +989,18 @@ function EditClientForm({
   client: Client;
   sourceAccounts: Array<{ id: string; name: string }>;
   saving: boolean;
-  onSave: (data: Partial<Client>) => void;
+  onSave: (data: Partial<Client>) => void | Promise<void>;
   onCancel: () => void;
 }) {
+  const linkedAccountSelectOptions = useMemo(() => {
+    const fromList = sourceAccounts.map((a) => ({ value: a.id, label: a.name }));
+    const cid = client.source_account_id?.trim();
+    if (cid && isUuid(cid) && !fromList.some((o) => o.value === cid)) {
+      return [{ value: cid, label: `Current link (${cid.slice(0, 8)}…)` }, ...fromList];
+    }
+    return fromList;
+  }, [sourceAccounts, client.source_account_id]);
+
   const [form, setForm] = useState({
     full_name: client.full_name,
     email: client.email ?? "",
@@ -639,6 +1014,45 @@ function EditClientForm({
     status: client.status,
     notes: client.notes ?? "",
   });
+
+  useEffect(() => {
+    const base = {
+      full_name: client.full_name,
+      email: client.email ?? "",
+      phone: client.phone ?? "",
+      address: client.address ?? "",
+      city: client.city ?? "",
+      postcode: client.postcode ?? "",
+      client_type: client.client_type,
+      source_account_id: client.source_account_id ?? "",
+      source: client.source,
+      status: client.status,
+      notes: client.notes ?? "",
+    };
+    setForm(base);
+
+    // If the client has no address saved, try to backfill from their default property address.
+    // This fixes clients created before the create-form backfill was added.
+    if (!client.address?.trim()) {
+      getSupabase()
+        .from("client_addresses")
+        .select("address, city, postcode")
+        .eq("client_id", client.id)
+        .eq("is_default", true)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data?.address) {
+            setForm((prev) => ({
+              ...prev,
+              address: prev.address || data.address,
+              city: prev.city || data.city || "",
+              postcode: prev.postcode || data.postcode || "",
+            }));
+          }
+        });
+    }
+  }, [client.id, client.updated_at]);
+
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
 
   return (
@@ -677,7 +1091,7 @@ function EditClientForm({
         onChange={(e) => update("source_account_id", e.target.value)}
         options={[
           { value: "", label: "— Where did the client come from? —" },
-          ...sourceAccounts.map((a) => ({ value: a.id, label: a.name })),
+          ...linkedAccountSelectOptions,
         ]}
       />
       <AddressAutocomplete
@@ -735,7 +1149,23 @@ function EditClientForm({
       </div>
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="outline" onClick={onCancel}>Cancel</Button>
-        <Button onClick={() => onSave({ ...form, source_account_id: form.source_account_id || undefined })} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}>
+        <Button
+          type="button"
+          onClick={() => {
+            const sid = form.source_account_id.trim();
+            if (sid !== "" && !isUuid(sid)) {
+              toast.error("Choose a valid account from the list under Accounts.");
+              return;
+            }
+            const { source_account_id: _drop, ...rest } = form;
+            onSave({
+              ...rest,
+              source_account_id: sid === "" ? null : sid,
+            });
+          }}
+          disabled={saving}
+          icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+        >
           {saving ? "Saving..." : "Save Changes"}
         </Button>
       </div>

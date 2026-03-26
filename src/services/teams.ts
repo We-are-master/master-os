@@ -75,7 +75,9 @@ export async function createTeamMember(
 
 export async function updateTeamMember(
   id: string,
-  updates: Partial<Pick<TeamMember, "full_name" | "email" | "phone" | "role" | "squad_id" | "base_salary" | "start_date" | "status">>
+  updates: Partial<
+    Pick<TeamMember, "full_name" | "email" | "phone" | "role" | "squad_id" | "base_salary" | "start_date" | "status" | "profile_id">
+  >
 ): Promise<void> {
   const { error } = await getSupabase()
     .from("team_members")

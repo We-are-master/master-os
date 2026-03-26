@@ -5,6 +5,7 @@ export type PermissionKey =
   | "requests"
   | "quotes"
   | "jobs"
+  | "service_catalog"
   | "partners"
   | "accounts"
   | "finance"

@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { NAVIGATION, type NavItem } from "@/lib/constants";
+import { APP_NAME, NAVIGATION, type NavItem } from "@/lib/constants";
 import { useSidebar } from "@/hooks/use-sidebar";
 import { useAdminConfigOptional } from "@/hooks/use-admin-config";
+import { useTheme } from "@/hooks/use-theme";
+import { useCompanyLogos, resolveAppLogoUrl } from "@/hooks/use-company-logos";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -27,6 +30,8 @@ import {
   CircleDollarSign,
   FileCheck,
   CalendarClock,
+  Wrench,
+  History,
   type LucideIcon,
 } from "lucide-react";
 
@@ -48,6 +53,8 @@ const iconMap: Record<string, LucideIcon> = {
   settings: Settings,
   "user-circle": UserCircle,
   "circle-dollar-sign": CircleDollarSign,
+  wrench: Wrench,
+  history: History,
 };
 
 /** Logos (SVG inline para herdar currentColor) para Clients, Partners, Accounts */
@@ -146,6 +153,56 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   );
 }
 
+function SidebarBrand({ collapsed }: { collapsed: boolean }) {
+  const { resolved } = useTheme();
+  const logos = useCompanyLogos();
+  const logoSrc = !logos.loading ? resolveAppLogoUrl(resolved, logos) : undefined;
+  const [imgErr, setImgErr] = useState(false);
+
+  useEffect(() => {
+    setImgErr(false);
+  }, [logoSrc, resolved]);
+
+  const title = logos.companyName?.trim() || APP_NAME;
+  const showCustom = Boolean(logoSrc && !imgErr);
+
+  return (
+    <Link href="/" className={cn("flex items-center min-w-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/40", collapsed ? "justify-center" : "gap-2.5")}>
+      {showCustom ? (
+        <img
+          src={logoSrc}
+          alt={title}
+          className={cn(
+            "object-contain object-left shrink-0",
+            collapsed ? "h-9 w-9 rounded-lg" : "h-9 max-h-9 max-w-[200px] w-auto"
+          )}
+          onError={() => setImgErr(true)}
+        />
+      ) : (
+        <>
+          <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
+            <Layers className="h-4 w-4 text-white" />
+          </div>
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.div
+                initial={{ opacity: 0, width: 0 }}
+                animate={{ opacity: 1, width: "auto" }}
+                exit={{ opacity: 0, width: 0 }}
+                className="overflow-hidden"
+              >
+                <span className="text-base font-bold text-white tracking-tight whitespace-nowrap">
+                  {title}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </>
+      )}
+    </Link>
+  );
+}
+
 export function Sidebar() {
   const { collapsed, toggle } = useSidebar();
   const adminConfig = useAdminConfigOptional();
@@ -161,25 +218,7 @@ export function Sidebar() {
       className="fixed left-0 top-0 bottom-0 z-30 bg-sidebar flex flex-col border-r border-white/5"
     >
       <div className={cn("flex items-center h-16 px-4 border-b border-white/5", collapsed && "justify-center px-2")}>
-        <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
-            <Layers className="h-4 w-4 text-white" />
-          </div>
-          <AnimatePresence>
-            {!collapsed && (
-              <motion.div
-                initial={{ opacity: 0, width: 0 }}
-                animate={{ opacity: 1, width: "auto" }}
-                exit={{ opacity: 0, width: 0 }}
-                className="overflow-hidden"
-              >
-                <span className="text-base font-bold text-white tracking-tight whitespace-nowrap">
-                  Master OS
-                </span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        <SidebarBrand collapsed={collapsed} />
       </div>
 
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">

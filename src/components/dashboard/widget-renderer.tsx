@@ -60,7 +60,7 @@ export function WidgetRenderer({ widget, className }: WidgetRendererProps) {
     case "custom_chart":        return <div className={cls}><CustomChartWidget widget={widget} /></div>;
     case "custom_table":        return <div className={cls}><CustomTableWidget widget={widget} /></div>;
     default:                    return <div className={cn("rounded-xl border border-dashed border-border p-6 flex items-center justify-center", cls)}>
-      <p className="text-sm text-text-tertiary">Widget desconhecido: {widget.type}</p>
+      <p className="text-sm text-text-tertiary">Unknown widget: {widget.type}</p>
     </div>;
   }
 }

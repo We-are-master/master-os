@@ -6,6 +6,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { formatCurrency } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
+import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 
 interface MonthData {
   month: string;
@@ -17,40 +18,68 @@ interface MonthData {
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function RevenueChart() {
+  const { bounds } = useDashboardDateRange();
   const [period, setPeriod] = useState("12m");
   const [allData, setAllData] = useState<MonthData[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const boundsKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
+
   useEffect(() => {
     async function load() {
       const supabase = getSupabase();
+      setLoading(true);
       try {
-        const now = new Date();
-        const startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString();
+        let rangeStartIso: string;
+        let rangeEndIso: string;
+        let monthCursor: Date;
+        let endCap: Date;
+
+        if (bounds) {
+          rangeStartIso = bounds.fromIso;
+          rangeEndIso = bounds.toIso;
+          const fromD = new Date(bounds.fromIso);
+          const toD = new Date(bounds.toIso);
+          monthCursor = new Date(fromD.getFullYear(), fromD.getMonth(), 1);
+          endCap = new Date(toD.getFullYear(), toD.getMonth(), 1);
+        } else {
+          const now = new Date();
+          rangeStartIso = new Date(now.getFullYear() - 1, now.getMonth(), 1).toISOString();
+          rangeEndIso = now.toISOString();
+          monthCursor = new Date(now.getFullYear() - 11, now.getMonth(), 1);
+          endCap = new Date(now.getFullYear(), now.getMonth(), 1);
+        }
 
         const [paidRes, allInvRes] = await Promise.all([
-          supabase.from("invoices").select("amount, paid_date").eq("status", "paid").gte("paid_date", startDate),
-          supabase.from("invoices").select("amount, created_at, status").gte("created_at", startDate),
+          supabase
+            .from("invoices")
+            .select("amount, paid_date")
+            .eq("status", "paid")
+            .gte("paid_date", rangeStartIso)
+            .lte("paid_date", rangeEndIso),
+          supabase
+            .from("invoices")
+            .select("amount, created_at, status")
+            .gte("created_at", rangeStartIso)
+            .lte("created_at", rangeEndIso),
         ]);
 
         const paidInvoices = (paidRes.data ?? []) as { amount: number; paid_date: string }[];
         const allInvoices = (allInvRes.data ?? []) as { amount: number; created_at: string; status: string }[];
 
         const months: MonthData[] = [];
-        for (let i = 11; i >= 0; i--) {
-          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-          const label = MONTH_LABELS[d.getMonth()];
-
+        const cur = new Date(monthCursor);
+        while (cur <= endCap) {
+          const key = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`;
+          const label = MONTH_LABELS[cur.getMonth()];
           const revenue = paidInvoices
             .filter((inv) => inv.paid_date && inv.paid_date.startsWith(key))
             .reduce((s, inv) => s + Number(inv.amount), 0);
-
           const invoiced = allInvoices
             .filter((inv) => inv.created_at.startsWith(key))
             .reduce((s, inv) => s + Number(inv.amount), 0);
-
           months.push({ month: key, label, revenue, invoiced });
+          cur.setMonth(cur.getMonth() + 1);
         }
 
         setAllData(months);
@@ -60,13 +89,14 @@ export function RevenueChart() {
         setLoading(false);
       }
     }
-    load();
-  }, []);
+    void load();
+  }, [boundsKey]);
 
   const visibleData = useMemo(() => {
+    if (bounds) return allData;
     const count = period === "3m" ? 3 : period === "6m" ? 6 : 12;
     return allData.slice(-count);
-  }, [allData, period]);
+  }, [allData, period, bounds]);
 
   const maxValue = Math.max(...visibleData.map((d) => Math.max(d.revenue, d.invoiced)), 1);
   const totalRevenue = visibleData.reduce((s, d) => s + d.revenue, 0);
@@ -79,18 +109,21 @@ export function RevenueChart() {
           <CardTitle>Revenue Overview</CardTitle>
           <p className="text-xs text-text-tertiary mt-0.5">
             {loading ? "Loading..." : `${formatCurrency(totalRevenue)} collected — ${formatCurrency(totalInvoiced)} invoiced`}
+            {bounds && <span className="block mt-0.5">Filtered by dashboard date range</span>}
           </p>
         </div>
-        <Tabs
-          variant="pills"
-          tabs={[
-            { id: "3m", label: "3M" },
-            { id: "6m", label: "6M" },
-            { id: "12m", label: "12M" },
-          ]}
-          activeTab={period}
-          onChange={setPeriod}
-        />
+        {!bounds && (
+          <Tabs
+            variant="pills"
+            tabs={[
+              { id: "3m", label: "3M" },
+              { id: "6m", label: "6M" },
+              { id: "12m", label: "12M" },
+            ]}
+            activeTab={period}
+            onChange={setPeriod}
+          />
+        )}
       </CardHeader>
 
       <div className="px-5 pb-5">

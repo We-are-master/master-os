@@ -1,5 +1,6 @@
 import { getSupabase } from "./base";
 import type { Profile } from "@/types/database";
+import type { Session } from "@supabase/supabase-js";
 
 export async function signIn(email: string, password: string) {
   const supabase = getSupabase();
@@ -26,12 +27,18 @@ export async function signUp(email: string, password: string, fullName: string) 
 
 export async function signOut() {
   const supabase = getSupabase();
-  const { error } = await supabase.auth.signOut();
+  const { error } = await supabase.auth.signOut({ scope: "global" });
   if (error) throw error;
 }
 
-export async function getSession() {
+/**
+ * Returns the local session only after `getUser()` succeeds (verified with Supabase).
+ * Prefer `getCurrentProfile()` or `getUser()` for auth checks; use this only when you need tokens from the session object.
+ */
+export async function getSession(): Promise<Session | null> {
   const supabase = getSupabase();
+  const { data: { user }, error: userErr } = await supabase.auth.getUser();
+  if (userErr || !user) return null;
   const { data: { session } } = await supabase.auth.getSession();
   return session;
 }

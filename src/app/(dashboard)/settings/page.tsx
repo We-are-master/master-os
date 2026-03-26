@@ -17,24 +17,26 @@ import {
   User, Shield, Users, Cog, Save, Plus, Trash2,
   Mail, Phone, Building2, Key, Eye, EyeOff,
   CheckCircle2, AlertTriangle, Lock, Unlock,
-  Palette, Globe, Upload, FileText, Loader2,
-  SlidersHorizontal, X, MinusCircle,
+  Palette, Globe, Upload, FileText, Loader2, Moon, Sun, Image,
+  SlidersHorizontal, X, MinusCircle, ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { getSupabase } from "@/services/base";
 import { listCommissionTiers, listCommissionPoolShares, updateCommissionTier, updateCommissionPoolShare, getCurrentMonthRevenue } from "@/services/tiers";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, setAppCurrencyCode } from "@/lib/utils";
 import type { Profile, CommissionTier, CommissionPoolShare } from "@/types/database";
 import type { NavGroup } from "@/lib/constants";
 import type { PermissionKey, RoleKey, PermissionsByRole, UserPermissionOverride } from "@/types/admin-config";
 import { saveUserPermissions, resolvePermission } from "@/services/admin-config";
+import { AiBriefsTab } from "./ai-briefs-tab";
 
 const settingsTabs = [
   { id: "profile", label: "My Profile" },
   { id: "team", label: "Team Members" },
   { id: "tiers", label: "Commission Tiers" },
+  { id: "ai-briefs", label: "AI & Daily brief" },
   { id: "navigation", label: "Navigation" },
   { id: "permissions", label: "Roles & Permissions" },
   { id: "system", label: "System" },
@@ -69,6 +71,7 @@ export default function SettingsPage() {
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "team" && isAdmin && <TeamTab />}
           {activeTab === "tiers" && isAdmin && <TiersTab />}
+          {activeTab === "ai-briefs" && isAdmin && <AiBriefsTab />}
           {activeTab === "navigation" && isAdmin && <NavigationTab />}
           {activeTab === "permissions" && isAdmin && <PermissionsTab />}
           {activeTab === "system" && isAdmin && <SystemTab />}
@@ -122,7 +125,7 @@ function ProfileTab() {
           department: form.department || null,
           job_title: form.job_title || null,
           role: profile.role,
-          is_active: profile.is_active,
+          is_active: profile.is_active !== false,
         });
 
       if (error) throw error;
@@ -294,7 +297,7 @@ function ProfileTab() {
           <div className="px-5 pb-5 space-y-3">
             <InfoRow label="Member Since" value={profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : "-"} />
             <InfoRow label="Last Login" value={profile?.last_login_at ? new Date(profile.last_login_at).toLocaleDateString() : "Current session"} />
-            <InfoRow label="Status" value={profile?.is_active ? "Active" : "Inactive"} />
+            <InfoRow label="Status" value={profile?.is_active !== false ? "Active" : "Inactive"} />
             <InfoRow label="Role" value={profile?.role ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1) : "-"} />
           </div>
         </Card>
@@ -333,6 +336,34 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** DB may store `is_active` as NULL — treat as active (only explicit `false` is inactive). */
+function profileIsActive(member: Pick<Profile, "is_active">): boolean {
+  return member.is_active !== false;
+}
+
+function TeamRoleSelect({
+  value,
+  onChange,
+}: {
+  value: Profile["role"];
+  onChange: (r: Profile["role"]) => void;
+}) {
+  return (
+    <div className="relative shrink-0">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as Profile["role"])}
+        className="appearance-none min-w-[118px] text-xs font-semibold pl-3 pr-9 py-2 rounded-xl border border-border bg-card text-text-primary shadow-sm hover:bg-surface-hover hover:border-primary/25 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all cursor-pointer"
+      >
+        <option value="admin">Admin</option>
+        <option value="manager">Manager</option>
+        <option value="operator">Operator</option>
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-tertiary" />
+    </div>
+  );
+}
+
 function TeamTab() {
   const [members, setMembers] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -340,23 +371,23 @@ function TeamTab() {
   const [permTarget, setPermTarget] = useState<Profile | null>(null);
   const { permissions } = useAdminConfig();
 
-  useEffect(() => {
-    async function loadTeam() {
-      const supabase = getSupabase();
-      try {
-        const { data } = await supabase
-          .from("profiles")
-          .select("*")
-          .order("created_at", { ascending: true });
-        setMembers((data ?? []) as Profile[]);
-      } catch {
-        // non-critical
-      } finally {
-        setLoading(false);
-      }
+  const loadTeam = useCallback(async () => {
+    const supabase = getSupabase();
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.from("profiles").select("*").order("created_at", { ascending: true });
+      if (error) throw error;
+      setMembers((data ?? []) as Profile[]);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load team");
+    } finally {
+      setLoading(false);
     }
-    loadTeam();
   }, []);
+
+  useEffect(() => {
+    void loadTeam();
+  }, [loadTeam]);
 
   const handleRoleChange = async (memberId: string, newRole: Profile["role"]) => {
     const supabase = getSupabase();
@@ -377,7 +408,7 @@ function TeamTab() {
 
   const handleToggleActive = async (member: Profile) => {
     const supabase = getSupabase();
-    const newActive = !member.is_active;
+    const newActive = !profileIsActive(member);
     try {
       const { error } = await supabase
         .from("profiles")
@@ -448,7 +479,7 @@ function TeamTab() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-text-primary">{member.full_name}</p>
-                      {!member.is_active && (
+                      {!profileIsActive(member) && (
                         <Badge variant="default" size="sm">Inactive</Badge>
                       )}
                       {overrideCount > 0 && (
@@ -464,15 +495,10 @@ function TeamTab() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <select
+                    <TeamRoleSelect
                       value={member.role}
-                      onChange={(e) => handleRoleChange(member.id, e.target.value as Profile["role"])}
-                      className="text-xs font-medium px-3 py-1.5 rounded-lg border border-border bg-card text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
-                    >
-                      <option value="admin">Admin</option>
-                      <option value="manager">Manager</option>
-                      <option value="operator">Operator</option>
-                    </select>
+                      onChange={(r) => handleRoleChange(member.id, r)}
+                    />
                     <button
                       onClick={() => setPermTarget(member)}
                       className="h-8 w-8 rounded-lg flex items-center justify-center text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors"
@@ -483,13 +509,13 @@ function TeamTab() {
                     <button
                       onClick={() => handleToggleActive(member)}
                       className={`h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
-                        member.is_active
-                          ? "text-emerald-600 hover:bg-emerald-50 dark:bg-emerald-950/30"
+                        profileIsActive(member)
+                          ? "text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
                           : "text-text-tertiary hover:bg-surface-tertiary"
                       }`}
-                      title={member.is_active ? "Deactivate user" : "Activate user"}
+                      title={profileIsActive(member) ? "Deactivate user" : "Activate user"}
                     >
-                      {member.is_active ? <Unlock className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+                      {profileIsActive(member) ? <Unlock className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
                     </button>
                   </div>
                 </motion.div>
@@ -498,7 +524,7 @@ function TeamTab() {
         </div>
       </Card>
 
-      {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} />}
+      {inviteOpen && <InviteModal onClose={() => setInviteOpen(false)} onInvited={() => void loadTeam()} />}
       {permTarget && (
         <UserPermissionsModal
           member={permTarget}
@@ -516,13 +542,13 @@ function TeamTab() {
 // ---------------------------------------------------------------------------
 
 const ALL_PERMISSIONS: PermissionKey[] = [
-  "dashboard", "requests", "quotes", "jobs", "partners",
+  "dashboard", "requests", "quotes", "jobs", "service_catalog", "partners",
   "accounts", "finance", "team", "settings", "manage_team", "manage_roles",
   "delete_data", "export_data",
 ];
 
 const PERMISSION_GROUPS: { label: string; keys: PermissionKey[] }[] = [
-  { label: "Operations", keys: ["dashboard", "requests", "quotes", "jobs"] },
+  { label: "Operations", keys: ["dashboard", "requests", "quotes", "jobs", "service_catalog"] },
   { label: "Network & Finance", keys: ["partners", "accounts", "finance", "team"] },
   { label: "Administration", keys: ["settings", "manage_team", "manage_roles", "delete_data", "export_data"] },
 ];
@@ -993,7 +1019,7 @@ function NavigationTab() {
   };
 
   const permissionOptions = [
-    "dashboard", "requests", "quotes", "jobs", "partners", "accounts", "finance", "team", "settings",
+    "dashboard", "requests", "quotes", "jobs", "service_catalog", "partners", "accounts", "finance", "team", "settings",
   ];
 
   if (loading && localNav.length === 0) {
@@ -1072,19 +1098,40 @@ function NavigationTab() {
   );
 }
 
-function InviteModal({ onClose }: { onClose: () => void }) {
+function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: () => void }) {
   const [form, setForm] = useState({ email: "", full_name: "", role: "operator" });
   const [sending, setSending] = useState(false);
 
   const handleInvite = async () => {
-    if (!form.email || !form.full_name) {
+    if (!form.email?.trim() || !form.full_name?.trim()) {
       toast.error("Please fill in all fields");
       return;
     }
     setSending(true);
-    toast.success(`Invitation sent to ${form.email}`);
-    setSending(false);
-    onClose();
+    try {
+      const res = await fetch("/api/admin/team/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: form.email.trim(),
+          full_name: form.full_name.trim(),
+          role: form.role,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        toast.error(typeof json.error === "string" ? json.error : "Invite failed");
+        return;
+      }
+      toast.success(`Invitation sent to ${form.email.trim()}. They will receive an email to set their password.`);
+      onInvited();
+      onClose();
+      setForm({ email: "", full_name: "", role: "operator" });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Invite failed");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -1104,16 +1151,13 @@ function InviteModal({ onClose }: { onClose: () => void }) {
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Email</label>
           <Input type="email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} placeholder="john@company.com" />
         </div>
-        <Select
-          label="Role"
-          value={form.role}
-          onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}
-          options={[
-            { value: "admin", label: "Admin" },
-            { value: "manager", label: "Manager" },
-            { value: "operator", label: "Operator" },
-          ]}
-        />
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Role</label>
+          <TeamRoleSelect
+            value={form.role as Profile["role"]}
+            onChange={(r) => setForm((p) => ({ ...p, role: r }))}
+          />
+        </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button onClick={handleInvite} disabled={sending} icon={<Mail className="h-3.5 w-3.5" />}>
@@ -1136,6 +1180,7 @@ const permissionLabels: Record<string, string> = {
   requests: "Requests",
   quotes: "Quotes",
   jobs: "Jobs",
+  service_catalog: "Service catalog (admin pricing templates)",
   partners: "Partners",
   accounts: "Accounts",
   finance: "Finance",
@@ -1274,7 +1319,11 @@ function SystemTab() {
     primary_color: "#F97316",
     tagline: "",
     logo_url: "",
+    logo_light_theme_url: "",
+    logo_dark_theme_url: "",
+    favicon_url: "",
     quote_footer_notes: "",
+    currency: "GBP",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
@@ -1284,6 +1333,7 @@ function SystemTab() {
       const { data } = await supabase.from("company_settings").select("*").limit(1).single();
       if (data) {
         setSettingsId(data.id);
+        const row = data as typeof data & { currency?: string | null };
         setForm({
           company_name: data.company_name ?? "",
           email: data.email ?? "",
@@ -1295,7 +1345,11 @@ function SystemTab() {
           primary_color: data.primary_color ?? "#F97316",
           tagline: data.tagline ?? "",
           logo_url: data.logo_url ?? "",
+          logo_light_theme_url: (data as { logo_light_theme_url?: string | null }).logo_light_theme_url ?? "",
+          logo_dark_theme_url: (data as { logo_dark_theme_url?: string | null }).logo_dark_theme_url ?? "",
+          favicon_url: (data as { favicon_url?: string | null }).favicon_url ?? "",
           quote_footer_notes: data.quote_footer_notes ?? "",
+          currency: row.currency && ["GBP", "USD", "EUR", "BRL"].includes(row.currency) ? row.currency : "GBP",
         });
       }
       setLoading(false);
@@ -1308,7 +1362,14 @@ function SystemTab() {
     setSaving(true);
     try {
       const supabase = getSupabase();
-      const payload = { ...form, vat_percent: Number(form.vat_percent) || 20 };
+      const payload = {
+        ...form,
+        vat_percent: Number(form.vat_percent) || 20,
+        currency: ["GBP", "USD", "EUR", "BRL"].includes(form.currency) ? form.currency : "GBP",
+        logo_light_theme_url: form.logo_light_theme_url.trim() || null,
+        logo_dark_theme_url: form.logo_dark_theme_url.trim() || null,
+        favicon_url: form.favicon_url.trim() || null,
+      };
       if (settingsId) {
         const { error } = await supabase.from("company_settings").update(payload).eq("id", settingsId);
         if (error) throw error;
@@ -1317,7 +1378,9 @@ function SystemTab() {
         if (error) throw error;
         setSettingsId(data.id);
       }
+      setAppCurrencyCode(payload.currency);
       toast.success("Company settings saved");
+      window.dispatchEvent(new Event("master-os-company-settings"));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save");
     } finally {
@@ -1397,15 +1460,101 @@ function SystemTab() {
             </div>
           </CardHeader>
           <div className="p-6 space-y-4">
+            <div className="p-3 rounded-xl bg-primary/5 border border-primary/10 space-y-3">
+              <p className="text-xs font-semibold text-text-primary flex items-center gap-2">
+                <Globe className="h-3.5 w-3.5 text-primary shrink-0" />
+                App sidebar (light / dark theme)
+              </p>
+              <p className="text-[11px] text-text-tertiary leading-snug">
+                The sidebar switches logo when users toggle light or dark mode. Use a light mark on transparent or dark background for <strong>dark theme</strong>, and a dark mark for <strong>light theme</strong>. If one is empty, the other (or the PDF logo below) is used as fallback.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="flex items-center gap-2 text-xs font-medium text-text-secondary mb-1.5">
+                    <Moon className="h-3.5 w-3.5 text-text-tertiary" />
+                    Logo — dark theme
+                  </label>
+                  <Input
+                    value={form.logo_dark_theme_url}
+                    onChange={(e) => update("logo_dark_theme_url", e.target.value)}
+                    placeholder="https://…/logo-dark-mode.png"
+                  />
+                  {form.logo_dark_theme_url ? (
+                    <div className="mt-2 p-3 rounded-xl bg-[#0a0a0a] border border-white/10 flex items-center justify-center min-h-[52px]">
+                      <img
+                        src={form.logo_dark_theme_url}
+                        alt=""
+                        className="max-h-9 max-w-full object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+                <div>
+                  <label className="flex items-center gap-2 text-xs font-medium text-text-secondary mb-1.5">
+                    <Sun className="h-3.5 w-3.5 text-text-tertiary" />
+                    Logo — light theme
+                  </label>
+                  <Input
+                    value={form.logo_light_theme_url}
+                    onChange={(e) => update("logo_light_theme_url", e.target.value)}
+                    placeholder="https://…/logo-light-mode.png"
+                  />
+                  {form.logo_light_theme_url ? (
+                    <div className="mt-2 p-3 rounded-xl bg-white border border-border flex items-center justify-center min-h-[52px]">
+                      <img
+                        src={form.logo_light_theme_url}
+                        alt=""
+                        className="max-h-9 max-w-full object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Logo URL</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">PDF &amp; email logo URL</label>
               <Input value={form.logo_url} onChange={(e) => update("logo_url", e.target.value)} placeholder="https://your-domain.com/logo.png" />
               {form.logo_url && (
                 <div className="mt-2 p-3 rounded-xl bg-surface-hover flex items-center gap-3">
                   <img src={form.logo_url} alt="Logo preview" className="h-8 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                  <span className="text-xs text-text-tertiary">Logo preview</span>
+                  <span className="text-xs text-text-tertiary">Used on quote PDFs and customer emails only</span>
                 </div>
               )}
+            </div>
+            <div className="p-3 rounded-xl bg-surface-hover border border-border-light space-y-2">
+              <label className="flex items-center gap-2 text-xs font-semibold text-text-primary">
+                <Image className="h-3.5 w-3.5 text-text-tertiary" />
+                Favicon (browser tab)
+              </label>
+              <p className="text-[11px] text-text-tertiary leading-snug">
+                Public URL to a square <strong className="text-text-secondary">.ico</strong>, <strong className="text-text-secondary">.png</strong> or <strong className="text-text-secondary">.svg</strong> (e.g. from your Supabase storage). Leave empty to use the default site icon.
+              </p>
+              <Input
+                value={form.favicon_url}
+                onChange={(e) => update("favicon_url", e.target.value)}
+                placeholder="https://…/favicon.png"
+              />
+              {form.favicon_url ? (
+                <div className="flex items-center gap-3 pt-1">
+                  <div className="h-10 w-10 rounded-lg border border-border bg-card flex items-center justify-center overflow-hidden shrink-0">
+                    <img
+                      src={form.favicon_url}
+                      alt=""
+                      className="max-h-8 max-w-8 object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  </div>
+                  <span className="text-xs text-text-tertiary">Updates the tab icon after you save (all pages).</span>
+                </div>
+              ) : null}
             </div>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Tagline</label>
@@ -1452,7 +1601,8 @@ function SystemTab() {
           <div className="p-6 space-y-4">
             <Select
               label="Currency"
-              defaultValue="GBP"
+              value={form.currency}
+              onChange={(e) => update("currency", e.target.value)}
               options={[
                 { value: "GBP", label: "GBP (£)" },
                 { value: "USD", label: "USD ($)" },

@@ -8,7 +8,7 @@ Mapeamento dos buckets e onde cada tipo de arquivo é usado no Master OS (e no a
 |----------------------|--------|---------|-------------------|-----|
 | **partner-documents** | Não    | 10 MB   | PDF, JPEG/PNG/Webp/GIF, Word | Documentos do parceiro (seguro, certificação, contrato, fiscal, etc.) |
 | **job-reports**      | Não    | 10 MB   | PDF, JPEG/PNG/Webp/GIF | Fotos e PDFs dos relatórios de fase do job (app ou OS) |
-| **company-assets**   | Sim    | 5 MB    | JPEG/PNG/Webp/SVG | Logo e assets da empresa (ex.: `company_settings.logo_url`) |
+| **company-assets**   | Sim    | 5 MB    | JPEG/PNG/Webp/SVG/GIF | Logos (empresa em `company_settings`, contas em `accounts.logo_url`) |
 | **quote-pdfs**       | Não    | 5 MB    | PDF | Cópias armazenadas de PDFs de quotes (opcional) |
 
 ---
@@ -38,7 +38,10 @@ Mapeamento dos buckets e onde cada tipo de arquivo é usado no Master OS (e no a
 - **Tabela:** `company_settings`
 - **Coluna:** `logo_url`
 - **Quem sobe:** Dashboard OS (Settings / branding).
-- **Sugestão de path:** `logo.png` ou `logo.{ext}` (um arquivo por tipo). Bucket público ⇒ `logo_url` pode ser a URL pública do Supabase (ex.: `https://...supabase.co/storage/v1/object/public/company-assets/logo.png`).
+- **Paths sugeridos:**
+  - Empresa (Settings): `logo.png` ou `logo.{ext}` na raiz do bucket.
+  - **Conta corporativa (Accounts):** `accounts/{account_id}/logo.{ext}` — upload no dashboard grava a URL pública em `accounts.logo_url`.
+- Bucket público ⇒ `logo_url` pode ser a URL pública do Supabase (ex.: `https://...supabase.co/storage/v1/object/public/company-assets/...`).
 
 ### 4. `quote-pdfs`
 
