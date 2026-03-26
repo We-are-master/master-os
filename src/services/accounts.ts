@@ -12,6 +12,7 @@ function normalizeAccountInsert(input: AccountInsert): AccountInsert {
     address: input.address?.trim() || null,
     crn: input.crn?.trim() || null,
     contact_number: input.contact_number?.trim() || null,
+    contract_url: input.contract_url?.trim() || null,
   };
 }
 
@@ -26,6 +27,10 @@ function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
   if (next.logo_url !== undefined) {
     const t = typeof next.logo_url === "string" ? next.logo_url.trim() : "";
     next.logo_url = t.length > 0 ? t : null;
+  }
+  if (next.contract_url !== undefined) {
+    const t = typeof next.contract_url === "string" ? next.contract_url.trim() : "";
+    next.contract_url = t.length > 0 ? t : null;
   }
   return next;
 }

@@ -16,7 +16,7 @@ import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, List, LayoutGrid, Calendar, Map,
+  Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon,
   ArrowRight, Briefcase, DollarSign, Clock,
   MapPin, Building2, TrendingUp,
   CheckCircle2, AlertTriangle, XCircle,
@@ -26,9 +26,10 @@ import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
-import { getSupabase, getStatusCounts } from "@/services/base";
+import { getSupabase, getStatusCounts, softDeleteById } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
-import type { Job } from "@/types/database";
+import type { Job, Partner } from "@/types/database";
+import { listPartners } from "@/services/partners";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -36,10 +37,11 @@ import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, isJobInProgressStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { jobScheduleYmd } from "@/lib/schedule-calendar";
 
-const JOB_STATUSES = ["scheduled", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
+const JOB_STATUSES = ["scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
+  late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress — Phase 1", variant: "primary", dot: true },
   in_progress_phase2: { label: "In Progress — Phase 2", variant: "primary", dot: true },
   in_progress_phase3: { label: "In Progress — Phase 3", variant: "primary", dot: true },
@@ -62,6 +64,7 @@ function JobsPageContent() {
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
+  const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) { if (filterRef.current && !filterRef.current.contains(e.target as Node)) setFilterOpen(false); }
@@ -81,7 +84,7 @@ function JobsPageContent() {
   }, [data, filterPartner, filterScheduled]);
 
   const kanbanColumns = useMemo(() => {
-    const ids = ["scheduled", "in_progress", "awaiting_payment", "need_attention", "completed"] as const;
+    const ids = ["scheduled", "late", "in_progress", "awaiting_payment", "need_attention", "completed"] as const;
     return ids.map((id) => {
       if (id === "in_progress") {
         return {
@@ -94,7 +97,7 @@ function JobsPageContent() {
       return {
         id,
         title: statusConfig[id]?.label ?? id,
-        color: id === "completed" ? "bg-emerald-500" : id === "need_attention" ? "bg-amber-500" : id === "awaiting_payment" ? "bg-amber-500" : "bg-primary",
+        color: id === "completed" ? "bg-emerald-500" : id === "late" ? "bg-red-500" : id === "need_attention" ? "bg-amber-500" : id === "awaiting_payment" ? "bg-amber-500" : "bg-primary",
         items: filteredData.filter((j) => j.status === id),
       };
     });
@@ -117,11 +120,40 @@ function JobsPageContent() {
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0 },
     { id: "scheduled", label: "Scheduled", count: tabCounts.scheduled ?? 0 },
+    { id: "late", label: "Late", count: tabCounts.late ?? 0 },
     { id: "in_progress", label: "In progress", count: inProgressTabCount },
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
     { id: "need_attention", label: "Need attention", count: tabCounts.need_attention ?? 0 },
     { id: "completed", label: "Completed", count: tabCounts.completed ?? 0 },
   ];
+
+  useEffect(() => {
+    const ids = [...new Set(data.map((j) => j.client_id).filter(Boolean))] as string[];
+    if (ids.length === 0) {
+      setClientAccountMap({});
+      return;
+    }
+    const supabase = getSupabase();
+    let cancelled = false;
+    (async () => {
+      const { data: clients } = await supabase.from("clients").select("id, source_account_id").in("id", ids);
+      const accountIds = [...new Set((clients ?? []).map((c: { source_account_id?: string | null }) => c.source_account_id).filter(Boolean))] as string[];
+      const { data: accounts } = accountIds.length > 0
+        ? await supabase.from("accounts").select("id, company_name").in("id", accountIds)
+        : { data: [] as Array<{ id: string; company_name: string }> };
+      if (cancelled) return;
+      const accountById = new Map((accounts ?? []).map((a: { id: string; company_name: string }) => [a.id, a.company_name]));
+      const next: Record<string, string> = {};
+      (clients ?? []).forEach((c: { id: string; source_account_id?: string | null }) => {
+        if (c.source_account_id) {
+          const name = accountById.get(c.source_account_id);
+          if (name) next[c.id] = name;
+        }
+      });
+      setClientAccountMap(next);
+    })();
+    return () => { cancelled = true; };
+  }, [data]);
 
   const handleCreate = useCallback(async (formData: Partial<Job>) => {
     const cp = formData.client_price ?? 0;
@@ -137,6 +169,7 @@ function JobsPageContent() {
         client_name: formData.client_name ?? "",
         property_address: formData.property_address ?? "",
         partner_name: formData.partner_name, partner_id: formData.partner_id,
+        partner_ids: formData.partner_ids,
         owner_id: formData.owner_id, owner_name: formData.owner_name,
         status: "scheduled",
         progress: 0,
@@ -148,6 +181,7 @@ function JobsPageContent() {
         materials_cost: mc,
         margin_percent: margin,
         scheduled_date: formData.scheduled_date, scheduled_start_at: formData.scheduled_start_at,
+        job_type: formData.job_type ?? "fixed",
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
         partner_agreed_value: 0, finance_status: "unpaid", service_value: cp,
         report_submitted: false,
@@ -210,12 +244,52 @@ function JobsPageContent() {
     } catch { toast.error("Failed"); }
   };
 
+  const handleBulkArchive = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      await Promise.all(Array.from(selectedIds).map((id) => softDeleteById("jobs", id, profile?.id)));
+      await logBulkAction("job", Array.from(selectedIds), "deleted", "deleted_at", "archived", profile?.id, profile?.full_name);
+      toast.success(`${selectedIds.size} jobs archived`);
+      setSelectedIds(new Set());
+      refresh();
+      loadCounts();
+    } catch {
+      toast.error("Failed to archive jobs");
+    }
+  }, [selectedIds, profile?.id, profile?.full_name, refresh, loadCounts]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${selectedIds.size} selected jobs permanently?`)) return;
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from("jobs").delete().in("id", Array.from(selectedIds));
+      if (error) throw error;
+      toast.success(`${selectedIds.size} jobs deleted`);
+      setSelectedIds(new Set());
+      refresh();
+      loadCounts();
+    } catch {
+      toast.error("Failed to delete jobs");
+    }
+  }, [selectedIds, refresh, loadCounts]);
+
   const columns: Column<Job>[] = [
     { key: "reference", label: "Job", width: "180px", render: (item) => (<div><p className="text-sm font-semibold text-text-primary">{item.reference}</p><p className="text-[11px] text-text-tertiary">{item.title}</p></div>) },
     { key: "client_name", label: "Client / Property", render: (item) => (<div><p className="text-sm font-medium text-text-primary">{item.client_name}</p><p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{item.property_address}</p></div>) },
     { key: "partner_name", label: "Partner", render: (item) => item.partner_name ? (<div className="flex items-center gap-2"><Avatar name={item.partner_name} size="xs" /><span className="text-sm text-text-secondary">{item.partner_name}</span></div>) : <span className="text-xs text-text-tertiary italic">Unassigned</span> },
     { key: "status", label: "Status", render: (item) => { const c = statusConfig[item.status] ?? { label: item.status, variant: "default" as const }; return <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>; } },
-    { key: "margin_percent", label: "Financial", render: (item) => (<div><p className="text-sm font-semibold text-text-primary">{formatCurrency(item.client_price)}</p><span className={`text-[11px] font-medium ${item.margin_percent >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{item.margin_percent}% margin</span></div>) },
+    { key: "account", label: "Account", render: (item) => item.client_id && clientAccountMap[item.client_id] ? <span className="text-sm text-text-primary">{clientAccountMap[item.client_id]}</span> : <span className="text-xs text-text-tertiary italic">No account</span> },
+    { key: "margin_percent", label: "Job Amount", render: (item) => (<div><p className="text-sm font-semibold text-text-primary">{formatCurrency(item.client_price + Number(item.extras_amount ?? 0))}</p><span className={`text-[11px] font-medium ${item.margin_percent >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{item.margin_percent}% margin</span></div>) },
+    {
+      key: "amount_due",
+      label: "Amount Due",
+      render: (item) => {
+        const paid = (item.customer_deposit_paid ? Number(item.customer_deposit ?? 0) : 0) + (item.customer_final_paid ? Number(item.customer_final_payment ?? 0) : 0);
+        const due = Math.max(0, Number(item.client_price ?? 0) + Number(item.extras_amount ?? 0) - paid);
+        return <span className="text-sm font-semibold text-text-primary">{formatCurrency(due)}</span>;
+      },
+    },
     { key: "finance_status", label: "Finance", render: (item) => { const fs = item.finance_status ?? "unpaid"; return <Badge variant={fs === "paid" ? "success" : fs === "partial" ? "warning" : "default"} size="sm">{fs === "paid" ? "Paid" : fs === "partial" ? "Partial" : "Unpaid"}</Badge>; } },
     { key: "actions", label: "", width: "40px", render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" /> },
   ];
@@ -255,14 +329,14 @@ function JobsPageContent() {
             <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
             <div className="flex items-center gap-2">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
-                {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: Map }].map(({ id, icon: Icon }) => (
+                {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: MapIcon }].map(({ id, icon: Icon }) => (
                   <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
                 ))}
               </div>
               <SearchInput placeholder="Search jobs..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           </div>
-          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /></div>} />}
+          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /><BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" /></div>} />}
           {viewMode === "kanban" && <div className="min-h-[400px]">{loading ? <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div> : <KanbanBoard columns={kanbanColumns} getCardId={(j) => j.id} onCardClick={(j) => router.push(`/jobs/${j.id}`)} renderCard={(j) => { const sc = statusConfig[j.status] ?? { label: j.status }; return (<div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors cursor-pointer"><p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p><p className="text-xs text-text-tertiary truncate">{j.title}</p><p className="text-[10px] text-text-tertiary mt-1 truncate">{sc.label}</p><p className="text-[11px] text-text-secondary mt-0.5">{j.client_name}</p><p className="text-xs font-medium text-primary mt-1">{formatCurrency(j.client_price)}</p></div>); }} />}</div>}
           {viewMode === "calendar" && <JobsCalendarView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
           {viewMode === "map" && <JobsMapView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
@@ -281,23 +355,36 @@ export default function JobsPage() {
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
   const [form, setForm] = useState({
-    title: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "3",
+    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "3", job_type: "fixed",
   });
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
+
+  useEffect(() => {
+    if (!open) return;
+    listPartners({ pageSize: 200, status: "all" })
+      .then((r) => setPartners(r.data ?? []))
+      .catch(() => setPartners([]));
+  }, [open]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Job title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
     const scheduled_date = form.scheduled_date || undefined;
     const scheduled_start_at = form.scheduled_date && form.scheduled_time ? `${form.scheduled_date}T${form.scheduled_time}:00` : form.scheduled_date ? `${form.scheduled_date}T09:00:00` : undefined;
+    const selectedPartner = partners.find((p) => p.id === form.partner_id);
     onCreate({
       title: form.title,
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
       property_address: clientAddress.property_address,
-      partner_name: form.partner_name || undefined,
+      partner_id: form.partner_id || undefined,
+      partner_ids: form.partner_ids.length > 0 ? form.partner_ids : undefined,
+      partner_name: selectedPartner ? (selectedPartner.company_name?.trim() || selectedPartner.contact_name) : undefined,
+      job_type: (form.job_type as Job["job_type"]) ?? "fixed",
       client_price: Number(form.client_price) || 0,
       partner_cost: Number(form.partner_cost) || 0,
       materials_cost: Number(form.materials_cost) || 0,
@@ -305,7 +392,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       scheduled_start_at,
       total_phases: normalizeTotalPhases(Number(form.total_phases)),
     });
-    setForm({ title: "", partner_name: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "3" });
+    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "3", job_type: "fixed" });
     setClientAddress({ client_name: "", property_address: "" });
   };
 
@@ -329,7 +416,40 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Time</label><Input type="time" value={form.scheduled_time} onChange={(e) => update("scheduled_time", e.target.value)} /></div>
         </div>
-        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Name</label><Input value={form.partner_name} onChange={(e) => update("partner_name", e.target.value)} /></div>
+        <Select
+          label="Job type"
+          options={[
+            { value: "fixed", label: "Fixed" },
+            { value: "hourly", label: "Hourly" },
+          ]}
+          value={form.job_type}
+          onChange={(e) => update("job_type", e.target.value)}
+        />
+        <Select
+          label="Partner"
+          options={[
+            { value: "", label: "No partner" },
+            ...partners.map((p) => ({
+              value: p.id,
+              label: p.company_name?.trim() || p.contact_name || "Partner",
+            })),
+          ]}
+          value={form.partner_id}
+          onChange={(e) => update("partner_id", e.target.value)}
+        />
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Partners (multiple)</label>
+          <select
+            multiple
+            value={form.partner_ids}
+            onChange={(e) => setForm((prev) => ({ ...prev, partner_ids: Array.from(e.target.selectedOptions).map((o) => o.value) }))}
+            className="w-full min-h-[96px] rounded-lg border border-border bg-card text-sm text-text-primary px-2 py-1.5"
+          >
+            {partners.map((p) => (
+              <option key={p.id} value={p.id}>{p.company_name?.trim() || p.contact_name || "Partner"}</option>
+            ))}
+          </select>
+        </div>
         <div className="grid grid-cols-3 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" /></div>

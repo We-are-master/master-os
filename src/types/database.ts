@@ -24,7 +24,7 @@ export interface CatalogService {
 
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
-export type JobStatus = "scheduled" | "in_progress_phase1" | "in_progress_phase2" | "in_progress_phase3" | "final_check" | "awaiting_payment" | "need_attention" | "completed";
+export type JobStatus = "scheduled" | "late" | "in_progress_phase1" | "in_progress_phase2" | "in_progress_phase3" | "final_check" | "awaiting_payment" | "need_attention" | "completed";
 export type JobFinanceStatus = "unpaid" | "partial" | "paid";
 export type PartnerStatus = "active" | "inactive" | "on_break" | "onboarding";
 export type InvoiceStatus = "paid" | "pending" | "overdue" | "cancelled";
@@ -160,6 +160,7 @@ export interface Job {
   client_name: string;
   property_address: string;
   partner_id?: string;
+  partner_ids?: string[] | null;
   partner_name?: string;
   quote_id?: string;
   owner_id?: string;
@@ -176,6 +177,7 @@ export interface Job {
   margin_percent: number;
   scheduled_date?: string;
   scheduled_start_at?: string;
+  job_type?: "fixed" | "hourly";
   completed_date?: string;
   cash_in: number;
   cash_out: number;
@@ -274,6 +276,8 @@ export interface Account {
   payment_terms: string;
   /** Optional logo image URL (HTTPS) for account header / listings */
   logo_url?: string | null;
+  /** Optional URL/path for the signed client contract document */
+  contract_url?: string | null;
   total_revenue: number;
   active_jobs: number;
   created_at: string;

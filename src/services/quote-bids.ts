@@ -6,6 +6,7 @@ export interface QuoteBid {
   partner_id: string;
   partner_name?: string;
   bid_amount: number;
+  job_type?: "fixed" | "hourly";
   notes?: string;
   status: "submitted" | "approved" | "rejected";
   created_at: string;
@@ -26,6 +27,7 @@ export async function getBidsByQuoteId(quoteId: string): Promise<QuoteBid[]> {
     partner_id: String(row.partner_id),
     partner_name: row.partner_name as string | undefined,
     bid_amount: Number(row.bid_amount),
+    job_type: (row.job_type as "fixed" | "hourly" | undefined) ?? "fixed",
     notes: row.notes as string | undefined,
     status: row.status as QuoteBid["status"],
     created_at: String(row.created_at),

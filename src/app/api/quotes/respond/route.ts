@@ -140,6 +140,7 @@ export async function POST(req: NextRequest) {
           progress: 0,
           current_phase: 0,
           total_phases: 3,
+          job_type: "fixed",
           client_price: totalValue,
           extras_amount: 0,
           partner_cost: Number(quote.partner_cost ?? 0),
