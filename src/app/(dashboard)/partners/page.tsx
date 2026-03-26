@@ -105,10 +105,14 @@ interface PartnerSelfBill {
 const jobStatusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   draft: { label: "Draft", variant: "default" },
   scheduled: { label: "Scheduled", variant: "info" },
-  in_progress: { label: "In Progress", variant: "primary" },
-  on_hold: { label: "On Hold", variant: "warning" },
+  late: { label: "Late", variant: "danger" },
+  in_progress_phase1: { label: "In Progress", variant: "primary" },
+  in_progress_phase2: { label: "In Progress", variant: "primary" },
+  in_progress_phase3: { label: "In Progress", variant: "primary" },
+  final_check: { label: "Final checks", variant: "warning" },
+  awaiting_payment: { label: "Awaiting Payment", variant: "danger" },
+  need_attention: { label: "Needs attention", variant: "warning" },
   completed: { label: "Completed", variant: "success" },
-  cancelled: { label: "Cancelled", variant: "danger" },
 };
 
 const emptyForm = {

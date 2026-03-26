@@ -55,7 +55,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
   }
 
   return (
-    <div className={cn("flex items-center gap-0 border-b border-border", className)}>
+    <div className={cn("flex flex-nowrap items-center gap-0 border-b border-border", className)}>
       {tabs.map((tab) => (
         <button
           key={tab.id}

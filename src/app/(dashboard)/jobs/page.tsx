@@ -35,20 +35,21 @@ import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
-import { canAdvanceJob, isJobInProgressStatus, normalizeTotalPhases } from "@/lib/job-phases";
+import { canAdvanceJob, isJobWorkPhaseStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
 
-const JOB_STATUSES = ["scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
+const JOB_STATUSES = ["draft", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
+  draft: { label: "Draft", variant: "default", dot: true },
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
   in_progress_phase2: { label: "In Progress", variant: "primary", dot: true },
   in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
-  final_check: { label: "Final Check", variant: "warning", dot: true },
+  final_check: { label: "Final Checks", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
-  need_attention: { label: "Need attention", variant: "warning", dot: true },
+  need_attention: { label: "Needs attention", variant: "warning", dot: true },
   completed: { label: "Completed", variant: "success", dot: true },
 };
 
@@ -86,20 +87,34 @@ function JobsPageContent() {
   }, [data, filterPartner, filterScheduled]);
 
   const kanbanColumns = useMemo(() => {
-    const ids = ["scheduled", "late", "in_progress", "awaiting_payment", "need_attention", "completed"] as const;
+    const ids = ["draft", "scheduled", "late", "in_progress", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
     return ids.map((id) => {
       if (id === "in_progress") {
         return {
           id,
           title: "In progress",
           color: "bg-primary",
-          items: filteredData.filter((j) => isJobInProgressStatus(j.status)),
+          items: filteredData.filter((j) => isJobWorkPhaseStatus(j.status)),
         };
       }
+      const title = id === "final_check" ? "Final Checks" : (statusConfig[id]?.label ?? id);
       return {
         id,
-        title: statusConfig[id]?.label ?? id,
-        color: id === "completed" ? "bg-emerald-500" : id === "late" ? "bg-red-500" : id === "need_attention" ? "bg-amber-500" : id === "awaiting_payment" ? "bg-amber-500" : "bg-primary",
+        title,
+        color:
+          id === "completed"
+            ? "bg-emerald-500"
+            : id === "late"
+              ? "bg-red-500"
+              : id === "need_attention"
+                ? "bg-amber-500"
+                : id === "awaiting_payment"
+                  ? "bg-amber-500"
+                  : id === "final_check"
+                    ? "bg-amber-600"
+                    : id === "draft"
+                      ? "bg-stone-400"
+                      : "bg-primary",
         items: filteredData.filter((j) => j.status === id),
       };
     });
@@ -122,19 +137,28 @@ function JobsPageContent() {
   }, []);
   useEffect(() => { loadCounts(); }, [loadCounts]);
 
-  const inProgressTabCount =
+  const workPhaseTabCount =
     (tabCounts.in_progress_phase1 ?? 0) +
     (tabCounts.in_progress_phase2 ?? 0) +
-    (tabCounts.in_progress_phase3 ?? 0) +
-    (tabCounts.final_check ?? 0);
+    (tabCounts.in_progress_phase3 ?? 0);
+
+  const activeJobsKpi =
+    (tabCounts.draft ?? 0) +
+    (tabCounts.scheduled ?? 0) +
+    (tabCounts.late ?? 0) +
+    workPhaseTabCount +
+    (tabCounts.final_check ?? 0) +
+    (tabCounts.awaiting_payment ?? 0);
 
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0 },
+    { id: "draft", label: "Draft", count: tabCounts.draft ?? 0 },
     { id: "scheduled", label: "Scheduled", count: tabCounts.scheduled ?? 0 },
     { id: "late", label: "Late", count: tabCounts.late ?? 0 },
-    { id: "in_progress", label: "In progress", count: inProgressTabCount },
+    { id: "in_progress", label: "In progress", count: workPhaseTabCount },
+    { id: "final_check", label: "Final Checks", count: tabCounts.final_check ?? 0 },
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
-    { id: "need_attention", label: "Need attention", count: tabCounts.need_attention ?? 0 },
+    { id: "need_attention", label: "Needs attention", count: tabCounts.need_attention ?? 0 },
     { id: "completed", label: "Completed", count: tabCounts.completed ?? 0 },
   ];
 
@@ -173,6 +197,7 @@ function JobsPageContent() {
     const margin =
       cp > 0 ? Math.round(((cp - pc - mc) / cp) * 1000) / 10 : 0;
     try {
+      const hasSchedule = !!(formData.scheduled_date?.trim() || formData.scheduled_start_at);
       const result = await createJob({
         title: formData.title ?? "",
         client_id: formData.client_id,
@@ -183,7 +208,7 @@ function JobsPageContent() {
         partner_ids: formData.partner_ids,
         owner_id: formData.owner_id ?? profile?.id,
         owner_name: formData.owner_name ?? profile?.full_name,
-        status: "scheduled",
+        status: hasSchedule ? "scheduled" : "draft",
         progress: 0,
         current_phase: 0,
         total_phases: normalizeTotalPhases(formData.total_phases),
@@ -330,23 +355,25 @@ function JobsPageContent() {
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
         </PageHeader>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Active Jobs" value={inProgressTabCount + (tabCounts.scheduled ?? 0)} format="number" icon={Briefcase} accent="blue" />
+        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch [&>*]:min-w-0">
+          <KpiCard title="Active Jobs" value={activeJobsKpi} format="number" icon={Briefcase} accent="blue" />
           <KpiCard title="Awaiting Payment" value={tabCounts.awaiting_payment ?? 0} format="number" icon={DollarSign} accent="amber" />
           <KpiCard title="Completed" value={tabCounts.completed ?? 0} format="number" icon={CheckCircle2} accent="emerald" />
           <KpiCard
             title="Total Revenue Booked"
             value={revenueBookedPipeline}
             format="currency"
-            description="Scheduled, late & in progress"
+            description="Draft → final checks (excl. completed)"
             icon={TrendingUp}
             accent="primary"
           />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex items-center justify-between mb-4">
-            <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between mb-4">
+            <div className="w-full min-w-0 overflow-x-auto pb-0.5">
+              <Tabs className="min-w-max" tabs={tabs} activeTab={status} onChange={setStatus} />
+            </div>
             <div className="flex items-center gap-2">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
                 {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: MapIcon }].map(({ id, icon: Icon }) => (
