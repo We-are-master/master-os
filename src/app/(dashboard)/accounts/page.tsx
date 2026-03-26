@@ -31,7 +31,7 @@ import {
   getAccount,
   updateAccount,
   listJobsLinkedToAccount,
-  listClientsLinkedToAccount,
+  listClientsLinkedToAccountPaged,
   listInvoicesForJobReferences,
 } from "@/services/accounts";
 import { uploadAccountLogo, removeAccountLogoFromStorage } from "@/services/account-logo-storage";
@@ -49,6 +49,7 @@ const INDUSTRY_OPTIONS = [
 ];
 
 const PAYMENT_TERMS_OPTIONS = [
+  { value: "Net 7", label: "Net 7" },
   { value: "Net 15", label: "Net 15" },
   { value: "Net 30", label: "Net 30" },
   { value: "Net 60", label: "Net 60" },
@@ -460,8 +461,14 @@ function AccountDetailDrawer({
   const [tab, setTab] = useState("overview");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [linkedClientRows, setLinkedClientRows] = useState<Client[]>([]);
   const [loadingExtras, setLoadingExtras] = useState(false);
+  // Clients tab — paginated independently
+  const [clientsRows, setClientsRows] = useState<Client[]>([]);
+  const [clientsTotal, setClientsTotal] = useState(0);
+  const [clientsPage, setClientsPage] = useState(0);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientsUsedFallback, setClientsUsedFallback] = useState(false);
+  const CLIENTS_PAGE_SIZE = 20;
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingContract, setUploadingContract] = useState(false);
@@ -505,33 +512,67 @@ function AccountDetailDrawer({
     setTab("overview");
   }, [account?.id]);
 
+  // Load jobs & invoices independently
   useEffect(() => {
     if (!account) return;
     let cancelled = false;
     setLoadingExtras(true);
+    setJobs([]);
+    setInvoices([]);
     (async () => {
       try {
-        const [jobList, clientRows] = await Promise.all([
-          listJobsLinkedToAccount(account.id),
-          listClientsLinkedToAccount(account.id),
-        ]);
+        const jobList = await listJobsLinkedToAccount(account.id, account.company_name);
         if (cancelled) return;
         setJobs(jobList);
-        setLinkedClientRows(clientRows);
         const refs = jobList.map((j) => j.reference).filter(Boolean);
-        const inv = await listInvoicesForJobReferences(refs);
-        if (cancelled) return;
-        setInvoices(inv);
-      } catch (e) {
-        if (!cancelled) toast.error(e instanceof Error ? e.message : "Failed to load linked data");
+        if (refs.length > 0) {
+          const inv = await listInvoicesForJobReferences(refs);
+          if (!cancelled) setInvoices(inv);
+        }
+      } catch {
+        // silent — jobs tab will show empty state
       } finally {
         if (!cancelled) setLoadingExtras(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [account]);
+    return () => { cancelled = true; };
+  }, [account?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load clients page (triggered by tab activation or page change)
+  const loadClientsPage = useCallback(async (acct: Account, page: number) => {
+    setClientsLoading(true);
+    try {
+      const { rows, total, usedFallback } = await listClientsLinkedToAccountPaged(
+        acct.id,
+        acct.company_name,
+        page,
+        CLIENTS_PAGE_SIZE,
+      );
+      setClientsRows(rows);
+      setClientsTotal(total);
+      setClientsUsedFallback(usedFallback);
+      setClientsPage(page);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load clients");
+    } finally {
+      setClientsLoading(false);
+    }
+  }, [CLIENTS_PAGE_SIZE]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset clients when account changes
+  useEffect(() => {
+    if (!account) return;
+    setClientsRows([]);
+    setClientsTotal(0);
+    setClientsPage(0);
+  }, [account?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load clients when clients tab is first opened
+  useEffect(() => {
+    if (tab === "clients" && account && clientsRows.length === 0 && !clientsLoading) {
+      loadClientsPage(account, 0);
+    }
+  }, [tab, account?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!account) {
     return <Drawer open={false} onClose={onClose}><div /></Drawer>;
@@ -634,10 +675,10 @@ function AccountDetailDrawer({
             <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-text-tertiary">
               <span className="inline-flex items-center gap-1">
                 <Users className="h-3 w-3" />
-                {linkedClientRows.length} client{linkedClientRows.length !== 1 ? "s" : ""} linked
+                {clientsTotal > 0 ? `${clientsTotal} client${clientsTotal !== 1 ? "s" : ""} linked` : "0 clients linked"}
               </span>
               <span className="text-border">·</span>
-              <span>Jobs are tied via clients assigned to this account</span>
+              <span>{jobs.length} job{jobs.length !== 1 ? "s" : ""}</span>
             </div>
             {(loading || loadingExtras) && (
               <p className="text-[11px] text-primary mt-1 inline-flex items-center gap-1">
@@ -652,38 +693,107 @@ function AccountDetailDrawer({
           variant="pills"
           className="w-full"
           activeTab={tab}
-          onChange={setTab}
+          onChange={(t) => {
+            setTab(t);
+            if (t === "clients" && account && clientsRows.length === 0 && !clientsLoading) {
+              loadClientsPage(account, 0);
+            }
+          }}
           tabs={[
             { id: "overview", label: "Overview" },
-            { id: "jobs", label: "Jobs", count: jobs.length },
-            { id: "finance", label: "Finance", count: invoices.length },
+            { id: "clients", label: "Clients", count: clientsTotal || undefined },
+            { id: "jobs", label: "Jobs", count: jobs.length || undefined },
+            { id: "finance", label: "Finance", count: invoices.length || undefined },
           ]}
         />
 
-        {!loadingExtras && linkedClientRows.length > 0 && (
-          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Linked clients</p>
-            <ul className="space-y-0.5 max-h-[min(200px,40vh)] overflow-y-auto">
-              {linkedClientRows.map((c) => (
-                <li key={c.id}>
-                  <Link
-                    href={`/clients?clientId=${encodeURIComponent(c.id)}`}
-                    className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-surface-hover transition-colors"
-                  >
-                    <Avatar name={c.full_name} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-text-primary truncate">{c.full_name}</p>
-                      {c.email ? (
-                        <p className="text-[11px] text-text-tertiary truncate">{c.email}</p>
-                      ) : (
-                        <p className="text-[11px] text-text-tertiary">—</p>
-                      )}
-                    </div>
-                    <ExternalLink className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
+        {/* ── Clients tab ─────────────────────────────────────────── */}
+        {tab === "clients" && (
+          <div className="space-y-3">
+            {clientsUsedFallback && (
+              <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-[11px] text-amber-400 flex items-center gap-2">
+                <span>⚠</span>
+                <span>These clients were matched by company name — link them properly by setting their Account field to <strong>{account.company_name}</strong>.</span>
+              </div>
+            )}
+            {clientsLoading ? (
+              <div className="flex items-center justify-center py-12 text-text-tertiary">
+                <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                <span className="text-sm">Loading clients…</span>
+              </div>
+            ) : clientsRows.length === 0 ? (
+              <div className="text-center py-12">
+                <Users className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
+                <p className="text-sm text-text-tertiary">No clients linked to this account yet.</p>
+                <p className="text-xs text-text-tertiary mt-1">Go to Clients and set their Account field to <strong>{account.company_name}</strong>.</p>
+              </div>
+            ) : (
+              <>
+                <div className="rounded-xl border border-border-light overflow-hidden">
+                  <div className="px-3 py-2 border-b border-border-light bg-surface-hover/40 flex items-center justify-between">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                      {clientsTotal} client{clientsTotal !== 1 ? "s" : ""}
+                    </p>
+                    <p className="text-[10px] text-text-tertiary">
+                      Page {clientsPage + 1} of {Math.ceil(clientsTotal / CLIENTS_PAGE_SIZE)}
+                    </p>
+                  </div>
+                  <ul className="divide-y divide-border-light">
+                    {clientsRows.map((c) => (
+                      <li key={c.id}>
+                        <Link
+                          href={`/clients?clientId=${encodeURIComponent(c.id)}`}
+                          className="flex items-center gap-3 px-3 py-3 hover:bg-surface-hover/60 transition-colors"
+                        >
+                          <Avatar name={c.full_name} size="sm" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-text-primary truncate">{c.full_name}</p>
+                            <p className="text-[11px] text-text-tertiary truncate">
+                              {c.email || c.phone || c.address || "—"}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {c.status && (
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                                c.status === "active" ? "bg-emerald-500/15 text-emerald-400" : "bg-surface-hover text-text-tertiary"
+                              }`}>
+                                {c.status}
+                              </span>
+                            )}
+                            <ExternalLink className="h-3.5 w-3.5 text-text-tertiary" />
+                          </div>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {/* Pagination controls */}
+                {Math.ceil(clientsTotal / CLIENTS_PAGE_SIZE) > 1 && (
+                  <div className="flex items-center justify-between pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={clientsPage === 0 || clientsLoading}
+                      onClick={() => loadClientsPage(account, clientsPage - 1)}
+                    >
+                      ← Previous
+                    </Button>
+                    <span className="text-xs text-text-tertiary">
+                      {clientsPage * CLIENTS_PAGE_SIZE + 1}–{Math.min((clientsPage + 1) * CLIENTS_PAGE_SIZE, clientsTotal)} of {clientsTotal}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={(clientsPage + 1) * CLIENTS_PAGE_SIZE >= clientsTotal || clientsLoading}
+                      onClick={() => loadClientsPage(account, clientsPage + 1)}
+                    >
+                      Next →
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
