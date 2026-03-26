@@ -88,24 +88,16 @@ export async function updateAccount(id: string, input: Partial<Account>): Promis
   return data as Account;
 }
 
-/** Jobs whose client is linked to this corporate account (`clients.source_account_id`).
- *  Falls back to matching by `client_name` ≈ account company name when no FK link exists.
- *  Accepts optional `companyName` to avoid a redundant account fetch. */
+/** Jobs whose client is linked to this corporate account.
+ *  Uses a server-side RPC (JOIN in Postgres) to avoid huge IN() URLs when
+ *  there are many linked clients. Falls back to client_name ILIKE match. */
 export async function listJobsLinkedToAccount(
   accountId: string,
   companyName?: string,
 ): Promise<Job[]> {
   const supabase = getSupabase();
 
-  // 1. Get client IDs linked via FK
-  const { data: clientsData } = await supabase
-    .from("clients")
-    .select("id")
-    .eq("source_account_id", accountId)
-    .is("deleted_at", null);
-  const clientIds = ((clientsData ?? []) as { id: string }[]).map((c) => c.id);
-
-  // 2. If caller didn't supply company name, fetch it once
+  // Resolve company name if not supplied
   let name = companyName ?? "";
   if (!name) {
     const { data: acctData } = await supabase
@@ -116,42 +108,14 @@ export async function listJobsLinkedToAccount(
     name = (acctData as { company_name?: string } | null)?.company_name ?? "";
   }
 
-  if (clientIds.length === 0 && !name) return [];
-
-  // 3. Fetch jobs sequentially to avoid query-builder issues in Promise.all
-  const allJobs: Job[] = [];
-
-  if (clientIds.length > 0) {
-    const { data, error } = await supabase
-      .from("jobs")
-      .select("*")
-      .in("client_id", clientIds)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(100);
-    if (error) throw new Error(error.message);
-    allJobs.push(...((data ?? []) as Job[]));
-  }
-
-  if (name) {
-    const { data, error } = await supabase
-      .from("jobs")
-      .select("*")
-      .ilike("client_name", `%${name}%`)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(100);
-    if (error) throw new Error(error.message);
-    allJobs.push(...((data ?? []) as Job[]));
-  }
-
-  // Deduplicate by id
-  const seen = new Set<string>();
-  return allJobs.filter((j) => {
-    if (seen.has(j.id)) return false;
-    seen.add(j.id);
-    return true;
+  // Use RPC to do the JOIN server-side — avoids URL length 400 errors with many clients
+  const { data, error } = await supabase.rpc("get_jobs_for_account", {
+    p_account_id: accountId,
+    p_company_name: name,
   });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Job[];
 }
 
 export async function countClientsLinkedToAccount(accountId: string): Promise<number> {
