@@ -762,14 +762,14 @@ export default function JobDetailPage() {
         </div>
 
         {/* ── MAIN GRID ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-5">
 
           {/* ═══ LEFT — operational column ═══ */}
-          <div className="lg:col-span-2 space-y-5">
+          <div className="min-w-0 space-y-4 sm:space-y-5 lg:col-span-2">
 
-            {/* Job figures — full-width equal columns; vertically centered in card */}
-            <div className="flex w-full min-w-0 items-center rounded-xl border border-border-light bg-card px-4 py-3.5 sm:px-5 sm:py-4">
-              <div className="grid w-full min-w-0 grid-cols-2 gap-x-4 gap-y-4 min-[480px]:grid-cols-4 min-[480px]:gap-x-6 min-[480px]:gap-y-0 min-[480px]:items-center">
+            {/* Job figures — same card shell as Client identity below */}
+            <div className="w-full min-w-0 rounded-xl border border-border-light bg-card p-3 sm:p-4">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-3 min-[480px]:grid-cols-4 min-[480px]:gap-x-4 min-[480px]:gap-y-0 items-start justify-items-stretch">
                 <div className="flex min-w-0 flex-col gap-1">
                   <p className="text-[10px] font-semibold uppercase tracking-wide leading-none text-text-tertiary whitespace-nowrap">Job amount</p>
                   <p className="min-w-0 truncate text-sm font-bold leading-none tabular-nums text-text-primary">{formatCurrency(billableRevenue)}</p>
@@ -789,11 +789,11 @@ export default function JobDetailPage() {
               </div>
             </div>
 
-            {/* CLIENT IDENTITY + MAP */}
+            {/* CLIENT IDENTITY + MAP — mobile: map on top; md+: side‑by‑side, top‑aligned */}
             <div className="rounded-xl border border-border-light bg-card overflow-hidden">
-              <div className="grid grid-cols-1 items-start gap-0 sm:grid-cols-2">
+              <div className="grid grid-cols-1 items-start gap-0 md:grid-cols-2 md:items-start">
                 {/* client info */}
-                <div className="w-full min-w-0 p-4 space-y-3 sm:border-r sm:border-border-light/70">
+                <div className="order-2 w-full min-w-0 space-y-3 p-4 sm:p-5 md:order-1 md:border-r md:border-border-light/70">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
                     <Building2 className="h-3.5 w-3.5" /> Client identity
                   </p>
@@ -802,7 +802,7 @@ export default function JobDetailPage() {
                     <p className="text-xs text-text-tertiary mt-0.5 leading-snug">{job.property_address}</p>
                   </div>
                   {/* schedule inline */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border-light">
+                  <div className="grid grid-cols-1 gap-3 border-t border-border-light pt-1 min-[420px]:grid-cols-2">
                     <div>
                       <p className="text-[10px] text-text-tertiary">Arrival date</p>
                       <Input
@@ -860,11 +860,11 @@ export default function JobDetailPage() {
                     {job.invoice_id && <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-primary hover:underline">Invoice <ExternalLink className="h-3 w-3" /></Link>}
                   </div>
                 </div>
-                {/* single map — top-aligned (not vertically centered in tall left column) */}
-                <div className="flex w-full min-w-0 flex-col items-stretch justify-start border-t border-border-light/70 bg-surface-hover/20 p-4 sm:border-t-0">
+                {/* map: first on mobile (order-1); right column on md+ */}
+                <div className="order-1 flex w-full min-w-0 flex-col items-stretch justify-start border-b border-border-light/70 bg-surface-hover/20 p-4 sm:p-5 md:order-2 md:border-b-0 md:border-l md:border-border-light/70">
                   <LocationMiniMap
                     address={job.property_address}
-                    className="h-[200px] w-full rounded-xl overflow-hidden sm:h-[240px] sm:max-w-none"
+                    className="h-[200px] w-full rounded-xl overflow-hidden sm:h-[240px] md:h-[260px] lg:h-[280px]"
                     lazy
                   />
                 </div>
@@ -1148,7 +1148,7 @@ export default function JobDetailPage() {
           </div>
 
           {/* ═══ RIGHT — partner + financial + history ═══ */}
-          <div className="space-y-5">
+          <div className="min-w-0 space-y-4 sm:space-y-5">
 
             {/* PRIMARY PARTNER */}
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
