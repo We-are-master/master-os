@@ -69,14 +69,15 @@ import {
 } from "@/lib/job-financials";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
+  draft: { label: "Draft", variant: "default", dot: true },
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
   in_progress_phase2: { label: "In Progress", variant: "primary", dot: true },
   in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
-  final_check: { label: "Final Check", variant: "warning", dot: true },
+  final_check: { label: "Final checks", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
-  need_attention: { label: "Need attention", variant: "warning", dot: true },
+  need_attention: { label: "Needs attention", variant: "warning", dot: true },
   completed: { label: "Completed", variant: "success", dot: true },
 };
 

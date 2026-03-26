@@ -24,7 +24,17 @@ export interface CatalogService {
 
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
-export type JobStatus = "scheduled" | "late" | "in_progress_phase1" | "in_progress_phase2" | "in_progress_phase3" | "final_check" | "awaiting_payment" | "need_attention" | "completed";
+export type JobStatus =
+  | "draft"
+  | "scheduled"
+  | "late"
+  | "in_progress_phase1"
+  | "in_progress_phase2"
+  | "in_progress_phase3"
+  | "final_check"
+  | "awaiting_payment"
+  | "need_attention"
+  | "completed";
 export type JobFinanceStatus = "unpaid" | "partial" | "paid";
 export type PartnerStatus = "active" | "inactive" | "on_break" | "onboarding";
 export type InvoiceStatus = "paid" | "pending" | "overdue" | "cancelled";

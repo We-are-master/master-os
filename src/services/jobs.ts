@@ -1,10 +1,11 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
-import { JOB_IN_PROGRESS_STATUSES } from "@/lib/job-phases";
+import { JOB_IN_PROGRESS_STATUSES, JOB_WORK_PHASE_STATUSES } from "@/lib/job-phases";
 import { jobBillableRevenue } from "@/lib/job-financials";
 
-/** Scheduled, Late, and In progress (phases + final check) — matches Jobs tabs. */
+/** Draft through final check — booked revenue before collection (matches Jobs KPI). */
 const REVENUE_BOOKED_STATUSES: Job["status"][] = [
+  "draft",
   "scheduled",
   "late",
   ...JOB_IN_PROGRESS_STATUSES,
@@ -47,7 +48,7 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(
       "jobs",
-      { ...rest, statusIn: [...JOB_IN_PROGRESS_STATUSES] },
+      { ...rest, statusIn: [...JOB_WORK_PHASE_STATUSES] },
       {
         searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
         defaultSort: "created_at",

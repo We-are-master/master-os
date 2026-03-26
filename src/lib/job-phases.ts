@@ -3,26 +3,35 @@ import type { LucideIcon } from "lucide-react";
 import {
   Play,
   Pause,
-  TrendingUp,
   RotateCcw,
   CheckCircle2,
   CreditCard,
   ShieldCheck,
+  Calendar,
 } from "lucide-react";
 
 export const JOB_PHASE_COUNT_MIN = 1;
 export const JOB_PHASE_COUNT_MAX = 2;
 
-/** DB statuses grouped under the "In progress" tab / column (phases + final check). */
-export const JOB_IN_PROGRESS_STATUSES: readonly Job["status"][] = [
+/** On-site work phases only (Jobs list tab "In progress" — excludes Final checks). */
+export const JOB_WORK_PHASE_STATUSES: readonly Job["status"][] = [
   "in_progress_phase1",
   "in_progress_phase2",
   "in_progress_phase3",
+] as const;
+
+/** Work phases + final check — pipeline revenue, schedule "active" counts, etc. */
+export const JOB_IN_PROGRESS_STATUSES: readonly Job["status"][] = [
+  ...JOB_WORK_PHASE_STATUSES,
   "final_check",
 ] as const;
 
 export function isJobInProgressStatus(status: Job["status"]): boolean {
   return (JOB_IN_PROGRESS_STATUSES as readonly string[]).includes(status);
+}
+
+export function isJobWorkPhaseStatus(status: Job["status"]): boolean {
+  return (JOB_WORK_PHASE_STATUSES as readonly string[]).includes(status);
 }
 
 /** Clamp to 1–2 (matches report_1…report_2 slots). */
@@ -51,6 +60,8 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
   const last = lastInProgressStatusForTotal(tp);
 
   switch (job.status) {
+    case "draft":
+      return [{ label: "Schedule", status: "scheduled", icon: Calendar, primary: true }];
     case "scheduled":
     case "late":
       return [{ label: "Start Job", status: "in_progress_phase1", icon: Play, primary: true }];
@@ -97,6 +108,10 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
 
 export function canAdvanceJob(job: Job, nextStatus: string): { ok: boolean; message?: string } {
   const tp = normalizeTotalPhases(job.total_phases);
+
+  if (job.status === "draft" && nextStatus === "scheduled") {
+    return { ok: true };
+  }
 
   if (nextStatus === "in_progress_phase2" && tp < 2) {
     return { ok: false, message: "This job is configured for only one phase." };
@@ -151,6 +166,8 @@ export function allConfiguredReportsApproved(job: Job): boolean {
 /** Monotonic workflow order for gating report actions (higher = further along). */
 export function jobStatusRank(status: Job["status"]): number {
   switch (status) {
+    case "draft":
+      return -5;
     case "scheduled":
     case "late":
       return 0;
