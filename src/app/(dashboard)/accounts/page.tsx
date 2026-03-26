@@ -104,6 +104,7 @@ const emptyForm = {
   industry: INDUSTRY_OPTIONS[0].value,
   credit_limit: "",
   payment_terms: PAYMENT_TERMS_OPTIONS[1].value,
+  contract_url: "",
 };
 
 export default function AccountsPage() {
@@ -174,6 +175,7 @@ export default function AccountsPage() {
         status: "onboarding",
         credit_limit: Number(form.credit_limit) || 0,
         payment_terms: form.payment_terms,
+        contract_url: form.contract_url.trim() || null,
       });
       setCreateOpen(false);
       setForm(emptyForm);
@@ -424,6 +426,14 @@ export default function AccountsPage() {
               placeholder="100000"
             />
           </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Contract URL</label>
+            <Input
+              value={form.contract_url}
+              onChange={(e) => setForm((f) => ({ ...f, contract_url: e.target.value }))}
+              placeholder="https://.../contract.pdf"
+            />
+          </div>
 
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -472,6 +482,7 @@ function AccountDetailDrawer({
     credit_limit: "",
     payment_terms: "",
     logo_url: "",
+    contract_url: "",
   });
 
   useEffect(() => {
@@ -488,6 +499,7 @@ function AccountDetailDrawer({
       credit_limit: String(account.credit_limit ?? 0),
       payment_terms: account.payment_terms,
       logo_url: account.logo_url ?? "",
+      contract_url: account.contract_url ?? "",
     });
   }, [account]);
 
@@ -595,6 +607,7 @@ function AccountDetailDrawer({
         credit_limit: Number(edit.credit_limit) || 0,
         payment_terms: edit.payment_terms,
         logo_url: edit.logo_url.trim() || null,
+        contract_url: edit.contract_url.trim() || null,
       });
       const fresh = await getAccount(account.id);
       const next = fresh ?? updated;
@@ -691,6 +704,14 @@ function AccountDetailDrawer({
                     <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contact</label>
                     <Input value={edit.contact_name} onChange={(e) => setEdit((p) => ({ ...p, contact_name: e.target.value }))} />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contract URL</label>
+                  <Input
+                    value={edit.contract_url}
+                    onChange={(e) => setEdit((p) => ({ ...p, contract_url: e.target.value }))}
+                    placeholder="https://.../contract.pdf"
+                  />
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Email</label>

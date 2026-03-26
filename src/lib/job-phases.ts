@@ -53,6 +53,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
 
   switch (job.status) {
     case "scheduled":
+    case "late":
       return [{ label: "Start Phase 1", status: "in_progress_phase1", icon: Play, primary: true }];
     case "in_progress_phase1":
       if (tp <= 1) {
@@ -171,6 +172,7 @@ export function allConfiguredReportsApproved(job: Job): boolean {
 export function jobStatusRank(status: Job["status"]): number {
   switch (status) {
     case "scheduled":
+    case "late":
       return 0;
     case "in_progress_phase1":
       return 10;

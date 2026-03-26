@@ -14,7 +14,9 @@ import { Select } from "@/components/ui/select";
 import {
   ArrowLeft,
   Building2,
+  Check,
   CheckCircle2,
+  ChevronDown,
   FileText,
   Upload,
   ShieldCheck,
@@ -31,6 +33,7 @@ import { getJob, updateJob } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { listJobPayments, createJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
+import { listPartners } from "@/services/partners";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit } from "@/services/audit";
 import { LocationMiniMap } from "@/components/ui/location-picker";
@@ -39,7 +42,7 @@ import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
-import type { Invoice, Job, JobPayment, JobPaymentType } from "@/types/database";
+import type { Invoice, Job, JobPayment, JobPaymentType, Partner } from "@/types/database";
 import { listInvoicesLinkedToJob } from "@/services/invoices";
 import {
   allConfiguredReportsApproved,
@@ -64,6 +67,7 @@ import {
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
+  late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "Phase 1", variant: "primary", dot: true },
   in_progress_phase2: { label: "Phase 2", variant: "primary", dot: true },
   in_progress_phase3: { label: "Phase 3", variant: "primary", dot: true },
@@ -185,6 +189,13 @@ export default function JobDetailPage() {
   const [savingUnlinkedAddress, setSavingUnlinkedAddress] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
+  const [partnerModalOpen, setPartnerModalOpen] = useState(false);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [loadingPartners, setLoadingPartners] = useState(false);
+  const [selectedPartnerId, setSelectedPartnerId] = useState("");
+  const [savingPartner, setSavingPartner] = useState(false);
+  const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
+  const partnerPickerRef = useRef<HTMLDivElement>(null);
   const [finForm, setFinForm] = useState({
     client_price: "",
     extras_amount: "",
@@ -353,6 +364,34 @@ export default function JobDetailPage() {
     if (!isAdmin) return;
     listAssignableUsers().then(setAssignableUsers).catch(() => {});
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!partnerModalOpen) return;
+    setLoadingPartners(true);
+    listPartners({ pageSize: 200, status: "all" })
+      .then((r) => setPartners(r.data ?? []))
+      .catch(() => {
+        setPartners([]);
+        toast.error("Failed to load partners");
+      })
+      .finally(() => setLoadingPartners(false));
+  }, [partnerModalOpen]);
+
+  useEffect(() => {
+    if (!job) return;
+    setSelectedPartnerId(job.partner_id ?? "");
+  }, [job?.id, job?.partner_id]);
+
+  useEffect(() => {
+    if (!partnerPickerOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (partnerPickerRef.current && !partnerPickerRef.current.contains(e.target as Node)) {
+        setPartnerPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [partnerPickerOpen]);
 
   useEffect(() => {
     if (!job) return;
@@ -570,6 +609,10 @@ export default function JobDetailPage() {
   const maxCustomerFinalPay = Math.max(0, (job.customer_final_payment ?? 0) - customerFinalPaidSum);
   const scheduledCustomerTotal = customerScheduledTotal(job);
   const customerScheduleMismatch = Math.abs(billableRevenue - scheduledCustomerTotal) > 0.02;
+  const customerPaidTotal =
+    (job.customer_deposit_paid ? Number(job.customer_deposit ?? 0) : 0) +
+    (job.customer_final_paid ? Number(job.customer_final_payment ?? 0) : 0);
+  const amountDue = Math.max(0, billableRevenue - customerPaidTotal);
 
   const paymentAmountMax =
     addPaymentType === "partner"
@@ -614,162 +657,90 @@ export default function JobDetailPage() {
           }
         />
 
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
+            <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Job amount</p>
+            <p className="text-lg font-bold text-text-primary tabular-nums">{formatCurrency(billableRevenue)}</p>
+          </div>
+          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
+            <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Amount due</p>
+            <p className="text-lg font-bold text-amber-600 tabular-nums">{formatCurrency(amountDue)}</p>
+          </div>
+          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
+            <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Net margin</p>
+            <p className={`text-lg font-bold tabular-nums ${marginPct >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{marginPct}%</p>
+          </div>
+          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
+            <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Progress</p>
+            <div className="flex items-center gap-2 mt-1">
+              <Progress value={job.progress} size="md" color={job.progress === 100 ? "emerald" : "primary"} className="flex-1" />
+              <span className="text-sm font-bold text-text-primary">{job.progress}%</span>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Left column: overview, client, partner, schedule */}
           <div className="lg:col-span-2 space-y-8">
-            <Section title="Overview">
-              <div className="rounded-xl border border-border-light bg-surface-hover/40 p-4 space-y-3 mb-4">
-                <div className="flex items-center gap-2 text-xs font-semibold text-text-secondary">
-                  <Info className="h-3.5 w-3.5 shrink-0" />
-                  Job record
+            <Section title="Job Card">
+              <div className="rounded-xl border border-border-light bg-card p-4 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client identity</p>
+                    <p className="text-lg font-semibold text-text-primary mt-1">{job.client_name}</p>
+                    <p className="text-xs text-text-tertiary mt-1">{job.property_address}</p>
+                  </div>
+                  <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Schedule</p>
+                    <p className="text-sm text-text-primary mt-1">
+                      {scheduleDate || "No date set"} {scheduleTime ? `· ${scheduleTime}` : ""}
+                    </p>
+                    <p className="text-xs text-text-tertiary mt-1">Phase {job.current_phase} / {phaseCount}</p>
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
-                    <span className="text-text-tertiary">Created</span>
-                    <span className="text-text-primary font-medium text-right tabular-nums">
-                      {new Date(job.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                    </span>
+
+                <LocationMiniMap address={job.property_address} className="rounded-xl overflow-hidden" lazy />
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30">
+                    <p className="text-[10px] font-semibold text-emerald-700 uppercase">Revenue</p>
+                    <p className="text-sm font-bold text-emerald-700">{formatCurrency(billableRevenue)}</p>
                   </div>
-                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
-                    <span className="text-text-tertiary">Last updated</span>
-                    <span className="text-text-primary font-medium text-right tabular-nums">
-                      {new Date(job.updated_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                    </span>
+                  <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30">
+                    <p className="text-[10px] font-semibold text-red-700 uppercase">Cost</p>
+                    <p className="text-sm font-bold text-red-700">{formatCurrency(directCost)}</p>
                   </div>
-                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
-                    <span className="text-text-tertiary">Phase</span>
-                    <span className="text-text-primary font-medium">
-                      {job.current_phase} / {phaseCount}
-                    </span>
+                  <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30">
+                    <p className="text-[10px] font-semibold text-blue-700 uppercase">Profit</p>
+                    <p className={`text-sm font-bold ${profit >= 0 ? "text-blue-700" : "text-red-600"}`}>{formatCurrency(profit)}</p>
                   </div>
-                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
-                    <span className="text-text-tertiary">Finance status</span>
-                    <Badge variant={job.finance_status === "paid" ? "success" : job.finance_status === "partial" ? "warning" : "default"} size="sm">
-                      {job.finance_status === "paid" ? "Paid" : job.finance_status === "partial" ? "Partial" : "Unpaid"}
-                    </Badge>
+                  <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30">
+                    <p className="text-[10px] font-semibold text-amber-700 uppercase">Margin</p>
+                    <p className={`text-sm font-bold ${marginPct >= 20 ? "text-amber-700" : "text-red-600"}`}>{marginPct}%</p>
                   </div>
-                  <div className="flex justify-between gap-2 border-b border-border-light/80 pb-2 sm:border-0 sm:pb-0">
-                    <span className="text-text-tertiary">Customer</span>
-                    <span className="text-text-primary text-right text-xs leading-snug">
-                      Deposit {job.customer_deposit_paid ? "paid" : "due"}
-                      {" · "}
-                      Final {job.customer_final_paid ? "paid" : "due"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-text-tertiary">Billable total (client + extras)</span>
-                    <span className="text-text-primary font-medium tabular-nums">{formatCurrency(billableRevenue)}</span>
-                  </div>
-                  {(Number(job.extras_amount ?? 0) > 0 || job.client_price !== billableRevenue) && (
-                    <div className="sm:col-span-2 text-[11px] text-text-tertiary">
-                      Base price {formatCurrency(job.client_price)}
-                      {Number(job.extras_amount ?? 0) > 0 && (
-                        <> · Extras {formatCurrency(Number(job.extras_amount ?? 0))}</>
-                      )}
-                    </div>
-                  )}
-                  {(job.partner_payment_1_paid || job.partner_payment_2_paid || job.partner_payment_3_paid) && (
-                    <div className="sm:col-span-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-tertiary pt-1">
-                      <span className="font-medium text-text-secondary">Legacy partner milestones</span>
-                      <span>P1 {job.partner_payment_1_paid ? "paid" : "open"}</span>
-                      <span>P2 {job.partner_payment_2_paid ? "paid" : "open"}</span>
-                      <span>P3 {job.partner_payment_3_paid ? "paid" : "open"}</span>
-                    </div>
-                  )}
                 </div>
-                {(job.cash_in > 0 || job.cash_out > 0 || job.expenses > 0 || job.commission > 0 || job.vat > 0) && (
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 pt-2 border-t border-border-light text-[11px] text-text-tertiary">
-                    {job.cash_in > 0 && <span>Cash in {formatCurrency(job.cash_in)}</span>}
-                    {job.cash_out > 0 && <span>Cash out {formatCurrency(job.cash_out)}</span>}
-                    {job.expenses > 0 && <span>Expenses {formatCurrency(job.expenses)}</span>}
-                    {job.commission > 0 && <span>Commission {formatCurrency(job.commission)}</span>}
-                    {job.vat > 0 && <span>VAT {formatCurrency(job.vat)}</span>}
-                  </div>
-                )}
+
                 <div className="flex flex-wrap gap-2 pt-1">
                   {job.quote_id && (
-                    <Link
-                      href="/quotes"
-                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                    >
-                      Quote <span className="font-mono text-[10px] opacity-80">{job.quote_id.slice(0, 8)}…</span>
-                      <ExternalLink className="h-3 w-3" />
+                    <Link href="/quotes" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                      Quote linked <ExternalLink className="h-3 w-3" />
                     </Link>
                   )}
                   {job.self_bill_id && (
-                    <Link
-                      href="/finance/selfbill"
-                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                    >
-                      Self-bill linked
-                      <ExternalLink className="h-3 w-3" />
+                    <Link href="/finance/selfbill" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                      Self-bill linked <ExternalLink className="h-3 w-3" />
                     </Link>
                   )}
                   {job.invoice_id && (
-                    <Link
-                      href="/finance/invoices"
-                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                    >
-                      Invoice linked
-                      <ExternalLink className="h-3 w-3" />
+                    <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                      Invoice linked <ExternalLink className="h-3 w-3" />
                     </Link>
                   )}
-                  {job.partner_id && (
-                    <Link href="/partners" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                      Partner record
-                      <ExternalLink className="h-3 w-3" />
-                    </Link>
-                  )}
-                </div>
-                {job.internal_notes?.trim() && (
-                  <div className="pt-2 border-t border-border-light">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1">Internal notes</p>
-                    <p className="text-sm text-text-primary whitespace-pre-wrap">{job.internal_notes}</p>
-                  </div>
-                )}
-                {job.report_notes?.trim() && (
-                  <div className="pt-2 border-t border-border-light">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1">Report notes</p>
-                    <p className="text-sm text-text-primary whitespace-pre-wrap">{job.report_notes}</p>
-                  </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-center">
-                  <p className="text-[10px] font-semibold text-emerald-700 uppercase">Revenue</p>
-                  <p className="text-lg font-bold text-emerald-700">{formatCurrency(billableRevenue)}</p>
-                  <p className="text-[10px] text-emerald-600/80 mt-1">client + extras</p>
-                </div>
-                <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/30 text-center">
-                  <p className="text-[10px] font-semibold text-red-700 uppercase">Cost</p>
-                  <p className="text-lg font-bold text-red-700">{formatCurrency(directCost)}</p>
-                  <p className="text-[10px] text-red-600/80 mt-1">partner + materials</p>
-                </div>
-                <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/30 text-center">
-                  <p className="text-[10px] font-semibold text-blue-700 uppercase">Profit</p>
-                  <p className={`text-lg font-bold ${profit >= 0 ? "text-blue-700" : "text-red-600"}`}>{formatCurrency(profit)}</p>
-                </div>
-                <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-center">
-                  <p className="text-[10px] font-semibold text-amber-700 uppercase">Margin</p>
-                  <p className={`text-lg font-bold ${marginPct >= 20 ? "text-amber-700" : "text-red-600"}`}>{marginPct}%</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-6">
-                <div>
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase">Progress</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Progress value={job.progress} size="md" color={job.progress === 100 ? "emerald" : "primary"} className="flex-1 max-w-[200px]" />
-                    <span className="text-sm font-bold text-text-primary">{job.progress}%</span>
-                  </div>
                 </div>
               </div>
             </Section>
 
-            <Section title="Pricing & customer schedule">
-              <p className="text-xs text-text-tertiary mb-3">
-                Update amounts here — <strong className="text-text-secondary">margin</strong> and <strong className="text-text-secondary">service value</strong> are recalculated from client price + extras minus costs.
-                Partner payment registrations cannot exceed the partner cap; each customer line is capped by deposit / final schedules.
-              </p>
+            <Section title="Financial setup">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Client price</label>
@@ -921,6 +892,15 @@ export default function JobDetailPage() {
                   ) : (
                     <p className="text-sm text-text-tertiary italic mt-2">Unassigned</p>
                   )}
+                  <div className="mt-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setPartnerModalOpen(true)}
+                    >
+                      {job.partner_id ? "Change partner" : "Assign partner"}
+                    </Button>
+                  </div>
                 </div>
                 <div className="p-4 rounded-xl bg-surface-hover">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job owner</p>
@@ -1306,6 +1286,105 @@ export default function JobDetailPage() {
               onClick={handleAddPayment}
             >
               Register
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={partnerModalOpen}
+        onClose={() => { setPartnerModalOpen(false); setPartnerPickerOpen(false); }}
+        title={job.partner_id ? "Change partner" : "Assign partner"}
+      >
+        <div className="p-4 space-y-4">
+          <p className="text-xs text-text-tertiary">
+            Select the partner responsible for this job.
+          </p>
+          <div ref={partnerPickerRef} className="relative">
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner</label>
+            <button
+              type="button"
+              disabled={loadingPartners}
+              onClick={() => setPartnerPickerOpen((o) => !o)}
+              className="w-full flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-left text-sm shadow-sm transition-all duration-200 hover:border-primary/25 hover:bg-surface-hover/80 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/35"
+            >
+              {selectedPartnerId ? (
+                <>
+                  <Avatar
+                    name={partners.find((p) => p.id === selectedPartnerId)?.company_name?.trim() || partners.find((p) => p.id === selectedPartnerId)?.contact_name || "Partner"}
+                    size="sm"
+                    className="shrink-0"
+                  />
+                  <span className="flex-1 text-text-primary font-medium truncate">
+                    {partners.find((p) => p.id === selectedPartnerId)?.company_name?.trim() || partners.find((p) => p.id === selectedPartnerId)?.contact_name || "Partner"}
+                  </span>
+                </>
+              ) : (
+                <span className="flex-1 text-text-tertiary">No partner</span>
+              )}
+              <ChevronDown className={`h-4 w-4 text-text-tertiary transition-transform ${partnerPickerOpen ? "rotate-180" : ""}`} />
+            </button>
+            {partnerPickerOpen && (
+              <div className="absolute z-50 mt-1.5 w-full max-h-72 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-xl ring-1 ring-black/5 dark:ring-white/10">
+                <button
+                  type="button"
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${!selectedPartnerId ? "bg-primary/8" : ""}`}
+                  onClick={() => { setSelectedPartnerId(""); setPartnerPickerOpen(false); }}
+                >
+                  <span className="flex-1 text-text-secondary font-medium">No partner</span>
+                  {!selectedPartnerId && <Check className="h-4 w-4 text-primary" />}
+                </button>
+                <div className="mx-2 h-px bg-border-light" />
+                {partners.map((p) => {
+                  const name = p.company_name?.trim() || p.contact_name || "Partner";
+                  const isSel = selectedPartnerId === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${isSel ? "bg-primary/8" : ""}`}
+                      onClick={() => { setSelectedPartnerId(p.id); setPartnerPickerOpen(false); }}
+                    >
+                      <Avatar name={name} size="sm" className="shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-text-primary truncate">{name}</p>
+                        {p.trade ? <p className="text-[11px] text-text-tertiary truncate">{p.trade}</p> : null}
+                      </div>
+                      {isSel && <Check className="h-4 w-4 text-primary" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setPartnerModalOpen(false); setPartnerPickerOpen(false); }}
+              disabled={savingPartner}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              loading={savingPartner || loadingPartners}
+              onClick={async () => {
+                const selected = partners.find((p) => p.id === selectedPartnerId);
+                setSavingPartner(true);
+                try {
+                  await handleJobUpdate(job.id, {
+                    partner_id: selectedPartnerId || undefined,
+                    partner_name: selectedPartnerId ? (selected?.company_name?.trim() || selected?.contact_name || undefined) : undefined,
+                    partner_ids: selectedPartnerId ? [selectedPartnerId] : [],
+                  });
+                  setPartnerModalOpen(false);
+                } finally {
+                  setSavingPartner(false);
+                }
+              }}
+            >
+              Save partner
             </Button>
           </div>
         </div>

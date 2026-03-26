@@ -38,7 +38,7 @@ import { listPartners } from "@/services/partners";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
-import { getStatusCounts, getAggregates, getSupabase, type ListParams, type ListResult } from "@/services/base";
+import { getStatusCounts, getAggregates, getSupabase, softDeleteById, type ListParams, type ListResult } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
@@ -294,8 +294,39 @@ export default function QuotesPage() {
     } catch { toast.error("Failed to update quotes"); }
   };
 
+  const handleBulkArchive = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      await Promise.all(Array.from(selectedIds).map((id) => softDeleteById("quotes", id, profile?.id)));
+      toast.success(`${selectedIds.size} quotes archived`);
+      setSelectedIds(new Set());
+      refresh();
+      loadCounts();
+      loadAggregates();
+    } catch {
+      toast.error("Failed to archive quotes");
+    }
+  }, [selectedIds, profile?.id, refresh, loadCounts, loadAggregates]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${selectedIds.size} selected quotes permanently?`)) return;
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from("quotes").delete().in("id", Array.from(selectedIds));
+      if (error) throw error;
+      toast.success(`${selectedIds.size} quotes deleted`);
+      setSelectedIds(new Set());
+      refresh();
+      loadCounts();
+      loadAggregates();
+    } catch {
+      toast.error("Failed to delete quotes");
+    }
+  }, [selectedIds, refresh, loadCounts, loadAggregates]);
+
   const handleConfirmCreateJob = useCallback(
-    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number }) => {
+    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => {
       if (!quoteToConvert) return;
       try {
         const margin = formData.client_price > 0 ? Math.round(((formData.client_price - formData.partner_cost - formData.materials_cost) / formData.client_price) * 1000) / 10 : 0;
@@ -321,6 +352,7 @@ export default function QuotesPage() {
           scheduled_date: formData.scheduled_date,
           scheduled_start_at: formData.scheduled_start_at,
           owner_id: profile?.id, owner_name: profile?.full_name,
+          job_type: formData.job_type ?? "fixed",
           cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
           partner_agreed_value: quoteToConvert.partner_cost ?? 0,
           finance_status: "unpaid",
@@ -615,6 +647,8 @@ export default function QuotesPage() {
                   <BulkBtn label="Awaiting Customer" onClick={() => handleBulkStatusChange("awaiting_customer")} variant="warning" />
                   <BulkBtn label="Accept" onClick={() => handleBulkStatusChange("accepted")} variant="success" />
                   <BulkBtn label="Reject" onClick={() => handleBulkStatusChange("rejected")} variant="danger" />
+                  <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
+                  <BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" />
                 </div>
               }
             />
@@ -804,8 +838,9 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
     if (!quote) return 40;
     const sp = Number(quote.sell_price ?? quote.total_value ?? 0);
     const pc = Number(quote.partner_cost ?? quote.cost ?? 0);
-    const raw = sp > 0 ? Math.round(((sp - pc) / sp) * 1000) / 10 : 40;
-    return Math.min(60, Math.max(5, raw));
+    if (sp <= 0) return 40;
+    const raw = Math.round(((sp - pc) / sp) * 1000) / 10;
+    return Math.min(99.9, Math.max(0, raw));
   }, [quote]);
 
   if (!quote) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
@@ -1657,9 +1692,9 @@ function getQuoteActions(currentStatus: string) {
 /* ========== CREATE JOB FROM QUOTE MODAL ========== */
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
-  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number }) => void;
+  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => void;
 }) {
-  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "3" });
+  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "3", job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
@@ -1668,7 +1703,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     setForm({
       title: quote.title ?? "", partner_id: quote.partner_id ?? "",
       client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
-      materials_cost: "0", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "3",
+      materials_cost: "0", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "3", job_type: "fixed",
     });
     setClientAddress({
       client_id: quote.client_id,
@@ -1709,6 +1744,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       scheduled_start_at,
       createWithoutDeposit: form.createWithoutDeposit,
       total_phases: normalizeTotalPhases(Number(form.total_phases)),
+      job_type: form.job_type as "fixed" | "hourly",
     });
   };
 
@@ -1727,6 +1763,15 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
           ]}
         />
         <p className="text-[10px] text-text-tertiary -mt-2">Each phase can have one partner report (photos / completion).</p>
+        <Select
+          label="Job type"
+          value={form.job_type}
+          onChange={(e) => update("job_type", e.target.value)}
+          options={[
+            { value: "fixed", label: "Fixed" },
+            { value: "hourly", label: "Hourly" },
+          ]}
+        />
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
@@ -1751,13 +1796,29 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   );
 }
 
+/** Gross margin % on sell price → markup % on cost (slider), up to 150% markup. */
+function grossMarginOnSellToMarkupPct(g: number): number {
+  if (g <= 0 || Number.isNaN(g)) return 5;
+  if (g >= 99.9) return 150;
+  return Math.min(150, Math.max(5, (g / (100 - g)) * 100));
+}
+
+/** Markup % on cost → gross margin % on sell (stored as margin_percent). */
+function markupPctToGrossMarginOnSell(markupPct: number): number {
+  return (markupPct / (100 + markupPct)) * 100;
+}
+
 /* ========== MARGIN CALCULATOR ========== */
 function MarginCalculator({ cost, initialMarginPct, onSellPriceChange, onMarginChange }: { cost: number; initialMarginPct?: number; onSellPriceChange: (v: number) => void; onMarginChange: (v: number) => void }) {
-  const [marginPct, setMarginPct] = useState(initialMarginPct ?? 40);
-  const sellPrice = cost > 0 ? Math.round((cost / (1 - marginPct / 100)) * 100) / 100 : 0;
+  const [markupPct, setMarkupPct] = useState(() => grossMarginOnSellToMarkupPct(initialMarginPct ?? 40));
+  const sellPrice = cost > 0 ? Math.round(cost * (1 + markupPct / 100) * 100) / 100 : 0;
   const marginValue = sellPrice - cost;
+  const grossMarginPct = markupPctToGrossMarginOnSell(markupPct);
 
-  useEffect(() => { onSellPriceChange(sellPrice); onMarginChange(marginPct); }, [marginPct, sellPrice, onSellPriceChange, onMarginChange]);
+  useEffect(() => {
+    onSellPriceChange(sellPrice);
+    onMarginChange(Math.round(grossMarginPct * 10) / 10);
+  }, [markupPct, sellPrice, grossMarginPct, onSellPriceChange, onMarginChange]);
 
   return (
     <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light dark:from-stone-950/40 dark:to-stone-900/20 dark:border-border-light/70">
@@ -1771,26 +1832,34 @@ function MarginCalculator({ cost, initialMarginPct, onSellPriceChange, onMarginC
         <div><p className="text-[10px] text-text-tertiary uppercase">Margin</p><p className="text-sm font-bold text-emerald-600">{formatCurrency(marginValue)}</p></div>
       </div>
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-text-tertiary">Margin %</span>
-          <span className={`text-xs font-bold ${marginPct >= 40 ? "text-primary" : marginPct >= 10 ? "text-amber-600" : "text-red-500"}`}>{marginPct}%</span>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <span className="text-xs text-text-tertiary">Markup on partner cost</span>
+          <span className="text-[10px] text-text-tertiary">
+            Margin on sell:{" "}
+            <span className={`font-bold ${grossMarginPct >= 40 ? "text-primary" : grossMarginPct >= 10 ? "text-amber-600" : "text-red-500"}`}>
+              {Math.round(grossMarginPct * 10) / 10}%
+            </span>
+            <span className="text-text-tertiary font-semibold"> · {markupPct}% markup</span>
+          </span>
         </div>
         <input
           type="range"
           min={5}
-          max={60}
+          max={150}
           step={0.5}
-          value={marginPct}
-          onChange={(e) => setMarginPct(Number(e.target.value))}
+          value={markupPct}
+          onChange={(e) => setMarkupPct(Number(e.target.value))}
           className="w-full h-2 bg-border rounded-full appearance-none cursor-pointer accent-primary"
         />
         <div className="flex justify-between text-[10px] text-text-tertiary">
           <span>5%</span>
-          <span className="text-amber-600 dark:text-amber-400 font-medium">10% min</span>
-          <span className="text-primary font-medium">40% default</span>
-          <span>60%</span>
+          <span className="text-amber-600 dark:text-amber-400 font-medium">10% min margin</span>
+          <span className="text-primary font-medium">40% target margin</span>
+          <span>150%</span>
         </div>
-        {marginPct < 40 && <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">Below standard margin (40%)</p>}
+        {grossMarginPct < 40 && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">Below standard margin on sell (40%)</p>
+        )}
       </div>
     </div>
   );

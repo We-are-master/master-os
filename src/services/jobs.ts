@@ -3,6 +3,23 @@ import type { Job } from "@/types/database";
 import { JOB_IN_PROGRESS_STATUSES } from "@/lib/job-phases";
 
 export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
+  const supabase = getSupabase();
+  const nowIso = new Date().toISOString();
+  const today = new Date().toISOString().slice(0, 10);
+  await Promise.all([
+    supabase
+      .from("jobs")
+      .update({ status: "late" })
+      .eq("status", "scheduled")
+      .lt("scheduled_start_at", nowIso),
+    supabase
+      .from("jobs")
+      .update({ status: "late" })
+      .eq("status", "scheduled")
+      .is("scheduled_start_at", null)
+      .lt("scheduled_date", today),
+  ]);
+
   if (params.status === "in_progress") {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(

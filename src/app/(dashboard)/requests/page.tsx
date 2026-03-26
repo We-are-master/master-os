@@ -25,7 +25,7 @@ import { listRequests, createRequest, updateRequestStatus, updateRequest } from 
 import { createQuote } from "@/services/quotes";
 import { createJob } from "@/services/jobs";
 import { logAudit, logBulkAction } from "@/services/audit";
-import { getStatusCounts, getSupabase } from "@/services/base";
+import { getStatusCounts, getSupabase, softDeleteById } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
@@ -217,6 +217,35 @@ export default function RequestsPage() {
       refreshSilent();
     } catch { toast.error("Failed to update requests"); }
   };
+
+  const handleBulkArchive = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    try {
+      await Promise.all(Array.from(selectedIds).map((id) => softDeleteById("service_requests", id, profile?.id)));
+      toast.success(`${selectedIds.size} requests archived`);
+      setSelectedIds(new Set());
+      refreshSilent();
+      loadCounts();
+    } catch {
+      toast.error("Failed to archive requests");
+    }
+  }, [selectedIds, profile?.id, refreshSilent, loadCounts]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${selectedIds.size} selected requests permanently?`)) return;
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from("service_requests").delete().in("id", Array.from(selectedIds));
+      if (error) throw error;
+      toast.success(`${selectedIds.size} requests deleted`);
+      setSelectedIds(new Set());
+      refreshSilent();
+      loadCounts();
+    } catch {
+      toast.error("Failed to delete requests");
+    }
+  }, [selectedIds, refreshSilent, loadCounts]);
 
   const handleStatusChange = useCallback(
     async (id: string, newStatus: string, oldStatus?: string) => {
@@ -446,6 +475,8 @@ export default function RequestsPage() {
                 <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
                 <BulkBtn label="Accept" onClick={() => handleBulkStatusChange("approved")} variant="success" />
                 <BulkBtn label="Decline" onClick={() => handleBulkStatusChange("declined")} variant="danger" />
+                <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
+                <BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" />
               </div>
             }
           />
@@ -888,6 +919,7 @@ export default function RequestsPage() {
               customer_final_payment: 0, customer_final_paid: false,
               owner_id: profile?.id,
               owner_name: profile?.full_name,
+              job_type: data.job_type ?? "fixed",
             });
             await updateRequestStatus(convertToJobOpen.id, "converted_to_job");
             await logAudit({
@@ -1181,15 +1213,15 @@ function ConvertToJobModal({
 }: {
   request: ServiceRequest | null;
   onClose: () => void;
-  onConvert: (data: { client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_value?: number; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number; total_phases?: number }) => void;
+  onConvert: (data: { client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_value?: number; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number; total_phases?: number; job_type?: "fixed" | "hourly" }) => void;
 }) {
-  const [form, setForm] = useState({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", total_phases: "3" });
+  const [form, setForm] = useState({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", total_phases: "3", job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
   useEffect(() => {
     if (!request) return;
-    setForm({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: String(request.estimated_value ?? 0), partner_cost: "", total_phases: "3" });
+    setForm({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: String(request.estimated_value ?? 0), partner_cost: "", total_phases: "3", job_type: "fixed" });
     setClientAddress(serviceRequestToClientAddressValue(request));
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
   }, [request]);
@@ -1218,6 +1250,7 @@ function ConvertToJobModal({
       client_price: Number(form.client_price) || 0,
       partner_cost: Number(form.partner_cost) || 0,
       total_phases: normalizeTotalPhases(Number(form.total_phases)),
+      job_type: form.job_type as "fixed" | "hourly",
     });
   };
 
@@ -1239,6 +1272,15 @@ function ConvertToJobModal({
           ]}
         />
         <p className="text-[10px] text-text-tertiary -mt-2">Each phase can have one partner report (photos / completion).</p>
+        <Select
+          label="Job type"
+          value={form.job_type}
+          onChange={(e) => update("job_type", e.target.value)}
+          options={[
+            { value: "fixed", label: "Fixed" },
+            { value: "hourly", label: "Hourly" },
+          ]}
+        />
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Valor ao cliente</label>
