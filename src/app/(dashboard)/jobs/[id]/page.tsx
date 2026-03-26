@@ -767,8 +767,8 @@ export default function JobDetailPage() {
           {/* ═══ LEFT — operational column ═══ */}
           <div className="lg:col-span-2 space-y-5">
 
-            {/* Job amount / margin strip; px matches client card inner padding (p-4) */}
-            <div className="w-full min-w-0 px-4 pb-1">
+            {/* Job figures — same card shell as Client identity below */}
+            <div className="w-full min-w-0 rounded-xl border border-border-light bg-card p-4">
               <div className="grid grid-cols-2 gap-x-4 gap-y-3 min-[480px]:grid-cols-4">
                 <div className="min-w-0">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
