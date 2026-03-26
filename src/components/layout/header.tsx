@@ -7,7 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings, Menu, LogOut, Moon, Sun, Sparkles,
-  Search, Wrench, FileText, ClipboardList, X,
+  Search, X,
 } from "lucide-react";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import Link from "next/link";
@@ -127,9 +127,17 @@ function GlobalSearch() {
   }, []);
 
   const typeIcon = (type: SearchResult["type"]) => {
-    if (type === "job") return <Wrench className="h-3.5 w-3.5 text-primary" />;
-    if (type === "quote") return <FileText className="h-3.5 w-3.5 text-emerald-400" />;
-    return <ClipboardList className="h-3.5 w-3.5 text-amber-400" />;
+    const colors: Record<SearchResult["type"], string> = {
+      job: "bg-primary/20 text-primary",
+      quote: "bg-emerald-400/20 text-emerald-500",
+      request: "bg-amber-400/20 text-amber-500",
+    };
+    const labels: Record<SearchResult["type"], string> = { job: "J", quote: "Q", request: "R" };
+    return (
+      <span className={`text-[10px] font-bold ${colors[type]}`}>
+        {labels[type]}
+      </span>
+    );
   };
 
   const typeLabel = (type: SearchResult["type"]) =>
