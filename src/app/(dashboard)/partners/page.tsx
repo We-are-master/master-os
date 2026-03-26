@@ -1649,7 +1649,7 @@ function PartnerDetailDrawer({
                     <Progress value={job.progress} size="sm" color={job.progress === 100 ? "emerald" : "primary"} className="flex-1" />
                     <span className="text-xs font-medium text-text-tertiary">{job.progress}%</span>
                     <span className="text-[10px] text-text-tertiary">
-                      Phase {Math.min(job.total_phases, 2) === 2 ? (job.report_2_uploaded ? 2 : 1) : 1}/{Math.min(job.total_phases, 2)}
+                      Phase {job.current_phase}/{Math.max(job.total_phases, 1)}
                     </span>
                   </div>
                   {job.scheduled_date && <p className="text-[10px] text-text-tertiary mt-2">Scheduled: {new Date(job.scheduled_date).toLocaleDateString()}</p>}
