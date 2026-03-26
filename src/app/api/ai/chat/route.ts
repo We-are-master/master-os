@@ -96,30 +96,34 @@ export async function POST(req: NextRequest) {
   let systemPrompt = MASTER_BRAIN_SYSTEM_PROMPT;
   const contextParts: string[] = [];
 
-  try {
-    const snap = await fetchOpsSnapshot(admin);
-    contextParts.push(`General operational context:\n${snapshotToPromptBlock(snap)}`);
-  } catch (e) {
-    console.error("Master Brain snapshot:", e);
+  // Fetch all context blocks in parallel — snapshot + optional quotes/jobs blocks.
+  const needsQuotes = role === "manager" || role === "operator";
+  const needsJobs   = role === "operator";
+
+  const [snapResult, qBlockResult, jBlockResult] = await Promise.allSettled([
+    fetchOpsSnapshot(admin),
+    needsQuotes ? fetchQuotesPipelineBlock(admin) : Promise.resolve(null),
+    needsJobs   ? fetchAssignedJobsBlock(admin, auth.user.id) : Promise.resolve(null),
+  ]);
+
+  if (snapResult.status === "fulfilled") {
+    contextParts.push(`General operational context:\n${snapshotToPromptBlock(snapResult.value)}`);
+  } else {
+    console.error("Master Brain snapshot:", snapResult.reason);
     contextParts.push("General operational context: (could not load)");
   }
-
-  if (role === "manager" || role === "operator") {
-    try {
-      const qBlock = await fetchQuotesPipelineBlock(admin);
-      contextParts.push(`Quotes focus:\n${qBlock}`);
-    } catch (e) {
-      console.error("Master Brain quotes block:", e);
-    }
+  if (needsQuotes && qBlockResult.status === "fulfilled" && qBlockResult.value) {
+    contextParts.push(`Quotes focus:\n${qBlockResult.value}`);
+  } else if (needsQuotes && qBlockResult.status === "rejected") {
+    console.error("Master Brain quotes block:", qBlockResult.reason);
+  }
+  if (needsJobs && jBlockResult.status === "fulfilled" && jBlockResult.value) {
+    contextParts.push(`This user's assignments:\n${jBlockResult.value}`);
+  } else if (needsJobs && jBlockResult.status === "rejected") {
+    console.error("Master Brain jobs block:", jBlockResult.reason);
   }
 
   if (role === "operator") {
-    try {
-      const jBlock = await fetchAssignedJobsBlock(admin, auth.user.id);
-      contextParts.push(`This user's assignments:\n${jBlock}`);
-    } catch (e) {
-      console.error("Master Brain jobs block:", e);
-    }
     systemPrompt = appendInstructions(
       MASTER_BRAIN_OPERATOR_PROMPT,
       settings?.master_brain_operator_instructions,

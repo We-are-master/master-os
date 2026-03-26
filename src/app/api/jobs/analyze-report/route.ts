@@ -28,10 +28,29 @@ export async function POST(req: NextRequest) {
 
   const fileUrl = (body.fileUrl ?? "").trim();
   const mimeType = (body.mimeType ?? "").trim().toLowerCase();
-  const notes = (body.notes ?? "").trim();
-  const jobReference = (body.jobReference ?? "").trim() || "job";
+  const notes = (body.notes ?? "").trim().slice(0, 2000); // cap operator notes
+  const jobReference = (body.jobReference ?? "").trim().slice(0, 100) || "job";
 
   if (!fileUrl) return NextResponse.json({ error: "fileUrl is required." }, { status: 400 });
+
+  // Only allow files hosted on our own Supabase storage to prevent SSRF and
+  // to avoid sending arbitrary external URLs to the OpenAI vision API.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim().replace(/\/$/, "");
+  const allowedPrefixes = [
+    supabaseUrl ? `${supabaseUrl}/storage/v1/object/` : null,
+    supabaseUrl ? `${supabaseUrl}/storage/v1/render/` : null,
+  ].filter(Boolean) as string[];
+
+  const urlIsAllowed =
+    allowedPrefixes.length > 0 &&
+    allowedPrefixes.some((prefix) => fileUrl.startsWith(prefix));
+
+  if (!urlIsAllowed) {
+    return NextResponse.json(
+      { error: "fileUrl must point to a file stored in this application's storage bucket." },
+      { status: 400 },
+    );
+  }
 
   const isImage = mimeType.startsWith("image/");
   const key = process.env.OPENAI_API_KEY?.trim();

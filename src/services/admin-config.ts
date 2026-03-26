@@ -11,15 +11,31 @@ const SERVICES_NAV_ITEM = {
 };
 
 function ensureServicesNavItem(nav: NavGroup[]): NavGroup[] {
-  if (nav.some((g) => g.items.some((i) => i.href === "/services"))) return nav;
-  const next = nav.map((g) => ({ ...g, items: [...g.items] }));
-  const ops = next.find((g) => g.label === "Operations");
-  if (ops) {
-    const rIdx = ops.items.findIndex((i) => i.href === "/requests");
-    ops.items.splice(rIdx >= 0 ? rIdx + 1 : 0, 0, { ...SERVICES_NAV_ITEM });
+  if (nav.some((g) => g.items.some((i) => i.href === "/services"))) {
+    // If it exists but is under Operations, move it to Finance.
+    const hasInOps = nav.find((g) => g.label === "Operations")?.items.some((i) => i.href === "/services");
+    if (!hasInOps) return nav;
+    // Remove from Operations and add to Finance.
+    const next = nav.map((g) => ({
+      ...g,
+      items: g.label === "Operations"
+        ? g.items.filter((i) => i.href !== "/services")
+        : g.items,
+    }));
+    const finance = next.find((g) => g.label === "Finance");
+    if (finance) {
+      finance.items = [...finance.items.filter((i) => i.href !== "/services"), { ...SERVICES_NAV_ITEM }];
+    }
     return next;
   }
-  return [{ label: "Operations", items: [{ ...SERVICES_NAV_ITEM }] }, ...next];
+  // Not present at all — add to Finance.
+  const next = nav.map((g) => ({ ...g, items: [...g.items] }));
+  const finance = next.find((g) => g.label === "Finance");
+  if (finance) {
+    finance.items = [...finance.items, { ...SERVICES_NAV_ITEM }];
+    return next;
+  }
+  return [...next, { label: "Finance", items: [{ ...SERVICES_NAV_ITEM }] }];
 }
 
 function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByRole {
@@ -37,7 +53,6 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     label: "Operations",
     items: [
       { label: "Requests", href: "/requests", icon: "inbox", permission: "requests" },
-      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
       { label: "Schedule", href: "/schedule", icon: "calendar", permission: "jobs" },
@@ -59,6 +74,7 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
       { label: "Bills", href: "/finance/bills", icon: "file-check", permission: "finance" },
       { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign", permission: "finance" },
       { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
+      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
     ],
   },
   { label: "Team", items: [{ label: "Team", href: "/team", icon: "users-2", permission: "team" }] },

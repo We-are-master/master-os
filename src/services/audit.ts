@@ -100,6 +100,7 @@ export async function logBulkAction(
 export async function getAuditLogs(
   entityType: AuditEntityType,
   entityId: string,
+  limit = 100,
 ): Promise<AuditLog[]> {
   const supabase = getSupabase();
   const { data, error } = await supabase
@@ -107,19 +108,21 @@ export async function getAuditLogs(
     .select("*")
     .eq("entity_type", entityType)
     .eq("entity_id", entityId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(limit);
 
   if (error) throw error;
   return (data ?? []) as AuditLog[];
 }
 
-export async function getEntityFullHistory(entityId: string): Promise<AuditLog[]> {
+export async function getEntityFullHistory(entityId: string, limit = 100): Promise<AuditLog[]> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("audit_logs")
     .select("*")
     .eq("entity_id", entityId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(limit);
 
   if (error) throw error;
   return (data ?? []) as AuditLog[];

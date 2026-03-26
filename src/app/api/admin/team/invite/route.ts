@@ -41,15 +41,14 @@ export async function POST(req: NextRequest) {
 
   try {
     const admin = createServiceClient();
-    const origin = req.headers.get("origin")?.trim();
-    const refererBase = req.headers.get("referer")?.match(/^https?:\/\/[^/]+/)?.[0];
-    const base =
+
+    // Always use the configured app URL — never trust request headers (Origin / Referer)
+    // for security-sensitive redirects, as they can be spoofed.
+    const appUrl =
       process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") ||
-      origin?.replace(/\/$/, "") ||
-      refererBase ||
       "http://localhost:3000";
 
-    const redirectTo = `${base}/login`;
+    const redirectTo = `${appUrl}/login`;
 
     const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
       data: { full_name, role },

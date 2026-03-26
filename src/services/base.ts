@@ -120,13 +120,27 @@ export async function getAggregates(
   column: string
 ): Promise<{ sum: number; count: number }> {
   const supabase = getSupabase();
-  const { data, error } = await supabase.from(table).select(column).is("deleted_at", null);
-  if (error) throw error;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows = (data ?? []) as any[];
-  const values = rows.map((row) => Number(row[column]) || 0);
+  // Use Postgres aggregate via PostgREST `select` with aggregate functions to avoid
+  // fetching all rows into the client just to sum them.
+  const { data, error } = await supabase
+    .from(table)
+    .select(`${column}.sum(), count:id.count()`)
+    .is("deleted_at", null)
+    .limit(1)
+    .single();
+  if (error) {
+    // Fallback for tables without aggregate support (older PostgREST versions)
+    const { data: rows, error: fallbackErr } = await supabase
+      .from(table)
+      .select(column)
+      .is("deleted_at", null);
+    if (fallbackErr) throw fallbackErr;
+    const vals = ((rows ?? []) as unknown as Record<string, unknown>[]).map((r) => Number(r[column]) || 0);
+    return { sum: vals.reduce((a, b) => a + b, 0), count: vals.length };
+  }
+  const row = data as unknown as Record<string, unknown>;
   return {
-    sum: values.reduce((a, b) => a + b, 0),
-    count: values.length,
+    sum: Number(row[`${column}_sum`] ?? row[column] ?? 0),
+    count: Number(row["count"] ?? 0),
   };
 }
