@@ -16,7 +16,7 @@ import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, List, LayoutGrid, Calendar, Map,
+  Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon,
   ArrowRight, Briefcase, DollarSign, Clock,
   MapPin, Building2, TrendingUp,
   CheckCircle2, AlertTriangle, XCircle,
@@ -329,7 +329,7 @@ function JobsPageContent() {
             <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
             <div className="flex items-center gap-2">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
-                {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: Map }].map(({ id, icon: Icon }) => (
+                {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: MapIcon }].map(({ id, icon: Icon }) => (
                   <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
                 ))}
               </div>
