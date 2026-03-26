@@ -17,6 +17,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  Copy,
   FileText,
   Upload,
   ShieldCheck,
@@ -28,7 +29,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
@@ -97,9 +98,11 @@ export default function JobDetailPage() {
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [addPaymentOpen, setAddPaymentOpen] = useState(false);
   const [addPaymentType, setAddPaymentType] = useState<JobPaymentType>("partner");
+  const [addPaymentMethod, setAddPaymentMethod] = useState<"stripe" | "bank_transfer">("bank_transfer");
   const [addPaymentAmount, setAddPaymentAmount] = useState("");
   const [addPaymentDate, setAddPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [addPaymentNote, setAddPaymentNote] = useState("");
+  const [addPaymentBankRef, setAddPaymentBankRef] = useState("");
   const [addingPayment, setAddingPayment] = useState(false);
   const [propertyEdit, setPropertyEdit] = useState<ClientAndAddressValue | null>(null);
   const [savingProperty, setSavingProperty] = useState(false);
@@ -332,14 +335,15 @@ export default function JobDetailPage() {
 
   useEffect(() => {
     if (!job) return;
+    const r2 = (v: unknown) => String(Math.round(Number(v ?? 0) * 100) / 100);
     setFinForm({
-      client_price: String(job.client_price ?? 0),
-      extras_amount: String(job.extras_amount ?? 0),
-      partner_cost: String(job.partner_cost ?? 0),
-      materials_cost: String(job.materials_cost ?? 0),
-      partner_agreed_value: String(job.partner_agreed_value ?? 0),
-      customer_deposit: String(job.customer_deposit ?? 0),
-      customer_final_payment: String(job.customer_final_payment ?? 0),
+      client_price: r2(job.client_price),
+      extras_amount: r2(job.extras_amount),
+      partner_cost: r2(job.partner_cost),
+      materials_cost: r2(job.materials_cost),
+      partner_agreed_value: r2(job.partner_agreed_value),
+      customer_deposit: r2(job.customer_deposit),
+      customer_final_payment: r2(job.customer_final_payment),
     });
   }, [job?.id, job?.updated_at]);
 
@@ -371,13 +375,14 @@ export default function JobDetailPage() {
     if (!job) return;
     setSavingFin(true);
     try {
-      const client_price = parseFloat(finForm.client_price) || 0;
-      const extras_amount = parseFloat(finForm.extras_amount) || 0;
-      const partner_cost = parseFloat(finForm.partner_cost) || 0;
-      const materials_cost = parseFloat(finForm.materials_cost) || 0;
-      const partner_agreed_value = parseFloat(finForm.partner_agreed_value) || 0;
-      const customer_deposit = parseFloat(finForm.customer_deposit) || 0;
-      const customer_final_payment = parseFloat(finForm.customer_final_payment) || 0;
+      const r2 = (s: string) => Math.round((parseFloat(s) || 0) * 100) / 100;
+      const client_price = r2(finForm.client_price);
+      const extras_amount = r2(finForm.extras_amount);
+      const partner_cost = r2(finForm.partner_cost);
+      const materials_cost = r2(finForm.materials_cost);
+      const partner_agreed_value = r2(finForm.partner_agreed_value);
+      const customer_deposit = r2(finForm.customer_deposit);
+      const customer_final_payment = r2(finForm.customer_final_payment);
       await handleJobUpdate(job.id, {
         client_price,
         extras_amount,
@@ -511,12 +516,15 @@ export default function JobDetailPage() {
         amount,
         payment_date: addPaymentDate,
         note: addPaymentNote.trim() || undefined,
+        payment_method: addPaymentMethod,
+        bank_reference: addPaymentBankRef.trim() || undefined,
       });
       toast.success("Payment registered");
       setAddPaymentOpen(false);
       setAddPaymentAmount("");
       setAddPaymentDate(new Date().toISOString().slice(0, 10));
       setAddPaymentNote("");
+      setAddPaymentBankRef("");
       await refreshJobFinance();
     } catch {
       toast.error("Failed to register payment");
@@ -528,6 +536,8 @@ export default function JobDetailPage() {
     addPaymentAmount,
     addPaymentDate,
     addPaymentNote,
+    addPaymentBankRef,
+    addPaymentMethod,
     addPaymentType,
     refreshJobFinance,
     partnerPayments,
@@ -1042,13 +1052,35 @@ export default function JobDetailPage() {
                   </div>
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price</label><Input type="number" min={0} step="0.01" value={finForm.client_price} onChange={(e) => setFinForm((f) => ({ ...f, client_price: e.target.value }))} /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Extras (add-ons)</label><Input type="number" min={0} step="0.01" value={finForm.extras_amount} onChange={(e) => setFinForm((f) => ({ ...f, extras_amount: e.target.value }))} /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price</label><Input type="number" min={0} step="0.01" value={finForm.client_price} onChange={(e) => {
+                    const price = parseFloat(e.target.value) || 0;
+                    const extras = parseFloat(finForm.extras_amount) || 0;
+                    const dep = parseFloat(finForm.customer_deposit) || 0;
+                    const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                    setFinForm((f) => ({ ...f, client_price: e.target.value, customer_final_payment: autoFinal }));
+                  }} /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Extras (add-ons)</label><Input type="number" min={0} step="0.01" value={finForm.extras_amount} onChange={(e) => {
+                    const price = parseFloat(finForm.client_price) || 0;
+                    const extras = parseFloat(e.target.value) || 0;
+                    const dep = parseFloat(finForm.customer_deposit) || 0;
+                    const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                    setFinForm((f) => ({ ...f, extras_amount: e.target.value, customer_final_payment: autoFinal }));
+                  }} /></div>
                   <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost</label><Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} /></div>
                   <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials cost</label><Input type="number" min={0} step="0.01" value={finForm.materials_cost} onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))} /></div>
                   <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner pay cap</label><Input type="number" min={0} step="0.01" value={finForm.partner_agreed_value} onChange={(e) => setFinForm((f) => ({ ...f, partner_agreed_value: e.target.value }))} /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Customer deposit</label><Input type="number" min={0} step="0.01" value={finForm.customer_deposit} onChange={(e) => setFinForm((f) => ({ ...f, customer_deposit: e.target.value }))} /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Customer final</label><Input type="number" min={0} step="0.01" value={finForm.customer_final_payment} onChange={(e) => setFinForm((f) => ({ ...f, customer_final_payment: e.target.value }))} /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Customer deposit</label><Input type="number" min={0} step="0.01" value={finForm.customer_deposit} onChange={(e) => {
+                    const price = parseFloat(finForm.client_price) || 0;
+                    const extras = parseFloat(finForm.extras_amount) || 0;
+                    const dep = parseFloat(e.target.value) || 0;
+                    const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                    setFinForm((f) => ({ ...f, customer_deposit: e.target.value, customer_final_payment: autoFinal }));
+                  }} /></div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Customer final</label>
+                    <Input type="number" min={0} step="0.01" value={finForm.customer_final_payment} onChange={(e) => setFinForm((f) => ({ ...f, customer_final_payment: e.target.value }))} />
+                    <p className="text-[10px] text-text-tertiary mt-1">Auto-calculated from price − deposit. Edit manually if needed.</p>
+                  </div>
                 </div>
                 <Button type="button" size="sm" variant="primary" loading={savingFin} onClick={handleSaveFinancials}>Save pricing</Button>
               </div>
@@ -1212,64 +1244,151 @@ export default function JobDetailPage() {
         </div>
       </div>
 
-      <Modal open={addPaymentOpen} onClose={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); }} title="Register payment">
+      <Modal
+        open={addPaymentOpen}
+        onClose={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); setAddPaymentBankRef(""); setAddPaymentMethod("bank_transfer"); }}
+        title="Register payment"
+      >
         <div className="space-y-4 p-4">
-          {(addPaymentType === "customer_deposit" || addPaymentType === "customer_final") && (
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
-              <Select
-                value={addPaymentType}
-                onChange={(e) => setAddPaymentType(e.target.value as JobPaymentType)}
-                options={[
-                  { value: "customer_deposit", label: "Deposit" },
-                  { value: "customer_final", label: "Final payment" },
-                ]}
-              />
+
+          {/* METHOD SELECTOR */}
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-2">Payment method</label>
+            <div className="grid grid-cols-2 gap-2">
+              {(["stripe", "bank_transfer"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setAddPaymentMethod(m)}
+                  className={cn(
+                    "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium transition-all",
+                    addPaymentMethod === m
+                      ? "border-primary bg-primary/8 text-primary shadow-sm"
+                      : "border-border-light bg-card text-text-secondary hover:border-border hover:bg-surface-hover/60",
+                  )}
+                >
+                  {m === "stripe"
+                    ? <><CreditCard className="h-4 w-4" /><span>Stripe</span><span className="text-[10px] font-normal opacity-70">Automatic</span></>
+                    : <><Building2 className="h-4 w-4" /><span>Bank transfer</span><span className="text-[10px] font-normal opacity-70">Manual</span></>
+                  }
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* STRIPE MODE */}
+          {addPaymentMethod === "stripe" && (
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+              <p className="text-xs text-text-secondary leading-relaxed">
+                Stripe payments are tracked <strong>automatically via webhook</strong>. Share the payment link with the client — when they pay, the system updates instantly.
+              </p>
+              {jobInvoices.filter((inv) => inv.stripe_payment_link_url).length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Payment links</p>
+                  {jobInvoices.filter((inv) => inv.stripe_payment_link_url).map((inv) => (
+                    <div key={inv.id} className="flex items-center justify-between gap-2 rounded-lg border border-border-light bg-card px-3 py-2">
+                      <div>
+                        <p className="text-xs font-semibold text-text-primary">{inv.reference}</p>
+                        <p className="text-[11px] text-text-tertiary">{formatCurrency(inv.amount)}</p>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          icon={<Copy className="h-3 w-3" />}
+                          onClick={() => { void navigator.clipboard.writeText(inv.stripe_payment_link_url!); toast.success("Link copied"); }}
+                        >Copy</Button>
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          icon={<ExternalLink className="h-3 w-3" />}
+                          onClick={() => window.open(inv.stripe_payment_link_url!, "_blank", "noopener,noreferrer")}
+                        >Open</Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-amber-600 dark:text-amber-400">No Stripe payment links on this job yet. Create an invoice with a Stripe link first.</p>
+              )}
+              <div className="flex justify-end pt-1">
+                <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); }}>Close</Button>
+              </div>
             </div>
           )}
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
-            <Input
-              type="number"
-              min={0}
-              max={paymentAmountMax > 0 ? paymentAmountMax : undefined}
-              step="0.01"
-              placeholder="0.00"
-              value={addPaymentAmount}
-              onChange={(e) => setAddPaymentAmount(e.target.value)}
-            />
-            <p className="text-[11px] text-text-tertiary mt-1.5">
-              Maximum for this payment type: <strong className="text-text-secondary">{formatCurrency(paymentAmountMax)}</strong>
-              {paymentAmountMax <= 0 && (
-                <span className="block text-amber-600 dark:text-amber-400 mt-1">Nothing left to register for this type under current schedules.</span>
+
+          {/* BANK TRANSFER MODE */}
+          {addPaymentMethod === "bank_transfer" && (
+            <>
+              {(addPaymentType === "customer_deposit" || addPaymentType === "customer_final") && (
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
+                  <Select
+                    value={addPaymentType}
+                    onChange={(e) => setAddPaymentType(e.target.value as JobPaymentType)}
+                    options={[
+                      { value: "customer_deposit", label: "Deposit" },
+                      { value: "customer_final", label: "Final payment" },
+                    ]}
+                  />
+                </div>
               )}
-            </p>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Date</label>
-            <Input type="date" value={addPaymentDate} onChange={(e) => setAddPaymentDate(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Note (optional)</label>
-            <input
-              type="text"
-              placeholder="e.g. Bank transfer ref"
-              value={addPaymentNote}
-              onChange={(e) => setAddPaymentNote(e.target.value)}
-              className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
-            />
-          </div>
-          <div className="flex gap-2 justify-end pt-2">
-            <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); }}>Cancel</Button>
-            <Button
-              size="sm"
-              loading={addingPayment}
-              disabled={!addPaymentAmount || Number(addPaymentAmount) <= 0 || paymentAmountMax <= 0}
-              onClick={handleAddPayment}
-            >
-              Register
-            </Button>
-          </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={paymentAmountMax > 0 ? paymentAmountMax : undefined}
+                  step="0.01"
+                  placeholder="0.00"
+                  value={addPaymentAmount}
+                  onChange={(e) => setAddPaymentAmount(e.target.value)}
+                />
+                <p className="text-[11px] text-text-tertiary mt-1.5">
+                  Remaining: <strong className="text-text-secondary">{formatCurrency(paymentAmountMax)}</strong>
+                  {paymentAmountMax <= 0 && (
+                    <span className="block text-amber-600 dark:text-amber-400 mt-1">Nothing left to register for this type.</span>
+                  )}
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Date received</label>
+                <Input type="date" value={addPaymentDate} onChange={(e) => setAddPaymentDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Bank reference / transaction ID</label>
+                <input
+                  type="text"
+                  placeholder="e.g. TRF-20260326-001"
+                  value={addPaymentBankRef}
+                  onChange={(e) => setAddPaymentBankRef(e.target.value)}
+                  className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Note (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Paid by John via Barclays"
+                  value={addPaymentNote}
+                  onChange={(e) => setAddPaymentNote(e.target.value)}
+                  className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                />
+              </div>
+              <div className="flex gap-2 justify-end pt-2">
+                <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); setAddPaymentBankRef(""); }}>Cancel</Button>
+                <Button
+                  size="sm"
+                  loading={addingPayment}
+                  disabled={!addPaymentAmount || Number(addPaymentAmount) <= 0 || paymentAmountMax <= 0}
+                  onClick={handleAddPayment}
+                >
+                  Register payment
+                </Button>
+              </div>
+            </>
+          )}
+
         </div>
       </Modal>
 

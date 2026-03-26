@@ -226,6 +226,8 @@ export interface Job {
 
 export type JobPaymentType = "partner" | "customer_deposit" | "customer_final";
 
+export type JobPaymentMethod = "stripe" | "bank_transfer" | "cash" | "other";
+
 export interface JobPayment {
   id: string;
   job_id: string;
@@ -233,6 +235,8 @@ export interface JobPayment {
   amount: number;
   payment_date: string;
   note?: string;
+  payment_method?: JobPaymentMethod | null;
+  bank_reference?: string | null;
   /** When set, this row was created from a paid invoice (e.g. Stripe); dedupes webhook. */
   source_invoice_id?: string | null;
   created_at: string;
@@ -246,6 +250,8 @@ export interface Partner {
   email: string;
   phone?: string;
   trade: string;
+  /** Multi-category support. Kept in sync with `trade` (first element). */
+  trades?: string[] | null;
   status: PartnerStatus;
   rating: number;
   jobs_completed: number;
