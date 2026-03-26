@@ -791,9 +791,9 @@ export default function JobDetailPage() {
 
             {/* CLIENT IDENTITY + MAP */}
             <div className="rounded-xl border border-border-light bg-card overflow-hidden">
-              <div className="grid grid-cols-1 sm:grid-cols-2">
+              <div className="grid grid-cols-1 items-start gap-0 sm:grid-cols-2">
                 {/* client info */}
-                <div className="p-4 space-y-3">
+                <div className="w-full min-w-0 p-4 space-y-3 sm:border-r sm:border-border-light/70">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
                     <Building2 className="h-3.5 w-3.5" /> Client identity
                   </p>
@@ -860,11 +860,11 @@ export default function JobDetailPage() {
                     {job.invoice_id && <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-primary hover:underline">Invoice <ExternalLink className="h-3 w-3" /></Link>}
                   </div>
                 </div>
-                {/* single map */}
-                <div className="p-4 flex items-center justify-center bg-surface-hover/20">
+                {/* single map — top-aligned (not vertically centered in tall left column) */}
+                <div className="flex w-full min-w-0 flex-col items-stretch justify-start border-t border-border-light/70 bg-surface-hover/20 p-4 sm:border-t-0">
                   <LocationMiniMap
                     address={job.property_address}
-                    className="h-[240px] w-full max-w-[520px] rounded-xl overflow-hidden"
+                    className="h-[200px] w-full rounded-xl overflow-hidden sm:h-[240px] sm:max-w-none"
                     lazy
                   />
                 </div>
