@@ -27,7 +27,6 @@ export const NAVIGATION: NavGroup[] = [
     label: "Operations",
     items: [
       { label: "Requests", href: "/requests", icon: "inbox", badge: 12 },
-      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
       { label: "Quotes", href: "/quotes", icon: "file-text" },
       { label: "Jobs", href: "/jobs", icon: "briefcase" },
       { label: "Schedule", href: "/schedule", icon: "calendar" },
@@ -56,6 +55,7 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Bills", href: "/finance/bills", icon: "file-check" },
       { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign" },
       { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock" },
+      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
     ],
   },
   { label: "Team", items: [{ label: "Team", href: "/team", icon: "users-2" }] },

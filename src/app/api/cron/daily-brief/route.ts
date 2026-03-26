@@ -39,9 +39,10 @@ function slotDue(
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const bearer = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
-  const secret = bearer || req.nextUrl.searchParams.get("secret");
+  // Accept the secret only via the Authorization header — never via query string,
+  // as query params are logged by proxies and appear in Referer headers.
   const expected = process.env.CRON_SECRET?.trim();
-  if (!expected || secret !== expected) {
+  if (!expected || bearer !== expected) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

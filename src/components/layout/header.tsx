@@ -6,7 +6,7 @@ import { useProfile } from "@/hooks/use-profile";
 import { SearchInput } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
-import { Settings, Menu, LogOut, Moon, Sun } from "lucide-react";
+import { Settings, Menu, LogOut, Moon, Sun, Sparkles } from "lucide-react";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import Link from "next/link";
 import { useTheme } from "@/hooks/use-theme";
@@ -66,6 +66,14 @@ export function Header() {
           </AnimatePresence>
         </button>
         <NotificationsMenu />
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent("master-brain-open"))}
+          className="h-9 w-9 rounded-lg flex items-center justify-center text-text-secondary hover:bg-primary/10 hover:text-primary transition-colors"
+          title="Master Brain"
+        >
+          <Sparkles className="h-[18px] w-[18px]" />
+        </button>
         <Link href="/settings" className="h-9 w-9 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary hover:text-text-primary transition-colors">
           <Settings className="h-[18px] w-[18px]" />
         </Link>

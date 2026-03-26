@@ -13,6 +13,7 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Modal } from "@/components/ui/modal";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { TimeSelect } from "@/components/ui/time-select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
@@ -35,7 +36,7 @@ import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui
 import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, isJobInProgressStatus, normalizeTotalPhases } from "@/lib/job-phases";
-import { jobScheduleYmd } from "@/lib/schedule-calendar";
+import { jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
 
 const JOB_STATUSES = ["scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
 
@@ -170,7 +171,8 @@ function JobsPageContent() {
         property_address: formData.property_address ?? "",
         partner_name: formData.partner_name, partner_id: formData.partner_id,
         partner_ids: formData.partner_ids,
-        owner_id: formData.owner_id, owner_name: formData.owner_name,
+        owner_id: formData.owner_id ?? profile?.id,
+        owner_name: formData.owner_name ?? profile?.full_name,
         status: "scheduled",
         progress: 0,
         current_phase: 0,
@@ -180,7 +182,7 @@ function JobsPageContent() {
         partner_cost: pc,
         materials_cost: mc,
         margin_percent: margin,
-        scheduled_date: formData.scheduled_date, scheduled_start_at: formData.scheduled_start_at,
+        scheduled_date: formData.scheduled_date, scheduled_start_at: formData.scheduled_start_at, scheduled_end_at: formData.scheduled_end_at,
         job_type: formData.job_type ?? "fixed",
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
         partner_agreed_value: 0, finance_status: "unpaid", service_value: cp,
@@ -192,7 +194,7 @@ function JobsPageContent() {
         partner_payment_2: 0, partner_payment_2_paid: false,
         partner_payment_3: 0, partner_payment_3_paid: false,
         customer_deposit: 0, customer_deposit_paid: false,
-        customer_final_payment: 0, customer_final_paid: false,
+        customer_final_payment: cp, customer_final_paid: false,
       });
       await logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
@@ -355,7 +357,7 @@ export default function JobsPage() {
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
   const [form, setForm] = useState({
-    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "2", job_type: "fixed",
+    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", finish_date: "", finish_time: "", total_phases: "3", job_type: "fixed",
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -372,8 +374,37 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     e.preventDefault();
     if (!form.title) { toast.error("Job title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
+    if ((form.scheduled_date && !form.finish_date) || (!form.scheduled_date && form.finish_date)) {
+      toast.error("Arrival window requires both start and finish dates.");
+      return;
+    }
+    if ((form.scheduled_time && !form.finish_time) || (!form.scheduled_time && form.finish_time)) {
+      toast.error("Arrival window requires both start and finish times.");
+      return;
+    }
+    if (form.scheduled_date && form.scheduled_time && form.finish_date && form.finish_time) {
+      const start = new Date(`${form.scheduled_date}T${form.scheduled_time}:00`);
+      const end = new Date(`${form.finish_date}T${form.finish_time}:00`);
+      if (!(end > start)) {
+        toast.error("Finish date and time must be after start date and time.");
+        return;
+      }
+    }
+    if (form.scheduled_date && form.finish_date && !form.scheduled_time && !form.finish_time) {
+      const start = new Date(`${form.scheduled_date}T09:00:00`);
+      const end = new Date(`${form.finish_date}T17:00:00`);
+      if (!(end > start)) {
+        toast.error("Finish date and time must be after start date and time.");
+        return;
+      }
+    }
+    if ((form.scheduled_date || form.finish_date) && (!form.scheduled_time || !form.finish_time)) {
+      toast.error("Please set both start and finish times.");
+      return;
+    }
     const scheduled_date = form.scheduled_date || undefined;
     const scheduled_start_at = form.scheduled_date && form.scheduled_time ? `${form.scheduled_date}T${form.scheduled_time}:00` : form.scheduled_date ? `${form.scheduled_date}T09:00:00` : undefined;
+    const scheduled_end_at = form.finish_date && form.finish_time ? `${form.finish_date}T${form.finish_time}:00` : undefined;
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     onCreate({
       title: form.title,
@@ -390,9 +421,10 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       materials_cost: Number(form.materials_cost) || 0,
       scheduled_date,
       scheduled_start_at,
+      scheduled_end_at,
       total_phases: normalizeTotalPhases(Number(form.total_phases)),
     });
-    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", total_phases: "2", job_type: "fixed" });
+    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", finish_date: "", finish_time: "", total_phases: "3", job_type: "fixed" });
     setClientAddress({ client_name: "", property_address: "" });
   };
 
@@ -410,10 +442,13 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
         />
         <p className="text-[10px] text-text-tertiary -mt-2">Report 1 is for start day; Report 2 unlocks the final step.</p>
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Time</label><Input type="time" value={form.scheduled_time} onChange={(e) => update("scheduled_time", e.target.value)} /></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date</label><Input type="date" className="h-9 text-sm" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
+          <div><TimeSelect label="Arrival from" value={form.scheduled_time} onChange={(v) => update("scheduled_time", v)} /></div>
+          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Finish date</label><Input type="date" className="h-9 text-sm" value={form.finish_date} onChange={(e) => update("finish_date", e.target.value)} /></div>
+          <div><TimeSelect label="Arrival to" value={form.finish_time} onChange={(v) => update("finish_time", v)} /></div>
         </div>
+        <p className="text-[10px] text-text-tertiary -mt-2">Arrival range: from (start) to (finish).</p>
         <Select
           label="Job type"
           options={[
@@ -480,12 +515,35 @@ function JobsCalendarView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading
   }, [firstDayOfWeek, daysInMonth]);
 
   const jobsByDay = useMemo(() => {
-    const map: Record<number, Job[]> = {};
+    const map: Record<number, Array<{ job: Job; kind: "start" | "end" | "span" }>> = {};
     for (const job of jobs) {
-      const ymd = jobScheduleYmd(job);
-      if (!ymd || ymd.y !== year || ymd.m !== month + 1) continue;
-      if (!map[ymd.d]) map[ymd.d] = [];
-      map[ymd.d].push(job);
+      const start = jobScheduleYmd(job);
+      if (!start) continue;
+      const finish = jobFinishYmd(job);
+      const startsThisMonth = start.y === year && start.m === month + 1;
+      const finishesThisMonth = !!finish && finish.y === year && finish.m === month + 1;
+
+      if (startsThisMonth) {
+        if (!map[start.d]) map[start.d] = [];
+        map[start.d].push({ job, kind: "start" });
+      }
+      if (finishesThisMonth) {
+        if (!map[finish!.d]) map[finish!.d] = [];
+        map[finish!.d].push({ job, kind: "end" });
+      }
+
+      if (!finish) continue;
+      const cursor = new Date(start.y, start.m - 1, start.d);
+      const endDate = new Date(finish.y, finish.m - 1, finish.d);
+      cursor.setDate(cursor.getDate() + 1);
+      while (cursor < endDate) {
+        if (cursor.getFullYear() === year && cursor.getMonth() === month) {
+          const d = cursor.getDate();
+          if (!map[d]) map[d] = [];
+          map[d].push({ job, kind: "span" });
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
     }
     return map;
   }, [jobs, year, month]);
@@ -505,8 +563,21 @@ function JobsCalendarView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading
             {day != null ? (
               <>
                 <span className="text-xs font-medium text-text-secondary">{day}</span>
-                {(jobsByDay[day] ?? []).slice(0, 2).map((j) => (
-                  <button key={j.id} type="button" onClick={() => onSelectJob(j)} className="block w-full text-left mt-1 px-1.5 py-1 rounded bg-primary/10 text-primary text-[10px] font-medium truncate">{j.reference}</button>
+                {(jobsByDay[day] ?? []).slice(0, 2).map(({ job, kind }, idx) => (
+                  <button
+                    key={`${job.id}-${kind}-${idx}`}
+                    type="button"
+                    onClick={() => onSelectJob(job)}
+                    className={`block w-full text-left mt-1 px-1.5 py-1 rounded text-[10px] font-medium truncate ${
+                      kind === "start"
+                        ? "bg-primary/10 text-primary"
+                        : kind === "end"
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
+                          : "bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                    }`}
+                  >
+                    {kind === "start" ? "Start" : kind === "end" ? "Finish" : "In progress"} · {job.reference}
+                  </button>
                 ))}
                 {(jobsByDay[day] ?? []).length > 2 && <span className="text-[10px] text-text-tertiary">+{(jobsByDay[day] ?? []).length - 2}</span>}
               </>

@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,12 +10,14 @@ import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
+import { TimeSelect } from "@/components/ui/time-select";
 import {
   ArrowLeft,
   Building2,
   Check,
   CheckCircle2,
   ChevronDown,
+  Copy,
   FileText,
   Upload,
   ShieldCheck,
@@ -26,16 +27,18 @@ import {
   AlertTriangle,
   CreditCard,
   RefreshCw,
+  X,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
-import { listJobPayments, createJobPayment } from "@/services/job-payments";
+import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
+import { uploadManualJobReport } from "@/services/job-report-storage";
 import { useProfile } from "@/hooks/use-profile";
-import { logAudit } from "@/services/audit";
+import { logAudit, logFieldChanges } from "@/services/audit";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
@@ -77,93 +80,6 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   completed: { label: "Completed", variant: "success", dot: true },
 };
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <h2 className="text-sm font-semibold text-text-primary border-b border-border-light pb-2 flex items-center gap-2">
-        {title}
-      </h2>
-      {children}
-    </section>
-  );
-}
-
-function JobPaymentBlock({
-  totalDue,
-  payments,
-  loading,
-  onAddPayment,
-  capHint,
-}: {
-  totalDue: number;
-  payments: JobPayment[];
-  loading: boolean;
-  onAddPayment: () => void;
-  /** e.g. max you can still register under the job cap */
-  capHint?: string;
-}) {
-  const totalPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
-  const remaining = Math.max(0, totalDue - totalPaid);
-  return (
-    <div className="space-y-3">
-      {capHint && (
-        <p className="text-[11px] text-text-tertiary flex items-start gap-1.5">
-          <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-          {capHint}
-        </p>
-      )}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-4">
-          <div>
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total due</p>
-            <p className="text-lg font-bold text-text-primary">{formatCurrency(totalDue)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Paid</p>
-            <p className="text-lg font-bold text-emerald-600">{formatCurrency(totalPaid)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Remaining</p>
-            <p className={`text-lg font-bold ${remaining > 0 ? "text-amber-600" : "text-text-primary"}`}>{formatCurrency(remaining)}</p>
-          </div>
-        </div>
-        <Button size="sm" variant="primary" icon={<Plus className="h-3.5 w-3.5" />} onClick={onAddPayment}>Register payment</Button>
-      </div>
-      {loading ? (
-        <div className="p-4 rounded-xl border border-border-light bg-surface-hover animate-pulse">Loading payments…</div>
-      ) : payments.length > 0 ? (
-        <div className="rounded-xl border border-border-light overflow-hidden">
-          <div className="bg-surface-tertiary/50 px-3 py-2 flex items-center gap-2 text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
-            <span className="w-24">Date</span>
-            <span className="flex-1">Amount</span>
-            <span className="flex-1">Note</span>
-          </div>
-          {payments.map((p) => (
-            <div key={p.id} className="px-3 py-2.5 flex items-center gap-2 border-t border-border-light text-sm">
-              <span className="w-24 text-text-secondary">{new Date(p.payment_date).toLocaleDateString()}</span>
-              <span className="flex-1 font-semibold text-text-primary">{formatCurrency(p.amount)}</span>
-              <span className="flex-1 text-text-tertiary truncate">{p.note || "—"}</span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="p-4 rounded-xl border border-border-light bg-surface-hover text-sm text-text-tertiary">No payments registered yet.</div>
-      )}
-    </div>
-  );
-}
-
-function TimelineItem({ label, date, active }: { label: string; date: string; active: boolean }) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className={`mt-1 h-3 w-3 rounded-full border-2 ${active ? "border-primary bg-primary" : "border-border bg-card"}`} />
-      <div>
-        <p className={`text-sm font-medium ${active ? "text-text-primary" : "text-text-tertiary"}`}>{label}</p>
-        <p className="text-[11px] text-text-tertiary">{new Date(date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</p>
-      </div>
-    </div>
-  );
-}
 
 export default function JobDetailPage() {
   const params = useParams();
@@ -174,15 +90,22 @@ export default function JobDetailPage() {
   const [loading, setLoading] = useState(true);
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
+  const [scheduleFinishDate, setScheduleFinishDate] = useState("");
+  const [scheduleFinishTime, setScheduleFinishTime] = useState("");
+  const [tasklineOpen, setTasklineOpen] = useState(true);
   const [partnerPayments, setPartnerPayments] = useState<JobPayment[]>([]);
   const [customerPayments, setCustomerPayments] = useState<JobPayment[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [addPaymentOpen, setAddPaymentOpen] = useState(false);
   const [addPaymentType, setAddPaymentType] = useState<JobPaymentType>("partner");
+  const [addPaymentMethod, setAddPaymentMethod] = useState<"stripe" | "bank_transfer">("bank_transfer");
   const [addPaymentAmount, setAddPaymentAmount] = useState("");
   const [addPaymentDate, setAddPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [addPaymentNote, setAddPaymentNote] = useState("");
+  const [addPaymentBankRef, setAddPaymentBankRef] = useState("");
   const [addingPayment, setAddingPayment] = useState(false);
+  const [deletePaymentTarget, setDeletePaymentTarget] = useState<{ id: string; amount: number; type: string } | null>(null);
+  const [deletingPayment, setDeletingPayment] = useState(false);
   const [propertyEdit, setPropertyEdit] = useState<ClientAndAddressValue | null>(null);
   const [savingProperty, setSavingProperty] = useState(false);
   const [unlinkedAddressDraft, setUnlinkedAddressDraft] = useState("");
@@ -209,8 +132,15 @@ export default function JobDetailPage() {
   const [jobInvoices, setJobInvoices] = useState<Invoice[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
+  const [manualReportFile, setManualReportFile] = useState<File | null>(null);
+  const [manualReportNotes, setManualReportNotes] = useState("");
+  const [manualReportResult, setManualReportResult] = useState("");
+  const [analyzingManualReport, setAnalyzingManualReport] = useState(false);
+  const [phaseReportFiles, setPhaseReportFiles] = useState<Record<number, File | null>>({});
+  const [analyzingPhase, setAnalyzingPhase] = useState<number | null>(null);
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
+  const autoOwnerFillRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
@@ -218,11 +148,9 @@ export default function JobDetailPage() {
   const loadPayments = useCallback(async (jobId: string) => {
     setLoadingPayments(true);
     try {
-      const [partner, all] = await Promise.all([
-        listJobPayments(jobId, "partner"),
-        listJobPayments(jobId),
-      ]);
-      setPartnerPayments(partner);
+      // Single query for all payment types — split client-side to halve round-trips.
+      const all = await listJobPayments(jobId);
+      setPartnerPayments(all.filter((p) => p.type === "partner"));
       setCustomerPayments(all.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"));
     } catch {
       toast.error("Failed to load payments");
@@ -297,14 +225,13 @@ export default function JobDetailPage() {
     setLoading(true);
     (async () => {
       try {
-        const [j, partner, all] = await Promise.all([
+        const [j, all] = await Promise.all([
           getJob(id),
-          listJobPayments(id, "partner"),
           listJobPayments(id),
         ]);
         if (cancelled) return;
         setJob(j ?? null);
-        setPartnerPayments(partner);
+        setPartnerPayments(all.filter((p) => p.type === "partner"));
         setCustomerPayments(all.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"));
       } catch {
         if (!cancelled) toast.error("Failed to load job");
@@ -330,14 +257,26 @@ export default function JobDetailPage() {
       const d = new Date(job.scheduled_start_at);
       setScheduleDate(d.toISOString().slice(0, 10));
       setScheduleTime(d.toTimeString().slice(0, 5));
+      if (job.scheduled_end_at) {
+        const end = new Date(job.scheduled_end_at);
+        setScheduleFinishDate(end.toISOString().slice(0, 10));
+        setScheduleFinishTime(end.toTimeString().slice(0, 5));
+      } else {
+        setScheduleFinishDate("");
+        setScheduleFinishTime("");
+      }
     } else if (job?.scheduled_date) {
       setScheduleDate(job.scheduled_date);
       setScheduleTime("");
+      setScheduleFinishDate("");
+      setScheduleFinishTime("");
     } else {
       setScheduleDate("");
       setScheduleTime("");
+      setScheduleFinishDate("");
+      setScheduleFinishTime("");
     }
-  }, [job?.id, job?.scheduled_start_at, job?.scheduled_date]);
+  }, [job?.id, job?.scheduled_start_at, job?.scheduled_end_at, job?.scheduled_date]);
 
   useEffect(() => {
     if (!job) {
@@ -395,14 +334,15 @@ export default function JobDetailPage() {
 
   useEffect(() => {
     if (!job) return;
+    const r2 = (v: unknown) => String(Math.round(Number(v ?? 0) * 100) / 100);
     setFinForm({
-      client_price: String(job.client_price ?? 0),
-      extras_amount: String(job.extras_amount ?? 0),
-      partner_cost: String(job.partner_cost ?? 0),
-      materials_cost: String(job.materials_cost ?? 0),
-      partner_agreed_value: String(job.partner_agreed_value ?? 0),
-      customer_deposit: String(job.customer_deposit ?? 0),
-      customer_final_payment: String(job.customer_final_payment ?? 0),
+      client_price: r2(job.client_price),
+      extras_amount: r2(job.extras_amount),
+      partner_cost: r2(job.partner_cost),
+      materials_cost: r2(job.materials_cost),
+      partner_agreed_value: r2(job.partner_agreed_value),
+      customer_deposit: r2(job.customer_deposit),
+      customer_final_payment: r2(job.customer_final_payment),
     });
   }, [job?.id, job?.updated_at]);
 
@@ -434,26 +374,26 @@ export default function JobDetailPage() {
     if (!job) return;
     setSavingFin(true);
     try {
-      const client_price = parseFloat(finForm.client_price) || 0;
-      const extras_amount = parseFloat(finForm.extras_amount) || 0;
-      const partner_cost = parseFloat(finForm.partner_cost) || 0;
-      const materials_cost = parseFloat(finForm.materials_cost) || 0;
-      const partner_agreed_value = parseFloat(finForm.partner_agreed_value) || 0;
-      const customer_deposit = parseFloat(finForm.customer_deposit) || 0;
-      const customer_final_payment = parseFloat(finForm.customer_final_payment) || 0;
-      await handleJobUpdate(job.id, {
-        client_price,
-        extras_amount,
-        partner_cost,
-        materials_cost,
-        partner_agreed_value,
-        customer_deposit,
-        customer_final_payment,
-      });
+      const r2 = (s: string) => Math.round((parseFloat(s) || 0) * 100) / 100;
+      const client_price = r2(finForm.client_price);
+      const extras_amount = r2(finForm.extras_amount);
+      const partner_cost = r2(finForm.partner_cost);
+      const materials_cost = r2(finForm.materials_cost);
+      const partner_agreed_value = r2(finForm.partner_agreed_value);
+      const customer_deposit = r2(finForm.customer_deposit);
+      const customer_final_payment = r2(finForm.customer_final_payment);
+      const newFields = { client_price, extras_amount, partner_cost, materials_cost, partner_agreed_value, customer_deposit, customer_final_payment };
+      await handleJobUpdate(job.id, newFields);
+      await logFieldChanges(
+        "job", job.id, job.reference,
+        job as unknown as Record<string, unknown>,
+        newFields as Record<string, unknown>,
+        profile?.id, profile?.full_name,
+      );
     } finally {
       setSavingFin(false);
     }
-  }, [job, finForm, handleJobUpdate]);
+  }, [job, finForm, handleJobUpdate, profile?.id, profile?.full_name]);
 
   const handleSaveLinkedProperty = useCallback(async () => {
     if (!job || !propertyEdit?.property_address?.trim()) {
@@ -511,10 +451,35 @@ export default function JobDetailPage() {
     }
   }, [profile?.id, profile?.full_name]);
 
-  const handleScheduleChange = useCallback((j: Job, date: string, time: string) => {
-    const scheduled_date = date || undefined;
-    const scheduled_start_at = date && time ? `${date}T${time}:00` : date ? `${date}T09:00:00` : undefined;
-    handleJobUpdate(j.id, { scheduled_start_at, scheduled_date } as Partial<Job>);
+  const handleScheduleChange = useCallback((j: Job, startDate: string, startTime: string, finishDate: string, finishTime: string) => {
+    if ((startDate && !finishDate) || (!startDate && finishDate)) {
+      toast.error("Set both arrival date and finish date.");
+      return;
+    }
+    if ((startTime && !finishTime) || (!startTime && finishTime)) {
+      toast.error("Set both arrival and finish times.");
+      return;
+    }
+    if (startDate && startTime && finishDate && finishTime) {
+      const start = new Date(`${startDate}T${startTime}:00`);
+      const end = new Date(`${finishDate}T${finishTime}:00`);
+      if (!(end > start)) {
+        toast.error("Finish date and time must be after arrival date and time.");
+        return;
+      }
+    }
+    if (startDate && !startTime) {
+      toast.error("Set arrival time.");
+      return;
+    }
+    if (finishDate && !finishTime) {
+      toast.error("Set finish time.");
+      return;
+    }
+    const scheduled_date = startDate || undefined;
+    const scheduled_start_at = startDate && startTime ? `${startDate}T${startTime}:00` : undefined;
+    const scheduled_end_at = finishDate && finishTime ? `${finishDate}T${finishTime}:00` : undefined;
+    handleJobUpdate(j.id, { scheduled_start_at, scheduled_end_at, scheduled_date } as Partial<Job>);
   }, [handleJobUpdate]);
 
   const handleAddPayment = useCallback(async () => {
@@ -549,12 +514,30 @@ export default function JobDetailPage() {
         amount,
         payment_date: addPaymentDate,
         note: addPaymentNote.trim() || undefined,
+        payment_method: addPaymentMethod,
+        bank_reference: addPaymentBankRef.trim() || undefined,
+      });
+      const typeLabel = addPaymentType === "customer_deposit" ? "Customer deposit" : addPaymentType === "customer_final" ? "Customer final" : "Partner payment";
+      await logAudit({
+        entityType: "job", entityId: job.id, entityRef: job.reference,
+        action: "payment",
+        fieldName: addPaymentType,
+        newValue: formatCurrency(amount),
+        userId: profile?.id, userName: profile?.full_name,
+        metadata: {
+          type_label: typeLabel,
+          method: addPaymentMethod,
+          date: addPaymentDate,
+          ...(addPaymentBankRef.trim() ? { bank_reference: addPaymentBankRef.trim() } : {}),
+          ...(addPaymentNote.trim() ? { note: addPaymentNote.trim() } : {}),
+        },
       });
       toast.success("Payment registered");
       setAddPaymentOpen(false);
       setAddPaymentAmount("");
       setAddPaymentDate(new Date().toISOString().slice(0, 10));
       setAddPaymentNote("");
+      setAddPaymentBankRef("");
       await refreshJobFinance();
     } catch {
       toast.error("Failed to register payment");
@@ -566,11 +549,127 @@ export default function JobDetailPage() {
     addPaymentAmount,
     addPaymentDate,
     addPaymentNote,
+    addPaymentBankRef,
+    addPaymentMethod,
     addPaymentType,
     refreshJobFinance,
     partnerPayments,
     customerPayments,
   ]);
+
+  const confirmDeletePayment = useCallback(async () => {
+    if (!deletePaymentTarget || !job) return;
+    setDeletingPayment(true);
+    try {
+      await deleteJobPayment(deletePaymentTarget.id);
+      await logAudit({
+        entityType: "job", entityId: job.id, entityRef: job.reference,
+        action: "deleted",
+        fieldName: "payment",
+        oldValue: formatCurrency(deletePaymentTarget.amount),
+        userId: profile?.id, userName: profile?.full_name,
+        metadata: { payment_type: deletePaymentTarget.type },
+      });
+      await refreshJobFinance();
+      toast.success("Payment removed");
+    } catch {
+      toast.error("Failed to remove payment");
+    } finally {
+      setDeletingPayment(false);
+      setDeletePaymentTarget(null);
+    }
+  }, [deletePaymentTarget, job, profile?.id, profile?.full_name, refreshJobFinance]);
+
+  useEffect(() => {
+    if (!job?.id || !profile?.id) return;
+    if (job.owner_id) return;
+    if (autoOwnerFillRef.current.has(job.id)) return;
+    autoOwnerFillRef.current.add(job.id);
+    (async () => {
+      try {
+        const updated = await updateJob(job.id, {
+          owner_id: profile.id,
+          owner_name: profile.full_name ?? undefined,
+        });
+        setJob(updated);
+      } catch {
+        // silent fallback: keeps UI stable even if owner autofill fails
+      }
+    })();
+  }, [job?.id, job?.owner_id, profile?.id, profile?.full_name]);
+
+  const handleManualReportAnalyze = useCallback(async () => {
+    if (!job) return;
+    if (!manualReportFile) {
+      toast.error("Select a report file first.");
+      return;
+    }
+    setAnalyzingManualReport(true);
+    try {
+      const uploaded = await uploadManualJobReport(job.id, manualReportFile);
+      const res = await fetch("/api/jobs/analyze-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobReference: job.reference,
+          fileUrl: uploaded.publicUrl,
+          mimeType: uploaded.mimeType,
+          notes: manualReportNotes.trim() || undefined,
+        }),
+      });
+      const body = (await res.json()) as { analysis?: string; error?: string };
+      if (!res.ok) throw new Error(body.error || "Failed to analyse report");
+      const analysis = body.analysis ?? "";
+      setManualReportResult(analysis);
+      await handleJobUpdate(job.id, {
+        report_notes: [job.report_notes, `Manual report analysis (${new Date().toLocaleString()}):`, analysis].filter(Boolean).join("\n\n"),
+      });
+      toast.success("Report analysed and saved to report notes.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to analyse report");
+    } finally {
+      setAnalyzingManualReport(false);
+    }
+  }, [job, manualReportFile, manualReportNotes, handleJobUpdate]);
+
+  const handlePhaseReportUploadAnalyze = useCallback(async (phase: number) => {
+    if (!job) return;
+    const file = phaseReportFiles[phase] ?? null;
+    if (!file) {
+      toast.error("Select a report file first.");
+      return;
+    }
+    setAnalyzingPhase(phase);
+    try {
+      const uploaded = await uploadManualJobReport(job.id, file);
+      const res = await fetch("/api/jobs/analyze-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobReference: job.reference,
+          fileUrl: uploaded.publicUrl,
+          mimeType: uploaded.mimeType,
+          notes: `Phase ${phase} report.`,
+        }),
+      });
+      const body = (await res.json()) as { analysis?: string; error?: string };
+      if (!res.ok) throw new Error(body.error || "Failed to analyse report");
+      const analysis = body.analysis ?? "";
+      await handleJobUpdate(job.id, {
+        [`report_${phase}_uploaded`]: true,
+        [`report_${phase}_uploaded_at`]: new Date().toISOString(),
+        report_notes: [job.report_notes, `Phase ${phase} report analysis (${new Date().toLocaleString()}):`, analysis]
+          .filter(Boolean)
+          .join("\n\n"),
+      } as Partial<Job>);
+      setPhaseReportFiles((prev) => ({ ...prev, [phase]: null }));
+      toast.success(`Phase ${phase} report uploaded and analysed.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to upload/analyse report");
+    } finally {
+      setAnalyzingPhase(null);
+    }
+  }, [job, phaseReportFiles, handleJobUpdate]);
 
   if (loading || !id) {
     return (
@@ -609,9 +708,8 @@ export default function JobDetailPage() {
   const maxCustomerFinalPay = Math.max(0, (job.customer_final_payment ?? 0) - customerFinalPaidSum);
   const scheduledCustomerTotal = customerScheduledTotal(job);
   const customerScheduleMismatch = Math.abs(billableRevenue - scheduledCustomerTotal) > 0.02;
-  const customerPaidTotal =
-    (job.customer_deposit_paid ? Number(job.customer_deposit ?? 0) : 0) +
-    (job.customer_final_paid ? Number(job.customer_final_payment ?? 0) : 0);
+  // Use actual payment records sum — not boolean flags — so the UI stays live without a page reload.
+  const customerPaidTotal = customerDepositPaid + customerFinalPaidSum;
   const amountDue = Math.max(0, billableRevenue - customerPaidTotal);
 
   const paymentAmountMax =
@@ -630,350 +728,187 @@ export default function JobDetailPage() {
 
   return (
     <PageTransition>
-      <div className="space-y-6 pb-12">
+      <div className="space-y-5 pb-12">
+
+        {/* ── HEADER ── */}
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" icon={<ArrowLeft className="h-4 w-4" />} onClick={() => router.push("/jobs")}>
             Back to Jobs
           </Button>
         </div>
 
-        <PageHeader
-          title={job.reference}
-          subtitle={job.title}
-          children={
-            <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl font-bold text-text-primary">{job.reference}</h1>
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
-              {statusActions.map((action, idx) => (
-                <Button
-                  key={`${action.status}-${idx}`}
-                  variant={action.primary ? "primary" : "outline"}
-                  size="sm"
-                  icon={<action.icon className="h-3.5 w-3.5" />}
-                  onClick={() => handleStatusChange(job, action.status as Job["status"])}
-                >
-                  {action.label}
-                </Button>
-              ))}
             </div>
-          }
-        />
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
-            <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Job amount</p>
-            <p className="text-lg font-bold text-text-primary tabular-nums">{formatCurrency(billableRevenue)}</p>
+            <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
           </div>
-          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
-            <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Amount due</p>
-            <p className="text-lg font-bold text-amber-600 tabular-nums">{formatCurrency(amountDue)}</p>
-          </div>
-          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
-            <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Net margin</p>
-            <p className={`text-lg font-bold tabular-nums ${marginPct >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{marginPct}%</p>
-          </div>
-          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
-            <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Progress</p>
-            <div className="flex items-center gap-2 mt-1">
-              <Progress value={job.progress} size="md" color={job.progress === 100 ? "emerald" : "primary"} className="flex-1" />
-              <span className="text-sm font-bold text-text-primary">{job.progress}%</span>
-            </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {statusActions.map((action, idx) => (
+              <Button
+                key={`${action.status}-${idx}`}
+                variant={action.primary ? "primary" : "outline"}
+                size="sm"
+                icon={<action.icon className="h-3.5 w-3.5" />}
+                onClick={() => handleStatusChange(job, action.status as Job["status"])}
+              >
+                {action.label}
+              </Button>
+            ))}
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left column: overview, client, partner, schedule */}
-          <div className="lg:col-span-2 space-y-8">
-            <Section title="Job Card">
-              <div className="rounded-xl border border-border-light bg-card p-4 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client identity</p>
-                    <p className="text-lg font-semibold text-text-primary mt-1">{job.client_name}</p>
-                    <p className="text-xs text-text-tertiary mt-1">{job.property_address}</p>
-                  </div>
-                  <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Schedule</p>
-                    <p className="text-sm text-text-primary mt-1">
-                      {scheduleDate || "No date set"} {scheduleTime ? `· ${scheduleTime}` : ""}
-                    </p>
-                    <p className="text-xs text-text-tertiary mt-1">Phase {displayPhase} / {phaseCount}</p>
-                  </div>
-                </div>
+        {/* ── MAIN GRID ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-                <LocationMiniMap address={job.property_address} className="rounded-xl overflow-hidden" lazy />
+          {/* ═══ LEFT — operational column ═══ */}
+          <div className="lg:col-span-2 space-y-5">
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30">
-                    <p className="text-[10px] font-semibold text-emerald-700 uppercase">Revenue</p>
-                    <p className="text-sm font-bold text-emerald-700">{formatCurrency(billableRevenue)}</p>
+            {/* CLIENT IDENTITY + MAP */}
+            <div className="rounded-xl border border-border-light bg-card overflow-hidden">
+              <div className="grid grid-cols-1 sm:grid-cols-2">
+                {/* client info */}
+                <div className="p-4 space-y-3">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
+                    <Building2 className="h-3.5 w-3.5" /> Client identity
+                  </p>
+                  <div>
+                    <p className="text-base font-bold text-text-primary">{job.client_name}</p>
+                    <p className="text-xs text-text-tertiary mt-0.5 leading-snug">{job.property_address}</p>
                   </div>
-                  <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30">
-                    <p className="text-[10px] font-semibold text-red-700 uppercase">Cost</p>
-                    <p className="text-sm font-bold text-red-700">{formatCurrency(directCost)}</p>
-                  </div>
-                  <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30">
-                    <p className="text-[10px] font-semibold text-blue-700 uppercase">Profit</p>
-                    <p className={`text-sm font-bold ${profit >= 0 ? "text-blue-700" : "text-red-600"}`}>{formatCurrency(profit)}</p>
-                  </div>
-                  <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30">
-                    <p className="text-[10px] font-semibold text-amber-700 uppercase">Margin</p>
-                    <p className={`text-sm font-bold ${marginPct >= 20 ? "text-amber-700" : "text-red-600"}`}>{marginPct}%</p>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {job.quote_id && (
-                    <Link href="/quotes" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                      Quote linked <ExternalLink className="h-3 w-3" />
-                    </Link>
-                  )}
-                  {job.self_bill_id && (
-                    <Link href="/finance/selfbill" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                      Self-bill linked <ExternalLink className="h-3 w-3" />
-                    </Link>
-                  )}
-                  {job.invoice_id && (
-                    <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                      Invoice linked <ExternalLink className="h-3 w-3" />
-                    </Link>
-                  )}
-                </div>
-              </div>
-            </Section>
-
-            <Section title="Financial setup">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Client price</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={finForm.client_price}
-                    onChange={(e) => setFinForm((f) => ({ ...f, client_price: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Extras (add-ons)</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={finForm.extras_amount}
-                    onChange={(e) => setFinForm((f) => ({ ...f, extras_amount: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={finForm.partner_cost}
-                    onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Materials cost</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={finForm.materials_cost}
-                    onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner pay cap</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={finForm.partner_agreed_value}
-                    onChange={(e) => setFinForm((f) => ({ ...f, partner_agreed_value: e.target.value }))}
-                  />
-                  <p className="text-[10px] text-text-tertiary mt-1">Max total partner payments (if 0, cap uses partner cost).</p>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Customer deposit (scheduled)</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={finForm.customer_deposit}
-                    onChange={(e) => setFinForm((f) => ({ ...f, customer_deposit: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Customer final (scheduled)</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={finForm.customer_final_payment}
-                    onChange={(e) => setFinForm((f) => ({ ...f, customer_final_payment: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <Button type="button" size="sm" variant="primary" loading={savingFin} onClick={handleSaveFinancials}>
-                Save pricing & schedule
-              </Button>
-            </Section>
-
-            <Section title="Client & property">
-              <p className="text-xs text-text-tertiary mb-3">Client details are read-only. You can update only the property address.</p>
-              {job.client_id && propertyEdit ? (
-                <>
-                  <ClientAddressPicker
-                    lockClient
-                    value={propertyEdit}
-                    onChange={setPropertyEdit}
-                    labelClient="Client"
-                    labelAddress="Property address *"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    loading={savingProperty}
-                    onClick={handleSaveLinkedProperty}
-                  >
-                    Save property address
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-hover">
-                    <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center shrink-0">
-                      <Building2 className="h-5 w-5 text-blue-600" />
-                    </div>
-                    <p className="text-sm font-semibold text-text-primary">{job.client_name}</p>
-                  </div>
-                  <p className="text-xs text-text-tertiary mt-2">Not linked to a client record — edit the address text only.</p>
-                  <div className="mt-3">
-                    <AddressAutocomplete
-                      value={unlinkedAddressDraft}
-                      onChange={(v) => setUnlinkedAddressDraft(v)}
-                      onSelect={(parts) => setUnlinkedAddressDraft(parts.full_address)}
-                      label="Property address *"
-                      placeholder="Start typing address or postcode..."
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="mt-3"
-                      loading={savingUnlinkedAddress}
-                      onClick={handleSaveUnlinkedProperty}
-                    >
-                      Save property address
-                    </Button>
-                  </div>
-                </>
-              )}
-              <LocationMiniMap address={job.property_address} className="mt-3 rounded-xl overflow-hidden" lazy />
-            </Section>
-
-            {job.scope && (
-              <Section title="Scope">
-                <p className="text-sm text-text-primary whitespace-pre-wrap">{job.scope}</p>
-              </Section>
-            )}
-
-            <Section title="Partner & owner">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-xl bg-surface-hover">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
-                  {job.partner_name ? (
-                    <div className="flex items-center gap-2 mt-2">
-                      <Avatar name={job.partner_name} size="sm" />
-                      <p className="text-sm font-semibold text-text-primary">{job.partner_name}</p>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-text-tertiary italic mt-2">Unassigned</p>
-                  )}
-                  <div className="mt-3">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setPartnerModalOpen(true)}
-                    >
-                      {job.partner_id ? "Change partner" : "Assign partner"}
-                    </Button>
-                  </div>
-                </div>
-                <div className="p-4 rounded-xl bg-surface-hover">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job owner</p>
-                  {isAdmin ? (
-                    <div className="mt-2">
-                      <JobOwnerSelect
-                        value={job.owner_id}
-                        fallbackName={job.owner_name}
-                        users={assignableUsers}
-                        disabled={savingOwner}
-                        onChange={async (ownerId) => {
-                          const owner = assignableUsers.find((u) => u.id === ownerId);
-                          setSavingOwner(true);
-                          try {
-                            await handleJobUpdate(job.id, {
-                              owner_id: ownerId,
-                              owner_name: owner?.full_name,
-                            });
-                            toast.success("Owner updated");
-                          } catch {
-                            toast.error("Failed to update owner");
-                          } finally {
-                            setSavingOwner(false);
-                          }
-                        }}
+                  {/* schedule inline */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border-light">
+                    <div>
+                      <p className="text-[10px] text-text-tertiary">Arrival date</p>
+                      <Input
+                        type="date"
+                        value={scheduleDate}
+                        className="mt-0.5 h-9 text-sm"
+                        onChange={(e) => { setScheduleDate(e.target.value); handleScheduleChange(job, e.target.value, scheduleTime, scheduleFinishDate, scheduleFinishTime); }}
                       />
                     </div>
-                  ) : job.owner_name ? (
-                    <div className="flex items-center gap-2 mt-2">
-                      <Avatar name={job.owner_name} size="sm" />
-                      <p className="text-sm font-semibold text-text-primary">{job.owner_name}</p>
+                    <div>
+                      <TimeSelect
+                        label="Arrival from"
+                        value={scheduleTime}
+                        className="mt-0.5"
+                        onChange={(v) => { setScheduleTime(v); handleScheduleChange(job, scheduleDate, v, scheduleFinishDate, scheduleFinishTime); }}
+                      />
                     </div>
-                  ) : (
-                    <p className="text-sm text-text-tertiary italic mt-2">No owner</p>
-                  )}
+                    <div>
+                      <p className="text-[10px] text-text-tertiary">Finish date</p>
+                      <Input
+                        type="date"
+                        value={scheduleFinishDate}
+                        className="mt-0.5 h-9 text-sm"
+                        onChange={(e) => { setScheduleFinishDate(e.target.value); handleScheduleChange(job, scheduleDate, scheduleTime, e.target.value, scheduleFinishTime); }}
+                      />
+                    </div>
+                    <div>
+                      <TimeSelect
+                        label="Arrival to"
+                        value={scheduleFinishTime}
+                        className="mt-0.5"
+                        onChange={(v) => { setScheduleFinishTime(v); handleScheduleChange(job, scheduleDate, scheduleTime, scheduleFinishDate, v); }}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-text-tertiary -mt-1">Arrival range: from (start) to (finish).</p>
+                  {/* address edit */}
+                  <div className="pt-1 border-t border-border-light">
+                    {job.client_id && propertyEdit ? (
+                      <div className="space-y-2">
+                        <ClientAddressPicker lockClient value={propertyEdit} onChange={setPropertyEdit} labelClient="Client" labelAddress="Property address" />
+                        <Button type="button" variant="outline" size="sm" loading={savingProperty} onClick={handleSaveLinkedProperty}>Save address</Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <AddressAutocomplete value={unlinkedAddressDraft} onChange={setUnlinkedAddressDraft} onSelect={(p) => setUnlinkedAddressDraft(p.full_address)} label="Property address" placeholder="Type address or postcode…" />
+                        <Button type="button" variant="outline" size="sm" loading={savingUnlinkedAddress} onClick={handleSaveUnlinkedProperty}>Save address</Button>
+                      </div>
+                    )}
+                  </div>
+                  {/* links */}
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {job.quote_id && <Link href="/quotes" className="inline-flex items-center gap-1 text-primary hover:underline">Quote <ExternalLink className="h-3 w-3" /></Link>}
+                    {job.self_bill_id && <Link href="/finance/selfbill" className="inline-flex items-center gap-1 text-primary hover:underline">Self-bill <ExternalLink className="h-3 w-3" /></Link>}
+                    {job.invoice_id && <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-primary hover:underline">Invoice <ExternalLink className="h-3 w-3" /></Link>}
+                  </div>
                 </div>
-              </div>
-            </Section>
-
-            <Section title="Schedule">
-              <div className="grid grid-cols-2 gap-3 max-w-sm">
-                <div>
-                  <label className="block text-[10px] text-text-tertiary mb-1">Date</label>
-                  <Input
-                    type="date"
-                    value={scheduleDate}
-                    onChange={(e) => {
-                      setScheduleDate(e.target.value);
-                      handleScheduleChange(job, e.target.value, scheduleTime);
-                    }}
+                {/* single map */}
+                <div className="p-4 flex items-center justify-center bg-surface-hover/20">
+                  <LocationMiniMap
+                    address={job.property_address}
+                    className="h-[240px] w-full max-w-[520px] rounded-xl overflow-hidden"
+                    lazy
                   />
                 </div>
-                <div>
-                  <label className="block text-[10px] text-text-tertiary mb-1">Time</label>
-                  <Input
-                    type="time"
-                    value={scheduleTime}
-                    onChange={(e) => {
-                      setScheduleTime(e.target.value);
-                      handleScheduleChange(job, scheduleDate, e.target.value);
-                    }}
-                  />
-                </div>
               </div>
-            </Section>
+            </div>
 
-            <Section title="Reports">
-              <p className="text-xs text-text-tertiary mb-3">
-                Partner uploads reports after each work phase. Ops approves them before payment. You cannot record reports while the job is still <strong className="text-text-secondary">Scheduled</strong> — use{" "}
-                    <strong className="text-text-secondary">Start Job</strong> first.
+            {/* SCOPE */}
+            {job.scope && (
+              <div className="rounded-xl border border-border-light bg-card p-4">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Scope</p>
+                <p className="text-sm text-text-primary whitespace-pre-wrap">{job.scope}</p>
+              </div>
+            )}
+
+            {/* OPERATIONAL TASKLINE */}
+            <div className="rounded-xl border border-border-light bg-card p-4">
+              <button
+                type="button"
+                onClick={() => setTasklineOpen((v) => !v)}
+                className="w-full flex items-center justify-between mb-3"
+              >
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5" /> Operational taskline
+                </p>
+                <div className="flex items-center gap-2">
+                  <Progress value={job.progress} size="sm" color={job.progress === 100 ? "emerald" : "primary"} className="w-24" />
+                  <span className="text-[11px] font-semibold text-text-primary tabular-nums">{job.progress}%</span>
+                  <ChevronDown className={`h-4 w-4 text-text-tertiary transition-transform ${tasklineOpen ? "rotate-180" : ""}`} />
+                </div>
+              </button>
+              {tasklineOpen && (
+                <div className="space-y-2">
+                  {reportPhaseIndices(job.total_phases).map((n) => {
+                    const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
+                    const approved = job[`report_${n}_approved` as keyof Job] as boolean;
+                    const uploadedAt = job[`report_${n}_uploaded_at` as keyof Job] as string | undefined;
+                    const approvedAt = job[`report_${n}_approved_at` as keyof Job] as string | undefined;
+                    const phaseLabel = reportPhaseLabel(n, job.total_phases);
+                    const uploadCheck = canMarkReportUploaded(job, n);
+                    const isActive = !approved && !uploaded && uploadCheck.ok;
+                    return (
+                      <div key={n} className={`flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors ${approved ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/20" : isActive ? "border-primary/40 bg-primary/5" : "border-border-light bg-surface-hover/40"}`}>
+                        <div className={`h-5 w-5 rounded-md border-2 flex items-center justify-center shrink-0 ${approved ? "border-emerald-500 bg-emerald-500" : uploaded ? "border-amber-400 bg-amber-400" : "border-border"}`}>
+                          {approved && <CheckCircle2 className="h-3 w-3 text-white" />}
+                          {uploaded && !approved && <Upload className="h-3 w-3 text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-text-primary truncate">{phaseLabel}</p>
+                          {approvedAt && <p className="text-[11px] text-emerald-600">Approved {new Date(approvedAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}</p>}
+                          {uploadedAt && !approvedAt && <p className="text-[11px] text-amber-600">Uploaded {new Date(uploadedAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}</p>}
+                        </div>
+                        <Badge variant={approved ? "success" : uploaded ? "warning" : isActive ? "primary" : "default"} size="sm">
+                          {approved ? "Validated" : uploaded ? "Pending review" : isActive ? "Active" : "Waiting"}
+                        </Badge>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* PHASE REPORTS */}
+            <div className="rounded-xl border border-border-light bg-card p-4">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5" /> Phase reports
               </p>
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {reportPhaseIndices(job.total_phases).map((n) => {
                   const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
                   const approved = job[`report_${n}_approved` as keyof Job] as boolean;
@@ -983,66 +918,451 @@ export default function JobDetailPage() {
                   const uploadCheck = canMarkReportUploaded(job, n);
                   const approveCheck = canApproveReport(job, n);
                   return (
-                    <div
-                      key={n}
-                      className={`p-4 rounded-xl border ${approved ? "border-emerald-200 bg-emerald-50/50" : uploaded ? "border-amber-200 bg-amber-50/50" : "border-border bg-surface-hover"}`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
+                    <div key={n} className={`rounded-xl border p-4 space-y-2 ${approved ? "border-emerald-200 bg-emerald-50/30 dark:bg-emerald-950/20" : uploaded ? "border-amber-200 bg-amber-50/30 dark:bg-amber-950/10" : "border-border-light bg-surface-hover/40"}`}>
+                      <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          {approved ? <ShieldCheck className="h-4 w-4 text-emerald-600" /> : uploaded ? <Upload className="h-4 w-4 text-amber-600" /> : <FileText className="h-4 w-4 text-text-tertiary" />}
+                          {approved ? <ShieldCheck className="h-4 w-4 text-emerald-600" /> : uploaded ? <Upload className="h-4 w-4 text-amber-500" /> : <FileText className="h-4 w-4 text-text-tertiary" />}
                           <p className="text-sm font-semibold text-text-primary">{phaseLabel}</p>
                         </div>
                         <Badge variant={approved ? "success" : uploaded ? "warning" : "default"} size="sm">
-                          {approved ? "Approved" : uploaded ? "Pending Approval" : "Not uploaded"}
+                          {approved ? "Validated" : uploaded ? "Pending review" : "Not uploaded"}
                         </Badge>
                       </div>
-                      {uploadedAt && <p className="text-xs text-text-tertiary">Uploaded: {new Date(uploadedAt).toLocaleDateString()}</p>}
-                      {approvedAt && <p className="text-xs text-emerald-600">Approved: {new Date(approvedAt).toLocaleDateString()}</p>}
-                      <div className="flex flex-col gap-2 mt-3">
+                      {approvedAt && <p className="text-xs text-emerald-600">Approved {new Date(approvedAt).toLocaleDateString()}</p>}
+                      {uploadedAt && !approvedAt && <p className="text-xs text-amber-600">Uploaded {new Date(uploadedAt).toLocaleDateString()}</p>}
+                      <div className="space-y-2 pt-1">
                         {!uploaded && (
                           <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              icon={<Upload className="h-3.5 w-3.5" />}
-                              disabled={!uploadCheck.ok}
-                              title={uploadCheck.message}
-                              onClick={() => {
-                                if (!uploadCheck.ok) {
-                                  toast.error(uploadCheck.message ?? "Cannot upload yet");
-                                  return;
-                                }
-                                handleJobUpdate(job.id, { [`report_${n}_uploaded`]: true, [`report_${n}_uploaded_at`]: new Date().toISOString() } as Partial<Job>);
-                              }}
-                            >
-                              Mark as Uploaded
-                            </Button>
-                            {!uploadCheck.ok && uploadCheck.message && (
-                              <p className="text-[11px] text-amber-600 dark:text-amber-400">{uploadCheck.message}</p>
-                            )}
+                            <input
+                              id={`phase-report-file-${n}`}
+                              type="file"
+                              accept=".pdf,.doc,.docx,image/jpeg,image/jpg,image/png,image/webp,image/gif"
+                              className="sr-only"
+                              onChange={(e) => setPhaseReportFiles((prev) => ({ ...prev, [n]: e.target.files?.[0] ?? null }))}
+                            />
+                            <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/40 p-3">
+                              <div className="flex items-center gap-2">
+                                <label
+                                  htmlFor={`phase-report-file-${n}`}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30 hover:bg-surface-hover transition-colors"
+                                >
+                                  <Upload className="h-3.5 w-3.5" />
+                                  {phaseReportFiles[n] ? "Change file" : "Choose file"}
+                                </label>
+                                {phaseReportFiles[n] && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setPhaseReportFiles((prev) => ({ ...prev, [n]: null }))}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+                                  >
+                                    <X className="h-3 w-3" /> Remove
+                                  </button>
+                                )}
+                              </div>
+                              <p className="mt-2 text-xs text-text-tertiary truncate">
+                                {phaseReportFiles[n]?.name ?? "No file selected"}
+                              </p>
+                            </div>
+                            <div className="flex gap-2 flex-wrap">
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                icon={<Upload className="h-3.5 w-3.5" />}
+                                disabled={!uploadCheck.ok || !phaseReportFiles[n]}
+                                loading={analyzingPhase === n}
+                                title={uploadCheck.message}
+                                onClick={() => {
+                                  if (!uploadCheck.ok) {
+                                    toast.error(uploadCheck.message ?? "Cannot upload yet");
+                                    return;
+                                  }
+                                  void handlePhaseReportUploadAnalyze(n);
+                                }}
+                              >
+                                Upload & analyze
+                              </Button>
+                            </div>
                           </>
                         )}
                         {uploaded && !approved && (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="primary"
-                              icon={<ShieldCheck className="h-3.5 w-3.5" />}
-                              disabled={!approveCheck.ok}
-                              title={approveCheck.message}
-                              onClick={() => {
-                                if (!approveCheck.ok) {
-                                  toast.error(approveCheck.message ?? "Cannot approve yet");
-                                  return;
-                                }
-                                handleJobUpdate(job.id, { [`report_${n}_approved`]: true, [`report_${n}_approved_at`]: new Date().toISOString() } as Partial<Job>);
-                              }}
-                            >
-                              Approve Report
-                            </Button>
-                            {!approveCheck.ok && approveCheck.message && (
-                              <p className="text-[11px] text-amber-600 dark:text-amber-400">{approveCheck.message}</p>
+                          <Button size="sm" variant="primary" icon={<ShieldCheck className="h-3.5 w-3.5" />} disabled={!approveCheck.ok} title={approveCheck.message}
+                            onClick={() => { if (!approveCheck.ok) { toast.error(approveCheck.message ?? "Cannot approve yet"); return; } handleJobUpdate(job.id, { [`report_${n}_approved`]: true, [`report_${n}_approved_at`]: new Date().toISOString() } as Partial<Job>); }}>
+                            Validate now
+                          </Button>
+                        )}
+                      </div>
+                      {!uploadCheck.ok && !uploaded && uploadCheck.message && <p className="text-[11px] text-amber-600 dark:text-amber-400">{uploadCheck.message}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+              {allConfiguredReportsApproved(job) && (
+                <div className="mt-3 p-3 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center gap-3">
+                  <p className="flex-1 text-sm font-medium text-text-primary">All reports validated — ready to send report & request final payment.</p>
+                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} disabled={!sendReportFinalCheck.ok} title={sendReportFinalCheck.message}
+                    onClick={() => { if (!sendReportFinalCheck.ok) { toast.error(sendReportFinalCheck.message ?? "Cannot proceed"); return; } handleJobUpdate(job.id, { report_submitted: true, report_submitted_at: new Date().toISOString() } as Partial<Job>); handleStatusChange(job, "awaiting_payment"); }}>
+                    Send Report & Invoice
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* MANUAL REPORT + AI ANALYSIS */}
+            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5" /> Manual report analysis (AI)
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Report file</label>
+                <input
+                  id="manual-report-file"
+                  type="file"
+                  accept=".pdf,.doc,.docx,image/jpeg,image/jpg,image/png,image/webp,image/gif"
+                  className="sr-only"
+                  onChange={(e) => setManualReportFile(e.target.files?.[0] ?? null)}
+                />
+                <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/40 p-3">
+                  <div className="flex items-center gap-2">
+                    <label
+                      htmlFor="manual-report-file"
+                      className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30 hover:bg-surface-hover transition-colors"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      {manualReportFile ? "Change file" : "Choose file"}
+                    </label>
+                    {manualReportFile && (
+                      <button
+                        type="button"
+                        onClick={() => setManualReportFile(null)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+                      >
+                        <X className="h-3 w-3" /> Remove
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-text-tertiary truncate">{manualReportFile?.name ?? "No file selected"}</p>
+                </div>
+                <p className="text-[11px] text-text-tertiary mt-1">Supported: PDF, DOC, DOCX or images (max 10MB).</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Ops notes (recommended)</label>
+                <textarea
+                  value={manualReportNotes}
+                  onChange={(e) => setManualReportNotes(e.target.value)}
+                  rows={3}
+                  placeholder="Add context, what was done, issues found, materials used, safety notes..."
+                  className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  loading={analyzingManualReport}
+                  disabled={!manualReportFile}
+                  icon={<Upload className="h-3.5 w-3.5" />}
+                  onClick={() => void handleManualReportAnalyze()}
+                >
+                  Upload & Analyze
+                </Button>
+                {manualReportFile && <span className="text-xs text-text-tertiary truncate">{manualReportFile.name}</span>}
+              </div>
+              {manualReportResult && (
+                <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
+                  <p className="text-xs font-semibold text-text-secondary mb-1">AI response</p>
+                  <pre className="text-xs whitespace-pre-wrap text-text-primary">{manualReportResult}</pre>
+                </div>
+              )}
+            </div>
+
+            {/* FINANCIAL SETUP (admin edit) */}
+            <details className="group rounded-xl border border-border-light bg-card overflow-hidden">
+              <summary className="flex items-center justify-between p-4 cursor-pointer select-none">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Financial setup</p>
+                <ChevronDown className="h-4 w-4 text-text-tertiary transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="px-4 pb-4 space-y-3 border-t border-border-light pt-4">
+                {customerScheduleMismatch && (
+                  <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 flex gap-2 text-xs text-amber-900 dark:text-amber-100">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    Deposit + final ({formatCurrency(scheduledCustomerTotal)}) ≠ billable total ({formatCurrency(billableRevenue)}). Align below.
+                  </div>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price</label><Input type="number" min={0} step="0.01" value={finForm.client_price} onChange={(e) => {
+                    const price = parseFloat(e.target.value) || 0;
+                    const extras = parseFloat(finForm.extras_amount) || 0;
+                    const dep = parseFloat(finForm.customer_deposit) || 0;
+                    const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                    setFinForm((f) => ({ ...f, client_price: e.target.value, customer_final_payment: autoFinal }));
+                  }} /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Extras (add-ons)</label><Input type="number" min={0} step="0.01" value={finForm.extras_amount} onChange={(e) => {
+                    const price = parseFloat(finForm.client_price) || 0;
+                    const extras = parseFloat(e.target.value) || 0;
+                    const dep = parseFloat(finForm.customer_deposit) || 0;
+                    const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                    setFinForm((f) => ({ ...f, extras_amount: e.target.value, customer_final_payment: autoFinal }));
+                  }} /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost</label><Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials cost</label><Input type="number" min={0} step="0.01" value={finForm.materials_cost} onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))} /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner pay cap</label><Input type="number" min={0} step="0.01" value={finForm.partner_agreed_value} onChange={(e) => setFinForm((f) => ({ ...f, partner_agreed_value: e.target.value }))} /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Customer deposit</label><Input type="number" min={0} step="0.01" value={finForm.customer_deposit} onChange={(e) => {
+                    const price = parseFloat(finForm.client_price) || 0;
+                    const extras = parseFloat(finForm.extras_amount) || 0;
+                    const dep = parseFloat(e.target.value) || 0;
+                    const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                    setFinForm((f) => ({ ...f, customer_deposit: e.target.value, customer_final_payment: autoFinal }));
+                  }} /></div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Customer final</label>
+                    <Input type="number" min={0} step="0.01" value={finForm.customer_final_payment} onChange={(e) => setFinForm((f) => ({ ...f, customer_final_payment: e.target.value }))} />
+                    <p className="text-[10px] text-text-tertiary mt-1">Auto-calculated from price − deposit. Edit manually if needed.</p>
+                  </div>
+                </div>
+                <Button type="button" size="sm" variant="primary" loading={savingFin} onClick={handleSaveFinancials}>Save pricing</Button>
+              </div>
+            </details>
+
+          </div>
+
+          {/* ═══ RIGHT — partner + financial + history ═══ */}
+          <div className="space-y-5">
+
+            {/* PRIMARY PARTNER */}
+            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Primary partner</p>
+                <Button size="sm" variant="outline" onClick={() => setPartnerModalOpen(true)}>
+                  {job.partner_id ? "Swap partner" : "Assign"}
+                </Button>
+              </div>
+              {job.partner_name ? (
+                <div className="flex items-center gap-3">
+                  <Avatar name={job.partner_name} size="lg" />
+                  <div>
+                    <p className="text-sm font-bold text-text-primary">{job.partner_name}</p>
+                    <p className="text-xs text-text-tertiary">{job.partner_id ? `ID: ${job.partner_id.slice(0, 8)}…` : "No partner ID"}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 py-2">
+                  <div className="h-10 w-10 rounded-full bg-surface-hover border border-border-light flex items-center justify-center">
+                    <Building2 className="h-5 w-5 text-text-tertiary" />
+                  </div>
+                  <p className="text-sm text-text-tertiary italic">Unassigned</p>
+                </div>
+              )}
+              {/* job owner */}
+              <div className="pt-2 border-t border-border-light">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Job owner</p>
+                {isAdmin ? (
+                  <JobOwnerSelect value={job.owner_id} fallbackName={job.owner_name} users={assignableUsers} disabled={savingOwner}
+                    onChange={async (ownerId) => { const owner = assignableUsers.find((u) => u.id === ownerId); setSavingOwner(true); try { await handleJobUpdate(job.id, { owner_id: ownerId, owner_name: owner?.full_name }); } finally { setSavingOwner(false); } }}
+                  />
+                ) : job.owner_name ? (
+                  <div className="flex items-center gap-2"><Avatar name={job.owner_name} size="sm" /><p className="text-sm font-medium text-text-primary">{job.owner_name}</p></div>
+                ) : (
+                  <p className="text-sm text-text-tertiary italic">No owner</p>
+                )}
+              </div>
+            </div>
+
+            {/* FINANCIAL COMPLETION */}
+            <div className="rounded-xl border border-border-light bg-card p-4 space-y-4">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
+                <CreditCard className="h-3.5 w-3.5" /> Financial completion
+              </p>
+
+              {/* CLIENT cash in */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client (cash in)</p>
+                  <div className="text-right">
+                    <p className="text-[10px] text-text-tertiary">Total job value</p>
+                    <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(billableRevenue)}</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {(job.customer_deposit ?? 0) > 0 && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-text-primary">Upfront deposit</span>
+                        <Badge variant={job.customer_deposit_paid ? "success" : "warning"} size="sm">{job.customer_deposit_paid ? "Paid" : "Pending"}</Badge>
+                      </div>
+                      <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_deposit ?? 0)}</span>
+                    </div>
+                  )}
+                  {(job.customer_final_payment ?? 0) > 0 && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-text-primary">Final balance</span>
+                        <Badge variant={job.customer_final_paid ? "success" : "default"} size="sm">{job.customer_final_paid ? "Paid" : "Pending"}</Badge>
+                      </div>
+                      <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_final_payment ?? 0)}</span>
+                    </div>
+                  )}
+                  {/* Payment history */}
+                  {customerPayments.length > 0 && (
+                    <div className="mt-1 space-y-1">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
+                      {customerPayments.map((p) => (
+                        <div key={p.id} className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] font-semibold text-text-tertiary uppercase">
+                                {p.type === "customer_deposit" ? "Deposit" : "Final"}
+                              </span>
+                              {p.payment_method && (
+                                <span className="text-[10px] text-text-tertiary">· {p.payment_method === "bank_transfer" ? "Bank" : "Stripe"}</span>
+                              )}
+                              <span className="text-[10px] text-text-tertiary">
+                                · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                              </span>
+                            </div>
+                            {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
+                            {p.note && <p className="text-[10px] text-text-tertiary truncate">{p.note}</p>}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-sm font-semibold tabular-nums text-emerald-600">+{formatCurrency(Number(p.amount))}</span>
+                            {isAdmin && (
+                              <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
+                                <X className="h-3 w-3" />
+                              </button>
                             )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-1.5 border-t border-border-light">
+                    <span className={`text-xs font-semibold ${amountDue > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                      {amountDue > 0 ? "Amount due" : "Fully collected"}
+                    </span>
+                    <span className={`text-sm font-bold tabular-nums ${amountDue > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                      {amountDue > 0 ? formatCurrency(amountDue) : formatCurrency(billableRevenue)}
+                    </span>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3 w-full"
+                  disabled={maxCustomerDepositPay <= 0 && maxCustomerFinalPay <= 0}
+                  icon={<Plus className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    const type = maxCustomerDepositPay > 0 ? "customer_deposit" : "customer_final";
+                    setAddPaymentType(type);
+                    setAddPaymentOpen(true);
+                  }}
+                >
+                  Register customer payment
+                </Button>
+              </div>
+
+              {/* PARTNER cash out */}
+              <div className="pt-3 border-t border-border-light">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner (cash out)</p>
+                  <div className="text-right">
+                    <p className="text-[10px] text-text-tertiary">Total to pay</p>
+                    <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(partnerCap)}</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-text-primary">Partner cost</span>
+                      <Badge variant={partnerPaidTotal >= partnerCap && partnerCap > 0 ? "success" : partnerPaidTotal > 0 ? "warning" : "default"} size="sm">
+                        {partnerPaidTotal >= partnerCap && partnerCap > 0 ? "Paid" : partnerPaidTotal > 0 ? "Partial" : "Pending"}
+                      </Badge>
+                    </div>
+                    <span className="text-sm font-semibold tabular-nums">{formatCurrency(partnerCap)}</span>
+                  </div>
+                  {/* Partner payment history */}
+                  {partnerPayments.length > 0 && (
+                    <div className="mt-1 space-y-1">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
+                      {partnerPayments.map((p) => (
+                        <div key={p.id} className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {p.payment_method && (
+                                <span className="text-[10px] text-text-tertiary">{p.payment_method === "bank_transfer" ? "Bank" : "Stripe"}</span>
+                              )}
+                              <span className="text-[10px] text-text-tertiary">
+                                · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                              </span>
+                            </div>
+                            {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
+                            {p.note && <p className="text-[10px] text-text-tertiary truncate">{p.note}</p>}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-sm font-semibold tabular-nums text-emerald-600">+{formatCurrency(Number(p.amount))}</span>
+                            {isAdmin && (
+                              <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {partnerCap > 0 && (
+                    <div className="flex items-center justify-between pt-1.5 border-t border-border-light">
+                      <span className={`text-xs font-semibold ${partnerPayRemaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                        {partnerPayRemaining > 0 ? "Amount due" : "Fully paid out"}
+                      </span>
+                      <span className={`text-sm font-bold tabular-nums ${partnerPayRemaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                        {partnerPayRemaining > 0 ? formatCurrency(partnerPayRemaining) : formatCurrency(partnerCap)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <Button size="sm" variant="outline" className="mt-3 w-full" disabled={partnerPayRemaining <= 0} icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setAddPaymentType("partner"); setAddPaymentOpen(true); }}>
+                  Register partner payment
+                </Button>
+              </div>
+
+              {/* Net margin */}
+              <div className="pt-3 border-t border-border-light flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Net margin</p>
+                  <p className="text-lg font-bold text-text-primary tabular-nums">{formatCurrency(profit)}</p>
+                </div>
+                <p className={`text-xl font-bold tabular-nums ${marginPct >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{marginPct}%</p>
+              </div>
+
+              {/* Fully paid */}
+              {job.customer_final_paid && (
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <p className="text-sm font-medium text-emerald-700">Job fully paid</p>
+                </div>
+              )}
+            </div>
+
+            {/* INVOICES & STRIPE */}
+            {jobInvoices.length > 0 && (
+              <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invoices</p>
+                  <Link href="/finance/invoices" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1">All <ExternalLink className="h-3 w-3" /></Link>
+                </div>
+                {loadingInvoices ? <p className="text-xs text-text-tertiary">Loading…</p> : jobInvoices.map((inv) => {
+                  const stripePaid = inv.stripe_payment_status === "paid";
+                  return (
+                    <div key={inv.id} className="rounded-lg border border-border-light p-3 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-text-primary">{inv.reference}</p>
+                        <Badge variant={inv.status === "paid" ? "success" : "warning"} size="sm">{inv.status}</Badge>
+                      </div>
+                      <p className="text-sm font-bold tabular-nums">{formatCurrency(inv.amount)}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Badge variant={stripePaid ? "success" : "default"} size="sm">Stripe: {inv.stripe_payment_status ?? "none"}</Badge>
+                        {inv.stripe_payment_link_url && (
+                          <>
+                            <Button size="sm" variant="outline" icon={<CreditCard className="h-3 w-3" />} onClick={() => window.open(inv.stripe_payment_link_url!, "_blank", "noopener,noreferrer")}>Pay link</Button>
+                            <Button size="sm" variant="secondary" loading={syncingInvoiceId === inv.id} icon={<RefreshCw className="h-3 w-3" />} onClick={() => void handleStripeInvoiceSync(inv)}>Sync</Button>
                           </>
                         )}
                       </div>
@@ -1050,245 +1370,191 @@ export default function JobDetailPage() {
                   );
                 })}
               </div>
-              {allConfiguredReportsApproved(job) && (
-                <div className="p-4 rounded-xl bg-primary/5 border border-primary/10 mt-3">
-                  <p className="text-sm font-semibold text-text-primary">All reports approved</p>
-                  <p className="text-xs text-text-tertiary mt-0.5">Send to customer and request final payment.</p>
-                  {!sendReportFinalCheck.ok && (
-                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 flex items-start gap-1.5">
-                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                      {sendReportFinalCheck.message}
-                    </p>
-                  )}
-                  <Button
-                    size="sm"
-                    className="mt-3"
-                    icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-                    disabled={!sendReportFinalCheck.ok}
-                    title={sendReportFinalCheck.message}
-                    onClick={() => {
-                      if (!sendReportFinalCheck.ok) {
-                        toast.error(sendReportFinalCheck.message ?? "Cannot proceed");
-                        return;
-                      }
-                      handleJobUpdate(job.id, { report_submitted: true, report_submitted_at: new Date().toISOString() } as Partial<Job>);
-                      handleStatusChange(job, "awaiting_payment");
-                    }}
-                  >
-                    Send Report & Request Final Payment
-                  </Button>
-                </div>
-              )}
-            </Section>
-          </div>
-
-          {/* Right column: finance, timeline, history */}
-          <div className="space-y-8">
-            <Section title="Partner payments">
-              <JobPaymentBlock
-                totalDue={partnerCap}
-                capHint={`You can register up to ${formatCurrency(partnerPayRemaining)} more; total partner lines cannot exceed ${formatCurrency(partnerCap)} (partner pay cap).`}
-                payments={partnerPayments}
-                loading={loadingPayments}
-                onAddPayment={() => { setAddPaymentType("partner"); setAddPaymentOpen(true); }}
-              />
-            </Section>
-
-            <Section title="Customer payments">
-              {customerScheduleMismatch && (
-                <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 flex gap-2 text-sm text-amber-900 dark:text-amber-100">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-semibold">Scheduled total ≠ billable total</p>
-                    <p className="text-xs mt-1 opacity-90">
-                      Deposit + final = {formatCurrency(scheduledCustomerTotal)} but client price + extras = {formatCurrency(billableRevenue)}.
-                      Align the amounts in <strong className="font-medium">Pricing & customer schedule</strong> so payments match the quote.
-                    </p>
-                  </div>
-                </div>
-              )}
-              <JobPaymentBlock
-                totalDue={scheduledCustomerTotal}
-                capHint={`Per line: up to ${formatCurrency(maxCustomerDepositPay)} on deposit type, ${formatCurrency(maxCustomerFinalPay)} on final type (against scheduled amounts).`}
-                payments={customerPayments}
-                loading={loadingPayments}
-                onAddPayment={() => { setAddPaymentType("customer_deposit"); setAddPaymentOpen(true); }}
-              />
-              <p className="text-[11px] text-text-tertiary mt-3">
-                <strong className="text-text-secondary">Stripe:</strong> when the customer pays via a linked invoice, the webhook (or <strong className="text-text-secondary">Sync Stripe</strong> below) updates this job — deposit/final flags and a matching line in the list above.
-              </p>
-            </Section>
-
-            <Section title="Invoices & Stripe">
-              <p className="text-xs text-text-tertiary mb-3">
-                Invoices with job reference <span className="font-mono text-text-secondary">{job.reference}</span> and the primary invoice on this job. Generate payment links in{" "}
-                <Link href="/finance/invoices" className="text-primary font-medium hover:underline inline-flex items-center gap-0.5">
-                  Finance → Invoices <ExternalLink className="h-3 w-3" />
-                </Link>
-                .
-              </p>
-              {loadingInvoices ? (
-                <div className="text-sm text-text-tertiary py-4">Loading invoices…</div>
-              ) : jobInvoices.length === 0 ? (
-                <div className="rounded-xl border border-border-light bg-surface-hover p-4 text-sm text-text-tertiary">
-                  No invoices linked yet. Use job reference <span className="font-mono">{job.reference}</span> when creating an invoice, or accept a quote with deposit to create one automatically.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {jobInvoices.map((inv) => {
-                    const stripePaid = inv.stripe_payment_status === "paid";
-                    const isPrimary = job.invoice_id === inv.id;
-                    return (
-                      <div
-                        key={inv.id}
-                        className="rounded-xl border border-border-light bg-surface-hover/50 p-4 space-y-2"
-                      >
-                        <div className="flex items-start justify-between gap-2 flex-wrap">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm font-semibold text-text-primary">{inv.reference}</p>
-                              {isPrimary && (
-                                <Badge variant="info" size="sm">Primary on job</Badge>
-                              )}
-                              <Badge variant={inv.status === "paid" ? "success" : "warning"} size="sm">
-                                {inv.status}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-text-tertiary mt-0.5">{inv.client_name}</p>
-                            <p className="text-sm font-bold text-text-primary mt-1">{formatCurrency(inv.amount)}</p>
-                          </div>
-                          {inv.stripe_payment_link_url && (
-                            <div className="flex flex-wrap gap-1.5 shrink-0">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                icon={<CreditCard className="h-3.5 w-3.5" />}
-                                onClick={() => window.open(inv.stripe_payment_link_url!, "_blank", "noopener,noreferrer")}
-                              >
-                                Pay link
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                loading={syncingInvoiceId === inv.id}
-                                icon={<RefreshCw className="h-3.5 w-3.5" />}
-                                onClick={() => void handleStripeInvoiceSync(inv)}
-                              >
-                                Sync Stripe
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
-                          <span>Stripe:</span>
-                          <Badge variant={stripePaid ? "success" : inv.stripe_payment_status === "failed" ? "danger" : "default"} size="sm">
-                            {inv.stripe_payment_status ?? "none"}
-                          </Badge>
-                          {!inv.stripe_payment_link_url && inv.status !== "paid" && (
-                            <span className="text-amber-600 dark:text-amber-400">No link — create in Invoices drawer</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </Section>
-
-            {job.customer_final_paid && (
-              <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <p className="text-sm font-medium text-emerald-700">Job fully paid</p>
-                </div>
-              </div>
             )}
 
-            <Section title="Timeline">
-              <p className="text-[11px] text-text-tertiary mb-3">Milestones from dates stored on the job (phase transitions are tracked in History).</p>
-              <div className="space-y-2">
-                <TimelineItem label="Created" date={job.created_at} active />
-                {(job.scheduled_start_at || job.scheduled_date) && (
-                  <TimelineItem
-                    label="Scheduled"
-                    date={job.scheduled_start_at ?? `${job.scheduled_date}T12:00:00`}
-                    active
-                  />
-                )}
-                {job.report_submitted && (
-                  <TimelineItem label="Report sent to customer" date={job.report_submitted_at ?? job.updated_at} active />
-                )}
-                {job.status === "completed" && (
-                  <TimelineItem label="Completed" date={job.completed_date ?? job.updated_at} active />
-                )}
-              </div>
-            </Section>
-
-            <Section title="History">
+            {/* COMMAND HISTORY */}
+            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Command history</p>
               <AuditTimeline entityType="job" entityId={job.id} deferUntilVisible />
-            </Section>
+            </div>
+
           </div>
         </div>
       </div>
 
-      <Modal open={addPaymentOpen} onClose={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); }} title="Register payment">
-        <div className="space-y-4 p-4">
-          {(addPaymentType === "customer_deposit" || addPaymentType === "customer_final") && (
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
-              <Select
-                value={addPaymentType}
-                onChange={(e) => setAddPaymentType(e.target.value as JobPaymentType)}
-                options={[
-                  { value: "customer_deposit", label: "Deposit" },
-                  { value: "customer_final", label: "Final payment" },
-                ]}
-              />
+      {/* DELETE PAYMENT CONFIRMATION MODAL */}
+      <Modal
+        open={!!deletePaymentTarget}
+        onClose={() => setDeletePaymentTarget(null)}
+        title="Remove payment"
+      >
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-text-secondary">
+            Are you sure you want to remove this payment record?
+          </p>
+          {deletePaymentTarget && (
+            <div className="rounded-xl border border-border-light bg-surface-hover/40 px-4 py-3 space-y-1">
+              <p className="text-xs text-text-tertiary capitalize">
+                {deletePaymentTarget.type === "customer_deposit" ? "Customer deposit" : deletePaymentTarget.type === "customer_final" ? "Customer final" : "Partner payment"}
+              </p>
+              <p className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(deletePaymentTarget.amount)}</p>
             </div>
           )}
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
-            <Input
-              type="number"
-              min={0}
-              max={paymentAmountMax > 0 ? paymentAmountMax : undefined}
-              step="0.01"
-              placeholder="0.00"
-              value={addPaymentAmount}
-              onChange={(e) => setAddPaymentAmount(e.target.value)}
-            />
-            <p className="text-[11px] text-text-tertiary mt-1.5">
-              Maximum for this payment type: <strong className="text-text-secondary">{formatCurrency(paymentAmountMax)}</strong>
-              {paymentAmountMax <= 0 && (
-                <span className="block text-amber-600 dark:text-amber-400 mt-1">Nothing left to register for this type under current schedules.</span>
-              )}
-            </p>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Date</label>
-            <Input type="date" value={addPaymentDate} onChange={(e) => setAddPaymentDate(e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Note (optional)</label>
-            <input
-              type="text"
-              placeholder="e.g. Bank transfer ref"
-              value={addPaymentNote}
-              onChange={(e) => setAddPaymentNote(e.target.value)}
-              className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
-            />
-          </div>
-          <div className="flex gap-2 justify-end pt-2">
-            <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); }}>Cancel</Button>
-            <Button
-              size="sm"
-              loading={addingPayment}
-              disabled={!addPaymentAmount || Number(addPaymentAmount) <= 0 || paymentAmountMax <= 0}
-              onClick={handleAddPayment}
-            >
-              Register
+          <p className="text-xs text-text-tertiary">This will update the Amount due immediately.</p>
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="ghost" size="sm" onClick={() => setDeletePaymentTarget(null)}>Cancel</Button>
+            <Button variant="danger" size="sm" loading={deletingPayment} onClick={() => void confirmDeletePayment()}>
+              Remove payment
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={addPaymentOpen}
+        onClose={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); setAddPaymentBankRef(""); setAddPaymentMethod("bank_transfer"); }}
+        title="Register payment"
+      >
+        <div className="space-y-4 p-4">
+
+          {/* METHOD SELECTOR */}
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-2">Payment method</label>
+            <div className="grid grid-cols-2 gap-2">
+              {(["stripe", "bank_transfer"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setAddPaymentMethod(m)}
+                  className={cn(
+                    "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium transition-all",
+                    addPaymentMethod === m
+                      ? "border-primary bg-primary/8 text-primary shadow-sm"
+                      : "border-border-light bg-card text-text-secondary hover:border-border hover:bg-surface-hover/60",
+                  )}
+                >
+                  {m === "stripe"
+                    ? <><CreditCard className="h-4 w-4" /><span>Stripe</span><span className="text-[10px] font-normal opacity-70">Automatic</span></>
+                    : <><Building2 className="h-4 w-4" /><span>Bank transfer</span><span className="text-[10px] font-normal opacity-70">Manual</span></>
+                  }
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* STRIPE MODE */}
+          {addPaymentMethod === "stripe" && (
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+              <p className="text-xs text-text-secondary leading-relaxed">
+                Stripe payments are tracked <strong>automatically via webhook</strong>. Share the payment link with the client — when they pay, the system updates instantly.
+              </p>
+              {jobInvoices.filter((inv) => inv.stripe_payment_link_url).length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Payment links</p>
+                  {jobInvoices.filter((inv) => inv.stripe_payment_link_url).map((inv) => (
+                    <div key={inv.id} className="flex items-center justify-between gap-2 rounded-lg border border-border-light bg-card px-3 py-2">
+                      <div>
+                        <p className="text-xs font-semibold text-text-primary">{inv.reference}</p>
+                        <p className="text-[11px] text-text-tertiary">{formatCurrency(inv.amount)}</p>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          icon={<Copy className="h-3 w-3" />}
+                          onClick={() => { void navigator.clipboard.writeText(inv.stripe_payment_link_url!); toast.success("Link copied"); }}
+                        >Copy</Button>
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          icon={<ExternalLink className="h-3 w-3" />}
+                          onClick={() => window.open(inv.stripe_payment_link_url!, "_blank", "noopener,noreferrer")}
+                        >Open</Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-amber-600 dark:text-amber-400">No Stripe payment links on this job yet. Create an invoice with a Stripe link first.</p>
+              )}
+              <div className="flex justify-end pt-1">
+                <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); }}>Close</Button>
+              </div>
+            </div>
+          )}
+
+          {/* BANK TRANSFER MODE */}
+          {addPaymentMethod === "bank_transfer" && (
+            <>
+              {(addPaymentType === "customer_deposit" || addPaymentType === "customer_final") && (
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
+                  <Select
+                    value={addPaymentType}
+                    onChange={(e) => setAddPaymentType(e.target.value as JobPaymentType)}
+                    options={[
+                      { value: "customer_deposit", label: "Deposit" },
+                      { value: "customer_final", label: "Final payment" },
+                    ]}
+                  />
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={paymentAmountMax > 0 ? paymentAmountMax : undefined}
+                  step="0.01"
+                  placeholder="0.00"
+                  value={addPaymentAmount}
+                  onChange={(e) => setAddPaymentAmount(e.target.value)}
+                />
+                <p className="text-[11px] text-text-tertiary mt-1.5">
+                  Remaining: <strong className="text-text-secondary">{formatCurrency(paymentAmountMax)}</strong>
+                  {paymentAmountMax <= 0 && (
+                    <span className="block text-amber-600 dark:text-amber-400 mt-1">Nothing left to register for this type.</span>
+                  )}
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Date received</label>
+                <Input type="date" value={addPaymentDate} onChange={(e) => setAddPaymentDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Bank reference / transaction ID</label>
+                <input
+                  type="text"
+                  placeholder="e.g. TRF-20260326-001"
+                  value={addPaymentBankRef}
+                  onChange={(e) => setAddPaymentBankRef(e.target.value)}
+                  className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Note (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Paid by John via Barclays"
+                  value={addPaymentNote}
+                  onChange={(e) => setAddPaymentNote(e.target.value)}
+                  className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                />
+              </div>
+              <div className="flex gap-2 justify-end pt-2">
+                <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); setAddPaymentBankRef(""); }}>Cancel</Button>
+                <Button
+                  size="sm"
+                  loading={addingPayment}
+                  disabled={!addPaymentAmount || Number(addPaymentAmount) <= 0 || paymentAmountMax <= 0}
+                  onClick={handleAddPayment}
+                >
+                  Register payment
+                </Button>
+              </div>
+            </>
+          )}
+
         </div>
       </Modal>
 
@@ -1296,6 +1562,7 @@ export default function JobDetailPage() {
         open={partnerModalOpen}
         onClose={() => { setPartnerModalOpen(false); setPartnerPickerOpen(false); }}
         title={job.partner_id ? "Change partner" : "Assign partner"}
+        scrollBody={false}
       >
         <div className="p-4 space-y-4">
           <p className="text-xs text-text-tertiary">
@@ -1307,7 +1574,7 @@ export default function JobDetailPage() {
               type="button"
               disabled={loadingPartners}
               onClick={() => setPartnerPickerOpen((o) => !o)}
-              className="w-full flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-left text-sm shadow-sm transition-all duration-200 hover:border-primary/25 hover:bg-surface-hover/80 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/35"
+              className={`w-full flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-left text-sm shadow-sm transition-all duration-200 hover:border-primary/25 hover:bg-surface-hover/80 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/35 ${partnerPickerOpen ? "ring-2 ring-primary/15 border-primary/30" : ""}`}
             >
               {selectedPartnerId ? (
                 <>
@@ -1327,34 +1594,34 @@ export default function JobDetailPage() {
             </button>
             {partnerPickerOpen && (
               <div className="absolute z-50 mt-1.5 w-full max-h-72 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-xl ring-1 ring-black/5 dark:ring-white/10">
-                <button
-                  type="button"
-                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${!selectedPartnerId ? "bg-primary/8" : ""}`}
-                  onClick={() => { setSelectedPartnerId(""); setPartnerPickerOpen(false); }}
-                >
-                  <span className="flex-1 text-text-secondary font-medium">No partner</span>
-                  {!selectedPartnerId && <Check className="h-4 w-4 text-primary" />}
-                </button>
-                <div className="mx-2 h-px bg-border-light" />
-                {partners.map((p) => {
-                  const name = p.company_name?.trim() || p.contact_name || "Partner";
-                  const isSel = selectedPartnerId === p.id;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${isSel ? "bg-primary/8" : ""}`}
-                      onClick={() => { setSelectedPartnerId(p.id); setPartnerPickerOpen(false); }}
-                    >
-                      <Avatar name={name} size="sm" className="shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-text-primary truncate">{name}</p>
-                        {p.trade ? <p className="text-[11px] text-text-tertiary truncate">{p.trade}</p> : null}
-                      </div>
-                      {isSel && <Check className="h-4 w-4 text-primary" />}
-                    </button>
-                  );
-                })}
+              <button
+                type="button"
+                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${!selectedPartnerId ? "bg-primary/8" : ""}`}
+                onClick={() => { setSelectedPartnerId(""); setPartnerPickerOpen(false); }}
+              >
+                <span className="flex-1 text-text-secondary font-medium">No partner</span>
+                {!selectedPartnerId && <Check className="h-4 w-4 text-primary" />}
+              </button>
+              <div className="mx-2 h-px bg-border-light" />
+              {partners.map((p) => {
+                const name = p.company_name?.trim() || p.contact_name || "Partner";
+                const isSel = selectedPartnerId === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${isSel ? "bg-primary/8" : ""}`}
+                    onClick={() => { setSelectedPartnerId(p.id); setPartnerPickerOpen(false); }}
+                  >
+                    <Avatar name={name} size="sm" className="shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-text-primary truncate">{name}</p>
+                      {p.trade ? <p className="text-[11px] text-text-tertiary truncate">{p.trade}</p> : null}
+                    </div>
+                    {isSel && <Check className="h-4 w-4 text-primary" />}
+                  </button>
+                );
+              })}
               </div>
             )}
           </div>

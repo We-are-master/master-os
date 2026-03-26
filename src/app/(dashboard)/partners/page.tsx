@@ -61,9 +61,16 @@ const tradeColors: Record<string, string> = {
   Plumbing: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 ring-teal-200/50",
   Painting: "bg-amber-50 dark:bg-amber-950/30 text-amber-700 ring-amber-200/50",
   Carpentry: "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 ring-emerald-200/50",
+  Handyman: "bg-orange-50 dark:bg-orange-950/30 text-orange-700 ring-orange-200/50",
+  Cleaning: "bg-cyan-50 dark:bg-cyan-950/30 text-cyan-700 ring-cyan-200/50",
+  Builder: "bg-stone-50 dark:bg-stone-950/30 text-stone-700 ring-stone-200/50",
+  Painter: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 ring-yellow-200/50",
 };
 
-const TRADES = ["HVAC", "Electrical", "Plumbing", "Painting", "Carpentry"];
+const TRADES = [
+  "HVAC", "Electrical", "Plumbing", "Painting", "Carpentry",
+  "Handyman", "Cleaning", "Builder", "Painter",
+];
 
 interface PartnerJobRow {
   id: string;
@@ -106,7 +113,7 @@ const jobStatusConfig: Record<string, { label: string; variant: "default" | "pri
 
 const emptyForm = {
   company_name: "", contact_name: "", email: "", phone: "",
-  trade: "HVAC", location: "", status: "active" as PartnerStatus,
+  trades: ["HVAC"] as string[], location: "", status: "active" as PartnerStatus,
 };
 
 type ViewMode = "directory" | "team";
@@ -164,12 +171,14 @@ export default function PartnersPage() {
     }
     setSubmitting(true);
     try {
+      const primaryTrade = form.trades[0] ?? TRADES[0];
       await createPartner({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
         email: form.email.trim(),
         phone: form.phone.trim() || undefined,
-        trade: form.trade,
+        trade: primaryTrade,
+        trades: form.trades,
         status: form.status,
         location: form.location.trim(),
         verified: false,
@@ -265,9 +274,13 @@ export default function PartnersPage() {
     {
       key: "trade", label: "Trade",
       render: (item) => (
-        <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[item.trade] || "bg-surface-tertiary text-text-primary"}`}>
-          {item.trade}
-        </span>
+        <div className="flex flex-wrap gap-1">
+          {(item.trades?.length ? item.trades : [item.trade]).map((t) => (
+            <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
+              {t}
+            </span>
+          ))}
+        </div>
       ),
     },
     {
@@ -443,12 +456,24 @@ export default function PartnersPage() {
               <Input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+1 555-000-0000" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-secondary">Trade</label>
-              <select value={form.trade} onChange={(e) => setForm({ ...form, trade: e.target.value })} className={selectClasses + " w-full"}>
-                {TRADES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
+              <label className="text-xs font-medium text-text-secondary">Trades <span className="text-text-tertiary font-normal">(select all that apply)</span></label>
+              <div className="flex flex-wrap gap-1.5">
+                {TRADES.map((t) => {
+                  const active = form.trades.includes(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setForm((f) => ({ ...f, trades: active ? f.trades.filter((x) => x !== t) : [...f.trades, t] }))}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${active ? "border-primary bg-primary/10 text-primary" : "border-border-light bg-card text-text-secondary hover:border-border"}`}
+                    >
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-secondary">Location</label>
@@ -818,7 +843,7 @@ function PartnerDetailDrawer({
     contact_name: "",
     email: "",
     phone: "",
-    trade: TRADES[0],
+    trades: [TRADES[0]] as string[],
     location: "",
     rating: "",
     compliance_score: "",
@@ -887,7 +912,7 @@ function PartnerDetailDrawer({
         contact_name: partner.contact_name ?? "",
         email: partner.email ?? "",
         phone: partner.phone ?? "",
-        trade: partner.trade ?? TRADES[0],
+        trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
         location: partner.location ?? "",
         rating: String(partner.rating ?? 0),
         compliance_score: String(partner.compliance_score ?? 0),
@@ -912,12 +937,14 @@ function PartnerDetailDrawer({
       return;
     }
     try {
+      const primaryTrade = overviewForm.trades[0] ?? TRADES[0];
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         contact_name: overviewForm.contact_name.trim(),
         email: overviewForm.email.trim(),
         phone: overviewForm.phone.trim() || undefined,
-        trade: overviewForm.trade,
+        trade: primaryTrade,
+        trades: overviewForm.trades,
         location: overviewForm.location.trim(),
         rating,
         compliance_score: compliance,
@@ -1346,7 +1373,7 @@ function PartnerDetailDrawer({
                             contact_name: partner.contact_name ?? "",
                             email: partner.email ?? "",
                             phone: partner.phone ?? "",
-                            trade: partner.trade ?? TRADES[0],
+                            trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
                             location: partner.location ?? "",
                             rating: String(partner.rating ?? 0),
                             compliance_score: String(partner.compliance_score ?? 0),
@@ -1361,28 +1388,41 @@ function PartnerDetailDrawer({
                   )}
                 </div>
                 {editingOverview ? (
-                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="mt-2 space-y-2">
                     <Input
                       value={overviewForm.contact_name}
                       onChange={(e) => setOverviewForm((p) => ({ ...p, contact_name: e.target.value }))}
                       placeholder="Contact name"
                     />
-                    <select
-                      value={overviewForm.trade}
-                      onChange={(e) => setOverviewForm((p) => ({ ...p, trade: e.target.value }))}
-                      className="h-9 px-3 rounded-lg border border-border text-sm text-text-secondary bg-card focus:outline-none focus:ring-2 focus:ring-primary/15"
-                    >
-                      {TRADES.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
+                    <div>
+                      <p className="text-[10px] font-medium text-text-tertiary mb-1.5">Trades (select all that apply)</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {TRADES.map((t) => {
+                          const active = overviewForm.trades.includes(t);
+                          return (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => setOverviewForm((p) => ({ ...p, trades: active ? p.trades.filter((x) => x !== t) : [...p.trades, t] }))}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${active ? "border-primary bg-primary/10 text-primary" : "border-border-light bg-card text-text-secondary hover:border-border"}`}
+                            >
+                              {t}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
                 )}
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
                   <Badge variant={config.variant} dot size="md">{config.label}</Badge>
-                  <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[editingOverview ? overviewForm.trade : partner.trade] || "bg-surface-tertiary text-text-primary"}`}>
-                    {editingOverview ? overviewForm.trade : partner.trade}
-                  </span>
+                  {(editingOverview ? overviewForm.trades : (partner.trades?.length ? partner.trades : [partner.trade])).map((t) => (
+                    <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
+                      {t}
+                    </span>
+                  ))}
                 </div>
               </div>
             </div>
@@ -1502,7 +1542,7 @@ function PartnerDetailDrawer({
                       contact_name: partner.contact_name ?? "",
                       email: partner.email ?? "",
                       phone: partner.phone ?? "",
-                      trade: partner.trade ?? TRADES[0],
+                      trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
                       location: partner.location ?? "",
                       rating: String(partner.rating ?? 0),
                       compliance_score: String(partner.compliance_score ?? 0),

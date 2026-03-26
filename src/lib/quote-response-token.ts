@@ -1,6 +1,30 @@
-import { createHmac, randomBytes } from "crypto";
+import { createHmac } from "crypto";
 
-const SECRET = process.env.QUOTE_RESPONSE_SECRET ?? process.env.NEXTAUTH_SECRET ?? "quote-respond-secret";
+function getSecret(): string {
+  const secret =
+    process.env.QUOTE_RESPONSE_SECRET?.trim() ||
+    process.env.NEXTAUTH_SECRET?.trim();
+
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      // Fail at request time (not build time) in production.
+      throw new Error(
+        "QUOTE_RESPONSE_SECRET (or NEXTAUTH_SECRET) must be set in production. " +
+          "Generate one with: openssl rand -base64 32",
+      );
+    }
+    console.warn(
+      "[quote-response-token] QUOTE_RESPONSE_SECRET is not set. " +
+        "Tokens are insecure and will not survive a server restart. " +
+        "Set QUOTE_RESPONSE_SECRET in .env.local.",
+    );
+    // In local dev, use a deterministic placeholder so tokens work across
+    // requests within a single process but are clearly insecure.
+    return "dev-only-insecure-placeholder";
+  }
+
+  return secret;
+}
 const TOKEN_SEP = ".";
 
 /**
@@ -8,8 +32,9 @@ const TOKEN_SEP = ".";
  * Format: base64(quoteId).hmac(quoteId)
  */
 export function createQuoteResponseToken(quoteId: string): string {
+  const secret = getSecret();
   const payload = Buffer.from(quoteId, "utf8").toString("base64url");
-  const sig = createHmac("sha256", SECRET).update(quoteId).digest("base64url");
+  const sig = createHmac("sha256", secret).update(quoteId).digest("base64url");
   return `${payload}${TOKEN_SEP}${sig}`;
 }
 
@@ -28,7 +53,8 @@ export function verifyQuoteResponseToken(token: string): string | null {
   } catch {
     return null;
   }
-  const expected = createHmac("sha256", SECRET).update(quoteId).digest("base64url");
+  const secret = getSecret();
+  const expected = createHmac("sha256", secret).update(quoteId).digest("base64url");
   if (sig !== expected) return null;
   return quoteId;
 }

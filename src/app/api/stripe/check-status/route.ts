@@ -1,15 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { requireStripe } from "@/lib/stripe";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
+import { createServiceClient } from "@/lib/supabase/service";
 import { syncJobAfterStripeInvoicePaid } from "@/lib/stripe-job-sync";
-
-function getSupabaseAdmin() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SERVICE_ROLE_KEY!,
-  );
-}
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -17,7 +10,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const stripe = requireStripe();
-    const supabaseAdmin = getSupabaseAdmin();
+    const supabaseAdmin = createServiceClient();
     const { invoiceId, paymentLinkId } = await req.json();
 
     if (!invoiceId || !paymentLinkId) {
@@ -27,12 +20,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid invoiceId" }, { status: 400 });
     }
 
+    // Verify that the paymentLinkId stored on the invoice matches what the caller provided.
+    // This prevents a confused-deputy attack where a paid session from link B is used to mark invoice A as paid.
+    const { data: invRow } = await supabaseAdmin
+      .from("invoices")
+      .select("stripe_payment_link_id")
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    if (!invRow) {
+      return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+    }
+    if (invRow.stripe_payment_link_id && invRow.stripe_payment_link_id !== paymentLinkId) {
+      return NextResponse.json({ error: "Payment link mismatch" }, { status: 400 });
+    }
+
     const sessions = await stripe.checkout.sessions.list({
       payment_link: paymentLinkId,
       limit: 5,
     });
 
-    const completedSession = sessions.data.find((s) => s.payment_status === "paid");
+    // Only consider sessions whose metadata references this invoice.
+    const completedSession = sessions.data.find(
+      (s) =>
+        s.payment_status === "paid" &&
+        (!s.metadata?.invoice_id || s.metadata.invoice_id === invoiceId),
+    );
     const latestSession = sessions.data[0];
 
     let paymentStatus: string = "pending";
