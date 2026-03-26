@@ -45,10 +45,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Quote not found" }, { status: 404 });
     }
 
+    // Fetch line items (if not pre-provided) and company settings in parallel.
+    const [lineItemResult, settingsResult] = await Promise.all([
+      items?.length
+        ? Promise.resolve(null)
+        : supabase.from("quote_line_items").select("description, quantity, unit_price").eq("quote_id", quoteId).order("sort_order"),
+      supabase.from("company_settings").select("*").limit(1).single(),
+    ]);
+
     let lineItemsForPdf = items;
-    if (!lineItemsForPdf?.length) {
-      const { data: rows } = await supabase.from("quote_line_items").select("description, quantity, unit_price").eq("quote_id", quoteId).order("sort_order");
-      lineItemsForPdf = (rows ?? []).map((r: { description: string; quantity: number; unit_price: number }) => ({
+    if (!lineItemsForPdf?.length && lineItemResult) {
+      const rows = (lineItemResult as { data: { description: string; quantity: number; unit_price: number }[] | null }).data ?? [];
+      lineItemsForPdf = rows.map((r) => ({
         description: r.description,
         quantity: Number(r.quantity) || 1,
         unitPrice: Number(r.unit_price) || 0,
@@ -56,23 +64,19 @@ export async function POST(req: NextRequest) {
       }));
     }
 
-    const { data: settings } = await supabase
-      .from("company_settings")
-      .select("*")
-      .limit(1)
-      .single();
+    const { data: settings } = settingsResult as { data: Record<string, unknown> | null };
 
     const branding: CompanyBranding = settings
       ? {
-          companyName: settings.company_name,
-          logoUrl: settings.logo_url ?? undefined,
-          address: settings.address ?? "",
-          phone: settings.phone ?? "",
-          email: settings.email ?? "",
-          website: settings.website ?? undefined,
-          vatNumber: settings.vat_number ?? undefined,
-          primaryColor: settings.primary_color ?? "#F97316",
-          tagline: settings.tagline ?? undefined,
+          companyName: String(settings.company_name ?? ""),
+          logoUrl: settings.logo_url ? String(settings.logo_url) : undefined,
+          address: String(settings.address ?? ""),
+          phone: String(settings.phone ?? ""),
+          email: String(settings.email ?? ""),
+          website: settings.website ? String(settings.website) : undefined,
+          vatNumber: settings.vat_number ? String(settings.vat_number) : undefined,
+          primaryColor: String(settings.primary_color ?? "#F97316"),
+          tagline: settings.tagline ? String(settings.tagline) : undefined,
         }
       : {
           companyName: "Master Group",
@@ -93,7 +97,7 @@ export async function POST(req: NextRequest) {
       expiresAt: quote.expires_at ?? undefined,
       ownerName: quote.owner_name ?? undefined,
       items: lineItemsForPdf,
-      notes: notes ?? settings?.quote_footer_notes ?? undefined,
+      notes: notes ?? (settings?.quote_footer_notes ? String(settings.quote_footer_notes) : undefined),
       depositRequired: Number(quote.deposit_required ?? 0) || undefined,
       scope:
         typeof scope === "string" && scope.trim()

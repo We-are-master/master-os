@@ -148,11 +148,9 @@ export default function JobDetailPage() {
   const loadPayments = useCallback(async (jobId: string) => {
     setLoadingPayments(true);
     try {
-      const [partner, all] = await Promise.all([
-        listJobPayments(jobId, "partner"),
-        listJobPayments(jobId),
-      ]);
-      setPartnerPayments(partner);
+      // Single query for all payment types — split client-side to halve round-trips.
+      const all = await listJobPayments(jobId);
+      setPartnerPayments(all.filter((p) => p.type === "partner"));
       setCustomerPayments(all.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"));
     } catch {
       toast.error("Failed to load payments");
@@ -227,14 +225,13 @@ export default function JobDetailPage() {
     setLoading(true);
     (async () => {
       try {
-        const [j, partner, all] = await Promise.all([
+        const [j, all] = await Promise.all([
           getJob(id),
-          listJobPayments(id, "partner"),
           listJobPayments(id),
         ]);
         if (cancelled) return;
         setJob(j ?? null);
-        setPartnerPayments(partner);
+        setPartnerPayments(all.filter((p) => p.type === "partner"));
         setCustomerPayments(all.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"));
       } catch {
         if (!cancelled) toast.error("Failed to load job");

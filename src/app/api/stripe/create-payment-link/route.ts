@@ -10,19 +10,36 @@ export async function POST(req: NextRequest) {
   try {
     const stripe = requireStripe();
     const supabaseAdmin = createServiceClient();
-    const { invoiceId, amount, clientName, reference, customerEmail } = await req.json();
+    const { invoiceId, clientName, customerEmail } = await req.json();
 
-    if (!invoiceId || !amount || !clientName || !reference) {
+    if (!invoiceId || !clientName) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
     if (!isValidUUID(invoiceId)) {
       return NextResponse.json({ error: "Invalid invoiceId" }, { status: 400 });
     }
 
-    const { data: invRow } = await supabaseAdmin.from("invoices").select("job_reference").eq("id", invoiceId).maybeSingle();
+    // Load invoice server-side — never trust client-supplied amount or reference.
+    const { data: invRow, error: invErr } = await supabaseAdmin
+      .from("invoices")
+      .select("amount, reference, job_reference")
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    if (invErr || !invRow) {
+      return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+    }
+
+    const amount: number = invRow.amount;
+    const reference: string = invRow.reference;
+
     let jobIdMeta = "";
-    if (invRow?.job_reference) {
-      const { data: jobRow } = await supabaseAdmin.from("jobs").select("id").eq("reference", invRow.job_reference).maybeSingle();
+    if (invRow.job_reference) {
+      const { data: jobRow } = await supabaseAdmin
+        .from("jobs")
+        .select("id")
+        .eq("reference", invRow.job_reference)
+        .maybeSingle();
       if (jobRow?.id) jobIdMeta = jobRow.id;
     }
 

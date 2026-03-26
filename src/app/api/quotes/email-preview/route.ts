@@ -50,39 +50,42 @@ async function buildPreview(req: NextRequest, payload?: {
       return NextResponse.json({ error: "Quote not found" }, { status: 404 });
     }
 
+    // Fetch line items (if not pre-provided) and company settings in parallel.
+    const [lineItemResult, settingsResult] = await Promise.all([
+      itemsOverride?.length
+        ? Promise.resolve(null)
+        : supabase
+            .from("quote_line_items")
+            .select("description, quantity, unit_price")
+            .eq("quote_id", quoteId)
+            .order("sort_order", { ascending: true }),
+      supabase.from("company_settings").select("*").limit(1).single(),
+    ]);
+
     let items = itemsOverride;
-    if (!items?.length) {
-      const { data: lineItemRows } = await supabase
-        .from("quote_line_items")
-        .select("description, quantity, unit_price")
-        .eq("quote_id", quoteId)
-        .order("sort_order", { ascending: true });
-      items =
-        lineItemRows?.map((r: { description: string; quantity: number; unit_price: number }) => ({
-          description: r.description,
-          quantity: Number(r.quantity) || 1,
-          unitPrice: Number(r.unit_price) || 0,
-          total: (Number(r.quantity) || 1) * (Number(r.unit_price) || 0),
-        })) ?? undefined;
+    if (!items?.length && lineItemResult) {
+      const lineItemRows = (lineItemResult as { data: { description: string; quantity: number; unit_price: number }[] | null }).data;
+      items = lineItemRows?.map((r) => ({
+        description: r.description,
+        quantity: Number(r.quantity) || 1,
+        unitPrice: Number(r.unit_price) || 0,
+        total: (Number(r.quantity) || 1) * (Number(r.unit_price) || 0),
+      })) ?? undefined;
     }
 
-    const { data: settings } = await supabase
-      .from("company_settings")
-      .select("*")
-      .limit(1)
-      .single();
+    const { data: settings } = settingsResult as { data: Record<string, unknown> | null };
 
     const branding: CompanyBranding = settings
       ? {
-          companyName: settings.company_name,
-          logoUrl: settings.logo_url ?? undefined,
-          address: settings.address ?? "",
-          phone: settings.phone ?? "",
-          email: settings.email ?? "",
-          website: settings.website ?? undefined,
-          vatNumber: settings.vat_number ?? undefined,
-          primaryColor: settings.primary_color ?? "#F97316",
-          tagline: settings.tagline ?? undefined,
+          companyName: String(settings.company_name ?? ""),
+          logoUrl: settings.logo_url ? String(settings.logo_url) : undefined,
+          address: String(settings.address ?? ""),
+          phone: String(settings.phone ?? ""),
+          email: String(settings.email ?? ""),
+          website: settings.website ? String(settings.website) : undefined,
+          vatNumber: settings.vat_number ? String(settings.vat_number) : undefined,
+          primaryColor: String(settings.primary_color ?? "#F97316"),
+          tagline: settings.tagline ? String(settings.tagline) : undefined,
         }
       : {
           companyName: "Master Group",
@@ -103,7 +106,7 @@ async function buildPreview(req: NextRequest, payload?: {
       expiresAt: quote.expires_at ?? undefined,
       ownerName: quote.owner_name ?? undefined,
       items,
-      notes: settings?.quote_footer_notes ?? undefined,
+      notes: settings?.quote_footer_notes ? String(settings.quote_footer_notes) : undefined,
       depositRequired: Number(depositOverride ?? quote.deposit_required ?? 0) || undefined,
       scope:
         typeof scopeOverride === "string" && scopeOverride.trim()

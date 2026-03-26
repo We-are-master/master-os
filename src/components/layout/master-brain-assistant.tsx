@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { getSupabase } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { cn } from "@/lib/utils";
+import ReactMarkdown from "react-markdown";
 
 type Turn = { role: "user" | "assistant"; content: string };
 type BrainMode = "admin" | "manager" | "operator";
@@ -57,7 +58,28 @@ function MessageBubble({ turn }: { turn: Turn }) {
             : "bg-card border-border-light text-text-primary rounded-tl-md",
         )}
       >
-        <p className="whitespace-pre-wrap text-[13px] leading-relaxed">{turn.content}</p>
+        {isUser ? (
+          <p className="whitespace-pre-wrap text-[13px] leading-relaxed">{turn.content}</p>
+        ) : (
+          <div className="text-[13px] leading-relaxed prose-brain">
+            <ReactMarkdown
+              components={{
+                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                strong: ({ children }) => <strong className="font-semibold text-text-primary">{children}</strong>,
+                ul: ({ children }) => <ul className="mb-2 space-y-0.5 pl-4 last:mb-0">{children}</ul>,
+                ol: ({ children }) => <ol className="mb-2 space-y-0.5 pl-4 list-decimal last:mb-0">{children}</ol>,
+                li: ({ children }) => <li className="list-disc marker:text-text-tertiary">{children}</li>,
+                h1: ({ children }) => <p className="font-bold text-text-primary mb-1">{children}</p>,
+                h2: ({ children }) => <p className="font-semibold text-text-primary mb-1">{children}</p>,
+                h3: ({ children }) => <p className="font-medium text-text-primary mb-1">{children}</p>,
+                code: ({ children }) => <code className="rounded bg-surface-hover px-1 py-0.5 font-mono text-[11px]">{children}</code>,
+                hr: () => <hr className="my-2 border-border-light" />,
+              }}
+            >
+              {turn.content}
+            </ReactMarkdown>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -147,6 +169,13 @@ export function MasterBrainAssistant() {
     void sendMessage(text);
   };
 
+  // Listen for the header button to open the drawer
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener("master-brain-open", handler);
+    return () => window.removeEventListener("master-brain-open", handler);
+  }, []);
+
   if (!mode) return null;
 
   const quick = QUICK_PROMPTS[mode];
@@ -198,21 +227,6 @@ export function MasterBrainAssistant() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className={cn(
-          "fixed bottom-6 right-6 z-30 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-xl transition-transform hover:scale-[1.03] active:scale-[0.98]",
-          mode === "admin" && "bg-primary shadow-primary/30",
-          mode === "manager" && "bg-gradient-to-br from-sky-600 to-blue-700 shadow-blue-900/30",
-          mode === "operator" && "bg-gradient-to-br from-emerald-600 to-teal-700 shadow-emerald-900/30",
-        )}
-        title="Master Brain"
-        aria-label="Open Master Brain"
-      >
-        <Sparkles className="h-6 w-6" />
-      </button>
-
       <Drawer
         open={open}
         onClose={() => setOpen(false)}
