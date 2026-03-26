@@ -7,7 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings, Menu, LogOut, Moon, Sun, Sparkles,
-  Search, Briefcase, FileText, ClipboardList, X,
+  Search, Wrench, FileText, ClipboardList, X,
 } from "lucide-react";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import Link from "next/link";
@@ -127,7 +127,7 @@ function GlobalSearch() {
   }, []);
 
   const typeIcon = (type: SearchResult["type"]) => {
-    if (type === "job") return <Briefcase className="h-3.5 w-3.5 text-primary" />;
+    if (type === "job") return <Wrench className="h-3.5 w-3.5 text-primary" />;
     if (type === "quote") return <FileText className="h-3.5 w-3.5 text-emerald-400" />;
     return <ClipboardList className="h-3.5 w-3.5 text-amber-400" />;
   };
