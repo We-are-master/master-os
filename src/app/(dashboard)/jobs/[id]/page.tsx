@@ -55,6 +55,7 @@ import {
   canMarkReportUploaded,
   canSendReportAndRequestFinalPayment,
   getJobStatusActions,
+  isJobInProgressStatus,
   normalizeTotalPhases,
   reportPhaseIndices,
   reportPhaseLabel,
@@ -74,6 +75,7 @@ import {
   computePartnerLiveTimerActiveMs,
   formatPartnerLiveTimer,
   isPartnerLiveTimerRunning,
+  officePartnerTimerStartPatch,
 } from "@/lib/partner-live-timer";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
@@ -175,6 +177,12 @@ export default function JobDetailPage() {
     }, 2000);
     return () => window.clearInterval(poll);
   }, [id, job?.partner_timer_started_at, job?.partner_timer_ended_at]);
+
+  const partnerLiveActiveMs = useMemo(() => {
+    void partnerTimerTick;
+    if (!job?.partner_timer_started_at) return null;
+    return computePartnerLiveTimerActiveMs(job);
+  }, [job, partnerTimerTick]);
 
   const loadPayments = useCallback(async (jobId: string) => {
     setLoadingPayments(true);
@@ -507,7 +515,12 @@ export default function JobDetailPage() {
         });
         selfBillId = selfBill.id;
       }
-      const updated = await updateJob(j.id, { status: newStatus, ...(selfBillId ? { self_bill_id: selfBillId } : {}) });
+      const statusPatch: Partial<Job> = {
+        status: newStatus,
+        ...(selfBillId ? { self_bill_id: selfBillId } : {}),
+        ...(newStatus === "in_progress_phase1" && !j.partner_timer_started_at ? officePartnerTimerStartPatch() : {}),
+      };
+      const updated = await updateJob(j.id, statusPatch);
       await logAudit({ entityType: "job", entityId: j.id, entityRef: j.reference, action: "status_changed", fieldName: "status", oldValue: j.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
       setJob(updated);
       toast.success(selfBillId ? "Self-bill created. Job updated." : "Job updated");
@@ -764,10 +777,6 @@ export default function JobDetailPage() {
   }
 
   const config = statusConfig[job.status] ?? { label: job.status, variant: "default" as const };
-  const partnerLiveActiveMs = useMemo(() => {
-    void partnerTimerTick;
-    return job.partner_timer_started_at ? computePartnerLiveTimerActiveMs(job) : null;
-  }, [job, partnerTimerTick]);
   const billableRevenue = jobBillableRevenue(job);
   const directCost = jobDirectCost(job);
   const profit = jobProfit(job);
@@ -821,7 +830,7 @@ export default function JobDetailPage() {
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
             </div>
             <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
-            {partnerLiveActiveMs != null && (
+            {partnerLiveActiveMs != null ? (
               <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface-secondary/60 px-3 py-2 text-sm">
                 <Timer className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
                 <span className="text-text-secondary">
@@ -834,7 +843,12 @@ export default function JobDetailPage() {
                   <Badge variant="warning" size="sm">Paused</Badge>
                 ) : null}
               </div>
-            )}
+            ) : isJobInProgressStatus(job.status) || job.status === "awaiting_payment" ? (
+              <p className="mt-2 max-w-xl text-xs text-text-tertiary">
+                On-site work time appears once the job is moved to <strong className="text-text-secondary">In progress (phase 1)</strong> here or when the partner starts the job in the app. If this stays empty, apply DB migrations{" "}
+                <code className="rounded bg-surface-tertiary px-1">062</code>–<code className="rounded bg-surface-tertiary px-1">063</code> on Supabase.
+              </p>
+            ) : null}
             {job.status === "cancelled" && job.partner_cancelled_at ? (
               <div className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-text-secondary max-w-xl">
                 <p className="font-semibold text-text-primary">Partner cancellation</p>

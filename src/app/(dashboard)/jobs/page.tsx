@@ -26,6 +26,7 @@ import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob } from "@/services/jobs";
+import { officePartnerTimerStartPatch } from "@/lib/partner-live-timer";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
@@ -251,7 +252,12 @@ function JobsPageContent() {
         });
         selfBillId = selfBill.id;
       }
-      const updated = await updateJob(job.id, { status: newStatus, ...(selfBillId ? { self_bill_id: selfBillId } : {}) });
+      const statusPatch: Partial<Job> = {
+        status: newStatus,
+        ...(selfBillId ? { self_bill_id: selfBillId } : {}),
+        ...(newStatus === "in_progress_phase1" && !job.partner_timer_started_at ? officePartnerTimerStartPatch() : {}),
+      };
+      const updated = await updateJob(job.id, statusPatch);
       await logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "status_changed", fieldName: "status", oldValue: job.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
       toast.success(selfBillId ? `Self-bill created. Job moved to ${statusConfig[newStatus]?.label ?? newStatus}` : `Job moved to ${statusConfig[newStatus]?.label ?? newStatus}`);
       refresh(); loadCounts();
@@ -312,8 +318,25 @@ function JobsPageContent() {
           return;
         }
       }
-      const { error } = await supabase.from("jobs").update({ status: newStatus }).in("id", ids);
-      if (error) throw error;
+      if (newStatus === "in_progress_phase1") {
+        const { data: rows, error: fetchErr } = await supabase
+          .from("jobs")
+          .select("id, partner_timer_started_at")
+          .in("id", ids);
+        if (fetchErr) throw fetchErr;
+        for (const row of rows ?? []) {
+          const rid = row.id as string;
+          const patch: Record<string, unknown> = { status: newStatus };
+          if (!row.partner_timer_started_at) {
+            Object.assign(patch, officePartnerTimerStartPatch());
+          }
+          const { error: upErr } = await supabase.from("jobs").update(patch).eq("id", rid);
+          if (upErr) throw upErr;
+        }
+      } else {
+        const { error } = await supabase.from("jobs").update({ status: newStatus }).in("id", ids);
+        if (error) throw error;
+      }
       await logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
       toast.success(`${ids.length} jobs updated`);
       setSelectedIds(new Set());

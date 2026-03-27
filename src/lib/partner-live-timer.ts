@@ -1,5 +1,24 @@
 import type { Job } from "@/types/database";
 
+/** Seed live timer when staff sets job to phase 1 from Master OS (partner app uses the same columns via RPC). */
+export function officePartnerTimerStartPatch(): Pick<
+  Job,
+  | "partner_timer_started_at"
+  | "partner_timer_ended_at"
+  | "partner_timer_accum_paused_ms"
+  | "partner_timer_is_paused"
+  | "partner_timer_pause_began_at"
+> {
+  const now = new Date().toISOString();
+  return {
+    partner_timer_started_at: now,
+    partner_timer_ended_at: null,
+    partner_timer_accum_paused_ms: 0,
+    partner_timer_is_paused: false,
+    partner_timer_pause_began_at: null,
+  };
+}
+
 type TimerFields = Pick<
   Job,
   | "partner_timer_started_at"
