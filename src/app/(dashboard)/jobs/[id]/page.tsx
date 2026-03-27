@@ -84,6 +84,16 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   cancelled: { label: "Cancelled", variant: "default", dot: true },
 };
 
+const CANCEL_REASON_OPTIONS = [
+  { value: "Client cancelou o serviço", label: "Client cancelled the service" },
+  { value: "Sem acesso ao local", label: "No access to the property" },
+  { value: "Conflito de agenda / disponibilidade", label: "Scheduling conflict / availability" },
+  { value: "Problema de pagamento", label: "Payment issue" },
+  { value: "Escopo inválido ou incompleto", label: "Invalid or incomplete scope" },
+  { value: "Partner indisponível", label: "Partner unavailable" },
+  { value: "other", label: "Other (specify)" },
+] as const;
+
 
 export default function JobDetailPage() {
   const params = useParams();
@@ -137,7 +147,8 @@ export default function JobDetailPage() {
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
-  const [cancelReason, setCancelReason] = useState("");
+  const [cancelReasonOption, setCancelReasonOption] = useState("");
+  const [cancelReasonOther, setCancelReasonOther] = useState("");
   const [cancellingJob, setCancellingJob] = useState(false);
   const [manualReportFile, setManualReportFile] = useState<File | null>(null);
   const [manualReportNotes, setManualReportNotes] = useState("");
@@ -491,7 +502,7 @@ export default function JobDetailPage() {
 
   const handleCancelJob = useCallback(async () => {
     if (!job) return;
-    const reason = cancelReason.trim();
+    const reason = (cancelReasonOption === "other" ? cancelReasonOther : cancelReasonOption).trim();
     if (!reason) {
       toast.error("Please provide a cancellation reason.");
       return;
@@ -533,14 +544,15 @@ export default function JobDetailPage() {
       });
       setJob(updated);
       setCancelModalOpen(false);
-      setCancelReason("");
+      setCancelReasonOption("");
+      setCancelReasonOther("");
       toast.success("Job cancelled");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to cancel job");
     } finally {
       setCancellingJob(false);
     }
-  }, [job, cancelReason, profile?.id, profile?.full_name]);
+  }, [job, cancelReasonOption, cancelReasonOther, profile?.id, profile?.full_name]);
 
   const handleAddPayment = useCallback(async () => {
     if (!job || !addPaymentAmount || Number(addPaymentAmount) <= 0) return;
@@ -815,7 +827,11 @@ export default function JobDetailPage() {
                 variant="danger"
                 size="sm"
                 icon={<Ban className="h-3.5 w-3.5" />}
-                onClick={() => setCancelModalOpen(true)}
+                onClick={() => {
+                  setCancelReasonOption("");
+                  setCancelReasonOther("");
+                  setCancelModalOpen(true);
+                }}
               >
                 Cancelled
               </Button>
@@ -1495,13 +1511,23 @@ export default function JobDetailPage() {
           </p>
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Cancellation reason *</label>
-            <textarea
-              value={cancelReason}
-              onChange={(e) => setCancelReason(e.target.value)}
-              rows={4}
-              placeholder="Explain what happened and why the job was cancelled..."
-              className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            <Select
+              value={cancelReasonOption}
+              onChange={(e) => setCancelReasonOption(e.target.value)}
+              options={[
+                { value: "", label: "Select a reason..." },
+                ...CANCEL_REASON_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
+              ]}
             />
+            {cancelReasonOption === "other" && (
+              <textarea
+                value={cancelReasonOther}
+                onChange={(e) => setCancelReasonOther(e.target.value)}
+                rows={3}
+                placeholder="Type the cancellation reason..."
+                className="mt-2 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            )}
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" disabled={cancellingJob} onClick={() => setCancelModalOpen(false)}>Back</Button>
