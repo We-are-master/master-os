@@ -242,6 +242,12 @@ export interface Job {
   customer_review_rating?: number | null;
   customer_review_comment?: string | null;
   customer_review_submitted_at?: string | null;
+  /** Partner app work timer — synced for Master OS live display */
+  partner_timer_started_at?: string | null;
+  partner_timer_ended_at?: string | null;
+  partner_timer_accum_paused_ms?: number | null;
+  partner_timer_is_paused?: boolean | null;
+  partner_timer_pause_began_at?: string | null;
   created_at: string;
   updated_at: string;
 }

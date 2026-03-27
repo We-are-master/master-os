@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { PageTransition } from "@/components/layout/page-transition";
@@ -27,6 +27,7 @@ import {
   AlertTriangle,
   CreditCard,
   RefreshCw,
+  Timer,
   X,
 } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -69,6 +70,11 @@ import {
 } from "@/lib/job-financials";
 import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
+import {
+  computePartnerLiveTimerActiveMs,
+  formatPartnerLiveTimer,
+  isPartnerLiveTimerRunning,
+} from "@/lib/partner-live-timer";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
@@ -149,6 +155,26 @@ export default function JobDetailPage() {
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
+
+  const [partnerTimerTick, setPartnerTimerTick] = useState(0);
+  useEffect(() => {
+    if (!job || !isPartnerLiveTimerRunning(job)) return;
+    const t = window.setInterval(() => setPartnerTimerTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [job?.partner_timer_started_at, job?.partner_timer_ended_at, job?.id]);
+
+  useEffect(() => {
+    if (!id || !job || !isPartnerLiveTimerRunning(job)) return;
+    const poll = window.setInterval(async () => {
+      try {
+        const j = await getJob(id);
+        if (j) setJob(j);
+      } catch {
+        /* ignore */
+      }
+    }, 2000);
+    return () => window.clearInterval(poll);
+  }, [id, job?.partner_timer_started_at, job?.partner_timer_ended_at]);
 
   const loadPayments = useCallback(async (jobId: string) => {
     setLoadingPayments(true);
@@ -738,6 +764,10 @@ export default function JobDetailPage() {
   }
 
   const config = statusConfig[job.status] ?? { label: job.status, variant: "default" as const };
+  const partnerLiveActiveMs = useMemo(() => {
+    void partnerTimerTick;
+    return job.partner_timer_started_at ? computePartnerLiveTimerActiveMs(job) : null;
+  }, [job, partnerTimerTick]);
   const billableRevenue = jobBillableRevenue(job);
   const directCost = jobDirectCost(job);
   const profit = jobProfit(job);
@@ -791,6 +821,20 @@ export default function JobDetailPage() {
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
             </div>
             <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
+            {partnerLiveActiveMs != null && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface-secondary/60 px-3 py-2 text-sm">
+                <Timer className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
+                <span className="text-text-secondary">
+                  {job.partner_timer_ended_at ? "Partner work time (last session)" : "Partner on site — active time"}
+                </span>
+                <span className="font-mono font-semibold tabular-nums text-text-primary">
+                  {formatPartnerLiveTimer(partnerLiveActiveMs)}
+                </span>
+                {job.partner_timer_is_paused && !job.partner_timer_ended_at ? (
+                  <Badge variant="warning" size="sm">Paused</Badge>
+                ) : null}
+              </div>
+            )}
             {job.status === "cancelled" && job.partner_cancelled_at ? (
               <div className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-text-secondary max-w-xl">
                 <p className="font-semibold text-text-primary">Partner cancellation</p>
