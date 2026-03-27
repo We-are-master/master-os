@@ -25,7 +25,6 @@ export interface CatalogService {
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
 export type JobStatus =
-  | "draft"
   | "scheduled"
   | "late"
   | "in_progress_phase1"
@@ -145,6 +144,8 @@ export interface Quote {
   partner_id?: string;
   partner_name?: string;
   partner_cost: number;
+  /** Trade / service label for partner app push targeting (optional). */
+  service_type?: string | null;
   created_at: string;
   updated_at: string;
   expires_at?: string;
@@ -170,9 +171,10 @@ export interface Job {
   client_address_id?: string;
   client_name: string;
   property_address: string;
-  partner_id?: string;
+  /** Set to null in updates to clear assignment (undefined is omitted by the client and leaves the old value). */
+  partner_id?: string | null;
   partner_ids?: string[] | null;
-  partner_name?: string;
+  partner_name?: string | null;
   quote_id?: string;
   owner_id?: string;
   owner_name?: string;
@@ -231,9 +233,15 @@ export interface Job {
   invoice_id?: string;
   scope?: string;
   internal_notes?: string;
-  cancellation_reason?: string;
-  cancelled_at?: string;
-  cancelled_by?: string;
+  /** Set when partner cancels from the app (RPC `partner_cancel_job`). */
+  partner_cancelled_at?: string | null;
+  /** Snapshot of cancellation fee (GBP) from company_settings at cancel time. */
+  partner_cancellation_fee?: number | null;
+  partner_cancellation_reason?: string | null;
+  /** 1–5 when client leaves feedback (partner app shows on completed job). */
+  customer_review_rating?: number | null;
+  customer_review_comment?: string | null;
+  customer_review_submitted_at?: string | null;
   created_at: string;
   updated_at: string;
 }

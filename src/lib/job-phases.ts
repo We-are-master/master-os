@@ -1,37 +1,29 @@
 import type { Job } from "@/types/database";
+import { canMarkJobCompletedFinancially, type JobCompletionPaymentRow } from "@/lib/job-financials";
 import type { LucideIcon } from "lucide-react";
 import {
   Play,
   Pause,
+  TrendingUp,
   RotateCcw,
   CheckCircle2,
   CreditCard,
   ShieldCheck,
-  Calendar,
 } from "lucide-react";
 
 export const JOB_PHASE_COUNT_MIN = 1;
 export const JOB_PHASE_COUNT_MAX = 2;
 
-/** On-site work phases only (Jobs list tab "In progress" — excludes Final checks). */
-export const JOB_WORK_PHASE_STATUSES: readonly Job["status"][] = [
+/** DB statuses grouped under the "In progress" tab / column (phases + final check). */
+export const JOB_IN_PROGRESS_STATUSES: readonly Job["status"][] = [
   "in_progress_phase1",
   "in_progress_phase2",
   "in_progress_phase3",
-] as const;
-
-/** Work phases + final check — pipeline revenue, schedule "active" counts, etc. */
-export const JOB_IN_PROGRESS_STATUSES: readonly Job["status"][] = [
-  ...JOB_WORK_PHASE_STATUSES,
   "final_check",
 ] as const;
 
 export function isJobInProgressStatus(status: Job["status"]): boolean {
   return (JOB_IN_PROGRESS_STATUSES as readonly string[]).includes(status);
-}
-
-export function isJobWorkPhaseStatus(status: Job["status"]): boolean {
-  return (JOB_WORK_PHASE_STATUSES as readonly string[]).includes(status);
 }
 
 /** Clamp to 1–2 (matches report_1…report_2 slots). */
@@ -60,8 +52,6 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
   const last = lastInProgressStatusForTotal(tp);
 
   switch (job.status) {
-    case "draft":
-      return [{ label: "Schedule", status: "scheduled", icon: Calendar, primary: true }];
     case "scheduled":
     case "late":
       return [{ label: "Start Job", status: "in_progress_phase1", icon: Play, primary: true }];
@@ -102,22 +92,23 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     case "completed":
       return [{ label: "Reopen", status: "scheduled", icon: RotateCcw, primary: false }];
     case "cancelled":
-      return [{ label: "Reopen", status: "scheduled", icon: RotateCcw, primary: false }];
+      return [];
     default:
       return [];
   }
 }
 
-export function canAdvanceJob(job: Job, nextStatus: string): { ok: boolean; message?: string } {
+export type JobAdvanceFinancialContext = {
+  customerPayments: JobCompletionPaymentRow[];
+  partnerPayments: JobCompletionPaymentRow[];
+};
+
+export function canAdvanceJob(
+  job: Job,
+  nextStatus: string,
+  financialCtx?: JobAdvanceFinancialContext,
+): { ok: boolean; message?: string } {
   const tp = normalizeTotalPhases(job.total_phases);
-
-  if (job.status === "draft" && nextStatus === "scheduled") {
-    return { ok: true };
-  }
-
-  if (nextStatus === "cancelled") {
-    return { ok: true };
-  }
 
   if (nextStatus === "in_progress_phase2" && tp < 2) {
     return { ok: false, message: "This job is configured for only one phase." };
@@ -144,6 +135,22 @@ export function canAdvanceJob(job: Job, nextStatus: string): { ok: boolean; mess
     }
     if (!allApproved) return { ok: false, message: "Ops must approve all reports before Awaiting Payment." };
   }
+
+  if (nextStatus === "completed") {
+    if (!financialCtx) {
+      return {
+        ok: false,
+        message:
+          "Open this job to verify payments. Completed is only allowed when customer and partner amounts are fully collected/paid out.",
+      };
+    }
+    return canMarkJobCompletedFinancially(
+      job,
+      financialCtx.customerPayments,
+      financialCtx.partnerPayments,
+    );
+  }
+
   return { ok: true };
 }
 
@@ -172,8 +179,6 @@ export function allConfiguredReportsApproved(job: Job): boolean {
 /** Monotonic workflow order for gating report actions (higher = further along). */
 export function jobStatusRank(status: Job["status"]): number {
   switch (status) {
-    case "draft":
-      return -5;
     case "scheduled":
     case "late":
       return 0;
@@ -192,7 +197,7 @@ export function jobStatusRank(status: Job["status"]): number {
     case "completed":
       return 100;
     case "cancelled":
-      return -100;
+      return 1;
     default:
       return 0;
   }
@@ -208,8 +213,11 @@ export function minimumStatusRankForReportSlot(reportSlotIndex: number, totalPha
 }
 
 export function canMarkReportUploaded(job: Job, reportSlotIndex: number): { ok: boolean; message?: string } {
-  if (job.status === "completed" || job.status === "cancelled") {
-    return { ok: false, message: "Job is closed — reports are locked." };
+  if (job.status === "cancelled") {
+    return { ok: false, message: "Job is cancelled." };
+  }
+  if (job.status === "completed") {
+    return { ok: false, message: "Job is completed — reports are locked." };
   }
   const tp = normalizeTotalPhases(job.total_phases);
   if (reportSlotIndex < 1 || reportSlotIndex > tp) {

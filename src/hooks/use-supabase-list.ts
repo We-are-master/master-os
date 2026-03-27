@@ -11,8 +11,6 @@ interface UseSupabaseListOptions<T> {
   initialStatus?: string;
   /** Subscribe to Postgres changes and soft-refresh the list (enable Realtime on this table in Supabase). */
   realtimeTable?: string;
-  /** Additional static/dynamic params merged into each fetcher call. */
-  extraParams?: Partial<ListParams>;
 }
 
 interface UseSupabaseListReturn<T> {
@@ -34,7 +32,7 @@ interface UseSupabaseListReturn<T> {
 }
 
 export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupabaseListReturn<T> {
-  const { fetcher, pageSize = 10, realtimeTable, initialStatus = "all", extraParams } = options;
+  const { fetcher, pageSize = 10, realtimeTable, initialStatus = "all" } = options;
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
@@ -69,8 +67,6 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     setTick((t) => t + 1);
   }, []);
 
-  const extraParamsKey = JSON.stringify(extraParams ?? {});
-
   useEffect(() => {
     let cancelled = false;
     const silent = skipLoadingRef.current;
@@ -87,7 +83,6 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
         pageSize,
         search: search || undefined,
         status: status !== "all" ? status : undefined,
-        ...(extraParams ?? {}),
       })
       .then((result) => {
         if (cancelled) return;
@@ -108,7 +103,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     return () => {
       cancelled = true;
     };
-  }, [page, pageSize, search, status, tick, extraParamsKey]);
+  }, [page, pageSize, search, status, tick]);
 
   const refreshSilentRef = useRef(refreshSilent);
   refreshSilentRef.current = refreshSilent;

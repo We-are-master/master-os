@@ -35,6 +35,8 @@ export interface CompanySettings {
   daily_brief_emails?: string;
   /** ISO 4217 — KPIs and UI amounts (Settings → Preferences). */
   currency?: string | null;
+  /** Fee applied when a partner cancels a job from the app (GBP). */
+  partner_cancellation_fee_gbp?: number | null;
   updated_at: string;
 }
 

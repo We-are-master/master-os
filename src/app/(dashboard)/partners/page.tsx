@@ -47,7 +47,6 @@ import {
   type TeamMember,
 } from "@/services/partner-detail";
 import { LocationMiniMapByCoords } from "@/components/ui/location-picker";
-import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
@@ -68,36 +67,10 @@ const tradeColors: Record<string, string> = {
   Painter: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 ring-yellow-200/50",
 };
 
-const TRADES = [...TYPE_OF_WORK_OPTIONS];
-
-const LEGACY_TRADE_ALIASES: Record<string, string> = {
-  electrical: "Electrician",
-  plumbing: "Plumber",
-  painting: "Painter",
-  carpentry: "Carpenter",
-  handyman: "General Maintenance",
-  hvac: "General Maintenance",
-};
-
-function normalizeTradeName(value?: string | null): string | null {
-  const raw = (value ?? "").trim();
-  if (!raw) return null;
-  if (TRADES.includes(raw)) return raw;
-  return LEGACY_TRADE_ALIASES[raw.toLowerCase()] ?? null;
-}
-
-function normalizeTrades(values: Array<string | null | undefined>): string[] {
-  const seen = new Set<string>();
-  for (const value of values) {
-    const normalized = normalizeTradeName(value);
-    if (normalized) seen.add(normalized);
-  }
-  return seen.size > 0 ? Array.from(seen) : [TRADES[0]];
-}
-
-function getPartnerTrades(partner: Pick<Partner, "trade" | "trades">): string[] {
-  return normalizeTrades(partner.trades?.length ? partner.trades : [partner.trade]);
-}
+const TRADES = [
+  "HVAC", "Electrical", "Plumbing", "Painting", "Carpentry",
+  "Handyman", "Cleaning", "Builder", "Painter",
+];
 
 interface PartnerJobRow {
   id: string;
@@ -132,19 +105,15 @@ interface PartnerSelfBill {
 const jobStatusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   draft: { label: "Draft", variant: "default" },
   scheduled: { label: "Scheduled", variant: "info" },
-  late: { label: "Late", variant: "danger" },
-  in_progress_phase1: { label: "In Progress", variant: "primary" },
-  in_progress_phase2: { label: "In Progress", variant: "primary" },
-  in_progress_phase3: { label: "In Progress", variant: "primary" },
-  final_check: { label: "Final checks", variant: "warning" },
-  awaiting_payment: { label: "Awaiting Payment", variant: "danger" },
-  need_attention: { label: "Needs attention", variant: "warning" },
+  in_progress: { label: "In Progress", variant: "primary" },
+  on_hold: { label: "On Hold", variant: "warning" },
   completed: { label: "Completed", variant: "success" },
+  cancelled: { label: "Cancelled", variant: "danger" },
 };
 
 const emptyForm = {
   company_name: "", contact_name: "", email: "", phone: "",
-  trades: [TRADES[0]] as string[], location: "", status: "active" as PartnerStatus,
+  trades: ["HVAC"] as string[], location: "", status: "active" as PartnerStatus,
 };
 
 type ViewMode = "directory" | "team";
@@ -164,15 +133,17 @@ export default function PartnersPage() {
   const { profile } = useProfile();
   const isAdmin = profile?.role === "admin";
 
+  const loadTeam = useCallback(() => {
+    setTeamLoading(true);
+    getTeamMembers()
+      .then(setTeamMembers)
+      .catch(() => toast.error("Failed to load team"))
+      .finally(() => setTeamLoading(false));
+  }, []);
+
   useEffect(() => {
-    if (viewMode === "team") {
-      setTeamLoading(true);
-      getTeamMembers()
-        .then(setTeamMembers)
-        .catch(() => toast.error("Failed to load team"))
-        .finally(() => setTeamLoading(false));
-    }
-  }, [viewMode]);
+    if (viewMode === "team") loadTeam();
+  }, [viewMode, loadTeam]);
 
   const fetcher = useCallback(
     (params: ListParams) => listPartners({ ...params, trade: tradeFilter !== "all" ? tradeFilter : undefined }),
@@ -202,15 +173,14 @@ export default function PartnersPage() {
     }
     setSubmitting(true);
     try {
-      const normalizedTrades = normalizeTrades(form.trades);
-      const primaryTrade = normalizedTrades[0] ?? TRADES[0];
+      const primaryTrade = form.trades[0] ?? TRADES[0];
       await createPartner({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
         email: form.email.trim(),
         phone: form.phone.trim() || undefined,
         trade: primaryTrade,
-        trades: normalizedTrades,
+        trades: form.trades,
         status: form.status,
         location: form.location.trim(),
         verified: false,
@@ -219,6 +189,7 @@ export default function PartnersPage() {
       setForm(emptyForm);
       refresh();
       await loadCounts();
+      if (viewMode === "team") loadTeam();
       toast.success("Partner created successfully.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create partner.");
@@ -307,7 +278,7 @@ export default function PartnersPage() {
       key: "trade", label: "Trade",
       render: (item) => (
         <div className="flex flex-wrap gap-1">
-          {getPartnerTrades(item).map((t) => (
+          {(item.trades?.length ? item.trades : [item.trade]).map((t) => (
             <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
               {t}
             </span>
@@ -381,7 +352,13 @@ export default function PartnersPage() {
           <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-3">
             {teamLoading && <div className="text-sm text-text-tertiary">Loading team...</div>}
             {!teamLoading && teamMembers.length === 0 && (
-              <div className="py-12 text-center text-text-tertiary">No app partners with jobs yet.</div>
+              <div className="py-12 text-center space-y-2 text-text-tertiary max-w-md mx-auto">
+                <p className="text-sm text-text-secondary">No field partners in the app yet.</p>
+                <p className="text-xs">
+                  Open a partner in <span className="font-medium text-text-primary">Directory</span>, then use{" "}
+                  <span className="font-medium text-text-primary">Mobile app account</span> to link their login email. You can also assign them on a job — they appear here once they have work.
+                </p>
+              </div>
             )}
             {!teamLoading && teamMembers.length > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -464,9 +441,19 @@ export default function PartnersPage() {
         onStatusChange={handleStatusChange}
         onVerify={handleVerify}
         onPartnerUpdate={setSelectedPartner}
+        onTeamChanged={loadTeam}
       />
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Add Partner" subtitle="Create a new partner in your network.">
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Add Partner"
+        subtitle={
+          viewMode === "team"
+            ? "Saves to Directory. To show them under Team (App), open the partner and link their app login email, or assign them on a job."
+            : "Create a new partner in your network."
+        }
+      >
         <div className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -833,6 +820,7 @@ function PartnerDetailDrawer({
   onStatusChange,
   onVerify,
   onPartnerUpdate,
+  onTeamChanged,
 }: {
   partner: Partner | null;
   teamMember: TeamMember | null;
@@ -840,6 +828,7 @@ function PartnerDetailDrawer({
   onStatusChange: (partner: Partner, status: PartnerStatus) => void;
   onVerify: (partner: Partner) => void;
   onPartnerUpdate?: (updated: Partner) => void;
+  onTeamChanged?: () => void;
 }) {
   const [tab, setTab] = useState("overview");
   const [documents, setDocuments] = useState<PartnerDoc[]>([]);
@@ -869,6 +858,9 @@ function PartnerDetailDrawer({
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const partnerAvatarInputRef = useRef<HTMLInputElement>(null);
   const [selectedDoc, setSelectedDoc] = useState<PartnerDoc | null>(null);
+  const [linkEmail, setLinkEmail] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkedAppProfile, setLinkedAppProfile] = useState<Awaited<ReturnType<typeof getProfileById>>>(null);
   const [editingOverview, setEditingOverview] = useState(false);
   const [overviewForm, setOverviewForm] = useState({
     company_name: "",
@@ -934,9 +926,24 @@ function PartnerDetailDrawer({
   }, []);
 
   useEffect(() => {
+    if (!partner?.auth_user_id) {
+      setLinkedAppProfile(null);
+      return;
+    }
+    let cancelled = false;
+    getProfileById(partner.auth_user_id).then((p) => {
+      if (!cancelled) setLinkedAppProfile(p);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [partner?.auth_user_id, partner?.id]);
+
+  useEffect(() => {
     if (partner) {
       setTab("overview");
       setSelectedDoc(null);
+      setLinkEmail(partner.email ?? "");
       loadAll(partner);
       setEditingOverview(false);
       setOverviewForm({
@@ -944,13 +951,103 @@ function PartnerDetailDrawer({
         contact_name: partner.contact_name ?? "",
         email: partner.email ?? "",
         phone: partner.phone ?? "",
-        trades: getPartnerTrades(partner),
+        trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
         location: partner.location ?? "",
         rating: String(partner.rating ?? 0),
         compliance_score: String(partner.compliance_score ?? 0),
       });
     }
   }, [partner, loadAll]);
+
+  const syncAppUserRow = useCallback(async (userId: string, partnerRowId: string) => {
+    const res = await fetch("/api/admin/partner/sync-app-user", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, partnerId: partnerRowId }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+      hint?: string;
+    };
+    if (!res.ok) {
+      const msg = [data.error, data.hint].filter(Boolean).join(" — ") || "Could not sync public.users";
+      throw new Error(msg);
+    }
+    return data;
+  }, []);
+
+  const handleLinkAppUser = async () => {
+    if (!partner) return;
+    const raw = linkEmail.trim();
+    if (!raw) {
+      toast.error("Enter the email they use to log into the app.");
+      return;
+    }
+    setLinkBusy(true);
+    try {
+      const supabase = getSupabase();
+      const { data: found, error: qErr } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .ilike("email", raw.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_"))
+        .limit(8);
+      if (qErr) throw new Error(qErr.message);
+      const match =
+        (found ?? []).find((r) => (r.email ?? "").toLowerCase() === raw.toLowerCase()) ?? (found ?? [])[0];
+      if (!match?.id) {
+        toast.error("No profile with that email. They need to register in the Master Services app first.");
+        return;
+      }
+      const { data: clash } = await supabase
+        .from("partners")
+        .select("id, company_name")
+        .eq("auth_user_id", match.id)
+        .neq("id", partner.id)
+        .maybeSingle();
+      if (clash) {
+        toast.error(
+          `That app account is already linked to “${(clash as { company_name: string }).company_name}”.`
+        );
+        return;
+      }
+      const updated = await updatePartner(partner.id, { auth_user_id: match.id });
+      onPartnerUpdate?.(updated);
+      setLinkedAppProfile(await getProfileById(match.id));
+      try {
+        await syncAppUserRow(match.id, partner.id);
+        toast.success("Linked — Team (App) + mobile app profile (users) ready.");
+      } catch (syncErr) {
+        toast.success("Linked in OS — they appear under Team (App).");
+        toast.error(
+          syncErr instanceof Error
+            ? `${syncErr.message} Add SUPABASE_SERVICE_ROLE_KEY to the server env, or run docs/SQL_APP_SETUP.sql if users is missing.`
+            : "Could not create row in public.users for the app."
+        );
+      }
+      onTeamChanged?.();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to link");
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
+  const handleUnlinkAppUser = async () => {
+    if (!partner?.auth_user_id) return;
+    setLinkBusy(true);
+    try {
+      const updated = await updatePartner(partner.id, { auth_user_id: null });
+      onPartnerUpdate?.(updated);
+      setLinkedAppProfile(null);
+      toast.success("App link removed.");
+      onTeamChanged?.();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to remove link");
+    } finally {
+      setLinkBusy(false);
+    }
+  };
 
   const handleSaveOverview = useCallback(async () => {
     if (!partner) return;
@@ -969,15 +1066,14 @@ function PartnerDetailDrawer({
       return;
     }
     try {
-      const normalizedTrades = normalizeTrades(overviewForm.trades);
-      const primaryTrade = normalizedTrades[0] ?? TRADES[0];
+      const primaryTrade = overviewForm.trades[0] ?? TRADES[0];
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         contact_name: overviewForm.contact_name.trim(),
         email: overviewForm.email.trim(),
         phone: overviewForm.phone.trim() || undefined,
         trade: primaryTrade,
-        trades: normalizedTrades,
+        trades: overviewForm.trades,
         location: overviewForm.location.trim(),
         rating,
         compliance_score: compliance,
@@ -1406,7 +1502,7 @@ function PartnerDetailDrawer({
                             contact_name: partner.contact_name ?? "",
                             email: partner.email ?? "",
                             phone: partner.phone ?? "",
-                            trades: getPartnerTrades(partner),
+                            trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
                             location: partner.location ?? "",
                             rating: String(partner.rating ?? 0),
                             compliance_score: String(partner.compliance_score ?? 0),
@@ -1449,16 +1545,14 @@ function PartnerDetailDrawer({
                 ) : (
                   <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
                 )}
-                {!editingOverview && (
-                  <div className="flex items-center gap-2 mt-1 flex-wrap">
-                    <Badge variant={config.variant} dot size="md">{config.label}</Badge>
-                    {getPartnerTrades(partner).map((t) => (
-                      <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <Badge variant={config.variant} dot size="md">{config.label}</Badge>
+                  {(editingOverview ? overviewForm.trades : (partner.trades?.length ? partner.trades : [partner.trade])).map((t) => (
+                    <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
+                      {t}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1577,7 +1671,7 @@ function PartnerDetailDrawer({
                       contact_name: partner.contact_name ?? "",
                       email: partner.email ?? "",
                       phone: partner.phone ?? "",
-                      trades: getPartnerTrades(partner),
+                      trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
                       location: partner.location ?? "",
                       rating: String(partner.rating ?? 0),
                       compliance_score: String(partner.compliance_score ?? 0),
@@ -1600,6 +1694,74 @@ function PartnerDetailDrawer({
                 </Button>
               </div>
             </div>
+
+            {isAdmin && (
+              <div className="p-4 rounded-xl border border-border-light bg-card space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">Mobile app account</p>
+                  <p className="text-xs text-text-tertiary mt-0.5">
+                    Link this directory partner to their Master Services app login so they show under{" "}
+                    <span className="font-medium text-text-secondary">Team (App)</span> even before the first job.
+                  </p>
+                </div>
+                {partner.auth_user_id ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-text-secondary">
+                      Linked to{" "}
+                      <span className="font-semibold text-text-primary">
+                        {linkedAppProfile?.full_name ?? "App user"}
+                      </span>
+                      {linkedAppProfile?.email && (
+                        <span className="text-text-tertiary"> · {linkedAppProfile.email}</span>
+                      )}
+                    </p>
+                    <p className="text-[11px] text-text-tertiary">
+                      The mobile app reads <span className="font-medium text-text-secondary">public.users</span> (not
+                      only profiles). Use sync if they still see missing profile after linking.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={linkBusy}
+                        onClick={() => {
+                          void (async () => {
+                            if (!partner.auth_user_id) return;
+                            setLinkBusy(true);
+                            try {
+                              await syncAppUserRow(partner.auth_user_id, partner.id);
+                              toast.success("App profile row updated in public.users.");
+                            } catch (e) {
+                              toast.error(e instanceof Error ? e.message : "Sync failed");
+                            } finally {
+                              setLinkBusy(false);
+                            }
+                          })();
+                        }}
+                      >
+                        Sync app profile (users)
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={linkBusy} onClick={() => void handleUnlinkAppUser()}>
+                        Remove app link
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Input
+                      type="email"
+                      value={linkEmail}
+                      onChange={(e) => setLinkEmail(e.target.value)}
+                      placeholder="Email they use in the app"
+                      className="flex-1 min-w-0"
+                    />
+                    <Button size="sm" disabled={linkBusy || !linkEmail.trim()} onClick={() => void handleLinkAppUser()}>
+                      {linkBusy ? "Linking…" : "Link account"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex gap-2 pt-4 border-t border-border-light">
               {statusActions.map((action) => (
