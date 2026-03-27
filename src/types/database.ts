@@ -34,7 +34,8 @@ export type JobStatus =
   | "final_check"
   | "awaiting_payment"
   | "need_attention"
-  | "completed";
+  | "completed"
+  | "cancelled";
 export type JobFinanceStatus = "unpaid" | "partial" | "paid";
 export type PartnerStatus = "active" | "inactive" | "on_break" | "onboarding";
 export type InvoiceStatus = "paid" | "pending" | "overdue" | "cancelled";
@@ -230,6 +231,9 @@ export interface Job {
   invoice_id?: string;
   scope?: string;
   internal_notes?: string;
+  cancellation_reason?: string;
+  cancelled_at?: string;
+  cancelled_by?: string;
   created_at: string;
   updated_at: string;
 }

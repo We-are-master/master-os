@@ -38,7 +38,7 @@ import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, isJobWorkPhaseStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
 
-const JOB_STATUSES = ["draft", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
+const JOB_STATUSES = ["draft", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   draft: { label: "Draft", variant: "default", dot: true },
@@ -51,6 +51,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
   need_attention: { label: "Needs attention", variant: "warning", dot: true },
   completed: { label: "Completed", variant: "success", dot: true },
+  cancelled: { label: "Cancelled", variant: "default", dot: true },
 };
 
 function JobsPageContent() {
@@ -99,7 +100,7 @@ function JobsPageContent() {
   }, [data, filterPartner, filterScheduled]);
 
   const kanbanColumns = useMemo(() => {
-    const ids = ["draft", "scheduled", "late", "in_progress", "final_check", "awaiting_payment", "need_attention", "completed"] as const;
+    const ids = ["draft", "scheduled", "late", "in_progress", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
     return ids.map((id) => {
       if (id === "in_progress") {
         return {
@@ -116,6 +117,8 @@ function JobsPageContent() {
         color:
           id === "completed"
             ? "bg-emerald-500"
+            : id === "cancelled"
+              ? "bg-slate-400"
             : id === "late"
               ? "bg-red-500"
               : id === "need_attention"
@@ -180,6 +183,7 @@ function JobsPageContent() {
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
     { id: "need_attention", label: "Needs attention", count: tabCounts.need_attention ?? 0 },
     { id: "completed", label: "Completed", count: tabCounts.completed ?? 0 },
+    { id: "cancelled", label: "Cancelled", count: tabCounts.cancelled ?? 0 },
   ];
 
   useEffect(() => {

@@ -28,6 +28,7 @@ import {
   CreditCard,
   RefreshCw,
   X,
+  Ban,
 } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
@@ -39,6 +40,7 @@ import { listPartners } from "@/services/partners";
 import { uploadManualJobReport } from "@/services/job-report-storage";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logFieldChanges } from "@/services/audit";
+import { getSupabase } from "@/services/base";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
@@ -79,6 +81,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
   need_attention: { label: "Needs attention", variant: "warning", dot: true },
   completed: { label: "Completed", variant: "success", dot: true },
+  cancelled: { label: "Cancelled", variant: "default", dot: true },
 };
 
 
@@ -133,6 +136,9 @@ export default function JobDetailPage() {
   const [jobInvoices, setJobInvoices] = useState<Invoice[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancellingJob, setCancellingJob] = useState(false);
   const [manualReportFile, setManualReportFile] = useState<File | null>(null);
   const [manualReportNotes, setManualReportNotes] = useState("");
   const [manualReportResult, setManualReportResult] = useState("");
@@ -483,8 +489,65 @@ export default function JobDetailPage() {
     handleJobUpdate(j.id, { scheduled_start_at, scheduled_end_at, scheduled_date } as Partial<Job>);
   }, [handleJobUpdate]);
 
+  const handleCancelJob = useCallback(async () => {
+    if (!job) return;
+    const reason = cancelReason.trim();
+    if (!reason) {
+      toast.error("Please provide a cancellation reason.");
+      return;
+    }
+    setCancellingJob(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const updated = await updateJob(job.id, {
+        status: "cancelled",
+        cancellation_reason: reason,
+        cancelled_at: nowIso,
+        cancelled_by: profile?.id,
+      } as Partial<Job>);
+
+      if (job.partner_id) {
+        const supabase = getSupabase();
+        const { data: partner } = await supabase
+          .from("partners")
+          .select("internal_notes")
+          .eq("id", job.partner_id)
+          .maybeSingle();
+        const stamp = new Date().toLocaleString();
+        const line = `[${stamp}] Job ${job.reference} cancelled: ${reason}`;
+        const mergedNotes = [String(partner?.internal_notes ?? "").trim(), line].filter(Boolean).join("\n");
+        await supabase.from("partners").update({ internal_notes: mergedNotes }).eq("id", job.partner_id);
+      }
+
+      await logAudit({
+        entityType: "job",
+        entityId: job.id,
+        entityRef: job.reference,
+        action: "status_changed",
+        fieldName: "status",
+        oldValue: job.status,
+        newValue: "cancelled",
+        userId: profile?.id,
+        userName: profile?.full_name,
+        metadata: { cancellation_reason: reason, partner_id: job.partner_id ?? null },
+      });
+      setJob(updated);
+      setCancelModalOpen(false);
+      setCancelReason("");
+      toast.success("Job cancelled");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to cancel job");
+    } finally {
+      setCancellingJob(false);
+    }
+  }, [job, cancelReason, profile?.id, profile?.full_name]);
+
   const handleAddPayment = useCallback(async () => {
     if (!job || !addPaymentAmount || Number(addPaymentAmount) <= 0) return;
+    if (job.status === "cancelled") {
+      toast.error("Cancelled jobs cannot receive payments.");
+      return;
+    }
     const amount = Number(addPaymentAmount);
     const partnerCap = partnerPaymentCap(job);
     const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
@@ -747,6 +810,16 @@ export default function JobDetailPage() {
             <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            {job.status !== "cancelled" && (
+              <Button
+                variant="danger"
+                size="sm"
+                icon={<Ban className="h-3.5 w-3.5" />}
+                onClick={() => setCancelModalOpen(true)}
+              >
+                Cancelled
+              </Button>
+            )}
             {statusActions.map((action, idx) => (
               <Button
                 key={`${action.status}-${idx}`}
@@ -766,6 +839,12 @@ export default function JobDetailPage() {
 
           {/* ═══ LEFT — operational column ═══ */}
           <div className="min-w-0 space-y-4 sm:space-y-5 lg:col-span-2">
+            {job.status === "cancelled" && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-red-700">Cancellation reason</p>
+                <p className="mt-1 text-sm text-red-800">{job.cancellation_reason || "No reason provided."}</p>
+              </div>
+            )}
 
             {/* Job figures — same card shell as Client identity below */}
             <div className="w-full min-w-0 rounded-xl border border-border-light bg-card p-3 sm:p-4">
@@ -1269,7 +1348,7 @@ export default function JobDetailPage() {
                   size="sm"
                   variant="outline"
                   className="mt-3 w-full"
-                  disabled={maxCustomerDepositPay <= 0 && maxCustomerFinalPay <= 0}
+                  disabled={job.status === "cancelled" || (maxCustomerDepositPay <= 0 && maxCustomerFinalPay <= 0)}
                   icon={<Plus className="h-3.5 w-3.5" />}
                   onClick={() => {
                     const type = maxCustomerDepositPay > 0 ? "customer_deposit" : "customer_final";
@@ -1341,7 +1420,7 @@ export default function JobDetailPage() {
                     </div>
                   )}
                 </div>
-                <Button size="sm" variant="outline" className="mt-3 w-full" disabled={partnerPayRemaining <= 0} icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setAddPaymentType("partner"); setAddPaymentOpen(true); }}>
+                <Button size="sm" variant="outline" className="mt-3 w-full" disabled={job.status === "cancelled" || partnerPayRemaining <= 0} icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setAddPaymentType("partner"); setAddPaymentOpen(true); }}>
                   Register partner payment
                 </Button>
               </div>
@@ -1404,6 +1483,34 @@ export default function JobDetailPage() {
           </div>
         </div>
       </div>
+
+      <Modal
+        open={cancelModalOpen}
+        onClose={() => { if (!cancellingJob) setCancelModalOpen(false); }}
+        title="Cancel job"
+      >
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-text-secondary">
+            This closes the job as <strong>Cancelled</strong> and stores the reason in history.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Cancellation reason *</label>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={4}
+              placeholder="Explain what happened and why the job was cancelled..."
+              className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" disabled={cancellingJob} onClick={() => setCancelModalOpen(false)}>Back</Button>
+            <Button variant="danger" size="sm" loading={cancellingJob} onClick={() => void handleCancelJob()}>
+              Confirm cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* DELETE PAYMENT CONFIRMATION MODAL */}
       <Modal
