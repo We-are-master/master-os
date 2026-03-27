@@ -47,6 +47,7 @@ import {
   type TeamMember,
 } from "@/services/partner-detail";
 import { LocationMiniMapByCoords } from "@/components/ui/location-picker";
+import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
@@ -67,10 +68,7 @@ const tradeColors: Record<string, string> = {
   Painter: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 ring-yellow-200/50",
 };
 
-const TRADES = [
-  "HVAC", "Electrical", "Plumbing", "Painting", "Carpentry",
-  "Handyman", "Cleaning", "Builder", "Painter",
-];
+const TRADES = [...TYPE_OF_WORK_OPTIONS];
 
 interface PartnerJobRow {
   id: string;
@@ -117,7 +115,7 @@ const jobStatusConfig: Record<string, { label: string; variant: "default" | "pri
 
 const emptyForm = {
   company_name: "", contact_name: "", email: "", phone: "",
-  trades: ["HVAC"] as string[], location: "", status: "active" as PartnerStatus,
+  trades: [TRADES[0]] as string[], location: "", status: "active" as PartnerStatus,
 };
 
 type ViewMode = "directory" | "team";

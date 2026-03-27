@@ -37,6 +37,7 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, isJobWorkPhaseStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
+import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const JOB_STATUSES = ["draft", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -519,7 +520,15 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   return (
     <Modal open={open} onClose={onClose} title="Novo Job" subtitle="Criar um novo job" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Job title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
+        <Select
+          label="Type of work *"
+          value={form.title}
+          onChange={(e) => update("title", e.target.value)}
+          options={[
+            { value: "", label: "Select type of work..." },
+            ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
+          ]}
+        />
         <Select
           label="Work phases *"
           value={form.total_phases}
