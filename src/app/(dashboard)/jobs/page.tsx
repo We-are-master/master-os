@@ -25,7 +25,7 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listJobs, createJob, updateJob, getJob, getTotalRevenueBookedPipeline, getAverageMarginPercentPipeline } from "@/services/jobs";
+import { listJobs, createJob, updateJob, getJob, getTotalRevenueBookedPipeline, getAverageMarginPercentPipeline, getAverageTicketPipeline } from "@/services/jobs";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
@@ -56,7 +56,17 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 function JobsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh } = useSupabaseList<Job>({ fetcher: listJobs, realtimeTable: "jobs" });
+  const [dateFilterMode, setDateFilterMode] = useState<"all" | "today" | "range">("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const todayYmd = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const effectiveDateFrom = dateFilterMode === "today" ? todayYmd : dateFilterMode === "range" ? (dateFrom || undefined) : undefined;
+  const effectiveDateTo = dateFilterMode === "today" ? todayYmd : dateFilterMode === "range" ? (dateTo || undefined) : undefined;
+  const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh } = useSupabaseList<Job>({
+    fetcher: listJobs,
+    realtimeTable: "jobs",
+    extraParams: { dateFrom: effectiveDateFrom, dateTo: effectiveDateTo },
+  });
   const { profile } = useProfile();
   const [viewMode, setViewMode] = useState("list");
   const [createOpen, setCreateOpen] = useState(false);
@@ -68,6 +78,7 @@ function JobsPageContent() {
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
   const [revenueBookedPipeline, setRevenueBookedPipeline] = useState(0);
   const [avgMarginPipeline, setAvgMarginPipeline] = useState(0);
+  const [avgTicketPipeline, setAvgTicketPipeline] = useState(0);
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -126,18 +137,24 @@ function JobsPageContent() {
 
   const loadCounts = useCallback(async () => {
     try {
-      const [counts, revenueBooked, avgMargin] = await Promise.all([
-        getStatusCounts("jobs", [...JOB_STATUSES]),
-        getTotalRevenueBookedPipeline(),
-        getAverageMarginPercentPipeline(),
+      const [counts, revenueBooked, avgMargin, avgTicket] = await Promise.all([
+        getStatusCounts("jobs", [...JOB_STATUSES], "status", {
+          dateColumn: "scheduled_date",
+          dateFrom: effectiveDateFrom,
+          dateTo: effectiveDateTo,
+        }),
+        getTotalRevenueBookedPipeline({ from: effectiveDateFrom, to: effectiveDateTo }),
+        getAverageMarginPercentPipeline({ from: effectiveDateFrom, to: effectiveDateTo }),
+        getAverageTicketPipeline({ from: effectiveDateFrom, to: effectiveDateTo }),
       ]);
       setTabCounts(counts);
       setRevenueBookedPipeline(revenueBooked);
       setAvgMarginPipeline(avgMargin);
+      setAvgTicketPipeline(avgTicket);
     } catch {
       /* cosmetic */
     }
-  }, []);
+  }, [effectiveDateFrom, effectiveDateTo]);
   useEffect(() => { loadCounts(); }, [loadCounts]);
 
   const workPhaseTabCount =
@@ -340,9 +357,21 @@ function JobsPageContent() {
         <PageHeader title="Jobs Management" subtitle="Track and manage all active jobs.">
           <div className="relative flex items-center gap-2" ref={filterRef}>
             <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-            {(filterPartner !== "all" || filterScheduled !== "all") && <span className="text-[10px] font-medium text-primary">Active</span>}
+            {(filterPartner !== "all" || filterScheduled !== "all" || dateFilterMode !== "all") && <span className="text-[10px] font-medium text-primary">Active</span>}
             {filterOpen && (
-              <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+              <div className="absolute top-full right-0 mt-1 w-[min(92vw,22rem)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Date</p>
+                <select value={dateFilterMode} onChange={(e) => setDateFilterMode(e.target.value as "all" | "today" | "range")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                  <option value="all">All dates</option>
+                  <option value="today">Today</option>
+                  <option value="range">Between dates</option>
+                </select>
+                {dateFilterMode === "range" && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+                    <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+                  </div>
+                )}
                 <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
                 <select value={filterPartner} onChange={(e) => setFilterPartner(e.target.value as "all" | "with" | "without")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
                   <option value="all">All</option><option value="with">With partner</option><option value="without">Without partner</option>
@@ -351,7 +380,7 @@ function JobsPageContent() {
                 <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
                   <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
                 </select>
-                <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); }}>Clear filters</Button>
+                <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); setDateFilterMode("all"); setDateFrom(""); setDateTo(""); }}>Clear filters</Button>
               </div>
             )}
           </div>
@@ -360,7 +389,7 @@ function JobsPageContent() {
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch [&>*]:min-w-0">
           <KpiCard title="Active Jobs" value={activeJobsKpi} format="number" icon={Briefcase} accent="blue" />
-          <KpiCard title="Awaiting Payment" value={tabCounts.awaiting_payment ?? 0} format="number" icon={DollarSign} accent="amber" />
+          <KpiCard title="Average per job" value={avgTicketPipeline} format="currency" description="Average ticket (pipeline jobs)" icon={DollarSign} accent="amber" />
           <KpiCard
             title="Average % margin"
             value={avgMarginPipeline}

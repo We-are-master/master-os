@@ -11,6 +11,12 @@ export interface ListParams {
   statusIn?: string[];
   sortBy?: string;
   sortDir?: SortDirection;
+  /** Inclusive YYYY-MM-DD */
+  dateFrom?: string;
+  /** Inclusive YYYY-MM-DD */
+  dateTo?: string;
+  /** Column used for date range filtering (e.g. `scheduled_date`). */
+  dateColumn?: string;
 }
 
 export interface ListResult<T> {
@@ -68,6 +74,11 @@ export async function queryList<T>(
     query = query.or(orConditions);
   }
 
+  if (params.dateColumn) {
+    if (params.dateFrom) query = query.gte(params.dateColumn, params.dateFrom);
+    if (params.dateTo) query = query.lte(params.dateColumn, params.dateTo);
+  }
+
   const sortCol = params.sortBy ?? options?.defaultSort ?? "created_at";
   const sortDir = params.sortDir ?? "desc";
   query = query.order(sortCol, { ascending: sortDir === "asc" });
@@ -90,24 +101,35 @@ export async function queryList<T>(
 export async function getStatusCounts(
   table: string,
   statuses: string[],
-  statusColumn = "status"
+  statusColumn = "status",
+  options?: { dateFrom?: string; dateTo?: string; dateColumn?: string }
 ): Promise<Record<string, number>> {
   const supabase = getSupabase();
   const counts: Record<string, number> = {};
 
-  const { count: totalCount } = await supabase
+  let totalQuery = supabase
     .from(table)
     .select("*", { count: "exact", head: true })
     .is("deleted_at", null);
+  if (options?.dateColumn) {
+    if (options.dateFrom) totalQuery = totalQuery.gte(options.dateColumn, options.dateFrom);
+    if (options.dateTo) totalQuery = totalQuery.lte(options.dateColumn, options.dateTo);
+  }
+  const { count: totalCount } = await totalQuery;
   counts["all"] = totalCount ?? 0;
 
   await Promise.all(
     statuses.map(async (s) => {
-      const { count } = await supabase
+      let statusQuery = supabase
         .from(table)
         .select("*", { count: "exact", head: true })
         .is("deleted_at", null)
         .eq(statusColumn, s);
+      if (options?.dateColumn) {
+        if (options.dateFrom) statusQuery = statusQuery.gte(options.dateColumn, options.dateFrom);
+        if (options.dateTo) statusQuery = statusQuery.lte(options.dateColumn, options.dateTo);
+      }
+      const { count } = await statusQuery;
       counts[s] = count ?? 0;
     })
   );

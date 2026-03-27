@@ -12,25 +12,31 @@ const REVENUE_BOOKED_STATUSES: Job["status"][] = [
 ];
 
 /** Sum of job amount (client_price + extras) for pipeline jobs; not limited to the current list page. */
-export async function getTotalRevenueBookedPipeline(): Promise<number> {
+export async function getTotalRevenueBookedPipeline(dateRange?: { from?: string; to?: string }): Promise<number> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from("jobs")
     .select("client_price, extras_amount")
     .in("status", REVENUE_BOOKED_STATUSES)
     .is("deleted_at", null);
+  if (dateRange?.from) query = query.gte("scheduled_date", dateRange.from);
+  if (dateRange?.to) query = query.lte("scheduled_date", dateRange.to);
+  const { data, error } = await query;
   if (error || !data) return 0;
   return data.reduce((sum, row) => sum + jobBillableRevenue(row as Pick<Job, "client_price" | "extras_amount">), 0);
 }
 
 /** Revenue-weighted average margin % for pipeline jobs (same scope as total revenue booked). */
-export async function getAverageMarginPercentPipeline(): Promise<number> {
+export async function getAverageMarginPercentPipeline(dateRange?: { from?: string; to?: string }): Promise<number> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from("jobs")
     .select("client_price, extras_amount, partner_cost, materials_cost")
     .in("status", REVENUE_BOOKED_STATUSES)
     .is("deleted_at", null);
+  if (dateRange?.from) query = query.gte("scheduled_date", dateRange.from);
+  if (dateRange?.to) query = query.lte("scheduled_date", dateRange.to);
+  const { data, error } = await query;
   if (error || !data?.length) return 0;
   let rev = 0;
   let profit = 0;
@@ -42,6 +48,25 @@ export async function getAverageMarginPercentPipeline(): Promise<number> {
     profit += jobProfit(j);
   }
   return rev > 0 ? Math.round((profit / rev) * 1000) / 10 : 0;
+}
+
+export async function getAverageTicketPipeline(dateRange?: { from?: string; to?: string }): Promise<number> {
+  const supabase = getSupabase();
+  let query = supabase
+    .from("jobs")
+    .select("client_price, extras_amount")
+    .in("status", REVENUE_BOOKED_STATUSES)
+    .is("deleted_at", null);
+  if (dateRange?.from) query = query.gte("scheduled_date", dateRange.from);
+  if (dateRange?.to) query = query.lte("scheduled_date", dateRange.to);
+  const { data, error } = await query;
+  if (error || !data?.length) return 0;
+  const revenues = data
+    .map((row) => jobBillableRevenue(row as Pick<Job, "client_price" | "extras_amount">))
+    .filter((v) => v > 0);
+  if (revenues.length === 0) return 0;
+  const total = revenues.reduce((sum, v) => sum + v, 0);
+  return total / revenues.length;
 }
 
 // Throttle: mark-late runs at most once every 5 minutes per server instance
@@ -69,14 +94,14 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(
       "jobs",
-      { ...rest, statusIn: [...JOB_WORK_PHASE_STATUSES] },
+      { ...rest, statusIn: [...JOB_WORK_PHASE_STATUSES], dateColumn: "scheduled_date" },
       {
         searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
         defaultSort: "created_at",
       }
     );
   }
-  return queryList<Job>("jobs", params, {
+  return queryList<Job>("jobs", { ...params, dateColumn: "scheduled_date" }, {
     searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
     defaultSort: "created_at",
   });
