@@ -1433,16 +1433,6 @@ function CreateRequestModal({
   return (
     <Modal open={open} onClose={onClose} title="New Service Request" subtitle="Create a new incoming request" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div>
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; property *</p>
-          <p className="text-xs text-text-tertiary mb-3">Search for an existing client or create a new one. This link is kept when you convert to quote or job.</p>
-          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} labelClient="Client *" labelAddress="Property address *" />
-          {!clientAddress.client_id && (
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2">
-              First pick or create a client in the field above, then choose or add the property address. Both are required.
-            </p>
-          )}
-        </div>
         <Select
           label="Request type"
           value={form.request_kind}
@@ -1458,6 +1448,16 @@ function CreateRequestModal({
           }}
           options={REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
         />
+        <div>
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; property *</p>
+          <p className="text-xs text-text-tertiary mb-3">Search for an existing client or create a new one. This link is kept when you convert to quote or job.</p>
+          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} labelClient="Client *" labelAddress="Property address *" />
+          {!clientAddress.client_id && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2">
+              First pick or create a client in the field above, then choose or add the property address. Both are required.
+            </p>
+          )}
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Phone (request)</label>

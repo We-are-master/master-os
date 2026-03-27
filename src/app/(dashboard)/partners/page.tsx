@@ -70,6 +70,35 @@ const tradeColors: Record<string, string> = {
 
 const TRADES = [...TYPE_OF_WORK_OPTIONS];
 
+const LEGACY_TRADE_ALIASES: Record<string, string> = {
+  electrical: "Electrician",
+  plumbing: "Plumber",
+  painting: "Painter",
+  carpentry: "Carpenter",
+  handyman: "General Maintenance",
+  hvac: "General Maintenance",
+};
+
+function normalizeTradeName(value?: string | null): string | null {
+  const raw = (value ?? "").trim();
+  if (!raw) return null;
+  if (TRADES.includes(raw)) return raw;
+  return LEGACY_TRADE_ALIASES[raw.toLowerCase()] ?? null;
+}
+
+function normalizeTrades(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = normalizeTradeName(value);
+    if (normalized) seen.add(normalized);
+  }
+  return seen.size > 0 ? Array.from(seen) : [TRADES[0]];
+}
+
+function getPartnerTrades(partner: Pick<Partner, "trade" | "trades">): string[] {
+  return normalizeTrades(partner.trades?.length ? partner.trades : [partner.trade]);
+}
+
 interface PartnerJobRow {
   id: string;
   reference: string;
@@ -173,14 +202,15 @@ export default function PartnersPage() {
     }
     setSubmitting(true);
     try {
-      const primaryTrade = form.trades[0] ?? TRADES[0];
+      const normalizedTrades = normalizeTrades(form.trades);
+      const primaryTrade = normalizedTrades[0] ?? TRADES[0];
       await createPartner({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
         email: form.email.trim(),
         phone: form.phone.trim() || undefined,
         trade: primaryTrade,
-        trades: form.trades,
+        trades: normalizedTrades,
         status: form.status,
         location: form.location.trim(),
         verified: false,
@@ -277,7 +307,7 @@ export default function PartnersPage() {
       key: "trade", label: "Trade",
       render: (item) => (
         <div className="flex flex-wrap gap-1">
-          {(item.trades?.length ? item.trades : [item.trade]).map((t) => (
+          {getPartnerTrades(item).map((t) => (
             <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
               {t}
             </span>
@@ -914,7 +944,7 @@ function PartnerDetailDrawer({
         contact_name: partner.contact_name ?? "",
         email: partner.email ?? "",
         phone: partner.phone ?? "",
-        trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
+        trades: getPartnerTrades(partner),
         location: partner.location ?? "",
         rating: String(partner.rating ?? 0),
         compliance_score: String(partner.compliance_score ?? 0),
@@ -939,14 +969,15 @@ function PartnerDetailDrawer({
       return;
     }
     try {
-      const primaryTrade = overviewForm.trades[0] ?? TRADES[0];
+      const normalizedTrades = normalizeTrades(overviewForm.trades);
+      const primaryTrade = normalizedTrades[0] ?? TRADES[0];
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         contact_name: overviewForm.contact_name.trim(),
         email: overviewForm.email.trim(),
         phone: overviewForm.phone.trim() || undefined,
         trade: primaryTrade,
-        trades: overviewForm.trades,
+        trades: normalizedTrades,
         location: overviewForm.location.trim(),
         rating,
         compliance_score: compliance,
@@ -1375,7 +1406,7 @@ function PartnerDetailDrawer({
                             contact_name: partner.contact_name ?? "",
                             email: partner.email ?? "",
                             phone: partner.phone ?? "",
-                            trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
+                            trades: getPartnerTrades(partner),
                             location: partner.location ?? "",
                             rating: String(partner.rating ?? 0),
                             compliance_score: String(partner.compliance_score ?? 0),
@@ -1418,14 +1449,16 @@ function PartnerDetailDrawer({
                 ) : (
                   <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
                 )}
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <Badge variant={config.variant} dot size="md">{config.label}</Badge>
-                  {(editingOverview ? overviewForm.trades : (partner.trades?.length ? partner.trades : [partner.trade])).map((t) => (
-                    <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
-                      {t}
-                    </span>
-                  ))}
-                </div>
+                {!editingOverview && (
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <Badge variant={config.variant} dot size="md">{config.label}</Badge>
+                    {getPartnerTrades(partner).map((t) => (
+                      <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1544,7 +1577,7 @@ function PartnerDetailDrawer({
                       contact_name: partner.contact_name ?? "",
                       email: partner.email ?? "",
                       phone: partner.phone ?? "",
-                      trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
+                      trades: getPartnerTrades(partner),
                       location: partner.location ?? "",
                       rating: String(partner.rating ?? 0),
                       compliance_score: String(partner.compliance_score ?? 0),
