@@ -1348,7 +1348,7 @@ function CreateRequestModal({
   const [postcode, setPostcode] = useState("");
   const [form, setForm] = useState({
     client_phone: "",
-    request_kind: "work",
+    request_kind: "",
     source: "manual" as ServiceRequest["source"],
     catalog_service_id: "",
     service_type: "",
@@ -1364,7 +1364,7 @@ function CreateRequestModal({
     setPostcode("");
     setForm({
       client_phone: "",
-      request_kind: "work",
+      request_kind: "",
       source: "manual",
       catalog_service_id: "",
       service_type: "",
@@ -1387,6 +1387,10 @@ function CreateRequestModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (form.request_kind !== "work" && form.request_kind !== "quote") {
+      toast.error("Request type is required.");
+      return;
+    }
     if (!clientAddress.client_id) {
       toast.error(
         "The client must be linked: click their name in the list, press Enter, or tab away after typing the exact name. If you only typed text without confirming, the system has no client ID."
@@ -1437,7 +1441,7 @@ function CreateRequestModal({
           label="Request type"
           value={form.request_kind}
           onChange={(e) => {
-            const next = e.target.value as "quote" | "work";
+            const next = e.target.value as "" | "quote" | "work";
             setForm((prev) => ({
               ...prev,
               request_kind: next,
@@ -1446,7 +1450,10 @@ function CreateRequestModal({
               estimated_value: "",
             }));
           }}
-          options={REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+          options={[
+            { value: "", label: "Select request type..." },
+            ...REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+          ]}
         />
         <div>
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; property *</p>
@@ -1502,7 +1509,7 @@ function CreateRequestModal({
               />
               <p className="text-[10px] text-text-tertiary">Values are loaded from Services and can be adjusted if needed.</p>
             </>
-          ) : (
+          ) : form.request_kind === "quote" ? (
             <Select
               label="Service name *"
               value={form.service_type}
@@ -1512,6 +1519,10 @@ function CreateRequestModal({
                 ...typeOfWorkOptions.map((name) => ({ value: name, label: name })),
               ]}
             />
+          ) : (
+            <p className="text-xs text-amber-600 dark:text-amber-400 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2">
+              Select Request type first.
+            </p>
           )}
           <Select label="Priority" value={form.priority} onChange={(e) => update("priority", e.target.value)} options={[
             { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
