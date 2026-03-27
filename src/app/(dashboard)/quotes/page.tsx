@@ -44,11 +44,11 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { normalizeTotalPhases } from "@/lib/job-phases";
+import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { isUuid } from "@/lib/utils";
-import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback } from "@/lib/type-of-work";
 
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
 
@@ -156,7 +156,10 @@ function getStageGuidance(status: string): {
     case "bidding":
       return {
         headline: "Bids or your own figures",
-        detail: "Partner bids are optional. If Overview already has the right partner cost and sell price, move to Awaiting Customer and send the email.",
+        detail:
+          "Approving a bid only locks partner cost — it does not accept with the customer. Set your sell price on Overview, complete the proposal, then Send to Customer. After the client accepts, convert to a job.",
+        goToTab: "overview",
+        goToLabel: "Overview",
       };
     case "awaiting_customer":
       return {
@@ -329,6 +332,21 @@ export default function QuotesPage() {
   const handleConfirmCreateJob = useCallback(
     async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => {
       if (!quoteToConvert) return;
+      const effectivePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
+      if (effectivePartnerId) {
+        const block = getPartnerAssignmentBlockReason({
+          property_address: formData.property_address,
+          scope: quoteToConvert.scope ?? "",
+          scheduled_date: formData.scheduled_date,
+          scheduled_start_at: formData.scheduled_start_at,
+          partner_id: effectivePartnerId,
+          partner_ids: [],
+        });
+        if (block) {
+          toast.error(block);
+          return;
+        }
+      }
       try {
         const margin = formData.client_price > 0 ? Math.round(((formData.client_price - formData.partner_cost - formData.materials_cost) / formData.client_price) * 1000) / 10 : 0;
         const noDeposit = !!formData.createWithoutDeposit;
@@ -439,6 +457,18 @@ export default function QuotesPage() {
         setSelectedQuote(updated);
         toast.success(`Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
         refresh(); loadCounts();
+        if (newStatus === "bidding" && quote.service_type) {
+          fetch("/api/push/notify-partner", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              trades: [quote.service_type],
+              title: "New Job Invitation",
+              body: `${quote.title} — ${quote.property_address ?? quote.client_name}`,
+              data: { type: "quote_invite", quoteId: quote.id },
+            }),
+          }).catch(() => {});
+        }
         return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to update quote";
@@ -1076,7 +1106,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
               {/* Pricing & margin — collapsed by default so the drawer feels guided, not overwhelming */}
               <details
                 key={`pricing-${quote.id}`}
-                className="group rounded-xl border border-border-light bg-gradient-to-br from-stone-50 to-stone-100/50 open:shadow-sm"
+                className="group rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary open:shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:open:shadow-md dark:open:shadow-black/20"
                 open={pricingOpen}
                 onToggle={(e) => setPricingOpen(e.currentTarget.open)}
               >
@@ -1088,9 +1118,9 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                   </div>
                   <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
                 </summary>
-                <div className="border-t border-border-light px-4 pb-4 space-y-3">
+                <div className="border-t border-border-light dark:border-border px-4 pb-4 space-y-3">
                 <div className="pt-1">
-                  <p className="text-[10px] text-text-tertiary uppercase mb-1">Partner cost</p>
+                  <p className="text-[10px] text-text-secondary uppercase mb-1">Partner cost</p>
                   <Input
                     type="number"
                     min={0}
@@ -1327,10 +1357,40 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
               <div className="p-4 rounded-xl bg-surface-hover border border-border-light">
                 <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
                 <p className="text-xs text-text-tertiary mt-0.5">
-                  Optional: when partners bid from the app, approve one to set partner and cost. If you already use your own figures on Overview, you can skip bids and use{" "}
-                  <strong className="text-text-secondary">Send to Customer</strong> from the pipeline actions.
+                  Optional: approve one bid to lock <strong className="text-text-secondary">partner cost</strong> on the quote. The quote stays in bidding until you send it to the customer — it is{" "}
+                  <strong className="text-text-secondary">not</strong> customer-accepted yet. Then set <strong className="text-text-secondary">your price</strong> on Overview, complete the proposal, and use{" "}
+                  <strong className="text-text-secondary">Send to Customer</strong>. After the client accepts, convert to a job.
                 </p>
               </div>
+              {quote.status === "bidding" && bids.some((b) => b.status === "approved") && (
+                <div className="rounded-xl border border-primary/25 bg-gradient-to-br from-primary/5 to-transparent p-4 space-y-3">
+                  <p className="text-sm font-semibold text-text-primary">Ready to price for the customer</p>
+                  <p className="text-xs text-text-tertiary">
+                    Partner cost comes from the approved bid. Adjust <strong className="text-text-secondary">your sell price</strong> and margin on Overview, then complete the proposal and send.
+                  </p>
+                  <div className="flex flex-wrap gap-6 text-sm">
+                    <div>
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner cost</p>
+                      <p className="font-bold text-text-primary mt-0.5">{formatCurrency(Number(quote.partner_cost ?? quote.cost ?? 0))}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Your price (customer)</p>
+                      <p className="font-bold text-primary mt-0.5">{formatCurrency(Number(quote.sell_price ?? quote.total_value ?? 0))}</p>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    className="w-full sm:w-auto"
+                    onClick={() => {
+                      setTab("overview");
+                      setPricingOpen(true);
+                    }}
+                  >
+                    Open Overview — pricing & proposal
+                  </Button>
+                </div>
+              )}
               {bidsLoading ? (
                 <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
               ) : bids.length === 0 ? (
@@ -1348,17 +1408,27 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                         <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="mt-2">{bid.status}</Badge>
                       </div>
                       {bid.status === "submitted" && (
-                        <Button size="sm" variant="primary" onClick={async () => {
-                          try {
-                            await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
-                            await updateQuote(quote.id, { status: "accepted" });
-                            await loadBids(quote.id);
-                            toast.success("Bid approved. Quote partner set — status set to Accepted.");
-                            onStatusChange(quote, "accepted");
-                          } catch (e) {
-                            toast.error(e instanceof Error ? e.message : "Failed to approve bid");
-                          }
-                        }}>
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          onClick={async () => {
+                            try {
+                              await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
+                              await loadBids(quote.id);
+                              const fresh = await getQuote(quote.id);
+                              if (fresh) {
+                                onQuoteUpdate?.(fresh);
+                                setPricingOpen(true);
+                                setTab("overview");
+                                toast.success("Partner cost locked from bid. Set customer price on Overview, then Send to Customer.");
+                              } else {
+                                toast.error("Bid approved but quote could not be reloaded. Refresh the page.");
+                              }
+                            } catch (e) {
+                              toast.error(e instanceof Error ? e.message : "Failed to approve bid");
+                            }
+                          }}
+                        >
                           Approve
                         </Button>
                       )}
@@ -1721,11 +1791,6 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     }
   }, [quote]);
 
-  const typeOfWorkOptions = useMemo(
-    () => withTypeOfWorkFallback(form.title).map((name) => ({ value: name, label: name })),
-    [form.title]
-  );
-
   if (!quote) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const handleSubmit = (e: React.FormEvent) => {
@@ -1735,6 +1800,21 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const scheduled_date = form.scheduled_date || undefined;
     const scheduled_start_at = form.scheduled_date && form.scheduled_time ? `${form.scheduled_date}T${form.scheduled_time}:00` : form.scheduled_date ? `${form.scheduled_date}T09:00:00` : undefined;
+    const effectivePartnerId = form.partner_id || quote.partner_id;
+    if (effectivePartnerId) {
+      const block = getPartnerAssignmentBlockReason({
+        property_address: clientAddress.property_address,
+        scope: quote.scope ?? "",
+        scheduled_date,
+        scheduled_start_at,
+        partner_id: effectivePartnerId,
+        partner_ids: [],
+      });
+      if (block) {
+        toast.error(block);
+        return;
+      }
+    }
     onSubmit({
       title: form.title.trim(),
       client_id: clientAddress.client_id,
@@ -1757,15 +1837,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   return (
     <Modal open={!!quote} onClose={onClose} title="Create Job from Quote" subtitle={`${quote.reference} — create job`} size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <Select
-          label="Type of work *"
-          value={form.title}
-          onChange={(e) => update("title", e.target.value)}
-          options={[
-            { value: "", label: "Select type of work..." },
-            ...typeOfWorkOptions,
-          ]}
-        />
+        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Job title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
         <Select
           label="Work phases *"
           value={form.total_phases}
@@ -1808,11 +1880,14 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   );
 }
 
-/** Gross margin % on sell price → markup % on cost (slider), up to 150% markup. */
+/** Max markup % on partner cost (slider only; typed sell price can go higher). */
+const MARGIN_SLIDER_MAX_MARKUP_PCT = 200;
+
+/** Gross margin % on sell → markup % on partner cost (unbounded for display/slider state). */
 function grossMarginOnSellToMarkupPct(g: number): number {
   if (g <= 0 || Number.isNaN(g)) return 5;
-  if (g >= 99.9) return 150;
-  return Math.min(150, Math.max(5, (g / (100 - g)) * 100));
+  const gSafe = Math.min(g, 99.89);
+  return Math.max(5, (gSafe / (100 - gSafe)) * 100);
 }
 
 /** Markup % on cost → gross margin % on sell (stored as margin_percent). */
@@ -1823,52 +1898,105 @@ function markupPctToGrossMarginOnSell(markupPct: number): number {
 /* ========== MARGIN CALCULATOR ========== */
 function MarginCalculator({ cost, initialMarginPct, onSellPriceChange, onMarginChange }: { cost: number; initialMarginPct?: number; onSellPriceChange: (v: number) => void; onMarginChange: (v: number) => void }) {
   const [markupPct, setMarkupPct] = useState(() => grossMarginOnSellToMarkupPct(initialMarginPct ?? 40));
-  const sellPrice = cost > 0 ? Math.round(cost * (1 + markupPct / 100) * 100) / 100 : 0;
+  /** While editing sell manually, raw string; cleared on blur so slider stays in sync. */
+  const [sellDraft, setSellDraft] = useState<string | null>(null);
+
+  const sellFromMarkup = cost > 0 ? Math.round(cost * (1 + markupPct / 100) * 100) / 100 : 0;
+  const sellPrice = sellFromMarkup;
   const marginValue = sellPrice - cost;
   const grossMarginPct = markupPctToGrossMarginOnSell(markupPct);
+
+  const minSellForSlider = cost > 0 ? Math.round(cost * 1.05 * 100) / 100 : 0;
 
   useEffect(() => {
     onSellPriceChange(sellPrice);
     onMarginChange(Math.round(grossMarginPct * 10) / 10);
   }, [markupPct, sellPrice, grossMarginPct, onSellPriceChange, onMarginChange]);
 
+  const applySellFromInput = () => {
+    if (cost <= 0) {
+      setSellDraft(null);
+      return;
+    }
+    const rawStr = (sellDraft ?? "").trim();
+    setSellDraft(null);
+    if (rawStr === "") return;
+    const raw = Number(rawStr.replace(",", "."));
+    if (!Number.isFinite(raw)) return;
+    const clamped = Math.max(minSellForSlider, raw);
+    const m = (clamped / cost - 1) * 100;
+    setMarkupPct(Math.round(Math.max(5, m) * 10) / 10);
+  };
+
   return (
-    <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light dark:from-stone-950/40 dark:to-stone-900/20 dark:border-border-light/70">
+    <div className="p-4 rounded-xl border border-border-light bg-surface-tertiary/70 dark:bg-surface-secondary dark:border-border">
       <div className="flex items-center gap-2 mb-3">
-        <SlidersHorizontal className="h-4 w-4 text-text-tertiary" />
-        <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Margin Calculator</label>
+        <SlidersHorizontal className="h-4 w-4 text-text-secondary" />
+        <label className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">Margin Calculator</label>
       </div>
-      <div className="grid grid-cols-3 gap-3 mb-3">
-        <div><p className="text-[10px] text-text-tertiary uppercase">Partner cost</p><p className="text-sm font-bold text-text-primary">{formatCurrency(cost)}</p></div>
-        <div><p className="text-[10px] text-text-tertiary uppercase">Sell Price</p><p className="text-sm font-bold text-primary">{formatCurrency(sellPrice)}</p></div>
-        <div><p className="text-[10px] text-text-tertiary uppercase">Margin</p><p className="text-sm font-bold text-emerald-600">{formatCurrency(marginValue)}</p></div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        <div><p className="text-[10px] text-text-secondary uppercase">Partner cost</p><p className="text-sm font-bold text-text-primary">{formatCurrency(cost)}</p></div>
+        <div>
+          <p className="text-[10px] text-text-secondary uppercase mb-1">Sell price</p>
+          {cost <= 0 ? (
+            <p className="text-sm font-bold text-primary">—</p>
+          ) : (
+            <Input
+              type="text"
+              inputMode="decimal"
+              className="text-sm font-bold h-9"
+              disabled={cost <= 0}
+              value={sellDraft !== null ? sellDraft : sellPrice === 0 ? "" : String(sellPrice)}
+              placeholder="0.00"
+              onFocus={() => setSellDraft(sellPrice === 0 ? "" : String(sellPrice))}
+              onChange={(e) => setSellDraft(e.target.value)}
+              onBlur={() => applySellFromInput()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+            />
+          )}
+          <p className="text-[10px] text-text-secondary dark:text-text-tertiary mt-1 leading-snug">
+            Slider up to +{MARGIN_SLIDER_MAX_MARKUP_PCT}% markup; you can type a higher sell price — margin % updates below (min +5% on cost).
+          </p>
+        </div>
+        <div><p className="text-[10px] text-text-secondary uppercase">Margin</p><p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(marginValue)}</p></div>
       </div>
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <span className="text-xs text-text-tertiary">Markup on partner cost</span>
-          <span className="text-[10px] text-text-tertiary">
+          <span className="text-xs font-medium text-text-secondary">Markup on partner cost</span>
+          <span className="text-[10px] text-text-secondary">
             Margin on sell:{" "}
-            <span className={`font-bold ${grossMarginPct >= 40 ? "text-primary" : grossMarginPct >= 10 ? "text-amber-600" : "text-red-500"}`}>
+            <span className={`font-bold ${grossMarginPct >= 40 ? "text-primary" : grossMarginPct >= 10 ? "text-amber-600 dark:text-amber-400" : "text-red-500 dark:text-red-400"}`}>
               {Math.round(grossMarginPct * 10) / 10}%
             </span>
-            <span className="text-text-tertiary font-semibold"> · {markupPct}% markup</span>
+            <span className="text-text-secondary font-semibold"> · {Math.round(markupPct * 10) / 10}% markup</span>
           </span>
         </div>
         <input
           type="range"
           min={5}
-          max={150}
+          max={MARGIN_SLIDER_MAX_MARKUP_PCT}
           step={0.5}
-          value={markupPct}
-          onChange={(e) => setMarkupPct(Number(e.target.value))}
-          className="w-full h-2 bg-border rounded-full appearance-none cursor-pointer accent-primary"
+          value={Math.min(MARGIN_SLIDER_MAX_MARKUP_PCT, Math.max(5, markupPct))}
+          onChange={(e) => {
+            setSellDraft(null);
+            setMarkupPct(Number(e.target.value));
+          }}
+          disabled={cost <= 0}
+          className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-50 disabled:cursor-not-allowed bg-border dark:bg-zinc-700"
         />
-        <div className="flex justify-between text-[10px] text-text-tertiary">
-          <span>5%</span>
+        <div className="flex justify-between text-[10px] text-text-secondary gap-1 flex-wrap">
+          <span className="tabular-nums">5%</span>
           <span className="text-amber-600 dark:text-amber-400 font-medium">10% min margin</span>
           <span className="text-primary font-medium">40% target margin</span>
-          <span>150%</span>
+          <span className="tabular-nums">{MARGIN_SLIDER_MAX_MARKUP_PCT}%</span>
         </div>
+        {markupPct > MARGIN_SLIDER_MAX_MARKUP_PCT && (
+          <p className="text-[10px] text-text-secondary">
+            Markup is above the slider range ({Math.round(markupPct * 10) / 10}%); drag the slider to bring it back to {MARGIN_SLIDER_MAX_MARKUP_PCT}% or less.
+          </p>
+        )}
         {grossMarginPct < 40 && (
           <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">Below standard margin on sell (40%)</p>
         )}
@@ -1892,12 +2020,6 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const [sellPrice, setSellPrice] = useState(0);
   const [marginPct, setMarginPct] = useState(0);
-  const typeOfWorkOptions = useMemo(
-    () => [...new Set([...TYPE_OF_WORK_OPTIONS, ...catalogList.map((c) => c.name)])]
-      .sort((a, b) => a.localeCompare(b))
-      .map((name) => ({ value: name, label: name })),
-    [catalogList]
-  );
 
   useEffect(() => {
     listCatalogServicesForPicker().then(setCatalogList).catch(() => setCatalogList([]));
@@ -2031,15 +2153,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
         </div>
       )}
 
-      <Select
-        label="Type of work *"
-        value={form.title}
-        onChange={(e) => update("title", e.target.value)}
-        options={[
-          { value: "", label: "Select type of work..." },
-          ...typeOfWorkOptions,
-        ]}
-      />
+      <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Quote title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="e.g. Commercial HVAC Refurbishment" required /></div>
       <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
       {quoteType === "internal" ? (
         <>

@@ -1,73 +1,6 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
-import { JOB_IN_PROGRESS_STATUSES, JOB_WORK_PHASE_STATUSES } from "@/lib/job-phases";
-import { jobBillableRevenue, jobProfit } from "@/lib/job-financials";
-
-/** Draft through final check — booked revenue before collection (matches Jobs KPI). */
-const REVENUE_BOOKED_STATUSES: Job["status"][] = [
-  "draft",
-  "scheduled",
-  "late",
-  ...JOB_IN_PROGRESS_STATUSES,
-];
-
-/** Sum of job amount (client_price + extras) for pipeline jobs; not limited to the current list page. */
-export async function getTotalRevenueBookedPipeline(dateRange?: { from?: string; to?: string }): Promise<number> {
-  const supabase = getSupabase();
-  let query = supabase
-    .from("jobs")
-    .select("client_price, extras_amount")
-    .in("status", REVENUE_BOOKED_STATUSES)
-    .is("deleted_at", null);
-  if (dateRange?.from) query = query.gte("scheduled_date", dateRange.from);
-  if (dateRange?.to) query = query.lte("scheduled_date", dateRange.to);
-  const { data, error } = await query;
-  if (error || !data) return 0;
-  return data.reduce((sum, row) => sum + jobBillableRevenue(row as Pick<Job, "client_price" | "extras_amount">), 0);
-}
-
-/** Revenue-weighted average margin % for pipeline jobs (same scope as total revenue booked). */
-export async function getAverageMarginPercentPipeline(dateRange?: { from?: string; to?: string }): Promise<number> {
-  const supabase = getSupabase();
-  let query = supabase
-    .from("jobs")
-    .select("client_price, extras_amount, partner_cost, materials_cost")
-    .in("status", REVENUE_BOOKED_STATUSES)
-    .is("deleted_at", null);
-  if (dateRange?.from) query = query.gte("scheduled_date", dateRange.from);
-  if (dateRange?.to) query = query.lte("scheduled_date", dateRange.to);
-  const { data, error } = await query;
-  if (error || !data?.length) return 0;
-  let rev = 0;
-  let profit = 0;
-  for (const row of data) {
-    const j = row as Pick<Job, "client_price" | "extras_amount" | "partner_cost" | "materials_cost">;
-    const r = jobBillableRevenue(j);
-    if (r <= 0) continue;
-    rev += r;
-    profit += jobProfit(j);
-  }
-  return rev > 0 ? Math.round((profit / rev) * 1000) / 10 : 0;
-}
-
-export async function getAverageTicketPipeline(dateRange?: { from?: string; to?: string }): Promise<number> {
-  const supabase = getSupabase();
-  let query = supabase
-    .from("jobs")
-    .select("client_price, extras_amount")
-    .in("status", REVENUE_BOOKED_STATUSES)
-    .is("deleted_at", null);
-  if (dateRange?.from) query = query.gte("scheduled_date", dateRange.from);
-  if (dateRange?.to) query = query.lte("scheduled_date", dateRange.to);
-  const { data, error } = await query;
-  if (error || !data?.length) return 0;
-  const revenues = data
-    .map((row) => jobBillableRevenue(row as Pick<Job, "client_price" | "extras_amount">))
-    .filter((v) => v > 0);
-  if (revenues.length === 0) return 0;
-  const total = revenues.reduce((sum, v) => sum + v, 0);
-  return total / revenues.length;
-}
+import { JOB_IN_PROGRESS_STATUSES } from "@/lib/job-phases";
 
 // Throttle: mark-late runs at most once every 5 minutes per server instance
 // to avoid write contention on every paginated list request.
@@ -94,14 +27,14 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(
       "jobs",
-      { ...rest, statusIn: [...JOB_WORK_PHASE_STATUSES], dateColumn: "scheduled_date" },
+      { ...rest, statusIn: [...JOB_IN_PROGRESS_STATUSES] },
       {
         searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
         defaultSort: "created_at",
       }
     );
   }
-  return queryList<Job>("jobs", { ...params, dateColumn: "scheduled_date" }, {
+  return queryList<Job>("jobs", params, {
     searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
     defaultSort: "created_at",
   });
@@ -145,6 +78,7 @@ export async function createJob(
   return data as Job;
 }
 
+/** Use `null` (not `undefined`) on nullable columns you want to clear — `undefined` keys are omitted from the PATCH. */
 export async function updateJob(
   id: string,
   input: Partial<Job>

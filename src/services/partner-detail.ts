@@ -30,7 +30,11 @@ export interface PartnerFinancialSummary {
   self_bills_count: number;
 }
 
-/** List app users (profiles) that have at least one job as partner_id — for "Team" tab */
+/**
+ * List app users for the "Team (App)" tab:
+ * - profiles that appear as jobs.partner_id (field partners with assigned work), and
+ * - profiles linked from the directory via partners.auth_user_id (even with 0 jobs).
+ */
 export async function getTeamMembers(): Promise<TeamMember[]> {
   const supabase = getSupabase();
   const { data: jobs, error: jobsError } = await supabase
@@ -39,7 +43,15 @@ export async function getTeamMembers(): Promise<TeamMember[]> {
     .not("partner_id", "is", null);
   if (jobsError) throw jobsError;
 
-  const partnerIds = [...new Set((jobs ?? []).map((j) => j.partner_id).filter(Boolean))] as string[];
+  const { data: linkedRows, error: linkErr } = await supabase
+    .from("partners")
+    .select("auth_user_id")
+    .not("auth_user_id", "is", null);
+  if (linkErr) throw linkErr;
+
+  const fromJobs = [...new Set((jobs ?? []).map((j) => j.partner_id).filter(Boolean))] as string[];
+  const fromDirectory = [...new Set((linkedRows ?? []).map((r) => r.auth_user_id).filter(Boolean))] as string[];
+  const partnerIds = [...new Set([...fromJobs, ...fromDirectory])];
   if (partnerIds.length === 0) return [];
 
   const { data: profiles, error: profError } = await supabase
@@ -56,7 +68,7 @@ export async function getTeamMembers(): Promise<TeamMember[]> {
     return acc;
   }, {});
 
-  return (profiles ?? []).map((p) => ({
+  const rows = (profiles ?? []).map((p) => ({
     id: p.id,
     full_name: p.full_name ?? "—",
     email: p.email ?? "",
@@ -65,6 +77,9 @@ export async function getTeamMembers(): Promise<TeamMember[]> {
     jobs_count: jobsByPartner[p.id]?.count ?? 0,
     total_earnings: jobsByPartner[p.id]?.earnings ?? 0,
   })) as TeamMember[];
+
+  rows.sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: "base" }));
+  return rows;
 }
 
 /** Latest location for one user (app partner) */

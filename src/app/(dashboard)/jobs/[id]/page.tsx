@@ -28,7 +28,6 @@ import {
   CreditCard,
   RefreshCw,
   X,
-  Ban,
 } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
@@ -40,7 +39,6 @@ import { listPartners } from "@/services/partners";
 import { uploadManualJobReport } from "@/services/job-report-storage";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logFieldChanges } from "@/services/audit";
-import { getSupabase } from "@/services/base";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
@@ -69,30 +67,21 @@ import {
   partnerPaymentCap,
   customerScheduledTotal,
 } from "@/lib/job-financials";
+import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
+import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
-  draft: { label: "Draft", variant: "default", dot: true },
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
   in_progress_phase2: { label: "In Progress", variant: "primary", dot: true },
   in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
-  final_check: { label: "Final checks", variant: "warning", dot: true },
+  final_check: { label: "Final Check", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
-  need_attention: { label: "Needs attention", variant: "warning", dot: true },
+  need_attention: { label: "Need attention", variant: "warning", dot: true },
   completed: { label: "Completed", variant: "success", dot: true },
-  cancelled: { label: "Cancelled", variant: "default", dot: true },
+  cancelled: { label: "Cancelled", variant: "danger", dot: true },
 };
-
-const CANCEL_REASON_OPTIONS = [
-  { value: "Client cancelou o serviço", label: "Client cancelled the service" },
-  { value: "Sem acesso ao local", label: "No access to the property" },
-  { value: "Conflito de agenda / disponibilidade", label: "Scheduling conflict / availability" },
-  { value: "Problema de pagamento", label: "Payment issue" },
-  { value: "Escopo inválido ou incompleto", label: "Invalid or incomplete scope" },
-  { value: "Partner indisponível", label: "Partner unavailable" },
-  { value: "other", label: "Other (specify)" },
-] as const;
 
 
 export default function JobDetailPage() {
@@ -146,16 +135,14 @@ export default function JobDetailPage() {
   const [jobInvoices, setJobInvoices] = useState<Invoice[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
-  const [cancelModalOpen, setCancelModalOpen] = useState(false);
-  const [cancelReasonOption, setCancelReasonOption] = useState("");
-  const [cancelReasonOther, setCancelReasonOther] = useState("");
-  const [cancellingJob, setCancellingJob] = useState(false);
   const [manualReportFile, setManualReportFile] = useState<File | null>(null);
   const [manualReportNotes, setManualReportNotes] = useState("");
   const [manualReportResult, setManualReportResult] = useState("");
   const [analyzingManualReport, setAnalyzingManualReport] = useState(false);
   const [phaseReportFiles, setPhaseReportFiles] = useState<Record<number, File | null>>({});
   const [analyzingPhase, setAnalyzingPhase] = useState<number | null>(null);
+  const [scopeDraft, setScopeDraft] = useState("");
+  const [savingScope, setSavingScope] = useState(false);
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
   const autoOwnerFillRef = useRef<Set<string>>(new Set());
@@ -364,7 +351,12 @@ export default function JobDetailPage() {
     });
   }, [job?.id, job?.updated_at]);
 
-  const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>) => {
+  useEffect(() => {
+    if (!job) return;
+    setScopeDraft(job.scope ?? "");
+  }, [job?.id, job?.scope]);
+
+  const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>, opts?: { notifyPartner?: boolean }) => {
     const current = jobRef.current;
     try {
       let payload: Partial<Job> = { ...updates };
@@ -380,9 +372,35 @@ export default function JobDetailPage() {
           payload = { ...payload, ...derived };
         }
       }
+      if (current && current.id === jobId && updates.partner_id != null && updates.partner_id !== "") {
+        const mergedForGate = { ...current, ...payload } as Job;
+        const block = getPartnerAssignmentBlockReason(mergedForGate);
+        if (block) {
+          toast.error(block);
+          return;
+        }
+      }
       const updated = await updateJob(jobId, payload);
       setJob(updated);
       toast.success("Job updated");
+
+      const wantNotify = opts?.notifyPartner !== false && !updatesOnlyIrrelevantToPartner(updates);
+      if (wantNotify) {
+        const prevPid = current?.id === jobId ? (current.partner_id ?? null) : null;
+        const newPid = updated.partner_id ?? null;
+        const partnerKeyTouched = updates.partner_id !== undefined;
+        if (partnerKeyTouched && prevPid && prevPid !== newPid) {
+          notifyAssignedPartnerAboutJob({ partnerId: prevPid, job: updated, kind: "job_unassigned" });
+        }
+        if (newPid) {
+          const assignedFresh = Boolean(partnerKeyTouched && newPid !== prevPid);
+          notifyAssignedPartnerAboutJob({
+            partnerId: newPid,
+            job: updated,
+            kind: assignedFresh ? "job_assigned" : "job_updated",
+          });
+        }
+      }
     } catch {
       toast.error("Failed to update");
     }
@@ -443,7 +461,10 @@ export default function JobDetailPage() {
   }, [job, unlinkedAddressDraft, handleJobUpdate]);
 
   const handleStatusChange = useCallback(async (j: Job, newStatus: Job["status"]) => {
-    const check = canAdvanceJob(j, newStatus);
+    const check = canAdvanceJob(j, newStatus, {
+      customerPayments: customerPayments.map((p) => ({ type: p.type, amount: p.amount })),
+      partnerPayments: partnerPayments.map((p) => ({ type: p.type, amount: p.amount })),
+    });
     if (!check.ok) {
       toast.error(check.message ?? "Complete the current step before advancing.");
       return;
@@ -464,10 +485,18 @@ export default function JobDetailPage() {
       await logAudit({ entityType: "job", entityId: j.id, entityRef: j.reference, action: "status_changed", fieldName: "status", oldValue: j.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
       setJob(updated);
       toast.success(selfBillId ? "Self-bill created. Job updated." : "Job updated");
+      if (updated.partner_id && j.status !== newStatus) {
+        notifyAssignedPartnerAboutJob({
+          partnerId: updated.partner_id,
+          job: updated,
+          kind: "job_status_changed",
+          statusLabel: statusConfig[newStatus]?.label ?? newStatus,
+        });
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
     }
-  }, [profile?.id, profile?.full_name]);
+  }, [profile?.id, profile?.full_name, customerPayments, partnerPayments]);
 
   const handleScheduleChange = useCallback((j: Job, startDate: string, startTime: string, finishDate: string, finishTime: string) => {
     if ((startDate && !finishDate) || (!startDate && finishDate)) {
@@ -500,66 +529,8 @@ export default function JobDetailPage() {
     handleJobUpdate(j.id, { scheduled_start_at, scheduled_end_at, scheduled_date } as Partial<Job>);
   }, [handleJobUpdate]);
 
-  const handleCancelJob = useCallback(async () => {
-    if (!job) return;
-    const reason = (cancelReasonOption === "other" ? cancelReasonOther : cancelReasonOption).trim();
-    if (!reason) {
-      toast.error("Please provide a cancellation reason.");
-      return;
-    }
-    setCancellingJob(true);
-    try {
-      const nowIso = new Date().toISOString();
-      const updated = await updateJob(job.id, {
-        status: "cancelled",
-        cancellation_reason: reason,
-        cancelled_at: nowIso,
-        cancelled_by: profile?.id,
-      } as Partial<Job>);
-
-      if (job.partner_id) {
-        const supabase = getSupabase();
-        const { data: partner } = await supabase
-          .from("partners")
-          .select("internal_notes")
-          .eq("id", job.partner_id)
-          .maybeSingle();
-        const stamp = new Date().toLocaleString();
-        const line = `[${stamp}] Job ${job.reference} cancelled: ${reason}`;
-        const mergedNotes = [String(partner?.internal_notes ?? "").trim(), line].filter(Boolean).join("\n");
-        await supabase.from("partners").update({ internal_notes: mergedNotes }).eq("id", job.partner_id);
-      }
-
-      await logAudit({
-        entityType: "job",
-        entityId: job.id,
-        entityRef: job.reference,
-        action: "status_changed",
-        fieldName: "status",
-        oldValue: job.status,
-        newValue: "cancelled",
-        userId: profile?.id,
-        userName: profile?.full_name,
-        metadata: { cancellation_reason: reason, partner_id: job.partner_id ?? null },
-      });
-      setJob(updated);
-      setCancelModalOpen(false);
-      setCancelReasonOption("");
-      setCancelReasonOther("");
-      toast.success("Job cancelled");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to cancel job");
-    } finally {
-      setCancellingJob(false);
-    }
-  }, [job, cancelReasonOption, cancelReasonOther, profile?.id, profile?.full_name]);
-
   const handleAddPayment = useCallback(async () => {
     if (!job || !addPaymentAmount || Number(addPaymentAmount) <= 0) return;
-    if (job.status === "cancelled") {
-      toast.error("Cancelled jobs cannot receive payments.");
-      return;
-    }
     const amount = Number(addPaymentAmount);
     const partnerCap = partnerPaymentCap(job);
     const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
@@ -820,22 +791,19 @@ export default function JobDetailPage() {
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
             </div>
             <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
+            {job.status === "cancelled" && job.partner_cancelled_at ? (
+              <div className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-text-secondary max-w-xl">
+                <p className="font-semibold text-text-primary">Partner cancellation</p>
+                <p>
+                  Fee recorded: £{Number(job.partner_cancellation_fee ?? 0).toFixed(2)}
+                  {job.partner_cancellation_reason?.trim()
+                    ? ` · Reason: ${job.partner_cancellation_reason.trim()}`
+                    : ""}
+                </p>
+              </div>
+            ) : null}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            {job.status !== "cancelled" && (
-              <Button
-                variant="danger"
-                size="sm"
-                icon={<Ban className="h-3.5 w-3.5" />}
-                onClick={() => {
-                  setCancelReasonOption("");
-                  setCancelReasonOther("");
-                  setCancelModalOpen(true);
-                }}
-              >
-                Cancelled
-              </Button>
-            )}
             {statusActions.map((action, idx) => (
               <Button
                 key={`${action.status}-${idx}`}
@@ -851,44 +819,16 @@ export default function JobDetailPage() {
         </div>
 
         {/* ── MAIN GRID ── */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
           {/* ═══ LEFT — operational column ═══ */}
-          <div className="min-w-0 space-y-4 sm:space-y-5 lg:col-span-2">
-            {job.status === "cancelled" && (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-red-700">Cancellation reason</p>
-                <p className="mt-1 text-sm text-red-800">{job.cancellation_reason || "No reason provided."}</p>
-              </div>
-            )}
+          <div className="lg:col-span-2 space-y-5">
 
-            {/* Job figures — same card shell as Client identity below */}
-            <div className="w-full min-w-0 rounded-xl border border-border-light bg-card p-3 sm:p-4">
-              <div className="grid grid-cols-2 gap-x-3 gap-y-3 min-[480px]:grid-cols-4 min-[480px]:gap-x-4 min-[480px]:gap-y-0 items-start justify-items-stretch">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide leading-none text-text-tertiary whitespace-nowrap">Job amount</p>
-                  <p className="min-w-0 truncate text-sm font-bold leading-none tabular-nums text-text-primary">{formatCurrency(billableRevenue)}</p>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide leading-none text-text-tertiary whitespace-nowrap">Total cost</p>
-                  <p className="min-w-0 truncate text-sm font-bold leading-none tabular-nums text-red-600">{formatCurrency(directCost)}</p>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide leading-none text-text-tertiary whitespace-nowrap">Margin</p>
-                  <p className={`min-w-0 truncate text-sm font-bold leading-none tabular-nums ${profit >= 0 ? "text-blue-700" : "text-red-600"}`}>{formatCurrency(profit)}</p>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide leading-none text-text-tertiary whitespace-nowrap">Margin %</p>
-                  <p className={`text-sm font-bold leading-none tabular-nums ${marginPct >= 20 ? "text-amber-700" : "text-red-600"}`}>{marginPct}%</p>
-                </div>
-              </div>
-            </div>
-
-            {/* CLIENT IDENTITY + MAP — mobile: map on top; md+: side‑by‑side, top‑aligned */}
+            {/* CLIENT IDENTITY + MAP */}
             <div className="rounded-xl border border-border-light bg-card overflow-hidden">
-              <div className="grid grid-cols-1 items-start gap-0 md:grid-cols-2 md:items-start">
+              <div className="grid grid-cols-1 sm:grid-cols-2">
                 {/* client info */}
-                <div className="order-2 w-full min-w-0 space-y-3 p-4 sm:p-5 md:order-1 md:border-r md:border-border-light/70">
+                <div className="p-4 space-y-3">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
                     <Building2 className="h-3.5 w-3.5" /> Client identity
                   </p>
@@ -897,7 +837,7 @@ export default function JobDetailPage() {
                     <p className="text-xs text-text-tertiary mt-0.5 leading-snug">{job.property_address}</p>
                   </div>
                   {/* schedule inline */}
-                  <div className="grid grid-cols-1 gap-3 border-t border-border-light pt-1 min-[420px]:grid-cols-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border-light">
                     <div>
                       <p className="text-[10px] text-text-tertiary">Arrival date</p>
                       <Input
@@ -955,11 +895,11 @@ export default function JobDetailPage() {
                     {job.invoice_id && <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-primary hover:underline">Invoice <ExternalLink className="h-3 w-3" /></Link>}
                   </div>
                 </div>
-                {/* map: first on mobile (order-1); right column on md+ */}
-                <div className="order-1 flex w-full min-w-0 flex-col items-stretch justify-start border-b border-border-light/70 bg-surface-hover/20 p-4 sm:p-5 md:order-2 md:border-b-0 md:border-l md:border-border-light/70">
+                {/* single map */}
+                <div className="p-4 flex items-center justify-center bg-surface-hover/20">
                   <LocationMiniMap
                     address={job.property_address}
-                    className="h-[200px] w-full rounded-xl overflow-hidden sm:h-[240px] md:h-[260px] lg:h-[280px]"
+                    className="h-[240px] w-full max-w-[520px] rounded-xl overflow-hidden"
                     lazy
                   />
                 </div>
@@ -967,12 +907,28 @@ export default function JobDetailPage() {
             </div>
 
             {/* SCOPE */}
-            {job.scope && (
-              <div className="rounded-xl border border-border-light bg-card p-4">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Scope</p>
-                <p className="text-sm text-text-primary whitespace-pre-wrap">{job.scope}</p>
-              </div>
-            )}
+            <div className="rounded-xl border border-border-light bg-card p-4 space-y-2">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope of work</p>
+              <p className="text-[11px] text-text-tertiary">Required before assigning a partner (with schedule and address).</p>
+              <textarea
+                value={scopeDraft}
+                onChange={(e) => setScopeDraft(e.target.value)}
+                rows={5}
+                placeholder="Describe what the partner is expected to do…"
+                className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[100px]"
+              />
+              <Button type="button" variant="outline" size="sm" loading={savingScope} onClick={async () => {
+                if (!job) return;
+                setSavingScope(true);
+                try {
+                  await handleJobUpdate(job.id, { scope: scopeDraft.trim() || undefined });
+                } finally {
+                  setSavingScope(false);
+                }
+              }}>
+                Save scope
+              </Button>
+            </div>
 
             {/* OPERATIONAL TASKLINE */}
             <div className="rounded-xl border border-border-light bg-card p-4">
@@ -1118,7 +1074,7 @@ export default function JobDetailPage() {
                 <div className="mt-3 p-3 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center gap-3">
                   <p className="flex-1 text-sm font-medium text-text-primary">All reports validated — ready to send report & request final payment.</p>
                   <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} disabled={!sendReportFinalCheck.ok} title={sendReportFinalCheck.message}
-                    onClick={() => { if (!sendReportFinalCheck.ok) { toast.error(sendReportFinalCheck.message ?? "Cannot proceed"); return; } handleJobUpdate(job.id, { report_submitted: true, report_submitted_at: new Date().toISOString() } as Partial<Job>); handleStatusChange(job, "awaiting_payment"); }}>
+                    onClick={() => { if (!sendReportFinalCheck.ok) { toast.error(sendReportFinalCheck.message ?? "Cannot proceed"); return; } void handleJobUpdate(job.id, { report_submitted: true, report_submitted_at: new Date().toISOString() } as Partial<Job>, { notifyPartner: false }); void handleStatusChange(job, "awaiting_payment"); }}>
                     Send Report & Invoice
                   </Button>
                 </div>
@@ -1243,7 +1199,7 @@ export default function JobDetailPage() {
           </div>
 
           {/* ═══ RIGHT — partner + financial + history ═══ */}
-          <div className="min-w-0 space-y-4 sm:space-y-5">
+          <div className="space-y-5">
 
             {/* PRIMARY PARTNER */}
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
@@ -1364,7 +1320,7 @@ export default function JobDetailPage() {
                   size="sm"
                   variant="outline"
                   className="mt-3 w-full"
-                  disabled={job.status === "cancelled" || (maxCustomerDepositPay <= 0 && maxCustomerFinalPay <= 0)}
+                  disabled={maxCustomerDepositPay <= 0 && maxCustomerFinalPay <= 0}
                   icon={<Plus className="h-3.5 w-3.5" />}
                   onClick={() => {
                     const type = maxCustomerDepositPay > 0 ? "customer_deposit" : "customer_final";
@@ -1436,7 +1392,7 @@ export default function JobDetailPage() {
                     </div>
                   )}
                 </div>
-                <Button size="sm" variant="outline" className="mt-3 w-full" disabled={job.status === "cancelled" || partnerPayRemaining <= 0} icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setAddPaymentType("partner"); setAddPaymentOpen(true); }}>
+                <Button size="sm" variant="outline" className="mt-3 w-full" disabled={partnerPayRemaining <= 0} icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setAddPaymentType("partner"); setAddPaymentOpen(true); }}>
                   Register partner payment
                 </Button>
               </div>
@@ -1499,44 +1455,6 @@ export default function JobDetailPage() {
           </div>
         </div>
       </div>
-
-      <Modal
-        open={cancelModalOpen}
-        onClose={() => { if (!cancellingJob) setCancelModalOpen(false); }}
-        title="Cancel job"
-      >
-        <div className="p-4 space-y-4">
-          <p className="text-sm text-text-secondary">
-            This closes the job as <strong>Cancelled</strong> and stores the reason in history.
-          </p>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Cancellation reason *</label>
-            <Select
-              value={cancelReasonOption}
-              onChange={(e) => setCancelReasonOption(e.target.value)}
-              options={[
-                { value: "", label: "Select a reason..." },
-                ...CANCEL_REASON_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
-              ]}
-            />
-            {cancelReasonOption === "other" && (
-              <textarea
-                value={cancelReasonOther}
-                onChange={(e) => setCancelReasonOther(e.target.value)}
-                rows={3}
-                placeholder="Type the cancellation reason..."
-                className="mt-2 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20"
-              />
-            )}
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" disabled={cancellingJob} onClick={() => setCancelModalOpen(false)}>Back</Button>
-            <Button variant="danger" size="sm" loading={cancellingJob} onClick={() => void handleCancelJob()}>
-              Confirm cancel
-            </Button>
-          </div>
-        </div>
-      </Modal>
 
       {/* DELETE PAYMENT CONFIRMATION MODAL */}
       <Modal
@@ -1718,11 +1636,11 @@ export default function JobDetailPage() {
         open={partnerModalOpen}
         onClose={() => { setPartnerModalOpen(false); setPartnerPickerOpen(false); }}
         title={job.partner_id ? "Change partner" : "Assign partner"}
-        scrollBody={false}
+        scrollBody
       >
         <div className="p-4 space-y-4">
           <p className="text-xs text-text-tertiary">
-            Select the partner responsible for this job.
+            Select the partner responsible for this job. You need a property address, scope of work, and a scheduled date (and times) on this job before assigning.
           </p>
           <div ref={partnerPickerRef} className="relative">
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner</label>
@@ -1746,17 +1664,21 @@ export default function JobDetailPage() {
               ) : (
                 <span className="flex-1 text-text-tertiary">No partner</span>
               )}
-              <ChevronDown className={`h-4 w-4 text-text-tertiary transition-transform ${partnerPickerOpen ? "rotate-180" : ""}`} />
+              <ChevronDown className={`h-4 w-4 text-text-tertiary transition-transform shrink-0 ${partnerPickerOpen ? "rotate-180" : ""}`} />
             </button>
             {partnerPickerOpen && (
-              <div className="absolute z-50 mt-1.5 w-full max-h-72 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-xl ring-1 ring-black/5 dark:ring-white/10">
+              <div
+                className="mt-1.5 w-full max-h-[min(50vh,320px)] min-h-0 overflow-y-auto overscroll-contain rounded-xl border border-border bg-card py-1 shadow-lg ring-1 ring-black/5 dark:ring-white/10 [-webkit-overflow-scrolling:touch]"
+                role="listbox"
+                aria-label="Partners"
+              >
               <button
                 type="button"
                 className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${!selectedPartnerId ? "bg-primary/8" : ""}`}
                 onClick={() => { setSelectedPartnerId(""); setPartnerPickerOpen(false); }}
               >
                 <span className="flex-1 text-text-secondary font-medium">No partner</span>
-                {!selectedPartnerId && <Check className="h-4 w-4 text-primary" />}
+                {!selectedPartnerId && <Check className="h-4 w-4 text-primary shrink-0" />}
               </button>
               <div className="mx-2 h-px bg-border-light" />
               {partners.map((p) => {
@@ -1774,7 +1696,7 @@ export default function JobDetailPage() {
                       <p className="font-medium text-text-primary truncate">{name}</p>
                       {p.trade ? <p className="text-[11px] text-text-tertiary truncate">{p.trade}</p> : null}
                     </div>
-                    {isSel && <Check className="h-4 w-4 text-primary" />}
+                    {isSel && <Check className="h-4 w-4 text-primary shrink-0" />}
                   </button>
                 );
               })}
@@ -1798,8 +1720,10 @@ export default function JobDetailPage() {
                 setSavingPartner(true);
                 try {
                   await handleJobUpdate(job.id, {
-                    partner_id: selectedPartnerId || undefined,
-                    partner_name: selectedPartnerId ? (selected?.company_name?.trim() || selected?.contact_name || undefined) : undefined,
+                    partner_id: selectedPartnerId || null,
+                    partner_name: selectedPartnerId
+                      ? (selected?.company_name?.trim() || selected?.contact_name || null)
+                      : null,
                     partner_ids: selectedPartnerId ? [selectedPartnerId] : [],
                   });
                   setPartnerModalOpen(false);

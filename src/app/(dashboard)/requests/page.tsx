@@ -35,13 +35,13 @@ import { listPartners } from "@/services/partners";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { normalizeTotalPhases } from "@/lib/job-phases";
+import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
 import { estimatedValueFromCatalog, lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { isUuid } from "@/lib/utils";
-import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   new: { label: "New", variant: "primary" },
@@ -603,17 +603,14 @@ export default function RequestsPage() {
                         }));
                       }}
                     />
-                    <Select
-                      label="Type of work"
-                      value={drawerFields.service_type}
-                      onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
-                      options={[
-                        { value: "", label: "Select type of work..." },
-                        ...[...new Set([...TYPE_OF_WORK_OPTIONS, ...catalogServices.map((c) => c.name)])]
-                          .sort((a, b) => a.localeCompare(b))
-                          .map((name) => ({ value: name, label: name })),
-                      ]}
-                    />
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Service name (on request)</label>
+                      <Input
+                        value={drawerFields.service_type}
+                        onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
+                        placeholder="e.g. Plumbing"
+                      />
+                    </div>
                     <div>
                       <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
                       <textarea
@@ -897,6 +894,8 @@ export default function RequestsPage() {
               property_address: data.property_address,
               partner_name: data.partner_name,
               partner_id: data.partner_id,
+              scheduled_date: data.scheduled_date,
+              scheduled_start_at: data.scheduled_start_at,
               status: "scheduled",
               progress: 0,
               current_phase: 0,
@@ -1217,15 +1216,22 @@ function ConvertToJobModal({
 }: {
   request: ServiceRequest | null;
   onClose: () => void;
-  onConvert: (data: { client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_value?: number; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number; total_phases?: number; job_type?: "fixed" | "hourly" }) => void;
+  onConvert: (data: { client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_value?: number; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number; total_phases?: number; job_type?: "fixed" | "hourly"; scheduled_date?: string; scheduled_start_at?: string }) => void;
 }) {
-  const [form, setForm] = useState({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", total_phases: "2", job_type: "fixed" });
+  const [form, setForm] = useState({
+    partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", total_phases: "2", job_type: "fixed",
+    scheduled_date: "", scheduled_time: "",
+  });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
   useEffect(() => {
     if (!request) return;
-    setForm({ partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: String(request.estimated_value ?? 0), partner_cost: "", total_phases: "2", job_type: "fixed" });
+    setForm({
+      partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "",
+      client_price: String(request.estimated_value ?? 0), partner_cost: "", total_phases: "2", job_type: "fixed",
+      scheduled_date: "", scheduled_time: "",
+    });
     setClientAddress(serviceRequestToClientAddressValue(request));
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
   }, [request]);
@@ -1239,6 +1245,27 @@ function ConvertToJobModal({
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) {
       toast.error("Select a client from the list (click the name) and choose or add a property address.");
       return;
+    }
+    const scheduled_date = form.scheduled_date || undefined;
+    const scheduled_start_at =
+      form.scheduled_date && form.scheduled_time
+        ? `${form.scheduled_date}T${form.scheduled_time}:00`
+        : form.scheduled_date
+          ? `${form.scheduled_date}T09:00:00`
+          : undefined;
+    if (form.partner_id) {
+      const block = getPartnerAssignmentBlockReason({
+        property_address: clientAddress.property_address ?? "",
+        scope: form.scope,
+        scheduled_date,
+        scheduled_start_at,
+        partner_id: form.partner_id,
+        partner_ids: [],
+      });
+      if (block) {
+        toast.error(block);
+        return;
+      }
     }
     onConvert({
       client_id: clientAddress.client_id,
@@ -1255,6 +1282,8 @@ function ConvertToJobModal({
       partner_cost: Number(form.partner_cost) || 0,
       total_phases: normalizeTotalPhases(Number(form.total_phases)),
       job_type: form.job_type as "fixed" | "hourly",
+      scheduled_date,
+      scheduled_start_at,
     });
   };
 
@@ -1297,6 +1326,17 @@ function ConvertToJobModal({
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Custo parceiro</label>
           <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} placeholder="0.00" min={0} step="0.01" />
         </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Data agendada {form.partner_id ? "*" : ""}</label>
+            <Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} className="h-10" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Hora início</label>
+            <Input type="time" value={form.scheduled_time} onChange={(e) => update("scheduled_time", e.target.value)} className="h-10" />
+          </div>
+        </div>
+        <p className="text-[10px] text-text-tertiary -mt-2">Obrigatório com parceiro: data (e escopo abaixo).</p>
         <Select label="Parceiro" options={[{ value: "", label: "Nenhum" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Escopo</label>
@@ -1324,11 +1364,6 @@ const REQUEST_SOURCES: { value: ServiceRequest["source"]; label: string }[] = [
   { value: "b2b", label: "B2B" },
 ];
 
-const REQUEST_KIND_OPTIONS = [
-  { value: "quote", label: "Quote Request" },
-  { value: "work", label: "Work Request" },
-] as const;
-
 function CreateRequestModal({
   open,
   onClose,
@@ -1348,7 +1383,6 @@ function CreateRequestModal({
   const [postcode, setPostcode] = useState("");
   const [form, setForm] = useState({
     client_phone: "",
-    request_kind: "",
     source: "manual" as ServiceRequest["source"],
     catalog_service_id: "",
     service_type: "",
@@ -1364,7 +1398,6 @@ function CreateRequestModal({
     setPostcode("");
     setForm({
       client_phone: "",
-      request_kind: "",
       source: "manual",
       catalog_service_id: "",
       service_type: "",
@@ -1374,11 +1407,6 @@ function CreateRequestModal({
     });
   }, [open]);
 
-  const typeOfWorkOptions = useMemo(() => {
-    const fromCatalog = catalogServices.map((c) => c.name);
-    return [...new Set([...TYPE_OF_WORK_OPTIONS, ...fromCatalog])].sort((a, b) => a.localeCompare(b));
-  }, [catalogServices]);
-
   useEffect(() => {
     const ex = extractUkPostcode(clientAddress.property_address);
     if (ex) setPostcode(ex);
@@ -1387,10 +1415,6 @@ function CreateRequestModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (form.request_kind !== "work" && form.request_kind !== "quote") {
-      toast.error("Request type is required.");
-      return;
-    }
     if (!clientAddress.client_id) {
       toast.error(
         "The client must be linked: click their name in the list, press Enter, or tab away after typing the exact name. If you only typed text without confirming, the system has no client ID."
@@ -1408,10 +1432,6 @@ function CreateRequestModal({
     }
     if (!form.service_type.trim()) {
       toast.error("Enter a service name (or pick a catalog template).");
-      return;
-    }
-    if (form.request_kind === "work" && !form.catalog_service_id.trim()) {
-      toast.error("For Work Request, select a Call Out type from Services.");
       return;
     }
     const cid = form.catalog_service_id.trim();
@@ -1437,24 +1457,6 @@ function CreateRequestModal({
   return (
     <Modal open={open} onClose={onClose} title="New Service Request" subtitle="Create a new incoming request" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <Select
-          label="Request type"
-          value={form.request_kind}
-          onChange={(e) => {
-            const next = e.target.value as "" | "quote" | "work";
-            setForm((prev) => ({
-              ...prev,
-              request_kind: next,
-              catalog_service_id: "",
-              service_type: "",
-              estimated_value: "",
-            }));
-          }}
-          options={[
-            { value: "", label: "Select request type..." },
-            ...REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-          ]}
-        />
         <div>
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; property *</p>
           <p className="text-xs text-text-tertiary mb-3">Search for an existing client or create a new one. This link is kept when you convert to quote or job.</p>
@@ -1483,51 +1485,39 @@ function CreateRequestModal({
           <Select label="Source" value={form.source ?? "manual"} onChange={(e) => update("source", e.target.value)} options={REQUEST_SOURCES.map((s) => ({ value: s.value!, label: s.label }))} />
         </div>
         <div className="space-y-3">
-          {form.request_kind === "work" ? (
-            <>
-              <Select
-                label="Call Out type"
-                value={form.catalog_service_id}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  const svc = catalogServices.find((c) => c.id === id);
-                  setForm((prev) => ({
-                    ...prev,
-                    catalog_service_id: id,
-                    service_type: svc?.name ?? "",
-                    description: svc?.default_description?.trim() || prev.description,
-                    estimated_value: svc ? String(estimatedValueFromCatalog(svc)) : prev.estimated_value,
-                  }));
-                }}
-                options={[
-                  { value: "", label: "Select call out type..." },
-                  ...catalogServices.map((c) => ({
-                    value: c.id,
-                    label: `${c.name} — ${estimatedValueFromCatalog(c).toFixed(2)}`,
-                  })),
-                ]}
+          <ServiceCatalogSelect
+            catalog={catalogServices}
+            value={form.catalog_service_id}
+            onChange={(id, svc) => {
+              setForm((prev) => ({
+                ...prev,
+                catalog_service_id: id,
+                ...(svc
+                  ? {
+                      service_type: svc.name,
+                      description: (svc.default_description?.trim() || prev.description) ?? "",
+                      estimated_value: String(estimatedValueFromCatalog(svc)),
+                    }
+                  : {}),
+              }));
+            }}
+          />
+          <p className="text-[10px] text-text-tertiary">You can change name, description and value below — catalog is only a starting point.</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Service name *</label>
+              <Input
+                value={form.service_type}
+                onChange={(e) => update("service_type", e.target.value)}
+                placeholder="e.g. Plumbing repair"
+                required
               />
-              <p className="text-[10px] text-text-tertiary">Values are loaded from Services and can be adjusted if needed.</p>
-            </>
-          ) : form.request_kind === "quote" ? (
-            <Select
-              label="Service name *"
-              value={form.service_type}
-              onChange={(e) => update("service_type", e.target.value)}
-              options={[
-                { value: "", label: "Select type of work..." },
-                ...typeOfWorkOptions.map((name) => ({ value: name, label: name })),
-              ]}
-            />
-          ) : (
-            <p className="text-xs text-amber-600 dark:text-amber-400 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2">
-              Select Request type first.
-            </p>
-          )}
-          <Select label="Priority" value={form.priority} onChange={(e) => update("priority", e.target.value)} options={[
-            { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
-            { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
-          ]} />
+            </div>
+            <Select label="Priority" value={form.priority} onChange={(e) => update("priority", e.target.value)} options={[
+              { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
+              { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
+            ]} />
+          </div>
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
