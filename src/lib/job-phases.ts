@@ -101,6 +101,8 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
       ];
     case "completed":
       return [{ label: "Reopen", status: "scheduled", icon: RotateCcw, primary: false }];
+    case "cancelled":
+      return [{ label: "Reopen", status: "scheduled", icon: RotateCcw, primary: false }];
     default:
       return [];
   }
@@ -110,6 +112,10 @@ export function canAdvanceJob(job: Job, nextStatus: string): { ok: boolean; mess
   const tp = normalizeTotalPhases(job.total_phases);
 
   if (job.status === "draft" && nextStatus === "scheduled") {
+    return { ok: true };
+  }
+
+  if (nextStatus === "cancelled") {
     return { ok: true };
   }
 
@@ -185,6 +191,8 @@ export function jobStatusRank(status: Job["status"]): number {
       return 50;
     case "completed":
       return 100;
+    case "cancelled":
+      return -100;
     default:
       return 0;
   }
@@ -200,8 +208,8 @@ export function minimumStatusRankForReportSlot(reportSlotIndex: number, totalPha
 }
 
 export function canMarkReportUploaded(job: Job, reportSlotIndex: number): { ok: boolean; message?: string } {
-  if (job.status === "completed") {
-    return { ok: false, message: "Job is completed — reports are locked." };
+  if (job.status === "completed" || job.status === "cancelled") {
+    return { ok: false, message: "Job is closed — reports are locked." };
   }
   const tp = normalizeTotalPhases(job.total_phases);
   if (reportSlotIndex < 1 || reportSlotIndex > tp) {
