@@ -853,17 +853,19 @@ function QuotesPageContent() {
         </motion.div>
       </div>
 
-      <QuoteDetailDrawer
-        quote={selectedQuote}
-        pendingInitialTab={drawerPendingTab}
-        onConsumePendingInitialTab={consumeDrawerPendingTab}
-        onClose={() => setSelectedQuote(null)}
-        onStatusChange={handleStatusChange}
-        onQuoteUpdate={(q) => {
-          setSelectedQuote(q);
-          refresh();
-        }}
-      />
+      {selectedQuote ? (
+        <QuoteDetailDrawer
+          quote={selectedQuote}
+          pendingInitialTab={drawerPendingTab}
+          onConsumePendingInitialTab={consumeDrawerPendingTab}
+          onClose={() => setSelectedQuote(null)}
+          onStatusChange={handleStatusChange}
+          onQuoteUpdate={(q) => {
+            setSelectedQuote(q);
+            refresh();
+          }}
+        />
+      ) : null}
       <CreateJobFromQuoteModal quote={quoteToConvert} onClose={() => setQuoteToConvert(null)} onSubmit={handleConfirmCreateJob} />
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create Quote" subtitle="Add line items and optionally request partner bids" size="lg">
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
@@ -881,7 +883,7 @@ function QuoteDetailDrawer({
   onStatusChange,
   onQuoteUpdate,
 }: {
-  quote: Quote | null;
+  quote: Quote;
   pendingInitialTab?: "overview" | "bids" | null;
   onConsumePendingInitialTab?: () => void;
   onClose: () => void;
@@ -914,15 +916,20 @@ function QuoteDetailDrawer({
   const [proposalScalePercent, setProposalScalePercent] = useState(100);
   const [partnerLabourCost, setPartnerLabourCost] = useState(0);
   const [partnerMaterialsCost, setPartnerMaterialsCost] = useState(0);
+  // Send to customer / preview — must stay above useLayoutEffect (Rules of Hooks).
+  const [depositRequired, setDepositRequired] = useState("");
+  const [startDate1, setStartDate1] = useState("");
+  const [startDate2, setStartDate2] = useState("");
+  const [customMessage, setCustomMessage] = useState("");
+  const [previewLinks, setPreviewLinks] = useState<{ acceptUrl: string; rejectUrl: string } | null>(null);
+  const [emailPreviewHtml, setEmailPreviewHtml] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
   const isAdmin = profile?.role === "admin";
   /** Earliest selectable day for proposed start dates (local calendar day). */
   const minProposalStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
   useLayoutEffect(() => {
-    if (!quote) {
-      lastTabInitQuoteIdRef.current = null;
-      return;
-    }
     if (pendingInitialTab === "bids" || pendingInitialTab === "overview") {
       setTab(pendingInitialTab);
       lastTabInitQuoteIdRef.current = quote.id;
@@ -935,53 +942,44 @@ function QuoteDetailDrawer({
     }
   }, [quote, pendingInitialTab, onConsumePendingInitialTab]);
 
-  // Send to customer fields
-  const [depositRequired, setDepositRequired] = useState("");
-  const [startDate1, setStartDate1] = useState("");
-  const [startDate2, setStartDate2] = useState("");
-  const [customMessage, setCustomMessage] = useState("");
-  const [previewLinks, setPreviewLinks] = useState<{ acceptUrl: string; rejectUrl: string } | null>(null);
-  const [emailPreviewHtml, setEmailPreviewHtml] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-
   useEffect(() => {
-    if (quote) {
-      setQuoteEmailedInSession(false);
-      setSendEmail(bidPayloadTrimmedString(quote.client_email as unknown));
-      setSendState("idle");
-      setScopeText(bidPayloadTrimmedString(quote.scope as unknown));
-      setDepositRequired(String(quote.deposit_required ?? 0));
-      setStartDate1(bidPayloadTrimmedString(quote.start_date_option_1 as unknown));
-      setStartDate2(bidPayloadTrimmedString(quote.start_date_option_2 as unknown));
-      setCustomMessage(bidPayloadTrimmedString(quote.email_custom_message as unknown));
-      setPanelPartnerCost(String(quote.partner_cost ?? quote.cost ?? 0));
-      setPanelSellPrice(String(quote.sell_price ?? quote.total_value ?? 0));
-      setProposalScalePercent(100);
-      setPartnerLabourCost(Number(quote.partner_cost ?? quote.cost ?? 0));
-      setPartnerMaterialsCost(0);
-      void loadLineItems(quote.id, quote);
-      if (quote.quote_type === "partner") {
-        void getBidsByQuoteId(quote.id)
-          .then((bids) => {
-            const approved = bids.find((b) => b.status === "approved");
-            if (!approved) return;
-            const { labour, materials } = splitBidPartnerCosts(approved.bid_amount, parseBidProposalFromNotes(approved.notes));
-            setPartnerLabourCost(labour);
-            setPartnerMaterialsCost(materials);
-          })
-          .catch(() => {});
-      }
+    setQuoteEmailedInSession(false);
+    setSendEmail(bidPayloadTrimmedString(quote.client_email as unknown));
+    setSendState("idle");
+    setScopeText(bidPayloadTrimmedString(quote.scope as unknown));
+    setDepositRequired(String(quote.deposit_required ?? 0));
+    setStartDate1(bidPayloadTrimmedString(quote.start_date_option_1 as unknown));
+    setStartDate2(bidPayloadTrimmedString(quote.start_date_option_2 as unknown));
+    setCustomMessage(bidPayloadTrimmedString(quote.email_custom_message as unknown));
+    setPanelPartnerCost(String(quote.partner_cost ?? quote.cost ?? 0));
+    setPanelSellPrice(String(quote.sell_price ?? quote.total_value ?? 0));
+    setProposalScalePercent(100);
+    setPartnerLabourCost(Number(quote.partner_cost ?? quote.cost ?? 0));
+    setPartnerMaterialsCost(0);
+    void loadLineItems(quote.id, quote);
+    if (quote.quote_type === "partner") {
+      void getBidsByQuoteId(quote.id)
+        .then((bids) => {
+          const approved = bids.find((b) => b.status === "approved");
+          if (!approved) return;
+          const { labour, materials } = splitBidPartnerCosts(approved.bid_amount, parseBidProposalFromNotes(approved.notes));
+          setPartnerLabourCost(labour);
+          setPartnerMaterialsCost(materials);
+        })
+        .catch(() => {});
     }
   }, [quote]);
 
   useEffect(() => {
-    if (quote?.id && (quote?.status === "accepted" || quote?.status === "converted_to_job")) {
+    if (quote.status === "accepted" || quote.status === "converted_to_job") {
       getJobByQuoteId(quote.id).then(setConvertedJob);
-    } else { setConvertedJob(null); }
-  }, [quote?.id, quote?.status]);
+    } else {
+      setConvertedJob(null);
+    }
+  }, [quote.id, quote.status]);
 
   useEffect(() => {
-    if (!quote?.id || quote.status !== "awaiting_customer" || tab !== "overview") return;
+    if (quote.status !== "awaiting_customer" || tab !== "overview") return;
     const timer = setTimeout(() => {
       setPreviewLoading(true);
       const recipientName = quote.client_name ?? "";
@@ -1016,7 +1014,7 @@ function QuoteDetailDrawer({
         .finally(() => setPreviewLoading(false));
     }, 300);
     return () => clearTimeout(timer);
-  }, [tab, quote?.id, quote?.status, quote?.client_name, customMessage, lineItems, depositRequired, scopeText]);
+  }, [tab, quote.id, quote.status, quote.client_name, customMessage, lineItems, depositRequired, scopeText]);
 
   const loadLineItems = async (quoteId: string, q: Quote) => {
     const supabase = getSupabase();
@@ -1063,8 +1061,8 @@ function QuoteDetailDrawer({
   }, []);
 
   useEffect(() => {
-    if (quote?.id && tab === "bids") loadBids(quote.id);
-  }, [quote?.id, tab, loadBids]);
+    if (tab === "bids") loadBids(quote.id);
+  }, [quote.id, tab, loadBids]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -1078,7 +1076,6 @@ function QuoteDetailDrawer({
   const handleDrawerMarginPct = useCallback(() => {}, []);
 
   const drawerInitialMarginPct = useMemo(() => {
-    if (!quote) return 40;
     const sp = Number(quote.sell_price ?? quote.total_value ?? 0);
     const pc = Number(quote.partner_cost ?? quote.cost ?? 0);
     if (sp <= 0 || !Number.isFinite(sp)) return 40;
@@ -1086,8 +1083,6 @@ function QuoteDetailDrawer({
     if (!Number.isFinite(raw)) return 40;
     return Math.min(99.9, Math.max(0, raw));
   }, [quote]);
-
-  if (!quote) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
   const actions = getQuoteActions(quote);
