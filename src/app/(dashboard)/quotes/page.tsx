@@ -50,8 +50,66 @@ import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { isUuid } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback } from "@/lib/type-of-work";
+import {
+  parseBidProposalFromNotes,
+  splitBidPartnerCosts,
+  summarizeBidProposalNotes,
+  BID_DEFAULT_LABOUR_MARKUP,
+  BID_DEFAULT_MATERIALS_MARKUP,
+} from "@/lib/quote-bid-payload";
 
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
+
+/** Two starter rows: type of work + materials (partner app aligns with this shape). */
+function defaultProposalLineItems(q: Quote): { description: string; quantity: string; unitPrice: string }[] {
+  const title = (q.title ?? "").trim() || "Type of work";
+  return [
+    { description: title, quantity: "1", unitPrice: "0" },
+    { description: "Materials", quantity: "1", unitPrice: "0" },
+  ];
+}
+
+function marginPctOnSell(sell: number, partnerCost: number): number {
+  if (!(sell > 0) || !Number.isFinite(sell)) return 0;
+  return Math.round(((sell - partnerCost) / sell) * 1000) / 10;
+}
+
+type ProposalLineRow = { description: string; quantity: string; unitPrice: string };
+
+function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
+  lines: ProposalLineRow[];
+  labourP: number;
+  materialsP: number;
+  scopeText?: string;
+  startDate1?: string;
+  startDate2?: string;
+  depositRequired?: string;
+} {
+  const payload = parseBidProposalFromNotes(bid.notes);
+  const { labour: L, materials: M } = splitBidPartnerCosts(bid.bid_amount, payload);
+  const title = (q.title ?? "").trim() || "Type of work";
+  const line0Desc = (payload?.labour_description ?? title).trim() || title;
+  const line1Desc = (payload?.materials_description ?? "Materials").trim() || "Materials";
+  const sell0 = L * (1 + BID_DEFAULT_LABOUR_MARKUP);
+  const sell1 = M * (1 + BID_DEFAULT_MATERIALS_MARKUP);
+  const u0 = Math.round(sell0 * 100) / 100;
+  const u1 = Math.round(sell1 * 100) / 100;
+  return {
+    lines: [
+      { description: line0Desc, quantity: "1", unitPrice: String(u0) },
+      { description: line1Desc, quantity: "1", unitPrice: String(u1) },
+    ],
+    labourP: L,
+    materialsP: M,
+    scopeText: payload?.scope?.trim() || undefined,
+    startDate1: payload?.start_date_option_1?.trim().slice(0, 10),
+    startDate2: payload?.start_date_option_2?.trim().slice(0, 10),
+    depositRequired:
+      payload?.deposit_required != null && Number.isFinite(Number(payload.deposit_required))
+        ? String(payload.deposit_required)
+        : undefined,
+  };
+}
 
 const statusLabels: Record<string, string> = {
   draft: "Draft",
@@ -140,7 +198,7 @@ function QuoteStageColumn({ status }: { status: string }) {
 function getStageGuidance(status: string): {
   headline: string;
   detail: string;
-  goToTab?: "overview" | "bids" | "send" | "history";
+  goToTab?: "overview" | "bids" | "history";
   goToLabel?: string;
 } {
   switch (status) {
@@ -165,9 +223,7 @@ function getStageGuidance(status: string): {
     case "awaiting_customer":
       return {
         headline: "Waiting on the customer",
-        detail: "Use Send to Customer to email the PDF and accept/reject links if you have not yet.",
-        goToTab: "send",
-        goToLabel: "Open email",
+        detail: "You can still edit the proposal or pricing, then Save & send PDF (or Resend email) so the client gets an updated attachment — links stay the same.",
       };
     case "accepted":
       return {
@@ -331,6 +387,8 @@ function QuotesPageContent() {
         property_address: formData.property_address,
         scope: formData.scope,
         partner_cost: formData.partner_cost ?? formData.cost ?? 0,
+        owner_id: profile?.id,
+        owner_name: profile?.full_name,
       });
       await logAudit({ entityType: "quote", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
@@ -829,6 +887,8 @@ function QuoteDetailDrawer({
   const { profile } = useProfile();
   const [tab, setTab] = useState("overview");
   const lastTabInitQuoteIdRef = useRef<string | null>(null);
+  /** After a successful email in this drawer session — drives Resend labels (resets when opening another quote). */
+  const [quoteEmailedInSession, setQuoteEmailedInSession] = useState(false);
   const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [sendEmail, setSendEmail] = useState("");
   const [lineItems, setLineItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([]);
@@ -846,6 +906,10 @@ function QuoteDetailDrawer({
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
+  /** 100 = 100% of (labour ×1.4 + materials ×1.25) customer prices; range 0–1000. */
+  const [proposalScalePercent, setProposalScalePercent] = useState(100);
+  const [partnerLabourCost, setPartnerLabourCost] = useState(0);
+  const [partnerMaterialsCost, setPartnerMaterialsCost] = useState(0);
   const isAdmin = profile?.role === "admin";
   /** Earliest selectable day for proposed start dates (local calendar day). */
   const minProposalStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -867,11 +931,6 @@ function QuoteDetailDrawer({
     }
   }, [quote, pendingInitialTab, onConsumePendingInitialTab]);
 
-  useEffect(() => {
-    if (!quote) return;
-    setPricingOpen(["draft", "in_survey", "bidding"].includes(quote.status));
-  }, [quote?.id, quote?.status]);
-
   // Send to customer fields
   const [depositRequired, setDepositRequired] = useState("");
   const [startDate1, setStartDate1] = useState("");
@@ -883,9 +942,9 @@ function QuoteDetailDrawer({
 
   useEffect(() => {
     if (quote) {
+      setQuoteEmailedInSession(false);
       setSendEmail(quote.client_email ?? "");
       setSendState("idle");
-      setLineItems([{ description: quote.title ?? "", quantity: "1", unitPrice: String(quote.total_value ?? 0) }]);
       setScopeText(quote.scope ?? "");
       setDepositRequired(String(quote.deposit_required ?? 0));
       setStartDate1(quote.start_date_option_1 ?? "");
@@ -893,7 +952,21 @@ function QuoteDetailDrawer({
       setCustomMessage(quote.email_custom_message ?? "");
       setPanelPartnerCost(String(quote.partner_cost ?? quote.cost ?? 0));
       setPanelSellPrice(String(quote.sell_price ?? quote.total_value ?? 0));
-      loadLineItems(quote.id);
+      setProposalScalePercent(100);
+      setPartnerLabourCost(Number(quote.partner_cost ?? quote.cost ?? 0));
+      setPartnerMaterialsCost(0);
+      void loadLineItems(quote.id, quote);
+      if (quote.quote_type === "partner") {
+        void getBidsByQuoteId(quote.id)
+          .then((bids) => {
+            const approved = bids.find((b) => b.status === "approved");
+            if (!approved) return;
+            const { labour, materials } = splitBidPartnerCosts(approved.bid_amount, parseBidProposalFromNotes(approved.notes));
+            setPartnerLabourCost(labour);
+            setPartnerMaterialsCost(materials);
+          })
+          .catch(() => {});
+      }
     }
   }, [quote]);
 
@@ -904,7 +977,7 @@ function QuoteDetailDrawer({
   }, [quote?.id, quote?.status]);
 
   useEffect(() => {
-    if (tab !== "send" || !quote?.id) return;
+    if (!quote?.id || quote.status !== "awaiting_customer" || tab !== "overview") return;
     const timer = setTimeout(() => {
       setPreviewLoading(true);
       const recipientName = quote.client_name ?? "";
@@ -939,15 +1012,30 @@ function QuoteDetailDrawer({
         .finally(() => setPreviewLoading(false));
     }, 300);
     return () => clearTimeout(timer);
-  }, [tab, quote?.id, quote?.client_name, customMessage, lineItems, depositRequired, scopeText]);
+  }, [tab, quote?.id, quote?.status, quote?.client_name, customMessage, lineItems, depositRequired, scopeText]);
 
-  const loadLineItems = async (quoteId: string) => {
+  const loadLineItems = async (quoteId: string, q: Quote) => {
     const supabase = getSupabase();
     const { data } = await supabase.from("quote_line_items").select("*").eq("quote_id", quoteId).order("sort_order");
     if (data && data.length > 0) {
-      setLineItems(data.map((li: { description: string; quantity: number; unit_price: number }) => ({
-        description: li.description, quantity: String(li.quantity), unitPrice: String(li.unit_price),
-      })));
+      let rows = data.map((li: { description: string; quantity: number; unit_price: number }) => ({
+        description: li.description,
+        quantity: String(li.quantity),
+        unitPrice: String(li.unit_price),
+      }));
+      const padStatuses = ["draft", "in_survey", "bidding", "awaiting_customer"];
+      if (rows.length < 2 && padStatuses.includes(q.status)) {
+        const title = (q.title ?? "").trim() || "Type of work";
+        if (rows.length === 0) {
+          rows = defaultProposalLineItems(q);
+        } else {
+          rows = [...rows, { description: "Materials", quantity: "1", unitPrice: "0" }];
+          if (!rows[0].description.trim()) rows[0] = { ...rows[0], description: title };
+        }
+      }
+      setLineItems(rows);
+    } else {
+      setLineItems(defaultProposalLineItems(q));
     }
   };
 
@@ -1001,6 +1089,12 @@ function QuoteDetailDrawer({
   const stepMap: Record<string, number> = { draft: 0, in_survey: 1, bidding: 2, awaiting_customer: 3, accepted: 4, rejected: -1, converted_to_job: 5 };
   const currentStep = stepMap[quote.status] ?? 0;
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
+  const proposalLine0Sell = (Number(lineItems[0]?.quantity) || 0) * (Number(lineItems[0]?.unitPrice) || 0);
+  const proposalLine1Sell = (Number(lineItems[1]?.quantity) || 0) * (Number(lineItems[1]?.unitPrice) || 0);
+  const proposalMarginLabourPct = marginPctOnSell(proposalLine0Sell, partnerLabourCost);
+  const proposalMarginMaterialsPct = marginPctOnSell(proposalLine1Sell, partnerMaterialsCost);
+  const proposalPartnerTotal = partnerLabourCost + partnerMaterialsCost;
+  const canUseProposalMarginSlider = proposalPartnerTotal > 0;
 
   // Email flow step-by-step (only relevant when quote.status === "awaiting_customer")
   const sendStep1Ready = scopeText.trim().length > 0 || lineItems.some((li) => li.description.trim().length > 0);
@@ -1010,25 +1104,62 @@ function QuoteDetailDrawer({
     sendDepositNumber >= 0 &&
     !Number.isNaN(sendDepositNumber) &&
     sendEmail.trim().includes("@");
-  const sendCurrentStep = !sendStep1Ready ? 1 : !sendStep2Ready ? 2 : !sendStep3Ready ? 3 : 4;
 
   const drawerTabs = [
     { id: "overview", label: "Review & Send" },
     { id: "bids", label: "Bids" },
-    ...(quote.status === "awaiting_customer" ? [{ id: "send", label: "Email" }] : []),
     { id: "history", label: "History" },
   ];
 
   const guidance = getStageGuidance(quote.status);
 
   const addLineItem = () => setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0" }]);
-  const removeLineItem = (idx: number) => setLineItems((prev) => prev.filter((_, i) => i !== idx));
+  const removeLineItem = (idx: number) => {
+    setLineItems((prev) => {
+      if (prev.length <= 2 && ["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status)) {
+        toast.info("Keep at least two lines (type of work and materials). Remove extra rows only.");
+        return prev;
+      }
+      return prev.filter((_, i) => i !== idx);
+    });
+  };
+
+  const recalcCustomerLinePricesFromPartnerScale = useCallback((scalePct: number, labourP: number, materialsP: number) => {
+    const m = scalePct / 100;
+    setLineItems((prev) => {
+      const q0 = Number(prev[0]?.quantity) || 1;
+      const q1 = Number(prev[1]?.quantity) || 1;
+      const sell0 = labourP * (1 + BID_DEFAULT_LABOUR_MARKUP) * m;
+      const sell1 = materialsP * (1 + BID_DEFAULT_MATERIALS_MARKUP) * m;
+      const u0 = q0 > 0 ? Math.round((sell0 / q0) * 100) / 100 : 0;
+      const u1 = q1 > 0 ? Math.round((sell1 / q1) * 100) / 100 : 0;
+      const next = [...prev];
+      if (next[0]) next[0] = { ...next[0], unitPrice: String(u0) };
+      if (next[1]) next[1] = { ...next[1], unitPrice: String(u1) };
+      return next;
+    });
+  }, []);
+
   const updateLineItem = (idx: number, field: string, value: string) => setLineItems((prev) => prev.map((item, i) => i === idx ? { ...item, [field]: value } : item));
 
-  const persistProposalToQuote = async (): Promise<Quote> => {
+  const persistProposalToQuote = async (opts?: {
+    lineItemsOverride?: ProposalLineRow[];
+    scopeTextOverride?: string;
+    startDate1Override?: string;
+    startDate2Override?: string;
+    depositOverride?: string;
+    partnerCostOverride?: number;
+  }): Promise<Quote> => {
+    const lines = opts?.lineItemsOverride ?? lineItems;
+    const st = opts?.scopeTextOverride !== undefined ? opts.scopeTextOverride : scopeText;
+    const d1 = opts?.startDate1Override !== undefined ? opts.startDate1Override : startDate1;
+    const d2 = opts?.startDate2Override !== undefined ? opts.startDate2Override : startDate2;
+    const dep = opts?.depositOverride !== undefined ? opts.depositOverride : depositRequired;
+    const partnerTotal = opts?.partnerCostOverride ?? Number(quote.partner_cost ?? quote.cost ?? 0);
+
     const supabase = getSupabase();
     await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
-    const rows = lineItems.map((li, i) => ({
+    const rows = lines.map((li, i) => ({
       quote_id: quote.id,
       description: li.description,
       quantity: Number(li.quantity) || 1,
@@ -1036,12 +1167,19 @@ function QuoteDetailDrawer({
       sort_order: i,
     }));
     if (rows.length > 0) await supabase.from("quote_line_items").insert(rows);
+
+    const lineTot = lines.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
+    const marginPct =
+      lineTot > 0 && partnerTotal >= 0 ? Math.round(((lineTot - partnerTotal) / lineTot) * 1000) / 10 : 0;
+
     return updateQuote(quote.id, {
-      total_value: lineTotal,
-      scope: scopeText.trim() || undefined,
-      deposit_required: Number(depositRequired) || 0,
-      start_date_option_1: startDate1 || undefined,
-      start_date_option_2: startDate2 || undefined,
+      total_value: lineTot,
+      sell_price: lineTot,
+      margin_percent: marginPct,
+      scope: st.trim() || undefined,
+      deposit_required: Number(dep) || 0,
+      start_date_option_1: d1 || undefined,
+      start_date_option_2: d2 || undefined,
       client_email: sendEmail.trim(),
       email_custom_message: customMessage.trim() || null,
     });
@@ -1060,10 +1198,9 @@ function QuoteDetailDrawer({
     }
   };
 
-  const saveLineItems = saveProposalDraft;
-
   const handleSendToCustomer = async () => {
     if (!sendEmail) { toast.error("Enter a recipient email"); return; }
+    const isResend = quoteEmailedInSession || sendState === "sent";
     setSendState("sending");
     try {
       await persistProposalToQuote();
@@ -1091,7 +1228,12 @@ function QuoteDetailDrawer({
       if (!data.emailSent) {
         toast.warning(data.reason ?? "Quote updated but email was not sent");
       } else {
-        toast.success(`Quote with PDF sent to ${sendEmail}. Customer can Accept or Reject via the email link.`);
+        toast.success(
+          isResend
+            ? `Proposal saved and updated PDF resent to ${sendEmail}. Accept / Reject links are unchanged.`
+            : `Proposal saved — PDF sent to ${sendEmail}. Customer can Accept or Reject via the email link.`,
+        );
+        setQuoteEmailedInSession(true);
       }
       setSendState("sent");
       if (data.emailSent && onQuoteUpdate && data.sentTo) {
@@ -1319,13 +1461,78 @@ function QuoteDetailDrawer({
                 </div>
               )}
 
-              {["draft", "in_survey", "bidding"].includes(quote.status) && (
+              {["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status) && (
                 <div className="rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-4 space-y-4">
+                  {quote.status === "awaiting_customer" && (
+                    <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 dark:bg-amber-950/25 dark:border-amber-800/50 px-3 py-2.5 space-y-1">
+                      <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">Edit after sending</p>
+                      <p className="text-[11px] text-amber-900/85 dark:text-amber-100/85 leading-snug">
+                        You can still change <strong className="font-semibold text-amber-950 dark:text-amber-50">line items, scope, dates, deposit, message</strong> and open{" "}
+                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Pricing & margin</strong> for partner/sell figures. Use{" "}
+                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Save proposal</strong> to store only, or{" "}
+                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Save & send PDF</strong> below to save and email an updated PDF in one step.
+                      </p>
+                    </div>
+                  )}
                   <div>
-                    <p className="text-xs font-semibold text-text-primary">Customer proposal (required before Send to Customer)</p>
-                    <p className="text-[11px] text-text-tertiary mt-0.5">
-                      Fill scope, line items, dates, deposit and email here first. Then use <strong className="text-text-secondary">Send to Customer</strong> below to move to Awaiting Customer and open the Email tab to preview and send.
+                    <p className="text-xs font-semibold text-text-primary">
+                      {quote.status === "awaiting_customer" ? "Customer proposal" : "Customer proposal (required before Send to Customer)"}
                     </p>
+                    <p className="text-[11px] text-text-tertiary mt-0.5">
+                      {quote.status === "awaiting_customer" ? (
+                        <>The customer&apos;s Accept / Reject links stay the same; they receive the latest PDF each time you send or resend.</>
+                      ) : (
+                        <>Two default lines match the partner app: <strong className="text-text-secondary">type of work</strong> and <strong className="text-text-secondary">Materials</strong>. Approving a bid pre-fills from the bid (+40% labour / +25% materials on partner costs). Use the slider to scale customer prices; edit lines manually anytime.</>
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-border-light bg-card/80 dark:bg-surface-secondary/30 p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer price scale</p>
+                      <span className="text-xs font-bold tabular-nums text-primary">{proposalScalePercent}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1000}
+                      step={1}
+                      value={proposalScalePercent}
+                      disabled={!canUseProposalMarginSlider}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setProposalScalePercent(v);
+                        recalcCustomerLinePricesFromPartnerScale(v, partnerLabourCost, partnerMaterialsCost);
+                      }}
+                      className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-40 disabled:cursor-not-allowed bg-border dark:bg-zinc-700"
+                    />
+                    <p className="text-[10px] text-text-tertiary leading-snug">
+                      100% = +40% on partner labour and +25% on partner materials. Below 100% reduces; above increases (up to 1000%).
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
+                        <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 1 · Labour</p>
+                        <p className="text-[11px] text-text-secondary mt-1">
+                          Partner <span className="font-semibold tabular-nums">{formatCurrency(partnerLabourCost)}</span>
+                          {" · "}
+                          Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine0Sell)}</span>
+                        </p>
+                        <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginLabourPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                          Margin {proposalMarginLabourPct}%
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
+                        <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 2 · Materials</p>
+                        <p className="text-[11px] text-text-secondary mt-1">
+                          Partner <span className="font-semibold tabular-nums">{formatCurrency(partnerMaterialsCost)}</span>
+                          {" · "}
+                          Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine1Sell)}</span>
+                        </p>
+                        <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginMaterialsPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                          Margin {proposalMarginMaterialsPct}%
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -1338,16 +1545,16 @@ function QuoteDetailDrawer({
                     <div className="space-y-2">
                       {lineItems.map((item, idx) => (
                         <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
-                          <div className="flex-1">
-                            <Input placeholder="Service / description" value={item.description} onChange={(e) => updateLineItem(idx, "description", e.target.value)} className="text-xs mb-1.5" />
-                            <div className="flex gap-2">
+                          <div className="flex-1 min-w-0">
+                            <Input placeholder={idx === 0 ? "Type of work / labour" : idx === 1 ? "Materials" : "Service / description"} value={item.description} onChange={(e) => updateLineItem(idx, "description", e.target.value)} className="text-xs mb-1.5" />
+                            <div className="flex gap-2 flex-wrap">
                               <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => updateLineItem(idx, "quantity", e.target.value)} className="text-xs w-20" />
-                              <Input type="number" placeholder="Unit price" value={item.unitPrice} onChange={(e) => updateLineItem(idx, "unitPrice", e.target.value)} className="text-xs flex-1" />
+                              <Input type="number" placeholder="Unit price (customer)" value={item.unitPrice} onChange={(e) => updateLineItem(idx, "unitPrice", e.target.value)} className="text-xs flex-1 min-w-[100px]" />
                             </div>
                           </div>
-                          <div className="flex flex-col items-end gap-1 pt-1">
-                            <span className="text-xs font-semibold text-text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
-                            {lineItems.length > 1 && (
+                          <div className="flex flex-col items-end gap-1 pt-1 shrink-0">
+                            <span className="text-xs font-semibold text-text-primary tabular-nums">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
+                            {lineItems.length > 1 && (idx >= 2 || !["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status)) && (
                               <button type="button" onClick={() => removeLineItem(idx)} className="text-text-tertiary hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
                             )}
                           </div>
@@ -1442,12 +1649,128 @@ function QuoteDetailDrawer({
                 </div>
               </div>
 
+              {quote.status === "awaiting_customer" && (
+                <div className="rounded-xl border border-primary/15 bg-gradient-to-br from-primary/5 to-transparent p-4 space-y-4">
+                  <div className="flex items-start gap-2">
+                    <Mail className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-semibold text-text-primary">Save & email customer</p>
+                      <p className="text-[11px] text-text-tertiary mt-0.5">
+                        The button below <strong className="text-text-secondary">saves the proposal to the quote</strong>, then emails the PDF with the same secure{" "}
+                        <strong className="text-text-secondary">Accept</strong> / <strong className="text-text-secondary">Reject</strong> links. Use it after any edit, or{" "}
+                        <strong className="text-text-secondary">Save proposal</strong> above if you only want to store changes without emailing yet.
+                      </p>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Customer email</label>
+                    <Input type="email" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} placeholder="client@company.com" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Personal message (optional)</label>
+                    <textarea
+                      value={customMessage}
+                      onChange={(e) => setCustomMessage(e.target.value)}
+                      placeholder="Short note shown above the buttons in the email…"
+                      rows={2}
+                      className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+                    />
+                  </div>
+                  <details className="group rounded-lg border border-border-light bg-surface-hover/60 px-3 py-2">
+                    <summary className="text-[11px] font-medium text-text-secondary cursor-pointer list-none [&::-webkit-details-marker]:hidden flex items-center justify-between">
+                      <span>Preview links & email</span>
+                      <ChevronDown className="h-3.5 w-3.5 text-text-tertiary shrink-0 transition-transform group-open:rotate-180" />
+                    </summary>
+                    <div className="mt-3 space-y-3 pt-1 border-t border-border-light">
+                      {previewLoading ? (
+                        <div className="flex items-center gap-2 text-xs text-text-tertiary py-2">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+                        </div>
+                      ) : (
+                        <>
+                          {previewLinks ? (
+                            <div className="space-y-1.5 text-[11px]">
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase">Customer links</p>
+                              <div>
+                                <span className="text-text-tertiary">Accept · </span>
+                                <a href={previewLinks.acceptUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{previewLinks.acceptUrl}</a>
+                              </div>
+                              <div>
+                                <span className="text-text-tertiary">Reject · </span>
+                                <a href={previewLinks.rejectUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{previewLinks.rejectUrl}</a>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-text-tertiary">Links unavailable</p>
+                          )}
+                          <div>
+                            <p className="text-[10px] font-semibold text-text-tertiary uppercase mb-1.5">Email body</p>
+                            <div className="rounded-lg border border-border bg-white overflow-hidden" style={{ minHeight: 200 }}>
+                              {emailPreviewHtml ? (
+                                <iframe
+                                  srcDoc={emailPreviewHtml}
+                                  title="Email preview"
+                                  className="w-full border-0 bg-white"
+                                  style={{ height: 280, maxHeight: "50vh" }}
+                                />
+                              ) : (
+                                <div className="flex items-center justify-center text-xs text-text-tertiary p-4">No preview</div>
+                              )}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </details>
+                  <Button
+                    type="button"
+                    onClick={() => void handleSendToCustomer()}
+                    disabled={sendState === "sending" || !sendStep3Ready}
+                    icon={sendState === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    className="w-full"
+                  >
+                    {sendState === "sending"
+                      ? "Saving & sending…"
+                      : quoteEmailedInSession || sendState === "sent"
+                        ? "Save & resend PDF to customer"
+                        : "Save & send PDF to customer"}
+                  </Button>
+                  {(sendState === "sent" || quoteEmailedInSession) && (
+                    <p className="text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                      Last PDF emailed to {sendEmail}. Edit anything above, then use this button again or <strong className="font-semibold">Resend email</strong> next to Mark Accepted.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-2 pt-4 border-t border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Move this quote</p>
                 <p className="text-[11px] text-text-tertiary -mt-1 mb-1">
-                  After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer — the Email tab opens to preview and send the PDF.
+                  {quote.status === "awaiting_customer" ? (
+                    <>The customer uses <strong className="text-text-secondary">Accept</strong> or <strong className="text-text-secondary">Reject</strong> in the email. You can edit the quote anytime, then <strong className="text-text-secondary">Save & send PDF</strong> or <strong className="text-text-secondary">Resend email</strong> here.</>
+                  ) : (
+                    <>After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer, then email the PDF from the section below.</>
+                  )}
                 </p>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 items-center">
+                  {quote.status === "awaiting_customer" && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={sendState === "sending" || !sendStep3Ready}
+                      icon={sendState === "sending" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                      onClick={() => void handleSendToCustomer()}
+                      title="Saves the latest proposal and emails the PDF again"
+                    >
+                      {sendState === "sending"
+                        ? "Saving…"
+                        : quoteEmailedInSession || sendState === "sent"
+                          ? "Resend email"
+                          : "Send email"}
+                    </Button>
+                  )}
                   {actions.map((action) => (
                     <Button
                       key={action.status}
@@ -1471,7 +1794,6 @@ function QuoteDetailDrawer({
                           onQuoteUpdate?.(updated);
                           const result = await Promise.resolve(onStatusChange(updated, "awaiting_customer"));
                           if (result === false) return;
-                          setTab("send");
                         } catch (e) {
                           toast.error(e instanceof Error ? e.message : "Failed to save proposal");
                         } finally {
@@ -1523,7 +1845,6 @@ function QuoteDetailDrawer({
                     className="w-full sm:w-auto"
                     onClick={() => {
                       setTab("overview");
-                      setPricingOpen(true);
                     }}
                   >
                     Open Review & Send — pricing & proposal
@@ -1543,7 +1864,16 @@ function QuoteDetailDrawer({
                       <div>
                         <p className="text-sm font-semibold text-text-primary">{bid.partner_name ?? bid.partner_id}</p>
                         <p className="text-lg font-bold text-primary mt-0.5">{formatCurrency(bid.bid_amount)}</p>
-                        {bid.notes && <p className="text-xs text-text-tertiary mt-1">{bid.notes}</p>}
+                        {(() => {
+                          const bidNoteSummary = summarizeBidProposalNotes(bid.notes);
+                          if (bidNoteSummary) {
+                            return <p className="text-xs text-text-tertiary mt-1">{bidNoteSummary}</p>;
+                          }
+                          if (bid.notes?.trim()) {
+                            return <p className="text-xs text-text-tertiary mt-1 whitespace-pre-wrap">{bid.notes}</p>;
+                          }
+                          return null;
+                        })()}
                         <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="mt-2">{bid.status}</Badge>
                       </div>
                       {bid.status === "submitted" && (
@@ -1552,17 +1882,45 @@ function QuoteDetailDrawer({
                           variant="primary"
                           onClick={async () => {
                             try {
+                              const pre = computeCustomerProposalFromBid(bid, quote);
+                              const scopeMerged = pre.scopeText ?? scopeText;
+                              const d1 = pre.startDate1 ?? startDate1;
+                              const d2 = pre.startDate2 ?? startDate2;
+                              const dep = pre.depositRequired ?? depositRequired;
+
                               await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
+
+                              const updated = await persistProposalToQuote({
+                                lineItemsOverride: pre.lines,
+                                scopeTextOverride: scopeMerged,
+                                startDate1Override: d1,
+                                startDate2Override: d2,
+                                depositOverride: dep,
+                                partnerCostOverride: bid.bid_amount,
+                              });
+
                               await loadBids(quote.id);
-                              const fresh = await getQuote(quote.id);
-                              if (fresh) {
-                                onQuoteUpdate?.(fresh);
-                                setPricingOpen(true);
-                                setTab("overview");
-                                toast.success("Partner cost locked from bid. Set customer price on Review & Send, then Send to Customer.");
-                              } else {
-                                toast.error("Bid approved but quote could not be reloaded. Refresh the page.");
-                              }
+
+                              const lineTot = pre.lines.reduce(
+                                (s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0),
+                                0,
+                              );
+                              setLineItems(pre.lines);
+                              setScopeText(scopeMerged.trim());
+                              setStartDate1(d1);
+                              setStartDate2(d2);
+                              setDepositRequired(dep);
+                              setPartnerLabourCost(pre.labourP);
+                              setPartnerMaterialsCost(pre.materialsP);
+                              setProposalScalePercent(100);
+                              setPanelPartnerCost(String(bid.bid_amount));
+                              setPanelSellPrice(String(lineTot));
+
+                              onQuoteUpdate?.(updated);
+                              setTab("overview");
+                              toast.success(
+                                "Bid approved. Customer proposal pre-filled (40% labour / 25% materials markup). Adjust on Review & Send if needed, then send to the customer.",
+                              );
                             } catch (e) {
                               toast.error(e instanceof Error ? e.message : "Failed to approve bid");
                             }
@@ -1575,189 +1933,6 @@ function QuoteDetailDrawer({
                   ))}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* SEND TO CUSTOMER TAB */}
-          {tab === "send" && quote.status === "awaiting_customer" && (
-            <div className="p-6 space-y-5">
-              <div className="p-4 rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/10 space-y-3">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-text-primary">Send to Customer</p>
-                    <p className="text-xs text-text-tertiary mt-0.5">Step {sendCurrentStep} of 4</p>
-                  </div>
-                  <div className="flex gap-1 pt-0.5">
-                    {[1, 2, 3, 4].map((i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          "h-2 w-8 rounded-full",
-                          i < sendCurrentStep ? "bg-primary/50" : i === sendCurrentStep ? "bg-primary" : "bg-border"
-                        )}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-2 text-[11px]">
-                  <div className="flex items-center justify-between">
-                    <span className={cn("font-medium", sendStep1Ready ? "text-primary" : "text-text-tertiary")}>Step 1: Scope / line items</span>
-                    <span className="text-text-tertiary">{sendStep1Ready ? "Ready" : "Pending"}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className={cn("font-medium", sendStep2Ready ? "text-primary" : "text-text-tertiary")}>Step 2: Start date options</span>
-                    <span className="text-text-tertiary">{sendStep2Ready ? "Ready" : "Pending"}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className={cn("font-medium", sendStep3Ready ? "text-primary" : "text-text-tertiary")}>Step 3: Deposit & customer email</span>
-                    <span className="text-text-tertiary">{sendStep3Ready ? "Ready" : "Pending"}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className={cn("font-medium", sendStep3Ready ? "text-primary" : "text-text-tertiary")}>Step 4: Preview & send</span>
-                    <span className="text-text-tertiary">{sendStep3Ready ? "Ready when preview loads" : "Complete step 3 first"}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Line Items */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope / Line Items</label>
-                  <div className="flex gap-2">
-                    <button onClick={addLineItem} className="text-[11px] font-medium text-primary hover:underline">+ Add Item</button>
-                    <button onClick={saveLineItems} className="text-[11px] font-medium text-emerald-600 hover:underline">Save</button>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {lineItems.map((item, idx) => (
-                    <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
-                      <div className="flex-1">
-                        <Input placeholder="Service / Description" value={item.description} onChange={(e) => updateLineItem(idx, "description", e.target.value)} className="text-xs mb-1.5" />
-                        <div className="flex gap-2">
-                          <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => updateLineItem(idx, "quantity", e.target.value)} className="text-xs w-20" />
-                          <Input type="number" placeholder="Unit price" value={item.unitPrice} onChange={(e) => updateLineItem(idx, "unitPrice", e.target.value)} className="text-xs flex-1" />
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-1 pt-1">
-                        <span className="text-xs font-semibold text-text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
-                        {lineItems.length > 1 && <button onClick={() => removeLineItem(idx)} className="text-text-tertiary hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex justify-end mt-2 pt-2 border-t border-border-light">
-                  <span className="text-sm font-bold text-text-primary">Total: {formatCurrency(lineTotal)}</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Scope of Work (for email/PDF)</label>
-                <textarea
-                  value={scopeText}
-                  onChange={(e) => setScopeText(e.target.value)}
-                  placeholder="Describe scope, inclusions and exclusions..."
-                  rows={4}
-                  className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
-                />
-              </div>
-
-              {/* Start Date Options (2 dates) */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 1</label>
-                  <Input type="date" min={minProposalStartDate} value={startDate1} onChange={(e) => setStartDate1(e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 2</label>
-                  <Input type="date" min={minProposalStartDate} value={startDate2} onChange={(e) => setStartDate2(e.target.value)} />
-                </div>
-              </div>
-
-              {/* Deposit */}
-              <div>
-                <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Deposit Required</label>
-                <Input type="number" value={depositRequired} onChange={(e) => setDepositRequired(e.target.value)} placeholder="0.00" min={0} step="0.01" />
-              </div>
-
-              {/* Recipient Email */}
-              <div>
-                <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Customer Email</label>
-                <Input type="email" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} placeholder="client@company.com" />
-              </div>
-
-              {/* Personal message (customizable) */}
-              <div>
-                <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Personal message (optional)</label>
-                <textarea
-                  value={customMessage}
-                  onChange={(e) => setCustomMessage(e.target.value)}
-                  placeholder="Add a short message that will appear in the email before the Accept/Reject buttons..."
-                  rows={3}
-                  className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
-                />
-              </div>
-
-              {/* Preview: links and email */}
-              <div className="rounded-xl border border-border-light bg-surface-hover p-4 space-y-4">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Preview</p>
-                {previewLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-text-tertiary py-4">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Loading preview...
-                  </div>
-                ) : (
-                  <>
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase mb-1.5">Links the customer will receive</p>
-                      {previewLinks ? (
-                        <div className="space-y-2 text-xs">
-                          <div>
-                            <span className="text-text-tertiary">Accept: </span>
-                            <a href={previewLinks.acceptUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{previewLinks.acceptUrl}</a>
-                          </div>
-                          <div>
-                            <span className="text-text-tertiary">Reject: </span>
-                            <a href={previewLinks.rejectUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{previewLinks.rejectUrl}</a>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-text-tertiary">Could not load links</p>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase mb-1.5">Email preview</p>
-                      <div className="rounded-lg border border-border bg-white overflow-hidden" style={{ minHeight: 320 }}>
-                        {emailPreviewHtml ? (
-                          <iframe
-                            srcDoc={emailPreviewHtml}
-                            title="Email preview"
-                            className="w-full border-0 bg-white"
-                            style={{ height: 420, maxHeight: "70vh" }}
-                          />
-                        ) : (
-                          <div className="flex items-center justify-center text-sm text-text-tertiary" style={{ height: 420 }}>No preview</div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {sendState === "sent" && (
-                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <p className="text-sm font-medium text-emerald-700">Sent to {sendEmail}. Status: Awaiting Customer.</p>
-                </div>
-              )}
-
-              <Button
-                onClick={handleSendToCustomer}
-                disabled={sendState === "sending" || sendState === "sent" || !sendStep3Ready}
-                icon={sendState === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                className="w-full"
-              >
-                {sendState === "sending" ? "Sending..." : sendState === "sent" ? "Sent" : "Send to Customer"}
-              </Button>
             </div>
           )}
 
