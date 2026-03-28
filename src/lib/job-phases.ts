@@ -59,6 +59,8 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
   };
 
   switch (job.status) {
+    case "unassigned":
+      return [cancelAction];
     case "scheduled":
     case "late":
       return [
@@ -201,6 +203,7 @@ export function allConfiguredReportsApproved(job: Job): boolean {
 /** Monotonic workflow order for gating report actions (higher = further along). */
 export function jobStatusRank(status: Job["status"]): number {
   switch (status) {
+    case "unassigned":
     case "scheduled":
     case "late":
       return 0;

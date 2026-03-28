@@ -18,17 +18,17 @@ import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon,
-  ArrowRight, Briefcase, DollarSign, Clock,
+  ArrowRight, Briefcase, Receipt,
   MapPin, Building2, TrendingUp,
   CheckCircle2, AlertTriangle, XCircle,
 } from "lucide-react";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, formatCurrencyPrecise } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listJobs, createJob, updateJob, getJob } from "@/services/jobs";
+import { listJobs, createJob, updateJob, getJob, fetchAllJobsFinancialKpiRows } from "@/services/jobs";
 import { officePartnerTimerStartPatch } from "@/lib/partner-live-timer";
 import { createSelfBillFromJob } from "@/services/self-bills";
-import { getSupabase, getStatusCounts, softDeleteById } from "@/services/base";
+import { getSupabase, getStatusCounts, softDeleteById, type ListParams } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import type { Job, Partner } from "@/types/database";
 import { listPartners } from "@/services/partners";
@@ -38,12 +38,41 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, isJobInProgressStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
-import { formatJobScheduleLine, jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
+import {
+  formatJobScheduleLine,
+  jobFinishYmd,
+  jobScheduleYmd,
+  formatLocalYmd,
+  addLocalCalendarDays,
+  startOfLocalWeekMonday,
+  endOfLocalWeekSunday,
+  startOfLocalMonth,
+  endOfLocalMonth,
+} from "@/lib/schedule-calendar";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow } from "@/lib/job-arrival-window";
-import { jobMarginPercent, jobProfit } from "@/lib/job-financials";
+import { jobBillableRevenue, jobMarginPercent, jobProfit } from "@/lib/job-financials";
 
-const JOB_STATUSES = ["scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
+const JOB_STATUSES = ["unassigned", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
+
+const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
+
+type ScheduleDatePreset = "all" | "today" | "tomorrow" | "week" | "month" | "custom";
+
+function formatMediumYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return ymd;
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+function scheduleFilterSubtitle(
+  preset: ScheduleDatePreset,
+  range: { from: string; to: string } | null
+): string | null {
+  if (!range || preset === "all") return null;
+  if (range.from === range.to) return `Scheduled ${formatMediumYmd(range.from)} · tabs & KPIs match this window`;
+  return `Scheduled ${formatMediumYmd(range.from)} – ${formatMediumYmd(range.to)} · tabs & KPIs match this window`;
+}
 
 function jobBillableAmount(j: Job) {
   return Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
@@ -92,6 +121,7 @@ function JobCardFinanceRow({ job }: { job: Job }) {
 }
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
+  unassigned: { label: "Unassigned", variant: "warning", dot: true },
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
@@ -107,7 +137,50 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 function JobsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh } = useSupabaseList<Job>({ fetcher: listJobs, realtimeTable: "jobs" });
+  const anchorDayKey = formatLocalYmd(new Date());
+  const [scheduleDatePreset, setScheduleDatePreset] = useState<ScheduleDatePreset>("all");
+  const [customScheduleFrom, setCustomScheduleFrom] = useState(() => formatLocalYmd(new Date()));
+  const [customScheduleTo, setCustomScheduleTo] = useState(() => formatLocalYmd(new Date()));
+  const [dateFilterOpen, setDateFilterOpen] = useState(false);
+  const dateFilterRef = useRef<HTMLDivElement>(null);
+
+  const scheduleRange = useMemo((): { from: string; to: string } | null => {
+    if (scheduleDatePreset === "all") return null;
+    const anchor = new Date();
+    if (scheduleDatePreset === "today") {
+      const d = formatLocalYmd(anchor);
+      return { from: d, to: d };
+    }
+    if (scheduleDatePreset === "tomorrow") {
+      const t = formatLocalYmd(addLocalCalendarDays(anchor, 1));
+      return { from: t, to: t };
+    }
+    if (scheduleDatePreset === "week") {
+      const a = startOfLocalWeekMonday(anchor);
+      const b = endOfLocalWeekSunday(anchor);
+      return { from: formatLocalYmd(a), to: formatLocalYmd(b) };
+    }
+    if (scheduleDatePreset === "month") {
+      const a = startOfLocalMonth(anchor);
+      const b = endOfLocalMonth(anchor);
+      return { from: formatLocalYmd(a), to: formatLocalYmd(b) };
+    }
+    let from = customScheduleFrom;
+    let to = customScheduleTo;
+    if (from > to) [from, to] = [to, from];
+    return { from, to };
+  }, [scheduleDatePreset, customScheduleFrom, customScheduleTo, anchorDayKey]);
+
+  const listParams = useMemo<Partial<ListParams>>(() => {
+    if (!scheduleRange) return NO_SCHEDULE_LIST_PARAMS;
+    return { scheduleRange };
+  }, [scheduleRange]);
+
+  const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh } = useSupabaseList<Job>({
+    fetcher: listJobs,
+    realtimeTable: "jobs",
+    listParams,
+  });
   const { profile } = useProfile();
   const [viewMode, setViewMode] = useState("list");
   const [createOpen, setCreateOpen] = useState(false);
@@ -117,13 +190,20 @@ function JobsPageContent() {
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
+  const [kpiFinancialLoading, setKpiFinancialLoading] = useState(true);
+  const [avgTicket, setAvgTicket] = useState(0);
+  const [avgMarginPct, setAvgMarginPct] = useState(0);
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) { if (filterRef.current && !filterRef.current.contains(e.target as Node)) setFilterOpen(false); }
-    if (filterOpen) document.addEventListener("mousedown", handleClickOutside);
+    function handleClickOutside(e: MouseEvent) {
+      const t = e.target as Node;
+      if (filterOpen && filterRef.current && !filterRef.current.contains(t)) setFilterOpen(false);
+      if (dateFilterOpen && dateFilterRef.current && !dateFilterRef.current.contains(t)) setDateFilterOpen(false);
+    }
+    if (filterOpen || dateFilterOpen) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [filterOpen]);
+  }, [filterOpen, dateFilterOpen]);
 
   const filteredData = useMemo(() => {
     return data.filter((j) => {
@@ -137,7 +217,7 @@ function JobsPageContent() {
   }, [data, filterPartner, filterScheduled]);
 
   const kanbanColumns = useMemo(() => {
-    const ids = ["scheduled", "late", "in_progress", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
+    const ids = ["unassigned", "scheduled", "late", "in_progress", "awaiting_payment", "completed", "cancelled", "need_attention"] as const;
     return ids.map((id) => {
       if (id === "in_progress") {
         return {
@@ -161,7 +241,9 @@ function JobsPageContent() {
                   ? "bg-amber-500"
                   : id === "awaiting_payment"
                     ? "bg-amber-500"
-                    : "bg-primary",
+                    : id === "unassigned"
+                      ? "bg-slate-500"
+                      : "bg-primary",
         items: filteredData.filter((j) => j.status === id),
       };
     });
@@ -170,10 +252,49 @@ function JobsPageContent() {
   const jobIdFromUrl = searchParams.get("jobId");
   useEffect(() => { if (jobIdFromUrl) router.replace(`/jobs/${jobIdFromUrl}`); }, [jobIdFromUrl, router]);
 
-  const loadCounts = useCallback(async () => {
-    try { const counts = await getStatusCounts("jobs", [...JOB_STATUSES]); setTabCounts(counts); } catch { /* cosmetic */ }
-  }, []);
-  useEffect(() => { loadCounts(); }, [loadCounts]);
+  const loadDashboardStats = useCallback(async () => {
+    setKpiFinancialLoading(true);
+    try {
+      const countOpts = scheduleRange ? { scheduleRange } : undefined;
+      const [counts, rows] = await Promise.all([
+        getStatusCounts("jobs", [...JOB_STATUSES], "status", countOpts),
+        fetchAllJobsFinancialKpiRows(scheduleRange),
+      ]);
+      setTabCounts(counts);
+      const pipelineRows = rows.filter((r) => r.status !== "cancelled");
+      const ticketSum = pipelineRows.reduce((s, r) => s + jobBillableRevenue(r), 0);
+      setAvgTicket(pipelineRows.length ? ticketSum / pipelineRows.length : 0);
+      const activeRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "completed");
+      const margins = activeRows.map((r) => jobMarginPercent(r));
+      const avgM = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
+      setAvgMarginPct(Math.round(avgM * 10) / 10);
+    } catch {
+      /* cosmetic */
+    } finally {
+      setKpiFinancialLoading(false);
+    }
+  }, [scheduleRange]);
+  useEffect(() => {
+    void loadDashboardStats();
+  }, [loadDashboardStats]);
+
+  useEffect(() => {
+    let debounce: ReturnType<typeof setTimeout>;
+    const supabase = getSupabase();
+    const channel = supabase
+      .channel("jobs-management-dashboard-kpis")
+      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => {
+        clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          void loadDashboardStats();
+        }, 400);
+      })
+      .subscribe();
+    return () => {
+      clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+  }, [loadDashboardStats]);
 
   const inProgressTabCount =
     (tabCounts.in_progress_phase1 ?? 0) +
@@ -181,15 +302,32 @@ function JobsPageContent() {
     (tabCounts.in_progress_phase3 ?? 0) +
     (tabCounts.final_check ?? 0);
 
+  const activeJobsKpiCount = useMemo(() => {
+    const ip =
+      (tabCounts.in_progress_phase1 ?? 0) +
+      (tabCounts.in_progress_phase2 ?? 0) +
+      (tabCounts.in_progress_phase3 ?? 0) +
+      (tabCounts.final_check ?? 0);
+    return (
+      (tabCounts.unassigned ?? 0) +
+      (tabCounts.scheduled ?? 0) +
+      (tabCounts.late ?? 0) +
+      ip +
+      (tabCounts.awaiting_payment ?? 0) +
+      (tabCounts.need_attention ?? 0)
+    );
+  }, [tabCounts]);
+
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0 },
+    { id: "unassigned", label: "Unassigned", count: tabCounts.unassigned ?? 0 },
     { id: "scheduled", label: "Scheduled", count: tabCounts.scheduled ?? 0 },
     { id: "late", label: "Late", count: tabCounts.late ?? 0 },
     { id: "in_progress", label: "In progress", count: inProgressTabCount },
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
-    { id: "need_attention", label: "Need attention", count: tabCounts.need_attention ?? 0 },
     { id: "completed", label: "Completed", count: tabCounts.completed ?? 0 },
     { id: "cancelled", label: "Cancelled", count: tabCounts.cancelled ?? 0 },
+    { id: "need_attention", label: "Need attention", count: tabCounts.need_attention ?? 0 },
   ];
 
   useEffect(() => {
@@ -251,7 +389,7 @@ function JobsPageContent() {
         partner_ids: formData.partner_ids,
         owner_id: formData.owner_id ?? profile?.id,
         owner_name: formData.owner_name ?? profile?.full_name,
-        status: "scheduled",
+        status: jobHasPartnerSet(formData as Job) ? "scheduled" : "unassigned",
         progress: 0,
         current_phase: 0,
         total_phases: normalizeTotalPhases(formData.total_phases),
@@ -280,7 +418,7 @@ function JobsPageContent() {
       });
       await logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
-      toast.success("Job created"); refresh(); loadCounts();
+      toast.success("Job created"); refresh(); loadDashboardStats();
       if (result.partner_id) {
         fetch("/api/push/notify-partner", {
           method: "POST",
@@ -295,7 +433,7 @@ function JobsPageContent() {
       }
       router.push(`/jobs/${result.id}`);
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed to create job"); }
-  }, [refresh, loadCounts, profile?.id, profile?.full_name, router]);
+  }, [refresh, loadDashboardStats, profile?.id, profile?.full_name, router]);
 
   const handleStatusChange = useCallback(async (job: Job, newStatus: Job["status"]) => {
     const check = canAdvanceJob(job, newStatus);
@@ -323,16 +461,16 @@ function JobsPageContent() {
       const updated = await updateJob(job.id, statusPatch);
       await logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "status_changed", fieldName: "status", oldValue: job.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
       toast.success(selfBillId ? `Self-bill created. Job moved to ${statusConfig[newStatus]?.label ?? newStatus}` : `Job moved to ${statusConfig[newStatus]?.label ?? newStatus}`);
-      refresh(); loadCounts();
+      refresh(); loadDashboardStats();
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
-  }, [refresh, loadCounts, profile?.id, profile?.full_name]);
+  }, [refresh, loadDashboardStats, profile?.id, profile?.full_name]);
 
   const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>) => {
     try {
       await updateJob(jobId, updates);
-      toast.success("Job updated"); refresh(); loadCounts();
+      toast.success("Job updated"); refresh(); loadDashboardStats();
     } catch { toast.error("Failed to update"); }
-  }, [refresh, loadCounts]);
+  }, [refresh, loadDashboardStats]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
@@ -417,11 +555,11 @@ function JobsPageContent() {
       toast.success(`${selectedIds.size} jobs archived`);
       setSelectedIds(new Set());
       refresh();
-      loadCounts();
+      loadDashboardStats();
     } catch {
       toast.error("Failed to archive jobs");
     }
-  }, [selectedIds, profile?.id, profile?.full_name, refresh, loadCounts]);
+  }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
 
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -433,11 +571,11 @@ function JobsPageContent() {
       toast.success(`${selectedIds.size} jobs deleted`);
       setSelectedIds(new Set());
       refresh();
-      loadCounts();
+      loadDashboardStats();
     } catch {
       toast.error("Failed to delete jobs");
     }
-  }, [selectedIds, refresh, loadCounts]);
+  }, [selectedIds, refresh, loadDashboardStats]);
 
   const columns: Column<Job>[] = [
     { key: "reference", label: "Job", width: "180px", render: (item) => (<div><p className="text-sm font-semibold text-text-primary">{item.reference}</p><p className="text-[11px] text-text-tertiary">{item.title}</p></div>) },
@@ -472,34 +610,117 @@ function JobsPageContent() {
     { key: "actions", label: "", width: "40px", render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" /> },
   ];
 
+  const scheduleSubtitleText = scheduleFilterSubtitle(scheduleDatePreset, scheduleRange);
+
   return (
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Jobs Management" subtitle="Track and manage all active jobs.">
-          <div className="relative flex items-center gap-2" ref={filterRef}>
-            <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-            {(filterPartner !== "all" || filterScheduled !== "all") && <span className="text-[10px] font-medium text-primary">Active</span>}
-            {filterOpen && (
-              <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
-                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
-                <select value={filterPartner} onChange={(e) => setFilterPartner(e.target.value as "all" | "with" | "without")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                  <option value="all">All</option><option value="with">With partner</option><option value="without">Without partner</option>
-                </select>
-                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Scheduled</p>
-                <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                  <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
-                </select>
-                <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); }}>Clear filters</Button>
-              </div>
-            )}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="relative flex items-center gap-2" ref={filterRef}>
+              <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
+              {(filterPartner !== "all" || filterScheduled !== "all") && <span className="text-[10px] font-medium text-primary">Active</span>}
+              {filterOpen && (
+                <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
+                  <select value={filterPartner} onChange={(e) => setFilterPartner(e.target.value as "all" | "with" | "without")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                    <option value="all">All</option><option value="with">With partner</option><option value="without">Without partner</option>
+                  </select>
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Scheduled</p>
+                  <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                    <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
+                  </select>
+                  <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); }}>Clear filters</Button>
+                </div>
+              )}
+            </div>
+            <div className="relative" ref={dateFilterRef}>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Calendar className="h-3.5 w-3.5" />}
+                onClick={() => setDateFilterOpen((o) => !o)}
+                className={cn(scheduleRange && "border-primary/40 bg-primary/5")}
+              >
+                {scheduleDatePreset === "all"
+                  ? "Dates"
+                  : scheduleDatePreset === "today"
+                    ? "Today"
+                    : scheduleDatePreset === "tomorrow"
+                      ? "Tomorrow"
+                      : scheduleDatePreset === "week"
+                        ? "This week"
+                        : scheduleDatePreset === "month"
+                          ? "This month"
+                          : "Custom range"}
+              </Button>
+              {dateFilterOpen && (
+                <div className="absolute top-full right-0 mt-1 w-[min(calc(100vw-2rem),280px)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Schedule window</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(
+                      [
+                        ["all", "All dates"],
+                        ["today", "Today"],
+                        ["tomorrow", "Tomorrow"],
+                        ["week", "This week"],
+                        ["month", "This month"],
+                        ["custom", "Custom"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <Button
+                        key={id}
+                        type="button"
+                        variant={scheduleDatePreset === id ? "secondary" : "ghost"}
+                        size="sm"
+                        className="h-8 justify-center px-2 text-[11px] font-medium"
+                        onClick={() => {
+                          setScheduleDatePreset(id);
+                          if (id === "custom") setDateFilterOpen(true);
+                          else setDateFilterOpen(false);
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                  {scheduleDatePreset === "custom" ? (
+                    <div className="space-y-2 pt-1 border-t border-border-light">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">From · to</p>
+                      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
+                        <Input type="date" value={customScheduleFrom} onChange={(e) => setCustomScheduleFrom(e.target.value)} className="h-9 text-sm" />
+                        <Input type="date" value={customScheduleTo} onChange={(e) => setCustomScheduleTo(e.target.value)} className="h-9 text-sm" />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
           </div>
-          <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
         </PageHeader>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <KpiCard title="Active Jobs" value={inProgressTabCount + (tabCounts.scheduled ?? 0)} format="number" icon={Briefcase} accent="blue" />
-          <KpiCard title="Awaiting Payment" value={tabCounts.awaiting_payment ?? 0} format="number" icon={DollarSign} accent="amber" />
-          <KpiCard title="Completed" value={tabCounts.completed ?? 0} format="number" icon={CheckCircle2} accent="emerald" />
+        {scheduleSubtitleText ? <p className="text-xs text-text-tertiary -mt-2">{scheduleSubtitleText}</p> : null}
+
+        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
+          <KpiCard className="min-h-[128px] h-full" title="Active Jobs" value={activeJobsKpiCount} format="number" icon={Briefcase} accent="blue" />
+          <KpiCard
+            className="min-h-[128px] h-full"
+            title="Avg. ticket"
+            value={kpiFinancialLoading ? "—" : formatCurrencyPrecise(avgTicket)}
+            format="none"
+            icon={Receipt}
+            accent="purple"
+          />
+          <KpiCard
+            className="min-h-[128px] h-full"
+            title="Avg. margin"
+            value={kpiFinancialLoading ? "—" : avgMarginPct}
+            format={kpiFinancialLoading ? "none" : "percent"}
+            icon={TrendingUp}
+            accent="amber"
+          />
+          <KpiCard className="min-h-[128px] h-full" title="Completed" value={tabCounts.completed ?? 0} format="number" icon={CheckCircle2} accent="emerald" />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">

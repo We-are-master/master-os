@@ -21,6 +21,7 @@ import { getSupabase } from "@/services/base";
 import type { Job } from "@/types/database";
 import { formatJobScheduleLine, formatLocalYmd, jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
 import { isJobInProgressStatus } from "@/lib/job-phases";
+import { jobBillableRevenue } from "@/lib/job-financials";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -45,6 +46,8 @@ function getJobColor(title: string): string {
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" }> = {
   pending_schedule: { label: "Pending Schedule", variant: "warning" },
+  unassigned: { label: "Unassigned", variant: "warning" },
+  scheduled: { label: "Scheduled", variant: "default" },
   in_progress: { label: "In Progress", variant: "primary" },
   on_hold: { label: "On Hold", variant: "danger" },
   completed: { label: "Completed", variant: "success" },
@@ -72,12 +75,14 @@ export default function SchedulePage() {
         supabase
           .from("jobs")
           .select("*")
+          .is("deleted_at", null)
           .gte("scheduled_date", startDate)
           .lte("scheduled_date", endDate)
           .order("scheduled_date", { ascending: true }),
         supabase
           .from("jobs")
           .select("*")
+          .is("deleted_at", null)
           .not("scheduled_start_at", "is", null)
           .gte("scheduled_start_at", monthStartInstant)
           .lt("scheduled_start_at", nextMonthStartInstant)
@@ -85,6 +90,7 @@ export default function SchedulePage() {
         supabase
           .from("jobs")
           .select("*")
+          .is("deleted_at", null)
           .not("scheduled_end_at", "is", null)
           .gte("scheduled_end_at", monthStartInstant)
           .lt("scheduled_end_at", nextMonthStartInstant)
@@ -115,20 +121,23 @@ export default function SchedulePage() {
   const loadAllJobs = useCallback(async () => {
     const supabase = getSupabase();
     try {
-      const { data } = await supabase.from("jobs").select("*");
+      const { data } = await supabase.from("jobs").select("*").is("deleted_at", null);
       const allJobs = (data ?? []) as Job[];
-      const withDate = allJobs.filter((j) => j.scheduled_date);
-      const withoutDate = allJobs.filter((j) => !j.scheduled_date && j.status !== "completed");
+      const withoutDate = allJobs.filter(
+        (j) =>
+          !j.scheduled_date &&
+          !j.scheduled_start_at &&
+          j.status !== "completed" &&
+          j.status !== "cancelled",
+      );
       setStats({
-        total: allJobs.length,
-        scheduled: withDate.length,
-        unassigned: withoutDate.length,
+        unscheduled: withoutDate.length,
         active: allJobs.filter((j) => isJobInProgressStatus(j.status)).length,
       });
     } catch { /* cosmetic */ }
   }, []);
 
-  const [stats, setStats] = useState({ total: 0, scheduled: 0, unassigned: 0, active: 0 });
+  const [stats, setStats] = useState({ unscheduled: 0, active: 0 });
 
   useEffect(() => {
     loadJobs();
@@ -203,6 +212,12 @@ export default function SchedulePage() {
 
   const selectedScheduleLine = selectedJob ? formatJobScheduleLine(selectedJob) : null;
 
+  const monthRevenue = useMemo(
+    () =>
+      jobs.filter((j) => j.status !== "cancelled").reduce((sum, j) => sum + jobBillableRevenue(j), 0),
+    [jobs],
+  );
+
   return (
     <PageTransition>
       <div className="space-y-5">
@@ -211,10 +226,10 @@ export default function SchedulePage() {
         </PageHeader>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Active Jobs" value={stats.active} format="number" icon={Briefcase} accent="blue" />
-          <KpiCard title="Scheduled This Month" value={jobs.length} format="number" icon={CalIcon} accent="emerald" />
-          <KpiCard title="Total Jobs" value={stats.total} format="number" icon={Briefcase} accent="primary" />
-          <KpiCard title="Unscheduled" value={stats.unassigned} format="number" description="Need date assignment" icon={AlertTriangle} accent="amber" />
+          <KpiCard title="Active" value={stats.active} format="number" icon={Briefcase} accent="blue" />
+          <KpiCard title="Schedule this month" value={jobs.length} format="number" icon={CalIcon} accent="emerald" />
+          <KpiCard title="Unscheduled" value={stats.unscheduled} format="number" description="Need date assignment" icon={AlertTriangle} accent="amber" />
+          <KpiCard title="Total revenue this month" value={monthRevenue} format="currency" icon={DollarSign} accent="purple" />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">

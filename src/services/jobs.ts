@@ -1,6 +1,31 @@
-import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
+import { getSupabase, queryList, applyJobsScheduleRangeToQuery, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
 import { JOB_IN_PROGRESS_STATUSES } from "@/lib/job-phases";
+
+/** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
+export type JobFinancialKpiRow = Pick<
+  Job,
+  "status" | "client_price" | "extras_amount" | "partner_cost" | "materials_cost"
+>;
+
+export async function fetchAllJobsFinancialKpiRows(
+  scheduleRange?: { from: string; to: string } | null
+): Promise<JobFinancialKpiRow[]> {
+  const supabase = getSupabase();
+  const chunk = 1000;
+  const columns = "status,client_price,extras_amount,partner_cost,materials_cost";
+  const all: JobFinancialKpiRow[] = [];
+  for (let from = 0; ; from += chunk) {
+    let q = supabase.from("jobs").select(columns).is("deleted_at", null);
+    if (scheduleRange) q = applyJobsScheduleRangeToQuery(q, scheduleRange);
+    const { data, error } = await q.order("created_at", { ascending: false }).range(from, from + chunk - 1);
+    if (error) throw error;
+    const batch = (data ?? []) as JobFinancialKpiRow[];
+    all.push(...batch);
+    if (batch.length < chunk) break;
+  }
+  return all;
+}
 
 // Throttle: mark-late runs at most once every 5 minutes per server instance
 // to avoid write contention on every paginated list request.

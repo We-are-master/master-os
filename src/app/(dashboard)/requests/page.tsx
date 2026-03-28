@@ -43,6 +43,7 @@ import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { isUuid } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   new: { label: "New", variant: "primary" },
@@ -313,8 +314,7 @@ export default function RequestsPage() {
   const handleCreate = useCallback(
     async (formData: Partial<ServiceRequest>) => {
       try {
-        const ownerId = formData.owner_id ?? profile?.id;
-        const ownerName = formData.owner_name ?? profile?.full_name;
+        const isManualSource = (formData.source ?? "manual") === "manual";
         const result = await createRequest({
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
@@ -326,12 +326,11 @@ export default function RequestsPage() {
           source: formData.source ?? "manual",
           service_type: formData.service_type ?? "",
           description: formData.description ?? "",
-          status: "new",
+          status: isManualSource ? "approved" : "new",
           priority: formData.priority ?? "medium",
-          owner_id: ownerId,
-          owner_name: ownerName,
+          owner_id: profile?.id,
+          owner_name: profile?.full_name ?? "",
           assigned_to: formData.assigned_to,
-          estimated_value: formData.estimated_value,
           catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
             ? String(formData.catalog_service_id).trim()
             : null,
@@ -341,6 +340,10 @@ export default function RequestsPage() {
           action: "created", userId: profile?.id, userName: profile?.full_name,
         });
         setCreateOpen(false);
+        if (isManualSource) {
+          setStatus("approved");
+          setSelectedRequest(result);
+        }
         refresh();
         await loadCounts();
         toast.success("Request created successfully");
@@ -348,7 +351,7 @@ export default function RequestsPage() {
         toast.error(err instanceof Error ? err.message : "Failed to create request");
       }
     },
-    [refresh, loadCounts, profile?.id, profile?.full_name]
+    [refresh, loadCounts, profile?.id, profile?.full_name, setStatus]
   );
 
   const columns: Column<ServiceRequest>[] = [
@@ -737,8 +740,8 @@ export default function RequestsPage() {
                 <Users className="h-6 w-6 text-amber-600" />
               </div>
               <div>
-                <p className="text-sm font-bold text-text-primary group-hover:text-primary">Invite to Partner</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Show all partners filtered by service category & request type. Send invite via email, app, or both.</p>
+                <p className="text-sm font-bold text-text-primary group-hover:text-primary">Invite Partner</p>
+                <p className="text-xs text-text-tertiary mt-0.5">Partners matching the type of work are pre-selected. Send invite via email, app, or both.</p>
               </div>
             </div>
           </button>
@@ -755,8 +758,8 @@ export default function RequestsPage() {
                 <PenLine className="h-6 w-6 text-blue-600" />
               </div>
               <div>
-                <p className="text-sm font-bold text-text-primary group-hover:text-primary">Add Manually</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Open manual quote lines: Service, Quantity, Unit price, Total, VAT. Allow multiple lines.</p>
+                <p className="text-sm font-bold text-text-primary group-hover:text-primary">Manual Quote</p>
+                <p className="text-xs text-text-tertiary mt-0.5">Enter quote lines (service, quantity, unit price, VAT). Opens the quote on Review &amp; send.</p>
               </div>
             </div>
           </button>
@@ -807,7 +810,7 @@ export default function RequestsPage() {
             refreshSilent();
             loadCounts();
             toast.success(`Quote ${quote.reference} created. ${partnerIds.length} partner(s) invited via ${sendMethod}.`);
-            router.push("/quotes");
+            router.push(`/quotes?quoteId=${encodeURIComponent(quote.id)}&drawerTab=bids`);
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to convert to quote");
           }
@@ -869,7 +872,7 @@ export default function RequestsPage() {
             refreshSilent();
             loadCounts();
             toast.success(`Quote ${quote.reference} created with ${lineItems.length} line items.`);
-            router.push("/quotes");
+            router.push(`/quotes?quoteId=${encodeURIComponent(quote.id)}&drawerTab=overview`);
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to create quote");
           }
@@ -890,6 +893,7 @@ export default function RequestsPage() {
             const clientPrice = data.client_price ?? 0;
             const partnerCost = data.partner_cost ?? 0;
             const margin = clientPrice > 0 ? Math.round(((clientPrice - partnerCost) / clientPrice) * 1000) / 10 : 0;
+            const hasPartner = !!(data.partner_id?.trim() || data.partner_name?.trim());
             const job = await createJob({
               title: `${convertToJobOpen.service_type} — ${data.client_name}`,
               client_id: data.client_id,
@@ -902,7 +906,7 @@ export default function RequestsPage() {
               scheduled_start_at: data.scheduled_start_at,
               scheduled_end_at: data.scheduled_end_at,
               scheduled_finish_date: data.scheduled_finish_date ?? null,
-              status: "scheduled",
+              status: hasPartner ? "scheduled" : "unassigned",
               progress: 0,
               current_phase: 0,
               total_phases: normalizeTotalPhases(data.total_phases),
@@ -951,8 +955,6 @@ export default function RequestsPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreate={handleCreate}
-        profileId={profile?.id}
-        profileName={profile?.full_name}
         catalogServices={catalogServices}
       />
     </PageTransition>
@@ -984,10 +986,14 @@ function InvitePartnerToQuote({
 
   useEffect(() => {
     if (!request) return;
-    setSelectedIds(new Set());
     setSearchTerm("");
     setClientAddress(serviceRequestToClientAddressValue(request));
-    listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
+    listPartners({ pageSize: 200, status: "all" }).then((r) => {
+      const list = r.data ?? [];
+      setPartners(list);
+      const matched = list.filter((p) => partnerMatchesTypeOfWork(p, request.service_type));
+      setSelectedIds(new Set(matched.map((p) => p.id)));
+    });
   }, [request]);
 
   if (!request) return null;
@@ -997,12 +1003,8 @@ function InvitePartnerToQuote({
     return true;
   });
 
-  const serviceRelated = filtered.filter((p) =>
-    p.trade.toLowerCase().includes(request.service_type.toLowerCase().split(" ")[0])
-  );
-  const others = filtered.filter((p) =>
-    !p.trade.toLowerCase().includes(request.service_type.toLowerCase().split(" ")[0])
-  );
+  const serviceRelated = filtered.filter((p) => partnerMatchesTypeOfWork(p, request.service_type));
+  const others = filtered.filter((p) => !partnerMatchesTypeOfWork(p, request.service_type));
 
   return (
     <Modal open={!!request} onClose={onClose} title="Invite partners" subtitle={`${request.reference} — ${request.service_type}`} size="lg">
@@ -1406,15 +1408,11 @@ function CreateRequestModal({
   open,
   onClose,
   onCreate,
-  profileId,
-  profileName,
   catalogServices,
 }: {
   open: boolean;
   onClose: () => void;
   onCreate: (data: Partial<ServiceRequest>) => void;
-  profileId?: string;
-  profileName?: string;
   catalogServices: CatalogService[];
 }) {
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -1427,7 +1425,6 @@ function CreateRequestModal({
     service_type: "",
     description: "",
     priority: "medium",
-    estimated_value: "",
   });
   const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
 
@@ -1443,7 +1440,6 @@ function CreateRequestModal({
       service_type: "",
       description: "",
       priority: "medium",
-      estimated_value: "",
     });
   }, [open]);
 
@@ -1500,10 +1496,7 @@ function CreateRequestModal({
       catalog_service_id: cid && isUuid(cid) ? cid : null,
       service_type: form.service_type.trim(),
       description: form.description,
-      estimated_value: form.estimated_value ? Number(form.estimated_value) : undefined,
       priority: form.priority as ServiceRequest["priority"],
-      owner_id: profileId,
-      owner_name: profileName,
     });
   };
 
@@ -1511,7 +1504,7 @@ function CreateRequestModal({
     <Modal open={open} onClose={onClose} title="New Service Request" subtitle="Create a new incoming request" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
         <Select
-          label="Request type"
+          label="Request type *"
           value={form.request_kind}
           onChange={(e) => {
             const next = e.target.value as "" | "quote" | "work";
@@ -1520,11 +1513,10 @@ function CreateRequestModal({
               request_kind: next,
               catalog_service_id: "",
               service_type: "",
-              estimated_value: "",
             }));
           }}
           options={[
-            { value: "", label: "Select request type..." },
+            { value: "", label: "Select request type…" },
             ...REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
           ]}
         />
@@ -1538,15 +1530,9 @@ function CreateRequestModal({
             </p>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Phone (request)</label>
-            <Input value={form.client_phone} onChange={(e) => update("client_phone", e.target.value)} placeholder="Optional — contact for this lead" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Estimated Value</label>
-            <Input type="number" value={form.estimated_value} onChange={(e) => update("estimated_value", e.target.value)} placeholder="0.00" />
-          </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Phone (request)</label>
+          <Input value={form.client_phone} onChange={(e) => update("client_phone", e.target.value)} placeholder="Optional — contact for this lead" />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -1569,18 +1555,17 @@ function CreateRequestModal({
                     catalog_service_id: id,
                     service_type: svc?.name ?? "",
                     description: svc?.default_description?.trim() || prev.description,
-                    estimated_value: svc ? String(estimatedValueFromCatalog(svc)) : prev.estimated_value,
                   }));
                 }}
                 options={[
                   { value: "", label: "Select call out type..." },
                   ...catalogServices.map((c) => ({
                     value: c.id,
-                    label: `${c.name} — ${estimatedValueFromCatalog(c).toFixed(2)}`,
+                    label: c.name,
                   })),
                 ]}
               />
-              <p className="text-[10px] text-text-tertiary">Values are loaded from Services and can be adjusted if needed.</p>
+              <p className="text-[10px] text-text-tertiary">Template text is loaded from Services; you can edit the description below.</p>
             </>
           ) : form.request_kind === "quote" ? (
             <Select

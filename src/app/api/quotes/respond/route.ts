@@ -126,6 +126,7 @@ export async function POST(req: NextRequest) {
       dueDate.setDate(dueDate.getDate() + 14);
       const dueDateStr = dueDate.toISOString().split("T")[0];
 
+      const hasPartner = !!(quote.partner_id?.trim() || (quote.partner_name && String(quote.partner_name).trim()));
       const { data: job, error: jobError } = await supabase
         .from("jobs")
         .insert({
@@ -136,7 +137,7 @@ export async function POST(req: NextRequest) {
           partner_id: quote.partner_id ?? null,
           partner_name: quote.partner_name ?? null,
           quote_id: quoteId,
-          status: "scheduled",
+          status: hasPartner ? "scheduled" : "unassigned",
           progress: 0,
           current_phase: 0,
           total_phases: 2,
