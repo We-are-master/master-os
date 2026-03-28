@@ -4,7 +4,8 @@ import { cn, getInitials } from "@/lib/utils";
 
 interface AvatarProps {
   src?: string | null;
-  name: string;
+  /** Use empty string or omit when unknown — never rely on DB non-null. */
+  name?: string | null;
   size?: "xs" | "sm" | "md" | "lg" | "xl";
   className?: string;
 }
@@ -37,11 +38,12 @@ function getColorFromName(name: string): string {
 }
 
 export function Avatar({ src, name, size = "md", className }: AvatarProps) {
+  const displayName = name ?? "";
   if (src) {
     return (
       <img
         src={src}
-        alt={name}
+        alt={displayName || "Avatar"}
         className={cn(
           "rounded-full object-cover ring-2 ring-white",
           sizeStyles[size],
@@ -56,11 +58,11 @@ export function Avatar({ src, name, size = "md", className }: AvatarProps) {
       className={cn(
         "rounded-full flex items-center justify-center font-semibold ring-2 ring-white shrink-0",
         sizeStyles[size],
-        getColorFromName(name),
+        getColorFromName(displayName),
         className
       )}
     >
-      {getInitials(name)}
+      {getInitials(displayName)}
     </div>
   );
 }

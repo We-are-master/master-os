@@ -54,6 +54,7 @@ import {
   parseBidProposalFromNotes,
   splitBidPartnerCosts,
   summarizeBidProposalNotes,
+  bidPayloadTrimmedString,
   BID_DEFAULT_LABOUR_MARKUP,
   BID_DEFAULT_MATERIALS_MARKUP,
 } from "@/lib/quote-bid-payload";
@@ -88,8 +89,8 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
   const payload = parseBidProposalFromNotes(bid.notes);
   const { labour: L, materials: M } = splitBidPartnerCosts(bid.bid_amount, payload);
   const title = (q.title ?? "").trim() || "Type of work";
-  const line0Desc = (payload?.labour_description ?? title).trim() || title;
-  const line1Desc = (payload?.materials_description ?? "Materials").trim() || "Materials";
+  const line0Desc = bidPayloadTrimmedString(payload?.labour_description) || title;
+  const line1Desc = bidPayloadTrimmedString(payload?.materials_description) || "Materials";
   const sell0 = L * (1 + BID_DEFAULT_LABOUR_MARKUP);
   const sell1 = M * (1 + BID_DEFAULT_MATERIALS_MARKUP);
   const u0 = Math.round(sell0 * 100) / 100;
@@ -644,7 +645,7 @@ function QuotesPageContent() {
     },
     {
       key: "total_value", label: "Value", align: "right" as const,
-      render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(item.total_value)}</span>,
+      render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>,
     },
     {
       key: "margin_percent", label: "Margin",
