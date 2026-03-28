@@ -9,15 +9,22 @@ export function updatesOnlyIrrelevantToPartner(updates: Partial<Job>): boolean {
   return keys.every((k) => PARTNER_IRRELEVANT_ONLY.has(k));
 }
 
-export type PartnerJobPushKind = "job_updated" | "job_assigned" | "job_unassigned" | "job_status_changed";
+export type PartnerJobPushKind =
+  | "job_updated"
+  | "job_assigned"
+  | "job_unassigned"
+  | "job_status_changed"
+  | "job_cancelled_by_office";
 
 export function notifyAssignedPartnerAboutJob(options: {
   partnerId: string;
   job: Pick<Job, "id" | "reference" | "title" | "property_address" | "status">;
   kind: PartnerJobPushKind;
   statusLabel?: string;
+  /** Shown in push body when the office cancels (same text as `jobs.cancellation_reason`). */
+  cancellationReason?: string;
 }): void {
-  const { partnerId, job, kind, statusLabel } = options;
+  const { partnerId, job, kind, statusLabel, cancellationReason } = options;
   if (typeof window === "undefined" || !partnerId) return;
   const head = [job.reference, job.title].filter(Boolean).join(" · ") || "Job";
   const loc = job.property_address ? ` · ${job.property_address}` : "";
@@ -33,6 +40,12 @@ export function notifyAssignedPartnerAboutJob(options: {
       title = "Job unassigned";
       body = `You were removed from ${head}${loc}`;
       break;
+    case "job_cancelled_by_office": {
+      const r = cancellationReason?.trim();
+      title = "Job cancelled";
+      body = r ? `${head}${loc}. Reason: ${r}` : `${head}${loc}. The office cancelled this job.`;
+      break;
+    }
     case "job_status_changed":
       title = "Job status updated";
       body = `${head}: ${statusLabel ?? job.status}${loc}`;
@@ -49,7 +62,11 @@ export function notifyAssignedPartnerAboutJob(options: {
       partnerId,
       title,
       body: body.slice(0, 500),
-      data: { type: kind, jobId: job.id },
+      data: {
+        type: kind,
+        jobId: job.id,
+        ...(cancellationReason?.trim() ? { cancellationReason: cancellationReason.trim().slice(0, 400) } : {}),
+      },
     }),
   }).catch(() => {});
 }

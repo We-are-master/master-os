@@ -15,6 +15,50 @@ export function parseIsoDateOnlyPrefix(s: string): { y: number; m: number; d: nu
   return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
 }
 
+/** Start/end of inclusive local day range as UTC ISO strings for filtering `timestamptz` columns. */
+export function localYmdBoundsToUtcIso(fromYmd: string, toYmd: string): { startIso: string; endIso: string } {
+  const pf = parseIsoDateOnlyPrefix(fromYmd);
+  const pt = parseIsoDateOnlyPrefix(toYmd);
+  const fallback = new Date();
+  const fy = pf?.y ?? fallback.getFullYear();
+  const fm = pf?.m ?? fallback.getMonth() + 1;
+  const fd = pf?.d ?? fallback.getDate();
+  const ty = pt?.y ?? fallback.getFullYear();
+  const tm = pt?.m ?? fallback.getMonth() + 1;
+  const td = pt?.d ?? fallback.getDate();
+  const start = new Date(fy, fm - 1, fd, 0, 0, 0, 0);
+  const end = new Date(ty, tm - 1, td, 23, 59, 59, 999);
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
+export function addLocalCalendarDays(anchor: Date, deltaDays: number): Date {
+  const d = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+  d.setDate(d.getDate() + deltaDays);
+  return d;
+}
+
+/** Week starting Monday (local calendar). */
+export function startOfLocalWeekMonday(anchor: Date): Date {
+  const c = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+  const day = c.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  c.setDate(c.getDate() + diff);
+  return c;
+}
+
+export function endOfLocalWeekSunday(anchor: Date): Date {
+  const m = startOfLocalWeekMonday(anchor);
+  return new Date(m.getFullYear(), m.getMonth(), m.getDate() + 6);
+}
+
+export function startOfLocalMonth(anchor: Date): Date {
+  return new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+}
+
+export function endOfLocalMonth(anchor: Date): Date {
+  return new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+}
+
 /**
  * Day/month/year for placing a job on a local calendar grid.
  * Prefer `scheduled_date` as a civil date; otherwise use local components of `scheduled_start_at`.

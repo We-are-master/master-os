@@ -212,23 +212,39 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Quote not found" }, { status: 404 });
     }
 
-    const { data: settings } = await supabase
-      .from("company_settings")
-      .select("*")
-      .limit(1)
-      .single();
+    const [lineItemResult, settingsResult] = await Promise.all([
+      supabase
+        .from("quote_line_items")
+        .select("description, quantity, unit_price")
+        .eq("quote_id", quoteId)
+        .order("sort_order"),
+      supabase.from("company_settings").select("*").limit(1).single(),
+    ]);
+
+    const lineRows = (lineItemResult as { data: { description: string; quantity: number; unit_price: number }[] | null }).data ?? [];
+    const items =
+      lineRows.length > 0
+        ? lineRows.map((r) => ({
+            description: r.description,
+            quantity: Number(r.quantity) || 1,
+            unitPrice: Number(r.unit_price) || 0,
+            total: (Number(r.quantity) || 1) * (Number(r.unit_price) || 0),
+          }))
+        : undefined;
+
+    const { data: settings } = settingsResult as { data: Record<string, unknown> | null };
 
     const branding: CompanyBranding = settings
       ? {
-          companyName: settings.company_name,
-          logoUrl: settings.logo_url ?? undefined,
-          address: settings.address ?? "",
-          phone: settings.phone ?? "",
-          email: settings.email ?? "",
-          website: settings.website ?? undefined,
-          vatNumber: settings.vat_number ?? undefined,
-          primaryColor: settings.primary_color ?? "#F97316",
-          tagline: settings.tagline ?? undefined,
+          companyName: String(settings.company_name ?? ""),
+          logoUrl: settings.logo_url ? String(settings.logo_url) : undefined,
+          address: String(settings.address ?? ""),
+          phone: String(settings.phone ?? ""),
+          email: String(settings.email ?? ""),
+          website: settings.website ? String(settings.website) : undefined,
+          vatNumber: settings.vat_number ? String(settings.vat_number) : undefined,
+          primaryColor: String(settings.primary_color ?? "#F97316"),
+          tagline: settings.tagline ? String(settings.tagline) : undefined,
         }
       : {
           companyName: "Master Group",
@@ -248,6 +264,10 @@ export async function GET(req: NextRequest) {
       createdAt: quote.created_at,
       expiresAt: quote.expires_at ?? undefined,
       ownerName: quote.owner_name ?? undefined,
+      items,
+      notes: settings?.quote_footer_notes ? String(settings.quote_footer_notes) : undefined,
+      depositRequired: Number(quote.deposit_required ?? 0) || undefined,
+      scope: typeof quote.scope === "string" && quote.scope.trim() ? quote.scope.trim() : undefined,
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -72,6 +72,7 @@ const ACCOUNT_STATUS_OPTIONS = [
 function jobStatusBadge(status: string) {
   const variants: Record<string, "success" | "info" | "warning" | "danger" | "default" | "primary"> = {
     completed: "success",
+    unassigned: "warning",
     scheduled: "info",
     in_progress_phase1: "primary",
     in_progress_phase2: "primary",

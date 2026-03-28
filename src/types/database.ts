@@ -25,6 +25,7 @@ export interface CatalogService {
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
 export type JobStatus =
+  | "unassigned"
   | "scheduled"
   | "late"
   | "in_progress_phase1"
@@ -240,6 +241,10 @@ export interface Job {
   /** Snapshot of cancellation fee (GBP) from company_settings at cancel time. */
   partner_cancellation_fee?: number | null;
   partner_cancellation_reason?: string | null;
+  /** Office-initiated cancellation (dashboard); visible internally and to partner notifications. */
+  cancellation_reason?: string | null;
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
   /** 1–5 when client leaves feedback (partner app shows on completed job). */
   customer_review_rating?: number | null;
   customer_review_comment?: string | null;

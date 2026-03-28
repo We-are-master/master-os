@@ -136,6 +136,7 @@ interface PartnerSelfBill {
 
 const jobStatusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   draft: { label: "Draft", variant: "default" },
+  unassigned: { label: "Unassigned", variant: "warning" },
   scheduled: { label: "Scheduled", variant: "info" },
   in_progress: { label: "In Progress", variant: "primary" },
   on_hold: { label: "On Hold", variant: "warning" },

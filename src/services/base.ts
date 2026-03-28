@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 
 export type SortDirection = "asc" | "desc";
 
@@ -17,6 +18,22 @@ export interface ListParams {
   dateTo?: string;
   /** Column used for date range filtering (e.g. `scheduled_date`). */
   dateColumn?: string;
+  /**
+   * Jobs only: inclusive schedule window on local calendar days.
+   * Matches if `scheduled_date` is in range OR `scheduled_start_at` falls within local start/end of range.
+   */
+  scheduleRange?: { from: string; to: string };
+}
+
+/** PostgREST `or` filter for jobs table schedule window (pairs with deleted_at / status filters via AND). */
+export function applyJobsScheduleRangeToQuery<T extends { or: (filters: string) => T }>(
+  query: T,
+  range: { from: string; to: string }
+): T {
+  const { startIso, endIso } = localYmdBoundsToUtcIso(range.from, range.to);
+  const byDate = `and(scheduled_date.gte.${range.from},scheduled_date.lte.${range.to})`;
+  const byStart = `and(scheduled_start_at.gte."${startIso}",scheduled_start_at.lte."${endIso}")`;
+  return query.or(`${byDate},${byStart}`);
 }
 
 export interface ListResult<T> {
@@ -74,7 +91,9 @@ export async function queryList<T>(
     query = query.or(orConditions);
   }
 
-  if (params.dateColumn) {
+  if (params.scheduleRange) {
+    query = applyJobsScheduleRangeToQuery(query, params.scheduleRange);
+  } else if (params.dateColumn) {
     if (params.dateFrom) query = query.gte(params.dateColumn, params.dateFrom);
     if (params.dateTo) query = query.lte(params.dateColumn, params.dateTo);
   }
@@ -102,7 +121,7 @@ export async function getStatusCounts(
   table: string,
   statuses: string[],
   statusColumn = "status",
-  options?: { dateFrom?: string; dateTo?: string; dateColumn?: string }
+  options?: { dateFrom?: string; dateTo?: string; dateColumn?: string; scheduleRange?: { from: string; to: string } }
 ): Promise<Record<string, number>> {
   const supabase = getSupabase();
   const counts: Record<string, number> = {};
@@ -111,7 +130,9 @@ export async function getStatusCounts(
     .from(table)
     .select("*", { count: "exact", head: true })
     .is("deleted_at", null);
-  if (options?.dateColumn) {
+  if (options?.scheduleRange && table === "jobs") {
+    totalQuery = applyJobsScheduleRangeToQuery(totalQuery, options.scheduleRange);
+  } else if (options?.dateColumn) {
     if (options.dateFrom) totalQuery = totalQuery.gte(options.dateColumn, options.dateFrom);
     if (options.dateTo) totalQuery = totalQuery.lte(options.dateColumn, options.dateTo);
   }
@@ -125,7 +146,9 @@ export async function getStatusCounts(
         .select("*", { count: "exact", head: true })
         .is("deleted_at", null)
         .eq(statusColumn, s);
-      if (options?.dateColumn) {
+      if (options?.scheduleRange && table === "jobs") {
+        statusQuery = applyJobsScheduleRangeToQuery(statusQuery, options.scheduleRange);
+      } else if (options?.dateColumn) {
         if (options.dateFrom) statusQuery = statusQuery.gte(options.dateColumn, options.dateFrom);
         if (options.dateTo) statusQuery = statusQuery.lte(options.dateColumn, options.dateTo);
       }

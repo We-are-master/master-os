@@ -11,6 +11,8 @@ interface UseSupabaseListOptions<T> {
   initialStatus?: string;
   /** Subscribe to Postgres changes and soft-refresh the list (enable Realtime on this table in Supabase). */
   realtimeTable?: string;
+  /** Merged into every fetch (use a stable reference when values are unchanged, e.g. module-level `{}`). */
+  listParams?: Partial<ListParams>;
 }
 
 interface UseSupabaseListReturn<T> {
@@ -32,9 +34,11 @@ interface UseSupabaseListReturn<T> {
 }
 
 export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupabaseListReturn<T> {
-  const { fetcher, pageSize = 10, realtimeTable, initialStatus = "all" } = options;
+  const { fetcher, pageSize = 10, realtimeTable, initialStatus = "all", listParams } = options;
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
+  const listParamsRef = useRef(listParams);
+  listParamsRef.current = listParams;
 
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +50,20 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   const [status, setStatusRaw] = useState(initialStatus);
   const [tick, setTick] = useState(0);
   const skipLoadingRef = useRef(false);
+
+  const scheduleRangeKey = listParams?.scheduleRange
+    ? `${listParams.scheduleRange.from}|${listParams.scheduleRange.to}`
+    : "";
+  const prevRangeKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevRangeKeyRef.current === null) {
+      prevRangeKeyRef.current = scheduleRangeKey;
+      return;
+    }
+    if (prevRangeKeyRef.current === scheduleRangeKey) return;
+    prevRangeKeyRef.current = scheduleRangeKey;
+    setPage(1);
+  }, [scheduleRangeKey]);
 
   const setSearch = useCallback((s: string) => {
     setSearchRaw(s);
@@ -83,6 +101,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
         pageSize,
         search: search || undefined,
         status: status !== "all" ? status : undefined,
+        ...(listParamsRef.current ?? {}),
       })
       .then((result) => {
         if (cancelled) return;
@@ -103,7 +122,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     return () => {
       cancelled = true;
     };
-  }, [page, pageSize, search, status, tick]);
+  }, [page, pageSize, search, status, tick, scheduleRangeKey]);
 
   const refreshSilentRef = useRef(refreshSilent);
   refreshSilentRef.current = refreshSilent;

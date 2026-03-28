@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Suspense, useLayoutEffect } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ import {
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
   ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Quote, Partner, Job, CatalogService } from "@/types/database";
@@ -158,9 +158,9 @@ function getStageGuidance(status: string): {
       return {
         headline: "Bids or your own figures",
         detail:
-          "Approving a bid only locks partner cost — it does not accept with the customer. Set your sell price on Overview, complete the proposal, then Send to Customer. After the client accepts, convert to a job.",
+          "Approving a bid only locks partner cost — it does not accept with the customer. Set your sell price on Review & Send, complete the proposal, then Send to Customer. After the client accepts, convert to a job.",
         goToTab: "overview",
-        goToLabel: "Overview",
+        goToLabel: "Review & Send",
       };
     case "awaiting_customer":
       return {
@@ -184,7 +184,22 @@ function getStageGuidance(status: string): {
 }
 
 export default function QuotesPage() {
+  return (
+    <Suspense
+      fallback={
+        <PageTransition>
+          <div className="p-8 text-sm text-text-tertiary">Loading quotes…</div>
+        </PageTransition>
+      }
+    >
+      <QuotesPageContent />
+    </Suspense>
+  );
+}
+
+function QuotesPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     data, loading, page, totalPages, totalItems,
     setPage, search, setSearch, status, setStatus, refresh,
@@ -205,6 +220,32 @@ export default function QuotesPage() {
   const [filterQuoteType, setFilterQuoteType] = useState<"all" | "internal" | "partner">("all");
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
+  const [drawerPendingTab, setDrawerPendingTab] = useState<"overview" | "bids" | null>(null);
+  const consumeDrawerPendingTab = useCallback(() => setDrawerPendingTab(null), []);
+
+  useEffect(() => {
+    const qid = searchParams.get("quoteId");
+    if (!qid || loading) return;
+    let cancelled = false;
+    (async () => {
+      let found = data.find((q) => q.id === qid) ?? null;
+      if (!found) {
+        try {
+          found = await getQuote(qid);
+        } catch {
+          found = null;
+        }
+      }
+      if (cancelled || !found) return;
+      const tab: "overview" | "bids" = searchParams.get("drawerTab") === "bids" ? "bids" : "overview";
+      setSelectedQuote(found);
+      setDrawerPendingTab(tab);
+      router.replace("/quotes", { scroll: false });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, data, loading, router]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -343,13 +384,14 @@ export default function QuotesPage() {
   }, [selectedIds, refresh, loadCounts, loadAggregates]);
 
   const handleConfirmCreateJob = useCallback(
-    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => {
+    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => {
       if (!quoteToConvert) return;
       const effectivePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
+      const jobScope = (formData.scope ?? "").trim() || (quoteToConvert.scope ?? "").trim();
       if (effectivePartnerId) {
         const block = getPartnerAssignmentBlockReason({
           property_address: formData.property_address,
-          scope: quoteToConvert.scope ?? "",
+          scope: jobScope,
           scheduled_date: formData.scheduled_date,
           scheduled_start_at: formData.scheduled_start_at,
           partner_id: effectivePartnerId,
@@ -365,6 +407,9 @@ export default function QuotesPage() {
         const noDeposit = !!formData.createWithoutDeposit;
         const scheduledDeposit = noDeposit ? 0 : (quoteToConvert.deposit_required ?? 0);
         const scheduledFinal = Math.max(0, formData.client_price - scheduledDeposit);
+        const quotePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
+        const quotePartnerName = (formData.partner_name ?? quoteToConvert.partner_name)?.trim();
+        const hasPartner = !!(quotePartnerId?.trim() || quotePartnerName);
         const job = await createJob({
           title: formData.title,
           client_id: formData.client_id,
@@ -374,8 +419,8 @@ export default function QuotesPage() {
           partner_id: formData.partner_id ?? quoteToConvert.partner_id,
           partner_name: formData.partner_name ?? quoteToConvert.partner_name,
           quote_id: quoteToConvert.id,
-          status: "scheduled",
-          progress: 0, current_phase: 0, total_phases: normalizeTotalPhases(formData.total_phases),
+          status: hasPartner ? "scheduled" : "unassigned",
+          progress: 0, current_phase: 0, total_phases: normalizeTotalPhases(2),
           client_price: formData.client_price,
           extras_amount: 0,
           partner_cost: formData.partner_cost,
@@ -402,7 +447,7 @@ export default function QuotesPage() {
           customer_deposit_paid: noDeposit,
           customer_final_payment: scheduledFinal,
           customer_final_paid: false,
-          scope: quoteToConvert.scope,
+          scope: jobScope || undefined,
         });
 
         const dueStr = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
@@ -531,7 +576,7 @@ export default function QuotesPage() {
       key: "quote_type", label: "Type",
       render: (item) => (
         <Badge variant={item.quote_type === "partner" ? "warning" : "info"} size="sm">
-          {item.quote_type === "partner" ? "Partner" : "Internal"}
+          {item.quote_type === "partner" ? "Partner" : "Manual"}
         </Badge>
       ),
     },
@@ -572,7 +617,7 @@ export default function QuotesPage() {
           <KpiCard title="Pipeline Value" value={pipelineValue} format="currency" change={12.5} changeLabel="vs last month" icon={BarChart3} accent="primary" />
           <KpiCard title="Total Quotes" value={statusCounts.all ?? 0} format="number" icon={FileText} accent="blue" />
           <KpiCard
-            title="Quote → job rate"
+            title="Quotes → jobs"
             value={quoteToJobConversion.pct}
             format="percent"
             icon={Briefcase}
@@ -580,7 +625,7 @@ export default function QuotesPage() {
             description={
               quoteToJobConversion.total === 0
                 ? "No quotes yet"
-                : `${quoteToJobConversion.converted} converted of ${quoteToJobConversion.total} quotes`
+                : `${quoteToJobConversion.converted} job${quoteToJobConversion.converted === 1 ? "" : "s"} from ${quoteToJobConversion.total} quote${quoteToJobConversion.total === 1 ? "" : "s"} · conversion rate`
             }
           />
           <KpiCard title="Awaiting Customer" value={statusCounts.awaiting_customer ?? 0} format="number" icon={Clock} accent="amber" />
@@ -635,12 +680,27 @@ export default function QuotesPage() {
                   </button>
                 );
               })}
+              <button
+                type="button"
+                onClick={() => setStatus("rejected")}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-xl border px-3 py-2 transition-all min-w-[7rem]",
+                  status === "rejected"
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border-light bg-card hover:border-primary/30 text-text-secondary"
+                )}
+              >
+                <XCircle className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                <span className="text-xs font-semibold truncate">Rejected</span>
+                <span className={cn("ml-auto text-[11px] font-bold tabular-nums", status === "rejected" ? "text-primary" : "text-text-tertiary")}>
+                  {statusCounts.rejected ?? 0}
+                </span>
+              </button>
             </div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 border-t border-border-light/80">
               <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">More</span>
               {[
                 { id: "all", label: "All quotes" },
-                { id: "rejected", label: "Rejected" },
                 { id: "converted_to_job", label: "Converted" },
               ].map((t) => (
                 <button
@@ -685,7 +745,7 @@ export default function QuotesPage() {
                     <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Quote type</p>
                     <select value={filterQuoteType} onChange={(e) => setFilterQuoteType(e.target.value as "all" | "internal" | "partner")} className="w-full h-8 rounded-lg border border-border bg-card text-sm px-2">
                       <option value="all">All</option>
-                      <option value="internal">Internal</option>
+                      <option value="internal">Manual</option>
                       <option value="partner">Partner</option>
                     </select>
                     <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setFilterQuoteType("all")}>Clear</Button>
@@ -731,7 +791,17 @@ export default function QuotesPage() {
         </motion.div>
       </div>
 
-      <QuoteDetailDrawer quote={selectedQuote} onClose={() => setSelectedQuote(null)} onStatusChange={handleStatusChange} onQuoteUpdate={(q) => { setSelectedQuote(q); refresh(); }} />
+      <QuoteDetailDrawer
+        quote={selectedQuote}
+        pendingInitialTab={drawerPendingTab}
+        onConsumePendingInitialTab={consumeDrawerPendingTab}
+        onClose={() => setSelectedQuote(null)}
+        onStatusChange={handleStatusChange}
+        onQuoteUpdate={(q) => {
+          setSelectedQuote(q);
+          refresh();
+        }}
+      />
       <CreateJobFromQuoteModal quote={quoteToConvert} onClose={() => setQuoteToConvert(null)} onSubmit={handleConfirmCreateJob} />
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create Quote" subtitle="Add line items and optionally request partner bids" size="lg">
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
@@ -741,14 +811,24 @@ export default function QuotesPage() {
 }
 
 /* ========== QUOTE DETAIL DRAWER ========== */
-function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
+function QuoteDetailDrawer({
+  quote,
+  pendingInitialTab,
+  onConsumePendingInitialTab,
+  onClose,
+  onStatusChange,
+  onQuoteUpdate,
+}: {
   quote: Quote | null;
+  pendingInitialTab?: "overview" | "bids" | null;
+  onConsumePendingInitialTab?: () => void;
   onClose: () => void;
   onStatusChange: (quote: Quote, status: string) => void | Promise<boolean>;
   onQuoteUpdate?: (updated: Quote) => void;
 }) {
   const { profile } = useProfile();
   const [tab, setTab] = useState("overview");
+  const lastTabInitQuoteIdRef = useRef<string | null>(null);
   const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [sendEmail, setSendEmail] = useState("");
   const [lineItems, setLineItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([]);
@@ -767,11 +847,25 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
   const [savingOwner, setSavingOwner] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
   const isAdmin = profile?.role === "admin";
+  /** Earliest selectable day for proposed start dates (local calendar day). */
+  const minProposalStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
-  useEffect(() => {
-    if (!quote) return;
-    setTab(quote.quote_type === "partner" ? "bids" : "overview");
-  }, [quote?.id, quote?.quote_type]);
+  useLayoutEffect(() => {
+    if (!quote) {
+      lastTabInitQuoteIdRef.current = null;
+      return;
+    }
+    if (pendingInitialTab === "bids" || pendingInitialTab === "overview") {
+      setTab(pendingInitialTab);
+      lastTabInitQuoteIdRef.current = quote.id;
+      onConsumePendingInitialTab?.();
+      return;
+    }
+    if (lastTabInitQuoteIdRef.current !== quote.id) {
+      lastTabInitQuoteIdRef.current = quote.id;
+      setTab(quote.quote_type === "partner" ? "bids" : "overview");
+    }
+  }, [quote, pendingInitialTab, onConsumePendingInitialTab]);
 
   useEffect(() => {
     if (!quote) return;
@@ -903,7 +997,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
   if (!quote) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
-  const actions = getQuoteActions(quote.status);
+  const actions = getQuoteActions(quote);
   const stepMap: Record<string, number> = { draft: 0, in_survey: 1, bidding: 2, awaiting_customer: 3, accepted: 4, rejected: -1, converted_to_job: 5 };
   const currentStep = stepMap[quote.status] ?? 0;
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
@@ -919,7 +1013,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
   const sendCurrentStep = !sendStep1Ready ? 1 : !sendStep2Ready ? 2 : !sendStep3Ready ? 3 : 4;
 
   const drawerTabs = [
-    { id: "overview", label: "Overview" },
+    { id: "overview", label: "Review & Send" },
     { id: "bids", label: "Bids" },
     ...(quote.status === "awaiting_customer" ? [{ id: "send", label: "Email" }] : []),
     { id: "history", label: "History" },
@@ -1160,6 +1254,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                   key={`margin-drawer-${quote.id}-${quote.updated_at}`}
                   cost={Number(panelPartnerCost) || 0}
                   initialMarginPct={drawerInitialMarginPct}
+                  anchorSellPrice={Number(panelSellPrice) || 0}
                   onSellPriceChange={handleDrawerSellFromMargin}
                   onMarginChange={handleDrawerMarginPct}
                 />
@@ -1214,10 +1309,6 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                   </div>
                 </div>
               </div>
-
-              <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="w-full">
-                Invite more partners
-              </Button>
 
               {convertedJob && (
                 <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200">
@@ -1282,11 +1373,11 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 1</label>
-                      <Input type="date" value={startDate1} onChange={(e) => setStartDate1(e.target.value)} />
+                      <Input type="date" min={minProposalStartDate} value={startDate1} onChange={(e) => setStartDate1(e.target.value)} />
                     </div>
                     <div>
                       <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 2</label>
-                      <Input type="date" value={startDate2} onChange={(e) => setStartDate2(e.target.value)} />
+                      <Input type="date" min={minProposalStartDate} value={startDate2} onChange={(e) => setStartDate2(e.target.value)} />
                     </div>
                   </div>
 
@@ -1331,6 +1422,25 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                   </div>
                 </div>
               )}
+
+              <div className="rounded-xl border border-border-light bg-surface-hover/80 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-text-tertiary" />
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer PDF preview</p>
+                </div>
+                <p className="text-[11px] text-text-tertiary">
+                  Matches the PDF attached when you email the client. Uses <strong className="text-text-secondary">saved</strong> scope, line items and figures — save the proposal or quote figures to refresh.
+                </p>
+                <div className="rounded-lg border border-border bg-white dark:bg-zinc-900 overflow-hidden">
+                  <iframe
+                    title="Quote PDF preview"
+                    src={`/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`}
+                    className="w-full border-0 bg-white dark:bg-zinc-950"
+                    style={{ height: 480, maxHeight: "65vh" }}
+                    key={`pdf-${quote.id}-${quote.updated_at}`}
+                  />
+                </div>
+              </div>
 
               <div className="space-y-2 pt-4 border-t border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Move this quote</p>
@@ -1380,11 +1490,14 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
           {/* BIDS TAB — Partner bids from app; approve to set quote partner */}
           {tab === "bids" && (
             <div className="p-6 space-y-5">
+              <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="w-full">
+                Invite more partners
+              </Button>
               <div className="p-4 rounded-xl bg-surface-hover border border-border-light">
                 <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
                 <p className="text-xs text-text-tertiary mt-0.5">
                   Optional: approve one bid to lock <strong className="text-text-secondary">partner cost</strong> on the quote. The quote stays in bidding until you send it to the customer — it is{" "}
-                  <strong className="text-text-secondary">not</strong> customer-accepted yet. Then set <strong className="text-text-secondary">your price</strong> on Overview, complete the proposal, and use{" "}
+                  <strong className="text-text-secondary">not</strong> customer-accepted yet. Then set <strong className="text-text-secondary">your price</strong> on Review & Send, complete the proposal, and use{" "}
                   <strong className="text-text-secondary">Send to Customer</strong>. After the client accepts, convert to a job.
                 </p>
               </div>
@@ -1392,7 +1505,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                 <div className="rounded-xl border border-primary/25 bg-gradient-to-br from-primary/5 to-transparent p-4 space-y-3">
                   <p className="text-sm font-semibold text-text-primary">Ready to price for the customer</p>
                   <p className="text-xs text-text-tertiary">
-                    Partner cost comes from the approved bid. Adjust <strong className="text-text-secondary">your sell price</strong> and margin on Overview, then complete the proposal and send.
+                    Partner cost comes from the approved bid. Adjust <strong className="text-text-secondary">your sell price</strong> and margin on Review & Send, then complete the proposal and send.
                   </p>
                   <div className="flex flex-wrap gap-6 text-sm">
                     <div>
@@ -1413,7 +1526,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                       setPricingOpen(true);
                     }}
                   >
-                    Open Overview — pricing & proposal
+                    Open Review & Send — pricing & proposal
                   </Button>
                 </div>
               )}
@@ -1421,7 +1534,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                 <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
               ) : bids.length === 0 ? (
                 <p className="text-sm text-text-tertiary">
-                  No partner bids yet — that&apos;s fine. Set partner cost and sell price on Overview, then move to <strong className="text-text-secondary">Awaiting Customer</strong> and send the email.
+                  No partner bids yet — that&apos;s fine. Set partner cost and sell price on Review & Send, then move to <strong className="text-text-secondary">Awaiting Customer</strong> and send the email.
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -1446,7 +1559,7 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
                                 onQuoteUpdate?.(fresh);
                                 setPricingOpen(true);
                                 setTab("overview");
-                                toast.success("Partner cost locked from bid. Set customer price on Overview, then Send to Customer.");
+                                toast.success("Partner cost locked from bid. Set customer price on Review & Send, then Send to Customer.");
                               } else {
                                 toast.error("Bid approved but quote could not be reloaded. Refresh the page.");
                               }
@@ -1553,11 +1666,11 @@ function QuoteDetailDrawer({ quote, onClose, onStatusChange, onQuoteUpdate }: {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 1</label>
-                  <Input type="date" value={startDate1} onChange={(e) => setStartDate1(e.target.value)} />
+                  <Input type="date" min={minProposalStartDate} value={startDate1} onChange={(e) => setStartDate1(e.target.value)} />
                 </div>
                 <div>
                   <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 2</label>
-                  <Input type="date" value={startDate2} onChange={(e) => setStartDate2(e.target.value)} />
+                  <Input type="date" min={minProposalStartDate} value={startDate2} onChange={(e) => setStartDate2(e.target.value)} />
                 </div>
               </div>
 
@@ -1734,7 +1847,7 @@ function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; messa
     const basics = quoteBasicsForPipeline(quote);
     if (!basics.ok) return basics;
     if (Number(quote.total_value) <= 0) {
-      return { ok: false, message: "Set total value (sell price) before sending to customer — use Overview pricing or line items." };
+      return { ok: false, message: "Set total value (sell price) before sending to customer — use Review & Send pricing or line items." };
     }
     return proposalFieldsReadyForQuote(quote);
   }
@@ -1745,9 +1858,16 @@ function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; messa
   return { ok: true };
 }
 
-function getQuoteActions(currentStatus: string) {
-  switch (currentStatus) {
+function getQuoteActions(quote: Quote) {
+  const isManual = (quote.quote_type ?? "internal") === "internal";
+  switch (quote.status) {
     case "draft":
+      if (isManual) {
+        return [
+          { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
+          { label: "Reject", status: "rejected", icon: XCircle, primary: false },
+        ];
+      }
       return [
         { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
         { label: "Start Bidding", status: "bidding", icon: Send, primary: false },
@@ -1755,20 +1875,29 @@ function getQuoteActions(currentStatus: string) {
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "in_survey":
+      if (isManual) {
+        return [
+          { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
+          { label: "Back to Draft", status: "draft", icon: RotateCcw, primary: false },
+          { label: "Reject", status: "rejected", icon: XCircle, primary: false },
+        ];
+      }
       return [
         { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
         { label: "Start Bidding", status: "bidding", icon: Send, primary: false },
         { label: "Back to Draft", status: "draft", icon: RotateCcw, primary: false },
+        { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "bidding":
       return [
         { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
         { label: "Back to Draft", status: "draft", icon: RotateCcw, primary: false },
+        { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "awaiting_customer":
       return [
         { label: "Mark Accepted", status: "accepted", icon: CheckCircle2, primary: true },
-        { label: "Rejected", status: "rejected", icon: XCircle, primary: false },
+        { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "accepted":
       return [
@@ -1787,11 +1916,18 @@ function getQuoteActions(currentStatus: string) {
 }
 
 /* ========== CREATE JOB FROM QUOTE MODAL ========== */
+/** Client preferred start date from quote (YYYY-MM-DD for date inputs). */
+function preferredScheduleDateFromQuote(q: Quote): string {
+  const raw = (q.start_date_option_1?.trim() || q.start_date_option_2?.trim()) ?? "";
+  if (!raw) return "";
+  return raw.slice(0, 10);
+}
+
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
-  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => void;
+  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => void;
 }) {
-  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "", createWithoutDeposit: false, total_phases: "2", job_type: "fixed" });
+  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "", scope: "", createWithoutDeposit: false, job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
@@ -1800,7 +1936,9 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     setForm({
       title: quote.title ?? "", partner_id: quote.partner_id ?? "",
       client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
-      materials_cost: "0", scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "", createWithoutDeposit: false, total_phases: "2", job_type: "fixed",
+      materials_cost: "0", scheduled_date: preferredScheduleDateFromQuote(quote), arrival_from: "", arrival_to: "", expected_finish_date: "",
+      scope: quote.scope ?? "",
+      createWithoutDeposit: false, job_type: "fixed",
     });
     setClientAddress({
       client_id: quote.client_id,
@@ -1866,10 +2004,11 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     } else if (scheduled_date && hasFrom) {
       scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
     }
+    const scopeTrimmed = (form.scope ?? "").trim();
     if (effectivePartnerId) {
       const block = getPartnerAssignmentBlockReason({
         property_address: clientAddress.property_address,
-        scope: quote.scope ?? "",
+        scope: scopeTrimmed || (quote.scope ?? "").trim(),
         scheduled_date,
         scheduled_start_at,
         partner_id: effectivePartnerId,
@@ -1896,7 +2035,6 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       scheduled_end_at,
       scheduled_finish_date: expected_finish ?? null,
       createWithoutDeposit: form.createWithoutDeposit,
-      total_phases: normalizeTotalPhases(Number(form.total_phases)),
       job_type: form.job_type as "fixed" | "hourly",
     });
   };
@@ -1914,15 +2052,6 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
           ]}
         />
         <Select
-          label="Work phases *"
-          value={form.total_phases}
-          onChange={(e) => update("total_phases", e.target.value)}
-          options={[
-            { value: "2", label: "2 phases — start & final (reports 1 & 2)" },
-          ]}
-        />
-        <p className="text-[10px] text-text-tertiary -mt-2">Report 1 is for start day; Report 2 unlocks the final step.</p>
-        <Select
           label="Job type"
           value={form.job_type}
           onChange={(e) => update("job_type", e.target.value)}
@@ -1933,8 +2062,24 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
         />
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work *</label>
+          <textarea
+            value={form.scope}
+            onChange={(e) => update("scope", e.target.value)}
+            placeholder="Describe scope, inclusions and exclusions for the job (required when assigning a partner)."
+            rows={4}
+            className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">
+            Pre-filled from the quote when available. Required if you assign a partner.
+          </p>
+        </div>
+        <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled date</label>
           <Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} className="h-10 max-w-[200px]" />
+          <p className="text-[10px] text-text-tertiary mt-1">
+            Pre-filled from the client&apos;s preferred start date on the quote (option 1, else option 2) when set.
+          </p>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival window from</label><Input type="time" value={form.arrival_from} onChange={(e) => update("arrival_from", e.target.value)} className="h-10" /></div>
@@ -1980,7 +2125,20 @@ function markupPctToGrossMarginOnSell(markupPct: number): number {
 }
 
 /* ========== MARGIN CALCULATOR ========== */
-function MarginCalculator({ cost, initialMarginPct, onSellPriceChange, onMarginChange }: { cost: number; initialMarginPct?: number; onSellPriceChange: (v: number) => void; onMarginChange: (v: number) => void }) {
+function MarginCalculator({
+  cost,
+  initialMarginPct,
+  anchorSellPrice = 0,
+  onSellPriceChange,
+  onMarginChange,
+}: {
+  cost: number;
+  initialMarginPct?: number;
+  /** When set (> 0), keeps markup slider aligned with partner cost and sell price typed outside the slider. */
+  anchorSellPrice?: number;
+  onSellPriceChange: (v: number) => void;
+  onMarginChange: (v: number) => void;
+}) {
   const [markupPct, setMarkupPct] = useState(() => grossMarginOnSellToMarkupPct(initialMarginPct ?? 40));
   /** While editing sell manually, raw string; cleared on blur so slider stays in sync. */
   const [sellDraft, setSellDraft] = useState<string | null>(null);
@@ -1991,6 +2149,15 @@ function MarginCalculator({ cost, initialMarginPct, onSellPriceChange, onMarginC
   const grossMarginPct = markupPctToGrossMarginOnSell(markupPct);
 
   const minSellForSlider = cost > 0 ? Math.round(cost * 1.05 * 100) / 100 : 0;
+
+  useEffect(() => {
+    if (sellDraft !== null) return;
+    if (cost <= 0 || anchorSellPrice <= 0) return;
+    const m = (anchorSellPrice / cost - 1) * 100;
+    if (!Number.isFinite(m)) return;
+    const next = Math.round(Math.max(5, m) * 10) / 10;
+    setMarkupPct(next);
+  }, [cost, anchorSellPrice, sellDraft]);
 
   useEffect(() => {
     onSellPriceChange(sellPrice);
@@ -2180,7 +2347,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
         value={quoteType}
         onChange={(e) => setQuoteType(e.target.value as "internal" | "partner")}
         options={[
-          { value: "internal", label: "Internal quote" },
+          { value: "internal", label: "Manual quote" },
           { value: "partner", label: "Bid for partner" },
         ]}
       />
@@ -2329,6 +2496,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
               key={`margin-${templateInitialMarginPct}`}
               cost={lineTotal}
               initialMarginPct={templateInitialMarginPct}
+              anchorSellPrice={sellPrice}
               onSellPriceChange={setSellPrice}
               onMarginChange={setMarginPct}
             />
