@@ -8,6 +8,7 @@ type Props = {
   value?: string;
   onChange: (value: string) => void;
   className?: string;
+  disabled?: boolean;
 };
 
 const BASE_TIME_OPTIONS = [{ value: "", label: "Select time" }].concat(
@@ -24,7 +25,7 @@ const BASE_TIME_OPTIONS = [{ value: "", label: "Select time" }].concat(
   }),
 );
 
-export function TimeSelect({ label, value = "", onChange, className }: Props) {
+export function TimeSelect({ label, value = "", onChange, className, disabled }: Props) {
   const options =
     value && !BASE_TIME_OPTIONS.some((o) => o.value === value)
       ? [{ value, label: value }, ...BASE_TIME_OPTIONS]
@@ -36,6 +37,7 @@ export function TimeSelect({ label, value = "", onChange, className }: Props) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         options={options}
+        disabled={disabled}
         className={cn("h-9 rounded-lg border-border bg-card text-sm", className)}
       />
     </div>

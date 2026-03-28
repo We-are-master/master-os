@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { MapPin, Search, X, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 
@@ -35,6 +36,7 @@ export function LocationPicker({
   readOnly = false,
   center,
 }: LocationPickerProps) {
+  const fillHeight = readOnly && mapHeight === "100%";
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markerRef = useRef<mapboxgl.Marker | null>(null);
@@ -58,7 +60,9 @@ export function LocationPicker({
       interactive: !readOnly,
     });
 
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+    if (!readOnly) {
+      map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+    }
 
     if (center) {
       markerRef.current = new mapboxgl.Marker({ color: "#ef4444" })
@@ -76,7 +80,26 @@ export function LocationPicker({
 
     mapRef.current = map;
 
-    return () => { map.remove(); };
+    const resize = () => {
+      try {
+        map.resize();
+      } catch {
+        /* ignore */
+      }
+    };
+    map.on("load", resize);
+    const ro =
+      mapContainer.current &&
+      new ResizeObserver(() => {
+        requestAnimationFrame(resize);
+      });
+    if (mapContainer.current && ro) ro.observe(mapContainer.current);
+
+    return () => {
+      map.off("load", resize);
+      ro?.disconnect();
+      map.remove();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readOnly]);
 
@@ -154,7 +177,12 @@ export function LocationPicker({
   }
 
   return (
-    <div className={`space-y-2 ${className}`}>
+    <div
+      className={cn(
+        fillHeight ? "h-full min-h-0 flex flex-col" : "space-y-2",
+        className,
+      )}
+    >
       {/* Search input */}
       {!readOnly && (
         <div className="relative">
@@ -198,8 +226,11 @@ export function LocationPicker({
       {/* Map */}
       <div
         ref={mapContainer}
-        className="rounded-xl border border-border overflow-hidden"
-        style={{ height: mapHeight }}
+        className={cn(
+          "rounded-xl border border-border overflow-hidden w-full min-h-0",
+          fillHeight && "flex-1 min-h-[100px] h-0",
+        )}
+        style={fillHeight ? undefined : { height: mapHeight }}
       />
 
       {/* Selected address display */}
@@ -246,9 +277,18 @@ export function LocationMiniMapByCoords({
   );
 }
 
-function LocationMiniMapInner({ address }: { address: string }) {
+function LocationMiniMapInner({
+  address,
+  mapHeight = "160px",
+  showAddressBelowMap = true,
+}: {
+  address: string;
+  mapHeight?: string;
+  showAddressBelowMap?: boolean;
+}) {
   const [coords, setCoords] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
+  const fillParent = mapHeight === "100%";
 
   useEffect(() => {
     if (!address || !MAPBOX_TOKEN) {
@@ -266,18 +306,38 @@ function LocationMiniMapInner({ address }: { address: string }) {
   }, [address]);
 
   if (loading) {
-    return <div className="animate-pulse h-32 bg-surface-tertiary rounded-xl" />;
+    return (
+      <div
+        className={`animate-pulse bg-surface-tertiary rounded-xl w-full ${fillParent ? "h-full min-h-[140px]" : "h-32"}`}
+      />
+    );
   }
 
   if (!coords || !MAPBOX_TOKEN) return null;
 
   return (
-    <div>
-      <LocationPicker readOnly center={coords} value={address} onChange={() => {}} mapHeight="160px" />
-      <div className="flex items-center gap-2 mt-1.5">
-        <MapPin className="h-3 w-3 text-red-400 shrink-0" />
-        <p className="text-xs text-text-tertiary truncate">{address}</p>
+    <div className={fillParent ? "flex flex-col h-full min-h-0 w-full" : "w-full"}>
+      <div
+        className={cn(
+          "w-full min-w-0 overflow-hidden",
+          fillParent ? "flex-1 min-h-[120px] h-0 rounded-xl border border-border" : "",
+        )}
+      >
+        <LocationPicker
+          readOnly
+          center={coords}
+          value={address}
+          onChange={() => {}}
+          mapHeight={fillParent ? "100%" : mapHeight}
+          className={fillParent ? "h-full" : ""}
+        />
       </div>
+      {showAddressBelowMap ? (
+        <div className="flex items-center gap-2 mt-1.5 min-w-0">
+          <MapPin className="h-3 w-3 text-red-400 shrink-0" />
+          <p className="text-xs text-text-tertiary truncate">{address}</p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -287,14 +347,21 @@ export function LocationMiniMap({
   address,
   className,
   lazy = false,
+  mapHeight = "160px",
+  showAddressBelowMap = true,
 }: {
   address: string;
   className?: string;
   /** When true, Mapbox JS and geocoding run only after the block scrolls into view (faster first paint). */
   lazy?: boolean;
+  /** Map container height; use `"100%"` with a parent that has defined height (e.g. aspect-ratio box). */
+  mapHeight?: string;
+  /** When false, hides the caption under the map (parent already shows the address). */
+  showAddressBelowMap?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(!lazy);
+  const fillParent = mapHeight === "100%";
 
   useEffect(() => {
     if (!lazy) return;
@@ -311,7 +378,10 @@ export function LocationMiniMap({
   }, [lazy]);
 
   return (
-    <div ref={wrapRef} className={className}>
+    <div
+      ref={wrapRef}
+      className={`${className ?? ""}${fillParent ? " h-full min-h-0 flex flex-col" : ""}`}
+    >
       {lazy && !visible ? (
         <div className="flex items-start gap-2 rounded-xl border border-border bg-surface-hover p-3 min-h-[4.5rem]">
           <MapPin className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
@@ -321,7 +391,11 @@ export function LocationMiniMap({
           </div>
         </div>
       ) : (
-        <LocationMiniMapInner address={address} />
+        <LocationMiniMapInner
+          address={address}
+          mapHeight={mapHeight}
+          showAddressBelowMap={showAddressBelowMap}
+        />
       )}
     </div>
   );

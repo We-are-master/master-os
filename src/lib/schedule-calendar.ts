@@ -37,12 +37,25 @@ export function jobScheduleYmd(job: {
 }
 
 export function jobFinishYmd(job: {
+  scheduled_finish_date?: string | null;
   scheduled_end_at?: string | null;
 }): { y: number; m: number; d: number } | null {
+  if (job.scheduled_finish_date) {
+    const p = parseIsoDateOnlyPrefix(job.scheduled_finish_date);
+    if (p) return p;
+  }
   if (!job.scheduled_end_at) return null;
   const dt = new Date(job.scheduled_end_at);
   if (Number.isNaN(dt.getTime())) return null;
   return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
+}
+
+function scheduleLineFinishSuffix(job: { scheduled_finish_date?: string | null }): string {
+  if (!job.scheduled_finish_date) return "";
+  const p = parseIsoDateOnlyPrefix(job.scheduled_finish_date);
+  if (!p) return "";
+  const endLabel = new Date(p.y, p.m - 1, p.d).toLocaleDateString(undefined, { dateStyle: "medium" });
+  return ` · ends ${endLabel}`;
 }
 
 /** Format date + optional time for schedule drawer / lists (local). */
@@ -50,22 +63,23 @@ export function formatJobScheduleLine(job: {
   scheduled_date?: string | null;
   scheduled_start_at?: string | null;
   scheduled_end_at?: string | null;
+  scheduled_finish_date?: string | null;
 }): string | null {
   if (job.scheduled_start_at && job.scheduled_end_at) {
     const start = new Date(job.scheduled_start_at);
     const end = new Date(job.scheduled_end_at);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
-    return `${start.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} - ${end.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
+    return `${start.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} – ${end.toLocaleTimeString(undefined, { timeStyle: "short" })}${scheduleLineFinishSuffix(job)}`;
   }
   if (job.scheduled_start_at) {
     const dt = new Date(job.scheduled_start_at);
     if (Number.isNaN(dt.getTime())) return null;
-    return dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    return `${dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}${scheduleLineFinishSuffix(job)}`;
   }
   if (job.scheduled_date) {
     const p = parseIsoDateOnlyPrefix(job.scheduled_date);
     if (!p) return null;
-    return new Date(p.y, p.m - 1, p.d).toLocaleDateString(undefined, { dateStyle: "medium" });
+    return `${new Date(p.y, p.m - 1, p.d).toLocaleDateString(undefined, { dateStyle: "medium" })}${scheduleLineFinishSuffix(job)}`;
   }
   return null;
 }

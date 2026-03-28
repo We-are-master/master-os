@@ -191,6 +191,8 @@ export interface Job {
   scheduled_date?: string;
   scheduled_start_at?: string;
   scheduled_end_at?: string;
+  /** Expected job completion day for calendar (date only; independent of arrival window). */
+  scheduled_finish_date?: string | null;
   job_type?: "fixed" | "hourly";
   completed_date?: string;
   cash_in: number;

@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   CreditCard,
   ShieldCheck,
+  XCircle,
 } from "lucide-react";
 
 export const JOB_PHASE_COUNT_MIN = 1;
@@ -50,35 +51,51 @@ export type JobStatusAction = {
 export function getJobStatusActions(job: Job): JobStatusAction[] {
   const tp = normalizeTotalPhases(job.total_phases);
   const last = lastInProgressStatusForTotal(tp);
+  const cancelAction: JobStatusAction = {
+    label: "Cancel job",
+    status: "cancelled",
+    icon: XCircle,
+    primary: false,
+  };
 
   switch (job.status) {
     case "scheduled":
     case "late":
-      return [{ label: "Start Job", status: "in_progress_phase1", icon: Play, primary: true }];
+      return [
+        { label: "Start Job", status: "in_progress_phase1", icon: Play, primary: true },
+        cancelAction,
+      ];
     case "in_progress_phase1":
       return [
         { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
         { label: "Pause", status: "scheduled", icon: Pause, primary: false },
+        cancelAction,
       ];
     case "in_progress_phase2":
       return [
         { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
         { label: "Pause", status: "scheduled", icon: Pause, primary: false },
+        cancelAction,
       ];
     case "in_progress_phase3":
       return [
         { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
         { label: "Pause", status: "scheduled", icon: Pause, primary: false },
+        cancelAction,
       ];
     case "final_check": {
       const backLabel = "Back to Phase 1";
       return [
         { label: "Awaiting Payment", status: "awaiting_payment", icon: CreditCard, primary: true },
         { label: backLabel, status: last, icon: RotateCcw, primary: false },
+        cancelAction,
       ];
     }
     case "awaiting_payment":
-      return [{ label: "Mark Completed", status: "completed", icon: CheckCircle2, primary: true }];
+      return [
+        { label: "Mark Completed", status: "completed", icon: CheckCircle2, primary: true },
+        cancelAction,
+      ];
     case "need_attention":
       return [
         { label: "Validate & complete", status: "completed", icon: ShieldCheck, primary: true },
@@ -88,6 +105,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           icon: RotateCcw,
           primary: false,
         },
+        cancelAction,
       ];
     case "completed":
       return [{ label: "Reopen", status: "scheduled", icon: RotateCcw, primary: false }];
@@ -109,6 +127,10 @@ export function canAdvanceJob(
   financialCtx?: JobAdvanceFinancialContext,
 ): { ok: boolean; message?: string } {
   const tp = normalizeTotalPhases(job.total_phases);
+
+  if (nextStatus === "cancelled") {
+    return { ok: true };
+  }
 
   if (nextStatus === "in_progress_phase2" && tp < 2) {
     return { ok: false, message: "This job is configured for only one phase." };
