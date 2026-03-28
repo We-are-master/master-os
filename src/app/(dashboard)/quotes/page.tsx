@@ -63,7 +63,7 @@ const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "a
 
 /** Two starter rows: type of work + materials (partner app aligns with this shape). */
 function defaultProposalLineItems(q: Quote): { description: string; quantity: string; unitPrice: string }[] {
-  const title = (q.title ?? "").trim() || "Type of work";
+  const title = bidPayloadTrimmedString(q.title as unknown) || "Type of work";
   return [
     { description: title, quantity: "1", unitPrice: "0" },
     { description: "Materials", quantity: "1", unitPrice: "0" },
@@ -88,7 +88,7 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
 } {
   const payload = parseBidProposalFromNotes(bid.notes);
   const { labour: L, materials: M } = splitBidPartnerCosts(bid.bid_amount, payload);
-  const title = (q.title ?? "").trim() || "Type of work";
+  const title = bidPayloadTrimmedString(q.title as unknown) || "Type of work";
   const line0Desc = bidPayloadTrimmedString(payload?.labour_description) || title;
   const line1Desc = bidPayloadTrimmedString(payload?.materials_description) || "Materials";
   const sell0 = L * (1 + BID_DEFAULT_LABOUR_MARKUP);
@@ -841,7 +841,7 @@ function QuotesPageContent() {
                       <p className="text-sm font-semibold text-text-primary truncate">{q.reference}</p>
                       <p className="text-xs text-text-tertiary truncate">{q.title}</p>
                       <p className="text-[11px] text-text-secondary mt-1">{q.client_name}</p>
-                      <p className="text-xs font-medium text-primary mt-1">{formatCurrency(q.total_value)}</p>
+                      <p className="text-xs font-medium text-primary mt-1">{formatCurrency(Number(q.total_value) || 0)}</p>
                     </div>
                   )}
                 />
@@ -998,10 +998,10 @@ function QuoteDetailDrawer({
           body: JSON.stringify({
             quoteId: quote.id,
             recipientName,
-            customMessage: customMessage.trim() || undefined,
+            customMessage: bidPayloadTrimmedString(customMessage as unknown) || undefined,
             items,
             depositRequired: Number(depositRequired) || 0,
-            scope: scopeText.trim() || undefined,
+            scope: bidPayloadTrimmedString(scopeText as unknown) || undefined,
           }),
         }).then((r) => r.ok ? r.text() : null),
       ])
@@ -1029,12 +1029,12 @@ function QuoteDetailDrawer({
       }));
       const padStatuses = ["draft", "in_survey", "bidding", "awaiting_customer"];
       if (rows.length < 2 && padStatuses.includes(q.status)) {
-        const title = (q.title ?? "").trim() || "Type of work";
+        const title = bidPayloadTrimmedString(q.title as unknown) || "Type of work";
         if (rows.length === 0) {
           rows = defaultProposalLineItems(q);
         } else {
           rows = [...rows, { description: "Materials", quantity: "1", unitPrice: "0" }];
-          if (!rows[0].description.trim()) rows[0] = { ...rows[0], description: title };
+          if (!bidPayloadTrimmedString(rows[0].description as unknown)) rows[0] = { ...rows[0], description: title };
         }
       }
       setLineItems(rows);
@@ -1081,8 +1081,9 @@ function QuoteDetailDrawer({
     if (!quote) return 40;
     const sp = Number(quote.sell_price ?? quote.total_value ?? 0);
     const pc = Number(quote.partner_cost ?? quote.cost ?? 0);
-    if (sp <= 0) return 40;
+    if (sp <= 0 || !Number.isFinite(sp)) return 40;
     const raw = Math.round(((sp - pc) / sp) * 1000) / 10;
+    if (!Number.isFinite(raw)) return 40;
     return Math.min(99.9, Math.max(0, raw));
   }, [quote]);
 
@@ -1109,7 +1110,7 @@ function QuoteDetailDrawer({
   const sendStep3Ready =
     sendDepositNumber >= 0 &&
     !Number.isNaN(sendDepositNumber) &&
-    sendEmail.trim().includes("@");
+    bidPayloadTrimmedString(sendEmail as unknown).includes("@");
 
   const drawerTabs = [
     { id: "overview", label: "Review & Send" },
@@ -1182,12 +1183,12 @@ function QuoteDetailDrawer({
       total_value: lineTot,
       sell_price: lineTot,
       margin_percent: marginPct,
-      scope: st.trim() || undefined,
+      scope: bidPayloadTrimmedString(st as unknown) || undefined,
       deposit_required: Number(dep) || 0,
       start_date_option_1: d1 || undefined,
       start_date_option_2: d2 || undefined,
-      client_email: sendEmail.trim(),
-      email_custom_message: customMessage.trim() || null,
+      client_email: bidPayloadTrimmedString(sendEmail as unknown),
+      email_custom_message: bidPayloadTrimmedString(customMessage as unknown) || null,
     });
   };
 
@@ -1222,9 +1223,9 @@ function QuoteDetailDrawer({
           quoteId: quote.id,
           recipientEmail: sendEmail,
           recipientName: quote.client_name,
-          customMessage: customMessage.trim() || undefined,
+          customMessage: bidPayloadTrimmedString(customMessage as unknown) || undefined,
           items: items.length ? items : undefined,
-          scope: scopeText.trim() || undefined,
+          scope: bidPayloadTrimmedString(scopeText as unknown) || undefined,
         }),
       });
       const data = await res.json();
@@ -1253,7 +1254,13 @@ function QuoteDetailDrawer({
   };
 
   return (
-    <Drawer open={!!quote} onClose={onClose} title={quote.reference} subtitle={quote.title} width="w-[540px]">
+    <Drawer
+      open={!!quote}
+      onClose={onClose}
+      title={bidPayloadTrimmedString(quote.reference as unknown) || "Quote"}
+      subtitle={bidPayloadTrimmedString(quote.title as unknown) || undefined}
+      width="w-[540px]"
+    >
       <div className="flex flex-col h-full">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} className="px-6 pt-2" />
         {guidance.headline && (
@@ -1332,11 +1339,11 @@ function QuoteDetailDrawer({
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-4 rounded-xl bg-surface-hover">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total value</p>
-                  <p className="text-xl font-bold text-text-primary mt-1">{formatCurrency(quote.total_value)}</p>
+                  <p className="text-xl font-bold text-text-primary mt-1">{formatCurrency(Number(quote.total_value) || 0)}</p>
                 </div>
                 <div className="p-4 rounded-xl bg-surface-hover">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Bids received</p>
-                  <p className="text-xl font-bold text-text-primary mt-1">{quote.partner_quotes_count}</p>
+                  <p className="text-xl font-bold text-text-primary mt-1">{Number(quote.partner_quotes_count) || 0}</p>
                 </div>
               </div>
               <div className="p-4 rounded-xl bg-surface-hover">
@@ -1913,7 +1920,7 @@ function QuoteDetailDrawer({
                                 0,
                               );
                               setLineItems(pre.lines);
-                              setScopeText(scopeMerged.trim());
+                              setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
                               setStartDate1(d1);
                               setStartDate2(d2);
                               setDepositRequired(dep);
@@ -2771,7 +2778,7 @@ function QuotesCardGridView({ quotes, loading, onSelectQuote }: { quotes: Quote[
           <p className="text-sm font-semibold text-text-primary">{q.reference}</p>
           <p className="text-xs text-text-tertiary truncate">{q.title}</p>
           <p className="text-[11px] text-text-secondary mt-1">{q.client_name}</p>
-          <p className="text-xs font-medium text-primary mt-1">{formatCurrency(q.total_value)}</p>
+          <p className="text-xs font-medium text-primary mt-1">{formatCurrency(Number(q.total_value) || 0)}</p>
           <Badge variant={statusConfig[q.status]?.variant ?? "default"} size="sm" className="mt-2">{statusLabels[q.status]}</Badge>
         </button>
       ))}

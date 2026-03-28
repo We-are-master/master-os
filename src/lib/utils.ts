@@ -40,13 +40,15 @@ function localeForCurrency(code: string): string {
 }
 
 export function formatCurrency(value: number, currency?: string): string {
+  const n = Number(value);
+  const safe = Number.isFinite(n) ? n : 0;
   const code = currency ?? appCurrencyCode;
   return new Intl.NumberFormat(localeForCurrency(code), {
     style: "currency",
     currency: code,
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(safe);
 }
 
 export function formatCurrencyPrecise(value: number, currency?: string): string {
