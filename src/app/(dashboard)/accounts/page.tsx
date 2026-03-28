@@ -37,6 +37,7 @@ import {
 import { uploadAccountLogo, removeAccountLogoFromStorage } from "@/services/account-logo-storage";
 import { uploadAccountContract, removeAccountContractFromStorage } from "@/services/account-contract-storage";
 import { getSupabase } from "@/services/base";
+import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
@@ -1063,7 +1064,9 @@ function AccountDetailDrawer({
               <p className="text-sm text-text-tertiary text-center py-8">No jobs linked yet. Link clients to this account under Clients, then create jobs for those clients.</p>
             ) : (
               <div className="rounded-xl border border-border-light overflow-hidden max-h-[50vh] overflow-y-auto">
-                {jobs.map((j) => (
+                {jobs.map((j) => {
+                  const schedLine = formatJobScheduleLine(j);
+                  return (
                   <Link
                     key={j.id}
                     href={`/jobs/${j.id}`}
@@ -1078,11 +1081,17 @@ function AccountDetailDrawer({
                       </div>
                       <p className="text-xs text-text-secondary truncate">{j.title}</p>
                       <p className="text-[11px] text-text-tertiary truncate">{j.client_name} · {j.property_address}</p>
+                      {schedLine ? (
+                        <p className="text-[10px] text-text-secondary mt-1 leading-snug line-clamp-2">{schedLine}</p>
+                      ) : (
+                        <p className="text-[10px] text-text-tertiary mt-1">No schedule set</p>
+                      )}
                       <p className="text-xs font-medium text-text-primary mt-1">{formatCurrency(j.client_price)}</p>
                     </div>
                     <ExternalLink className="h-4 w-4 text-text-tertiary shrink-0" />
                   </Link>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

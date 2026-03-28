@@ -77,6 +77,7 @@ import {
   isPartnerLiveTimerRunning,
   officePartnerTimerStartPatch,
 } from "@/lib/partner-live-timer";
+import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
@@ -101,8 +102,10 @@ export default function JobDetailPage() {
   const [loading, setLoading] = useState(true);
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
-  const [scheduleFinishDate, setScheduleFinishDate] = useState("");
-  const [scheduleFinishTime, setScheduleFinishTime] = useState("");
+  /** Preset minutes after arrival-from for window end (replaces manual “arrival to” time). */
+  const [scheduleWindowMins, setScheduleWindowMins] = useState("");
+  /** Civil end day for calendar (`scheduled_finish_date`). */
+  const [scheduleExpectedFinishDate, setScheduleExpectedFinishDate] = useState("");
   const [tasklineOpen, setTasklineOpen] = useState(true);
   const [partnerPayments, setPartnerPayments] = useState<JobPayment[]>([]);
   const [customerPayments, setCustomerPayments] = useState<JobPayment[]>([]);
@@ -297,25 +300,23 @@ export default function JobDetailPage() {
       setScheduleDate(d.toISOString().slice(0, 10));
       setScheduleTime(d.toTimeString().slice(0, 5));
       if (job.scheduled_end_at) {
-        const end = new Date(job.scheduled_end_at);
-        setScheduleFinishDate(end.toISOString().slice(0, 10));
-        setScheduleFinishTime(end.toTimeString().slice(0, 5));
+        const startMs = new Date(job.scheduled_start_at).getTime();
+        const endMs = new Date(job.scheduled_end_at).getTime();
+        setScheduleWindowMins(snapArrivalWindowMinutes(startMs, endMs));
       } else {
-        setScheduleFinishDate("");
-        setScheduleFinishTime("");
+        setScheduleWindowMins("");
       }
     } else if (job?.scheduled_date) {
       setScheduleDate(job.scheduled_date);
       setScheduleTime("");
-      setScheduleFinishDate("");
-      setScheduleFinishTime("");
+      setScheduleWindowMins("");
     } else {
       setScheduleDate("");
       setScheduleTime("");
-      setScheduleFinishDate("");
-      setScheduleFinishTime("");
+      setScheduleWindowMins("");
     }
-  }, [job?.id, job?.scheduled_start_at, job?.scheduled_end_at, job?.scheduled_date]);
+    setScheduleExpectedFinishDate(job?.scheduled_finish_date?.slice(0, 10) ?? "");
+  }, [job?.id, job?.scheduled_start_at, job?.scheduled_end_at, job?.scheduled_date, job?.scheduled_finish_date]);
 
   useEffect(() => {
     if (!job) {
@@ -495,6 +496,9 @@ export default function JobDetailPage() {
   }, [job, unlinkedAddressDraft, handleJobUpdate]);
 
   const handleStatusChange = useCallback(async (j: Job, newStatus: Job["status"]) => {
+    if (newStatus === "cancelled" && typeof window !== "undefined") {
+      if (!window.confirm("Cancel this job? It will be marked as Cancelled.")) return;
+    }
     const check = canAdvanceJob(j, newStatus, {
       customerPayments: customerPayments.map((p) => ({ type: p.type, amount: p.amount })),
       partnerPayments: partnerPayments.map((p) => ({ type: p.type, amount: p.amount })),
@@ -537,36 +541,59 @@ export default function JobDetailPage() {
     }
   }, [profile?.id, profile?.full_name, customerPayments, partnerPayments]);
 
-  const handleScheduleChange = useCallback((j: Job, startDate: string, startTime: string, finishDate: string, finishTime: string) => {
-    if ((startDate && !finishDate) || (!startDate && finishDate)) {
-      toast.error("Set both arrival date and finish date.");
-      return;
-    }
-    if ((startTime && !finishTime) || (!startTime && finishTime)) {
-      toast.error("Set both arrival and finish times.");
-      return;
-    }
-    if (startDate && startTime && finishDate && finishTime) {
-      const start = new Date(`${startDate}T${startTime}:00`);
-      const end = new Date(`${finishDate}T${finishTime}:00`);
-      if (!(end > start)) {
-        toast.error("Finish date and time must be after arrival date and time.");
+  const handleScheduleChange = useCallback(
+    (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string) => {
+      const d = startDate.trim();
+      const tFrom = startTime.trim();
+      const expectedTrim = expectedFinishDate.trim();
+      const wm = windowMinsStr.trim();
+      const windowMins = wm ? Number(wm) : NaN;
+      const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
+
+      if (!d) {
+        handleJobUpdate(
+          j.id,
+          {
+            scheduled_date: null,
+            scheduled_start_at: null,
+            scheduled_end_at: null,
+            scheduled_finish_date: null,
+          } as unknown as Partial<Job>,
+        );
         return;
       }
-    }
-    if (startDate && !startTime) {
-      toast.error("Set arrival time.");
-      return;
-    }
-    if (finishDate && !finishTime) {
-      toast.error("Set finish time.");
-      return;
-    }
-    const scheduled_date = startDate || undefined;
-    const scheduled_start_at = startDate && startTime ? `${startDate}T${startTime}:00` : undefined;
-    const scheduled_end_at = finishDate && finishTime ? `${finishDate}T${finishTime}:00` : undefined;
-    handleJobUpdate(j.id, { scheduled_start_at, scheduled_end_at, scheduled_date } as Partial<Job>);
-  }, [handleJobUpdate]);
+      if (expectedTrim && expectedTrim < d) {
+        toast.error("Expected finish date must be on or after the arrival date.");
+        return;
+      }
+      if (!tFrom) {
+        toast.error("Set arrival from time.");
+        return;
+      }
+      if (tFrom && wm !== "" && !hasWindow) {
+        toast.error("Choose a valid arrival window length.");
+        return;
+      }
+      if (tFrom && hasWindow) {
+        const endIso = scheduledEndFromWindow(d, tFrom, windowMins);
+        const startMs = new Date(`${d}T${tFrom}:00`).getTime();
+        const endMs = new Date(endIso).getTime();
+        if (!(endMs > startMs)) {
+          toast.error("Arrival window must end after the start time.");
+          return;
+        }
+      }
+      const scheduled_date = d;
+      const scheduled_start_at = `${d}T${tFrom}:00`;
+      const scheduled_end_at = hasWindow ? scheduledEndFromWindow(d, tFrom, windowMins) : null;
+      const scheduled_finish_date = expectedTrim ? expectedTrim : null;
+      handleJobUpdate(
+        j.id,
+        { scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date } as unknown as Partial<Job>,
+      );
+    },
+    [handleJobUpdate],
+  );
 
   const handleAddPayment = useCallback(async () => {
     if (!job || !addPaymentAmount || Number(addPaymentAmount) <= 0) return;
@@ -861,7 +888,7 @@ export default function JobDetailPage() {
               </div>
             ) : null}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap justify-end sm:justify-start">
             {statusActions.map((action, idx) => (
               <Button
                 key={`${action.status}-${idx}`}
@@ -876,17 +903,64 @@ export default function JobDetailPage() {
           </div>
         </div>
 
+        {/* ── Job economics (quick view) ── */}
+        <div className="rounded-xl border border-border-light bg-card p-4 sm:p-5">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-3">Job economics</p>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="min-w-0">
+              <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
+              <p className="text-lg sm:text-xl font-bold text-text-primary tabular-nums truncate">{formatCurrency(billableRevenue)}</p>
+              <p className="text-[10px] text-text-tertiary mt-0.5">Incl. extras</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Partner cost</p>
+              <p className="text-lg sm:text-xl font-bold text-text-secondary tabular-nums truncate">{formatCurrency(Number(job.partner_cost ?? 0))}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin</p>
+              <p
+                className={cn(
+                  "text-lg sm:text-xl font-bold tabular-nums truncate",
+                  profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+                )}
+              >
+                {formatCurrency(profit)}
+              </p>
+              <p className="text-[10px] text-text-tertiary mt-0.5">After partner + materials</p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin %</p>
+              <p
+                className={cn(
+                  "text-lg sm:text-xl font-bold tabular-nums",
+                  marginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+                )}
+              >
+                {marginPct}%
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* ── MAIN GRID ── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
           {/* ═══ LEFT — operational column ═══ */}
           <div className="lg:col-span-2 space-y-5">
 
-            {/* CLIENT IDENTITY + MAP */}
+            {/* MAP + CLIENT IDENTITY */}
             <div className="rounded-xl border border-border-light bg-card overflow-hidden">
-              <div className="grid grid-cols-1 sm:grid-cols-2">
-                {/* client info */}
-                <div className="p-4 space-y-3">
+              <div className="flex flex-col">
+                <div className="relative w-full aspect-[2/1] min-h-[200px] max-h-[min(360px,55vw)] bg-surface-hover/30 border-b border-border-light">
+                  <LocationMiniMap
+                    address={job.property_address}
+                    className="h-full w-full min-h-[200px]"
+                    mapHeight="100%"
+                    showAddressBelowMap={false}
+                    lazy
+                  />
+                </div>
+                <div className="p-4 sm:p-5 space-y-3">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
                     <Building2 className="h-3.5 w-3.5" /> Client identity
                   </p>
@@ -894,45 +968,51 @@ export default function JobDetailPage() {
                     <p className="text-base font-bold text-text-primary">{job.client_name}</p>
                     <p className="text-xs text-text-tertiary mt-0.5 leading-snug">{job.property_address}</p>
                   </div>
-                  {/* schedule inline */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border-light">
                     <div>
                       <p className="text-[10px] text-text-tertiary">Arrival date</p>
                       <Input
                         type="date"
                         value={scheduleDate}
+                        disabled={job.status === "cancelled"}
                         className="mt-0.5 h-9 text-sm"
-                        onChange={(e) => { setScheduleDate(e.target.value); handleScheduleChange(job, e.target.value, scheduleTime, scheduleFinishDate, scheduleFinishTime); }}
+                        onChange={(e) => { setScheduleDate(e.target.value); handleScheduleChange(job, e.target.value, scheduleTime, scheduleWindowMins, scheduleExpectedFinishDate); }}
                       />
                     </div>
                     <div>
                       <TimeSelect
                         label="Arrival from"
                         value={scheduleTime}
+                        disabled={job.status === "cancelled"}
                         className="mt-0.5"
-                        onChange={(v) => { setScheduleTime(v); handleScheduleChange(job, scheduleDate, v, scheduleFinishDate, scheduleFinishTime); }}
+                        onChange={(v) => { setScheduleTime(v); handleScheduleChange(job, scheduleDate, v, scheduleWindowMins, scheduleExpectedFinishDate); }}
                       />
                     </div>
+                    <Select
+                      label="Arrival window"
+                      value={scheduleWindowMins}
+                      disabled={job.status === "cancelled"}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setScheduleWindowMins(v);
+                        handleScheduleChange(job, scheduleDate, scheduleTime, v, scheduleExpectedFinishDate);
+                      }}
+                      options={[...ARRIVAL_WINDOW_OPTIONS]}
+                    />
                     <div>
-                      <p className="text-[10px] text-text-tertiary">Finish date</p>
+                      <p className="text-[10px] text-text-tertiary">Expected finish date</p>
                       <Input
                         type="date"
-                        value={scheduleFinishDate}
+                        value={scheduleExpectedFinishDate}
+                        disabled={job.status === "cancelled"}
                         className="mt-0.5 h-9 text-sm"
-                        onChange={(e) => { setScheduleFinishDate(e.target.value); handleScheduleChange(job, scheduleDate, scheduleTime, e.target.value, scheduleFinishTime); }}
-                      />
-                    </div>
-                    <div>
-                      <TimeSelect
-                        label="Arrival to"
-                        value={scheduleFinishTime}
-                        className="mt-0.5"
-                        onChange={(v) => { setScheduleFinishTime(v); handleScheduleChange(job, scheduleDate, scheduleTime, scheduleFinishDate, v); }}
+                        onChange={(e) => { setScheduleExpectedFinishDate(e.target.value); handleScheduleChange(job, scheduleDate, scheduleTime, scheduleWindowMins, e.target.value); }}
                       />
                     </div>
                   </div>
-                  <p className="text-[10px] text-text-tertiary -mt-1">Arrival range: from (start) to (finish).</p>
-                  {/* address edit */}
+                  <p className="text-[10px] text-text-tertiary -mt-1">
+                    End of arrival window is calculated from start time + window length (same as New Job). Expected finish is for the calendar only; late still uses window end.
+                  </p>
                   <div className="pt-1 border-t border-border-light">
                     {job.client_id && propertyEdit ? (
                       <div className="space-y-2">
@@ -946,20 +1026,11 @@ export default function JobDetailPage() {
                       </div>
                     )}
                   </div>
-                  {/* links */}
                   <div className="flex flex-wrap gap-2 text-xs">
                     {job.quote_id && <Link href="/quotes" className="inline-flex items-center gap-1 text-primary hover:underline">Quote <ExternalLink className="h-3 w-3" /></Link>}
                     {job.self_bill_id && <Link href="/finance/selfbill" className="inline-flex items-center gap-1 text-primary hover:underline">Self-bill <ExternalLink className="h-3 w-3" /></Link>}
                     {job.invoice_id && <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-primary hover:underline">Invoice <ExternalLink className="h-3 w-3" /></Link>}
                   </div>
-                </div>
-                {/* single map */}
-                <div className="p-4 flex items-center justify-center bg-surface-hover/20">
-                  <LocationMiniMap
-                    address={job.property_address}
-                    className="h-[240px] w-full max-w-[520px] rounded-xl overflow-hidden"
-                    lazy
-                  />
                 </div>
               </div>
             </div>

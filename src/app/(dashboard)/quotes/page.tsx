@@ -252,6 +252,18 @@ export default function QuotesPage() {
     (statusCounts.awaiting_customer ?? 0) +
     (statusCounts.accepted ?? 0);
 
+  /** Share of all quotes (non-deleted) that became jobs (`converted_to_job`). */
+  const quoteToJobConversion = useMemo(() => {
+    const total = statusCounts.all ?? 0;
+    const converted = statusCounts.converted_to_job ?? 0;
+    if (total <= 0) return { pct: 0, converted, total };
+    return {
+      pct: Math.round((converted / total) * 1000) / 10,
+      converted,
+      total,
+    };
+  }, [statusCounts]);
+
   const handleCreate = useCallback(async (formData: Partial<Quote>) => {
     try {
       const result = await createQuote({
@@ -331,7 +343,7 @@ export default function QuotesPage() {
   }, [selectedIds, refresh, loadCounts, loadAggregates]);
 
   const handleConfirmCreateJob = useCallback(
-    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => {
+    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => {
       if (!quoteToConvert) return;
       const effectivePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
       if (effectivePartnerId) {
@@ -371,6 +383,8 @@ export default function QuotesPage() {
           margin_percent: margin,
           scheduled_date: formData.scheduled_date,
           scheduled_start_at: formData.scheduled_start_at,
+          scheduled_end_at: formData.scheduled_end_at,
+          scheduled_finish_date: formData.scheduled_finish_date ?? null,
           owner_id: profile?.id, owner_name: profile?.full_name,
           job_type: formData.job_type ?? "fixed",
           cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
@@ -557,7 +571,18 @@ export default function QuotesPage() {
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Pipeline Value" value={pipelineValue} format="currency" change={12.5} changeLabel="vs last month" icon={BarChart3} accent="primary" />
           <KpiCard title="Total Quotes" value={statusCounts.all ?? 0} format="number" icon={FileText} accent="blue" />
-          <KpiCard title="Accepted" value={statusCounts.accepted ?? 0} format="number" icon={CheckCircle2} accent="emerald" />
+          <KpiCard
+            title="Quote → job rate"
+            value={quoteToJobConversion.pct}
+            format="percent"
+            icon={Briefcase}
+            accent="emerald"
+            description={
+              quoteToJobConversion.total === 0
+                ? "No quotes yet"
+                : `${quoteToJobConversion.converted} converted of ${quoteToJobConversion.total} quotes`
+            }
+          />
           <KpiCard title="Awaiting Customer" value={statusCounts.awaiting_customer ?? 0} format="number" icon={Clock} accent="amber" />
         </StaggerContainer>
 
@@ -1764,9 +1789,9 @@ function getQuoteActions(currentStatus: string) {
 /* ========== CREATE JOB FROM QUOTE MODAL ========== */
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
-  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => void;
+  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; total_phases?: number; job_type?: "fixed" | "hourly" }) => void;
 }) {
-  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "2", job_type: "fixed" });
+  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "", createWithoutDeposit: false, total_phases: "2", job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
@@ -1775,7 +1800,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     setForm({
       title: quote.title ?? "", partner_id: quote.partner_id ?? "",
       client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
-      materials_cost: "0", scheduled_date: "", scheduled_time: "", createWithoutDeposit: false, total_phases: "2", job_type: "fixed",
+      materials_cost: "0", scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "", createWithoutDeposit: false, total_phases: "2", job_type: "fixed",
     });
     setClientAddress({
       client_id: quote.client_id,
@@ -1805,8 +1830,42 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const scheduled_date = form.scheduled_date || undefined;
-    const scheduled_start_at = form.scheduled_date && form.scheduled_time ? `${form.scheduled_date}T${form.scheduled_time}:00` : form.scheduled_date ? `${form.scheduled_date}T09:00:00` : undefined;
+    const hasFrom = !!form.arrival_from?.trim();
+    const hasTo = !!form.arrival_to?.trim();
+    if ((hasFrom && !hasTo) || (!hasFrom && hasTo)) {
+      toast.error("Set both arrival window start and end, or leave both empty.");
+      return;
+    }
     const effectivePartnerId = form.partner_id || quote.partner_id;
+    if (effectivePartnerId) {
+      if (!scheduled_date?.trim()) {
+        toast.error("Set a scheduled date before assigning a partner.");
+        return;
+      }
+      if (!hasFrom || !hasTo) {
+        toast.error("Set the arrival window (from and to) when assigning a partner.");
+        return;
+      }
+      const startMs = new Date(`${scheduled_date}T${form.arrival_from}:00`).getTime();
+      const endMs = new Date(`${scheduled_date}T${form.arrival_to}:00`).getTime();
+      if (!(endMs > startMs)) {
+        toast.error("Arrival window end must be after start.");
+        return;
+      }
+    }
+    const expected_finish = form.expected_finish_date?.trim() || undefined;
+    if (expected_finish && scheduled_date && expected_finish < scheduled_date) {
+      toast.error("Expected finish date must be on or after the scheduled date.");
+      return;
+    }
+    let scheduled_start_at: string | undefined;
+    let scheduled_end_at: string | undefined;
+    if (scheduled_date && hasFrom && hasTo) {
+      scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
+      scheduled_end_at = `${scheduled_date}T${form.arrival_to}:00`;
+    } else if (scheduled_date && hasFrom) {
+      scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
+    }
     if (effectivePartnerId) {
       const block = getPartnerAssignmentBlockReason({
         property_address: clientAddress.property_address,
@@ -1834,6 +1893,8 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       materials_cost: Number(form.materials_cost) || 0,
       scheduled_date,
       scheduled_start_at,
+      scheduled_end_at,
+      scheduled_finish_date: expected_finish ?? null,
       createWithoutDeposit: form.createWithoutDeposit,
       total_phases: normalizeTotalPhases(Number(form.total_phases)),
       job_type: form.job_type as "fixed" | "hourly",
@@ -1871,10 +1932,19 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
           ]}
         />
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Date</label><Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled Time</label><Input type="time" value={form.scheduled_time} onChange={(e) => update("scheduled_time", e.target.value)} /></div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled date</label>
+          <Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} className="h-10 max-w-[200px]" />
         </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival window from</label><Input type="time" value={form.arrival_from} onChange={(e) => update("arrival_from", e.target.value)} className="h-10" /></div>
+          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival window to</label><Input type="time" value={form.arrival_to} onChange={(e) => update("arrival_to", e.target.value)} className="h-10" /></div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish date</label>
+          <Input type="date" value={form.expected_finish_date} onChange={(e) => update("expected_finish_date", e.target.value)} className="h-10 max-w-[200px]" />
+        </div>
+        <p className="text-[10px] text-text-tertiary -mt-2">With a partner, date and both window times are required. Late applies after the window ends. Expected finish is date-only for the calendar span.</p>
         <Select label="Partner" options={[{ value: "", label: "No partner" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         <div className="grid grid-cols-3 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min={0} step="0.01" /></div>

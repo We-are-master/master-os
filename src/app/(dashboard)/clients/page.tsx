@@ -26,6 +26,7 @@ import {
   ChevronDown, ChevronRight, ExternalLink,
 } from "lucide-react";
 import { formatCurrency, formatDate, formatRelativeTime, isUuid } from "@/lib/utils";
+import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
 import { toast } from "sonner";
 import type { Client, ClientType, ClientSource, ClientStatus } from "@/types/database";
@@ -377,9 +378,25 @@ export default function ClientsPage() {
 
 /* ============ JOB HISTORY CARD ============ */
 function JobHistoryCard({ job }: {
-  job: { id: string; reference: string; title: string; status: string; client_price: number; customer_deposit_paid?: boolean; customer_final_payment?: number; scheduled_date?: string; property_address?: string; partner_name?: string; job_type?: string };
+  job: {
+    id: string;
+    reference: string;
+    title: string;
+    status: string;
+    client_price: number;
+    customer_deposit_paid?: boolean;
+    customer_final_payment?: number;
+    scheduled_date?: string;
+    scheduled_start_at?: string;
+    scheduled_end_at?: string;
+    scheduled_finish_date?: string | null;
+    property_address?: string;
+    partner_name?: string;
+    job_type?: string;
+  };
 }) {
   const [expanded, setExpanded] = useState(false);
+  const scheduleLine = formatJobScheduleLine(job);
 
   const statusVariant =
     job.status === "completed" ? "success" :
@@ -418,16 +435,14 @@ function JobHistoryCard({ job }: {
       {expanded && (
         <div className="border-t border-border-light px-3 py-3 bg-surface-hover/40 space-y-2">
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-            {job.scheduled_date && (
+            {scheduleLine ? (
               <>
                 <span className="text-text-tertiary flex items-center gap-1">
-                  <Calendar className="h-3 w-3" /> Scheduled
+                  <Calendar className="h-3 w-3" /> Schedule
                 </span>
-                <span className="text-text-secondary font-medium">
-                  {new Date(job.scheduled_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-                </span>
+                <span className="text-text-secondary font-medium leading-snug">{scheduleLine}</span>
               </>
-            )}
+            ) : null}
             {job.partner_name && (
               <>
                 <span className="text-text-tertiary">Partner</span>
@@ -691,7 +706,7 @@ function ClientDetailDrawer({
   const [tab, setTab] = useState("overview");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [jobs, setJobs] = useState<{ id: string; reference: string; title: string; status: string; client_price: number; customer_deposit_paid?: boolean; customer_final_payment?: number; scheduled_date?: string; property_address?: string; partner_name?: string; job_type?: string }[]>([]);
+  const [jobs, setJobs] = useState<{ id: string; reference: string; title: string; status: string; client_price: number; customer_deposit_paid?: boolean; customer_final_payment?: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; property_address?: string; partner_name?: string; job_type?: string }[]>([]);
   const [quotes, setQuotes] = useState<{ id: string; reference: string; title: string; status: string; total_value: number }[]>([]);
   const [requests, setRequests] = useState<{ id: string; reference: string; service_type: string; status: string; created_at: string }[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -704,7 +719,7 @@ function ClientDetailDrawer({
     setLoadingHistory(true);
 
     const supabase = getSupabase();
-    const jobFields = "id, reference, title, status, client_price, customer_deposit_paid, customer_final_payment, scheduled_date, property_address, partner_name, job_type";
+    const jobFields = "id, reference, title, status, client_price, customer_deposit_paid, customer_final_payment, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, property_address, partner_name, job_type";
 
     // Two queries per entity: by client_id (reliable FK) + by client_name (legacy/fallback).
     // Merged and deduplicated client-side to avoid PostgREST OR filter issues with names

@@ -12,8 +12,28 @@ export async function markLateJobs(): Promise<void> {
   const nowIso = new Date().toISOString();
   const today = new Date().toISOString().slice(0, 10);
   await Promise.all([
-    supabase.from("jobs").update({ status: "late" }).eq("status", "scheduled").lt("scheduled_start_at", nowIso),
-    supabase.from("jobs").update({ status: "late" }).eq("status", "scheduled").is("scheduled_start_at", null).lt("scheduled_date", today),
+    // Arrival window set: late only after the window ends (e.g. after 10:00 for 09:00–10:00).
+    supabase
+      .from("jobs")
+      .update({ status: "late" })
+      .eq("status", "scheduled")
+      .not("scheduled_end_at", "is", null)
+      .lt("scheduled_end_at", nowIso),
+    // Start time only (no end): late after scheduled start (legacy behaviour).
+    supabase
+      .from("jobs")
+      .update({ status: "late" })
+      .eq("status", "scheduled")
+      .is("scheduled_end_at", null)
+      .not("scheduled_start_at", "is", null)
+      .lt("scheduled_start_at", nowIso),
+    // Date-only jobs: late when the calendar day is in the past.
+    supabase
+      .from("jobs")
+      .update({ status: "late" })
+      .eq("status", "scheduled")
+      .is("scheduled_start_at", null)
+      .lt("scheduled_date", today),
   ]);
   lastMarkLateAt = Date.now();
 }

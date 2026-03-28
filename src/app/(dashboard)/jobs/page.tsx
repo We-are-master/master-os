@@ -22,7 +22,7 @@ import {
   MapPin, Building2, TrendingUp,
   CheckCircle2, AlertTriangle, XCircle,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob } from "@/services/jobs";
@@ -38,10 +38,58 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, isJobInProgressStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
-import { jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
+import { formatJobScheduleLine, jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow } from "@/lib/job-arrival-window";
+import { jobMarginPercent, jobProfit } from "@/lib/job-financials";
 
 const JOB_STATUSES = ["scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
+
+function jobBillableAmount(j: Job) {
+  return Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
+}
+
+/** Mini financial strip: amount (incl. extras), partner cost, margin £, margin %. */
+function JobCardFinanceRow({ job }: { job: Job }) {
+  const amount = jobBillableAmount(job);
+  const pc = Number(job.partner_cost ?? 0);
+  const profit = jobProfit(job);
+  const marginPct = jobMarginPercent(job);
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 pt-2.5 border-t border-border-light">
+      <div className="min-w-0">
+        <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
+        <p className="text-xs font-semibold text-text-primary tabular-nums truncate">{formatCurrency(amount)}</p>
+      </div>
+      <div className="min-w-0">
+        <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Partner cost</p>
+        <p className="text-xs font-semibold text-text-secondary tabular-nums truncate">{formatCurrency(pc)}</p>
+      </div>
+      <div className="min-w-0">
+        <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin</p>
+        <p
+          className={cn(
+            "text-xs font-semibold tabular-nums truncate",
+            profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+          )}
+        >
+          {formatCurrency(profit)}
+        </p>
+      </div>
+      <div className="min-w-0">
+        <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin %</p>
+        <p
+          className={cn(
+            "text-xs font-semibold tabular-nums",
+            marginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+          )}
+        >
+          {marginPct}%
+        </p>
+      </div>
+    </div>
+  );
+}
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   scheduled: { label: "Scheduled", variant: "info", dot: true },
@@ -81,7 +129,7 @@ function JobsPageContent() {
     return data.filter((j) => {
       if (filterPartner === "with" && !j.partner_id && !j.partner_name) return false;
       if (filterPartner === "without" && (j.partner_id || j.partner_name)) return false;
-      const hasDate = !!(j.scheduled_date || j.scheduled_start_at);
+      const hasDate = !!(j.scheduled_date || j.scheduled_start_at || j.scheduled_finish_date);
       if (filterScheduled === "scheduled" && !hasDate) return false;
       if (filterScheduled === "unscheduled" && hasDate) return false;
       return true;
@@ -102,7 +150,18 @@ function JobsPageContent() {
       return {
         id,
         title: statusConfig[id]?.label ?? id,
-        color: id === "completed" ? "bg-emerald-500" : id === "late" ? "bg-red-500" : id === "need_attention" ? "bg-amber-500" : id === "awaiting_payment" ? "bg-amber-500" : "bg-primary",
+        color:
+          id === "completed"
+            ? "bg-emerald-500"
+            : id === "cancelled"
+              ? "bg-stone-500"
+              : id === "late"
+                ? "bg-red-500"
+                : id === "need_attention"
+                  ? "bg-amber-500"
+                  : id === "awaiting_payment"
+                    ? "bg-amber-500"
+                    : "bg-primary",
         items: filteredData.filter((j) => j.status === id),
       };
     });
@@ -201,7 +260,10 @@ function JobsPageContent() {
         partner_cost: pc,
         materials_cost: mc,
         margin_percent: margin,
-        scheduled_date: formData.scheduled_date, scheduled_start_at: formData.scheduled_start_at, scheduled_end_at: formData.scheduled_end_at,
+        scheduled_date: formData.scheduled_date,
+        scheduled_start_at: formData.scheduled_start_at,
+        scheduled_end_at: formData.scheduled_end_at,
+        scheduled_finish_date: formData.scheduled_finish_date ?? null,
         job_type: formData.job_type ?? "fixed",
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
         partner_agreed_value: 0, finance_status: "unpaid", service_value: cp,
@@ -381,6 +443,19 @@ function JobsPageContent() {
     { key: "reference", label: "Job", width: "180px", render: (item) => (<div><p className="text-sm font-semibold text-text-primary">{item.reference}</p><p className="text-[11px] text-text-tertiary">{item.title}</p></div>) },
     { key: "client_name", label: "Client / Property", render: (item) => (<div><p className="text-sm font-medium text-text-primary">{item.client_name}</p><p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{item.property_address}</p></div>) },
     { key: "partner_name", label: "Partner", render: (item) => item.partner_name ? (<div className="flex items-center gap-2"><Avatar name={item.partner_name} size="xs" /><span className="text-sm text-text-secondary">{item.partner_name}</span></div>) : <span className="text-xs text-text-tertiary italic">Unassigned</span> },
+    {
+      key: "schedule",
+      label: "Schedule",
+      width: "240px",
+      render: (item) => {
+        const line = formatJobScheduleLine(item);
+        return line ? (
+          <span className="text-xs text-text-secondary leading-snug block max-w-[240px] whitespace-normal">{line}</span>
+        ) : (
+          <span className="text-xs text-text-tertiary">—</span>
+        );
+      },
+    },
     { key: "status", label: "Status", render: (item) => { const c = statusConfig[item.status] ?? { label: item.status, variant: "default" as const }; return <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>; } },
     { key: "account", label: "Account", render: (item) => item.client_id && clientAccountMap[item.client_id] ? <span className="text-sm text-text-primary">{clientAccountMap[item.client_id]}</span> : <span className="text-xs text-text-tertiary italic">No account</span> },
     { key: "margin_percent", label: "Job Amount", render: (item) => (<div><p className="text-sm font-semibold text-text-primary">{formatCurrency(item.client_price + Number(item.extras_amount ?? 0))}</p><span className={`text-[11px] font-medium ${item.margin_percent >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{item.margin_percent}% margin</span></div>) },
@@ -440,7 +515,40 @@ function JobsPageContent() {
             </div>
           </div>
           {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /><BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" /></div>} />}
-          {viewMode === "kanban" && <div className="min-h-[400px]">{loading ? <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div> : <KanbanBoard columns={kanbanColumns} getCardId={(j) => j.id} onCardClick={(j) => router.push(`/jobs/${j.id}`)} renderCard={(j) => { const sc = statusConfig[j.status] ?? { label: j.status }; return (<div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors cursor-pointer"><p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p><p className="text-xs text-text-tertiary truncate">{j.title}</p><p className="text-[10px] text-text-tertiary mt-1 truncate">{sc.label}</p><p className="text-[11px] text-text-secondary mt-0.5">{j.client_name}</p><p className="text-xs font-medium text-primary mt-1">{formatCurrency(j.client_price)}</p></div>); }} />}</div>}
+          {viewMode === "kanban" && (
+            <div className="min-h-[400px]">
+              {loading ? (
+                <div className="flex items-center justify-center py-20 text-text-tertiary">Loading...</div>
+              ) : (
+                <KanbanBoard
+                  columns={kanbanColumns}
+                  getCardId={(j) => j.id}
+                  onCardClick={(j) => router.push(`/jobs/${j.id}`)}
+                  renderCard={(j) => {
+                    const sc = statusConfig[j.status] ?? { label: j.status };
+                    const sched = formatJobScheduleLine(j);
+                    return (
+                      <div className="rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors cursor-pointer overflow-hidden flex flex-col">
+                        {j.property_address?.trim() ? (
+                          <div className="relative w-full aspect-[2/1] min-h-[100px] max-h-[140px] bg-surface-hover">
+                            <LocationMiniMap address={j.property_address} className="h-full w-full" mapHeight="100%" showAddressBelowMap={false} lazy />
+                          </div>
+                        ) : null}
+                        <div className="p-3 flex flex-col flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
+                          <p className="text-xs text-text-tertiary truncate">{j.title}</p>
+                          <p className="text-[10px] text-text-tertiary mt-1 truncate">{sc.label}</p>
+                          {sched ? <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug">{sched}</p> : null}
+                          <p className="text-[11px] text-text-secondary mt-0.5 truncate">{j.client_name}</p>
+                          <JobCardFinanceRow job={j} />
+                        </div>
+                      </div>
+                    );
+                  }}
+                />
+              )}
+            </div>
+          )}
           {viewMode === "calendar" && <JobsCalendarView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
           {viewMode === "map" && <JobsMapView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
         </motion.div>
@@ -458,7 +566,7 @@ export default function JobsPage() {
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
   const [form, setForm] = useState({
-    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", finish_date: "", finish_time: "", job_type: "fixed", scope: "",
+    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "", job_type: "fixed", scope: "",
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -475,37 +583,40 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     e.preventDefault();
     if (!form.title) { toast.error("Type of work is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
-    if ((form.scheduled_date && !form.finish_date) || (!form.scheduled_date && form.finish_date)) {
-      toast.error("Arrival window requires both start and finish dates.");
-      return;
-    }
-    if ((form.scheduled_time && !form.finish_time) || (!form.scheduled_time && form.finish_time)) {
-      toast.error("Arrival window requires both start and finish times.");
-      return;
-    }
-    if (form.scheduled_date && form.scheduled_time && form.finish_date && form.finish_time) {
-      const start = new Date(`${form.scheduled_date}T${form.scheduled_time}:00`);
-      const end = new Date(`${form.finish_date}T${form.finish_time}:00`);
-      if (!(end > start)) {
-        toast.error("Finish date and time must be after start date and time.");
-        return;
-      }
-    }
-    if (form.scheduled_date && form.finish_date && !form.scheduled_time && !form.finish_time) {
-      const start = new Date(`${form.scheduled_date}T09:00:00`);
-      const end = new Date(`${form.finish_date}T17:00:00`);
-      if (!(end > start)) {
-        toast.error("Finish date and time must be after start date and time.");
-        return;
-      }
-    }
-    if ((form.scheduled_date || form.finish_date) && (!form.scheduled_time || !form.finish_time)) {
-      toast.error("Please set both start and finish times.");
-      return;
-    }
+    const hasPartner = !!(form.partner_id || form.partner_ids.length > 0);
     const scheduled_date = form.scheduled_date || undefined;
-    const scheduled_start_at = form.scheduled_date && form.scheduled_time ? `${form.scheduled_date}T${form.scheduled_time}:00` : form.scheduled_date ? `${form.scheduled_date}T09:00:00` : undefined;
-    const scheduled_end_at = form.finish_date && form.finish_time ? `${form.finish_date}T${form.finish_time}:00` : undefined;
+    const hasFrom = !!form.arrival_from?.trim();
+    const windowMinsRaw = form.arrival_window_mins?.trim();
+    const windowMins = windowMinsRaw ? Number(windowMinsRaw) : NaN;
+    const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
+    if ((hasFrom && !hasWindow) || (!hasFrom && hasWindow)) {
+      toast.error("Set both arrival from and arrival window length, or leave both empty.");
+      return;
+    }
+    if (hasPartner) {
+      if (!scheduled_date?.trim()) {
+        toast.error("Set a scheduled date before assigning a partner.");
+        return;
+      }
+      if (!hasFrom || !hasWindow) {
+        toast.error("Set arrival from and window length when assigning a partner.");
+        return;
+      }
+    }
+    const expected_finish = form.expected_finish_date?.trim() || undefined;
+    if (expected_finish && scheduled_date && expected_finish < scheduled_date) {
+      toast.error("Expected finish date must be on or after the arrival date.");
+      return;
+    }
+    let scheduled_start_at: string | undefined;
+    let scheduled_end_at: string | undefined;
+    if (scheduled_date && hasFrom && hasWindow) {
+      scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
+      scheduled_end_at = scheduledEndFromWindow(scheduled_date, form.arrival_from, windowMins);
+    } else if (scheduled_date && hasFrom) {
+      scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
+    }
+    const scheduled_finish_date = expected_finish ?? null;
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     onCreate({
       title: form.title,
@@ -523,10 +634,11 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       scheduled_date,
       scheduled_start_at,
       scheduled_end_at,
+      scheduled_finish_date,
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
     });
-    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", finish_date: "", finish_time: "", job_type: "fixed", scope: "" });
+    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "", job_type: "fixed", scope: "" });
     setClientAddress({ client_name: "", property_address: "" });
   };
 
@@ -545,11 +657,16 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date</label><Input type="date" className="h-9 text-sm" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
-          <div><TimeSelect label="Arrival from" value={form.scheduled_time} onChange={(v) => update("scheduled_time", v)} /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Finish date</label><Input type="date" className="h-9 text-sm" value={form.finish_date} onChange={(e) => update("finish_date", e.target.value)} /></div>
-          <div><TimeSelect label="Arrival to" value={form.finish_time} onChange={(v) => update("finish_time", v)} /></div>
+          <div><TimeSelect label="Arrival from" value={form.arrival_from} onChange={(v) => update("arrival_from", v)} /></div>
+          <Select
+            label="Arrival window"
+            value={form.arrival_window_mins}
+            onChange={(e) => update("arrival_window_mins", e.target.value)}
+            options={[...ARRIVAL_WINDOW_OPTIONS]}
+          />
+          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish date</label><Input type="date" className="h-9 text-sm" value={form.expected_finish_date} onChange={(e) => update("expected_finish_date", e.target.value)} /></div>
         </div>
-        <p className="text-[10px] text-text-tertiary -mt-2">Arrival range: from (start) to (finish).</p>
+        <p className="text-[10px] text-text-tertiary -mt-2">Arrival window = start time plus the length you pick (end time is calculated). Expected finish is date-only for the calendar. With a partner, arrival date, start time, and window length are required.</p>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work {form.partner_id || form.partner_ids.length > 0 ? "*" : ""}</label>
           <textarea
@@ -687,7 +804,7 @@ function JobsCalendarView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading
                           : "bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
                     }`}
                   >
-                    {kind === "start" ? "Start" : kind === "end" ? "Finish" : "In progress"} · {job.reference}
+                    {kind === "start" ? "Arrival" : kind === "end" ? "Expected finish" : "Ongoing"} · {job.reference}
                   </button>
                 ))}
                 {(jobsByDay[day] ?? []).length > 2 && <span className="text-[10px] text-text-tertiary">+{(jobsByDay[day] ?? []).length - 2}</span>}
@@ -706,13 +823,28 @@ function JobsMapView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boo
   if (withAddress.length === 0) return <div className="py-20 text-center text-text-tertiary text-sm">No jobs with address to show on map.</div>;
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {withAddress.slice(0, 12).map((j) => (
-        <button key={j.id} type="button" onClick={() => onSelectJob(j)} className="text-left rounded-xl border border-border bg-card p-4 hover:border-primary/40 transition-colors">
-          <p className="text-sm font-semibold text-text-primary">{j.reference}</p>
-          <p className="text-xs text-text-tertiary truncate">{j.property_address}</p>
-          <div className="mt-2 h-24 rounded-lg overflow-hidden bg-surface-hover"><LocationMiniMap address={j.property_address} className="h-full w-full" /></div>
-        </button>
-      ))}
+      {withAddress.slice(0, 12).map((j) => {
+        const mapSched = formatJobScheduleLine(j);
+        return (
+          <button
+            key={j.id}
+            type="button"
+            onClick={() => onSelectJob(j)}
+            className="text-left rounded-xl border border-border bg-card overflow-hidden hover:border-primary/40 transition-colors flex flex-col w-full min-w-0"
+          >
+            <div className="relative w-full aspect-[16/9] min-h-[160px] sm:min-h-[180px] bg-surface-hover">
+              <LocationMiniMap address={j.property_address} className="h-full w-full" mapHeight="100%" showAddressBelowMap={false} lazy />
+            </div>
+            <div className="p-3 sm:p-4 flex flex-col flex-1 min-w-0">
+              <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
+              <p className="text-xs text-text-tertiary truncate mt-0.5">{j.title}</p>
+              <p className="text-xs text-text-tertiary truncate mt-1">{j.property_address}</p>
+              {mapSched ? <p className="text-[10px] text-text-secondary mt-1.5 line-clamp-2 leading-snug">{mapSched}</p> : null}
+              <JobCardFinanceRow job={j} />
+            </div>
+          </button>
+        );
+      })}
       {withAddress.length > 12 && <p className="col-span-full text-xs text-text-tertiary text-center">Showing 12 of {withAddress.length} jobs</p>}
     </div>
   );

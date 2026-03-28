@@ -36,6 +36,7 @@ import {
 import { uploadPartnerAvatar } from "@/services/partner-avatar-storage";
 import { getStatusCounts } from "@/services/base";
 import { getSupabase } from "@/services/base";
+import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { useProfile } from "@/hooks/use-profile";
 import type { ListParams } from "@/services/base";
 import {
@@ -114,6 +115,9 @@ interface PartnerJobRow {
   partner_cost: number;
   materials_cost: number;
   scheduled_date?: string;
+  scheduled_start_at?: string;
+  scheduled_end_at?: string;
+  scheduled_finish_date?: string | null;
   created_at: string;
 }
 
@@ -1840,6 +1844,7 @@ function PartnerDetailDrawer({
             {!loadingJobs && partnerJobs.map((job) => {
               const jConfig = jobStatusConfig[job.status] || { label: job.status, variant: "default" as const };
               const profit = Number(job.client_price) - Number(job.partner_cost) - Number(job.materials_cost);
+              const partnerSchedLine = formatJobScheduleLine(job);
               return (
                 <motion.div key={job.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
                   <div className="flex items-start justify-between">
@@ -1877,7 +1882,9 @@ function PartnerDetailDrawer({
                       Phase {job.current_phase}/{Math.max(job.total_phases, 1)}
                     </span>
                   </div>
-                  {job.scheduled_date && <p className="text-[10px] text-text-tertiary mt-2">Scheduled: {new Date(job.scheduled_date).toLocaleDateString()}</p>}
+                  {partnerSchedLine ? (
+                    <p className="text-[10px] text-text-secondary mt-2 leading-snug">{partnerSchedLine}</p>
+                  ) : null}
                 </motion.div>
               );
             })}
