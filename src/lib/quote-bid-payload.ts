@@ -23,8 +23,8 @@ export function bidPayloadTrimmedString(v: unknown): string {
 }
 
 export function parseBidProposalFromNotes(notes: string | undefined | null): PartnerBidProposalPayload | null {
-  if (!notes?.trim()) return null;
-  const t = notes.trim();
+  const t = bidPayloadTrimmedString(notes as unknown);
+  if (!t) return null;
   const jsonSlice = t.startsWith(BID_JSON_PREFIX) ? t.slice(BID_JSON_PREFIX.length).trim() : t;
   if (!jsonSlice.startsWith("{")) return null;
   try {
