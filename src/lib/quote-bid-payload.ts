@@ -15,6 +15,13 @@ export type PartnerBidProposalPayload = {
 
 const BID_JSON_PREFIX = "BID_JSON:";
 
+/** JSON fields may be numbers or other types from partner apps — never call .trim() on unknown. */
+export function bidPayloadTrimmedString(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v.trim();
+  return String(v).trim();
+}
+
 export function parseBidProposalFromNotes(notes: string | undefined | null): PartnerBidProposalPayload | null {
   if (!notes?.trim()) return null;
   const t = notes.trim();
@@ -58,13 +65,13 @@ export function summarizeBidProposalNotes(notes: string | undefined | null): str
   if (p.deposit_required != null && Number.isFinite(Number(p.deposit_required)) && Number(p.deposit_required) > 0) {
     parts.push(`Deposit £${Number(p.deposit_required).toFixed(2)}`);
   }
-  const d1 = p.start_date_option_1?.trim().slice(0, 10);
-  const d2 = p.start_date_option_2?.trim().slice(0, 10);
+  const d1 = bidPayloadTrimmedString(p.start_date_option_1).slice(0, 10);
+  const d2 = bidPayloadTrimmedString(p.start_date_option_2).slice(0, 10);
   if (d1) parts.push(`Start A: ${d1}`);
   if (d2) parts.push(`Start B: ${d2}`);
-  if (p.scope?.trim()) {
-    const s = p.scope.trim();
-    parts.push(s.length > 120 ? `${s.slice(0, 120)}…` : s);
+  const scopeStr = bidPayloadTrimmedString(p.scope);
+  if (scopeStr) {
+    parts.push(scopeStr.length > 120 ? `${scopeStr.slice(0, 120)}…` : scopeStr);
   }
   return parts.length ? parts.join(" · ") : null;
 }
