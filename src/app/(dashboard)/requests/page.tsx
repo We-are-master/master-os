@@ -42,6 +42,7 @@ import { estimatedValueFromCatalog, lineItemDefaultsFromCatalog } from "@/lib/ca
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { isUuid } from "@/lib/utils";
+import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   new: { label: "New", variant: "primary" },
@@ -603,14 +604,17 @@ export default function RequestsPage() {
                         }));
                       }}
                     />
-                    <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Service name (on request)</label>
-                      <Input
-                        value={drawerFields.service_type}
-                        onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
-                        placeholder="e.g. Plumbing"
-                      />
-                    </div>
+                    <Select
+                      label="Type of work"
+                      value={drawerFields.service_type}
+                      onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
+                      options={[
+                        { value: "", label: "Select type of work..." },
+                        ...[...new Set([...TYPE_OF_WORK_OPTIONS, ...catalogServices.map((c) => c.name)])]
+                          .sort((a, b) => a.localeCompare(b))
+                          .map((name) => ({ value: name, label: name })),
+                      ]}
+                    />
                     <div>
                       <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
                       <textarea
@@ -1364,6 +1368,11 @@ const REQUEST_SOURCES: { value: ServiceRequest["source"]; label: string }[] = [
   { value: "b2b", label: "B2B" },
 ];
 
+const REQUEST_KIND_OPTIONS = [
+  { value: "quote", label: "Quote Request" },
+  { value: "work", label: "Work Request" },
+] as const;
+
 function CreateRequestModal({
   open,
   onClose,
@@ -1383,6 +1392,7 @@ function CreateRequestModal({
   const [postcode, setPostcode] = useState("");
   const [form, setForm] = useState({
     client_phone: "",
+    request_kind: "",
     source: "manual" as ServiceRequest["source"],
     catalog_service_id: "",
     service_type: "",
@@ -1398,6 +1408,7 @@ function CreateRequestModal({
     setPostcode("");
     setForm({
       client_phone: "",
+      request_kind: "",
       source: "manual",
       catalog_service_id: "",
       service_type: "",
@@ -1407,6 +1418,11 @@ function CreateRequestModal({
     });
   }, [open]);
 
+  const typeOfWorkOptions = useMemo(() => {
+    const fromCatalog = catalogServices.map((c) => c.name);
+    return [...new Set([...TYPE_OF_WORK_OPTIONS, ...fromCatalog])].sort((a, b) => a.localeCompare(b));
+  }, [catalogServices]);
+
   useEffect(() => {
     const ex = extractUkPostcode(clientAddress.property_address);
     if (ex) setPostcode(ex);
@@ -1415,6 +1431,10 @@ function CreateRequestModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (form.request_kind !== "work" && form.request_kind !== "quote") {
+      toast.error("Request type is required.");
+      return;
+    }
     if (!clientAddress.client_id) {
       toast.error(
         "The client must be linked: click their name in the list, press Enter, or tab away after typing the exact name. If you only typed text without confirming, the system has no client ID."
@@ -1432,6 +1452,10 @@ function CreateRequestModal({
     }
     if (!form.service_type.trim()) {
       toast.error("Enter a service name (or pick a catalog template).");
+      return;
+    }
+    if (form.request_kind === "work" && !form.catalog_service_id.trim()) {
+      toast.error("For Work Request, select a Call Out type from Services.");
       return;
     }
     const cid = form.catalog_service_id.trim();
@@ -1457,6 +1481,24 @@ function CreateRequestModal({
   return (
     <Modal open={open} onClose={onClose} title="New Service Request" subtitle="Create a new incoming request" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <Select
+          label="Request type"
+          value={form.request_kind}
+          onChange={(e) => {
+            const next = e.target.value as "" | "quote" | "work";
+            setForm((prev) => ({
+              ...prev,
+              request_kind: next,
+              catalog_service_id: "",
+              service_type: "",
+              estimated_value: "",
+            }));
+          }}
+          options={[
+            { value: "", label: "Select request type..." },
+            ...REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+          ]}
+        />
         <div>
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; property *</p>
           <p className="text-xs text-text-tertiary mb-3">Search for an existing client or create a new one. This link is kept when you convert to quote or job.</p>
@@ -1485,39 +1527,51 @@ function CreateRequestModal({
           <Select label="Source" value={form.source ?? "manual"} onChange={(e) => update("source", e.target.value)} options={REQUEST_SOURCES.map((s) => ({ value: s.value!, label: s.label }))} />
         </div>
         <div className="space-y-3">
-          <ServiceCatalogSelect
-            catalog={catalogServices}
-            value={form.catalog_service_id}
-            onChange={(id, svc) => {
-              setForm((prev) => ({
-                ...prev,
-                catalog_service_id: id,
-                ...(svc
-                  ? {
-                      service_type: svc.name,
-                      description: (svc.default_description?.trim() || prev.description) ?? "",
-                      estimated_value: String(estimatedValueFromCatalog(svc)),
-                    }
-                  : {}),
-              }));
-            }}
-          />
-          <p className="text-[10px] text-text-tertiary">You can change name, description and value below — catalog is only a starting point.</p>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Service name *</label>
-              <Input
-                value={form.service_type}
-                onChange={(e) => update("service_type", e.target.value)}
-                placeholder="e.g. Plumbing repair"
-                required
+          {form.request_kind === "work" ? (
+            <>
+              <Select
+                label="Call Out type"
+                value={form.catalog_service_id}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const svc = catalogServices.find((c) => c.id === id);
+                  setForm((prev) => ({
+                    ...prev,
+                    catalog_service_id: id,
+                    service_type: svc?.name ?? "",
+                    description: svc?.default_description?.trim() || prev.description,
+                    estimated_value: svc ? String(estimatedValueFromCatalog(svc)) : prev.estimated_value,
+                  }));
+                }}
+                options={[
+                  { value: "", label: "Select call out type..." },
+                  ...catalogServices.map((c) => ({
+                    value: c.id,
+                    label: `${c.name} — ${estimatedValueFromCatalog(c).toFixed(2)}`,
+                  })),
+                ]}
               />
-            </div>
-            <Select label="Priority" value={form.priority} onChange={(e) => update("priority", e.target.value)} options={[
-              { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
-              { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
-            ]} />
-          </div>
+              <p className="text-[10px] text-text-tertiary">Values are loaded from Services and can be adjusted if needed.</p>
+            </>
+          ) : form.request_kind === "quote" ? (
+            <Select
+              label="Service name *"
+              value={form.service_type}
+              onChange={(e) => update("service_type", e.target.value)}
+              options={[
+                { value: "", label: "Select type of work..." },
+                ...typeOfWorkOptions.map((name) => ({ value: name, label: name })),
+              ]}
+            />
+          ) : (
+            <p className="text-xs text-amber-600 dark:text-amber-400 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2">
+              Select Request type first.
+            </p>
+          )}
+          <Select label="Priority" value={form.priority} onChange={(e) => update("priority", e.target.value)} options={[
+            { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
+            { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
+          ]} />
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
