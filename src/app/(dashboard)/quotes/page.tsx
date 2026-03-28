@@ -62,11 +62,11 @@ import {
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
 
 /** Two starter rows: type of work + materials (partner app aligns with this shape). */
-function defaultProposalLineItems(q: Quote): { description: string; quantity: string; unitPrice: string }[] {
+function defaultProposalLineItems(q: Quote): ProposalLineRow[] {
   const title = bidPayloadTrimmedString(q.title as unknown) || "Type of work";
   return [
-    { description: title, quantity: "1", unitPrice: "0" },
-    { description: "Materials", quantity: "1", unitPrice: "0" },
+    { description: title, quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" },
+    { description: "Materials", quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" },
   ];
 }
 
@@ -75,7 +75,27 @@ function marginPctOnSell(sell: number, partnerCost: number): number {
   return Math.round(((sell - partnerCost) / sell) * 1000) / 10;
 }
 
-type ProposalLineRow = { description: string; quantity: string; unitPrice: string };
+type ProposalLineRow = {
+  description: string;
+  quantity: string;
+  /** Customer unit sell price */
+  unitPrice: string;
+  /** Partner cost per unit (fixed when from approved bid on the first two lines) */
+  partnerUnitCost: string;
+  notes?: string;
+};
+
+function linePartnerSubtotal(li: ProposalLineRow | undefined): number {
+  if (!li) return 0;
+  return (Number(li.quantity) || 0) * (Number(li.partnerUnitCost) || 0);
+}
+
+function lineItemDescriptionForCustomer(li: ProposalLineRow): string {
+  const d = bidPayloadTrimmedString(li.description as unknown);
+  const n = bidPayloadTrimmedString(li.notes as unknown);
+  if (!n) return d;
+  return `${d} (Note: ${n})`;
+}
 
 function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
   lines: ProposalLineRow[];
@@ -97,8 +117,8 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
   const u1 = Math.round(sell1 * 100) / 100;
   return {
     lines: [
-      { description: line0Desc, quantity: "1", unitPrice: String(u0) },
-      { description: line1Desc, quantity: "1", unitPrice: String(u1) },
+      { description: line0Desc, quantity: "1", unitPrice: String(u0), partnerUnitCost: String(L), notes: "" },
+      { description: line1Desc, quantity: "1", unitPrice: String(u1), partnerUnitCost: String(M), notes: "" },
     ],
     labourP: L,
     materialsP: M,
@@ -897,7 +917,7 @@ function QuoteDetailDrawer({
   const [quoteEmailedInSession, setQuoteEmailedInSession] = useState(false);
   const [sendState, setSendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [sendEmail, setSendEmail] = useState("");
-  const [lineItems, setLineItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([]);
+  const [lineItems, setLineItems] = useState<ProposalLineRow[]>([]);
   const [scopeText, setScopeText] = useState("");
   const [convertedJob, setConvertedJob] = useState<Job | null>(null);
   const [invitePartnerOpen, setInvitePartnerOpen] = useState(false);
@@ -905,8 +925,6 @@ function QuoteDetailDrawer({
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
   const [bids, setBids] = useState<QuoteBid[]>([]);
   const [bidsLoading, setBidsLoading] = useState(false);
-  const [panelPartnerCost, setPanelPartnerCost] = useState("");
-  const [panelSellPrice, setPanelSellPrice] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
   const [proposalSaving, setProposalSaving] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
@@ -914,8 +932,6 @@ function QuoteDetailDrawer({
   const [pricingOpen, setPricingOpen] = useState(false);
   /** 100 = 100% of (labour ×1.4 + materials ×1.25) customer prices; range 0–1000. */
   const [proposalScalePercent, setProposalScalePercent] = useState(100);
-  const [partnerLabourCost, setPartnerLabourCost] = useState(0);
-  const [partnerMaterialsCost, setPartnerMaterialsCost] = useState(0);
   // Send to customer / preview — must stay above useLayoutEffect (Rules of Hooks).
   const [depositRequired, setDepositRequired] = useState("");
   const [startDate1, setStartDate1] = useState("");
@@ -951,23 +967,8 @@ function QuoteDetailDrawer({
     setStartDate1(bidPayloadTrimmedString(quote.start_date_option_1 as unknown));
     setStartDate2(bidPayloadTrimmedString(quote.start_date_option_2 as unknown));
     setCustomMessage(bidPayloadTrimmedString(quote.email_custom_message as unknown));
-    setPanelPartnerCost(String(quote.partner_cost ?? quote.cost ?? 0));
-    setPanelSellPrice(String(quote.sell_price ?? quote.total_value ?? 0));
     setProposalScalePercent(100);
-    setPartnerLabourCost(Number(quote.partner_cost ?? quote.cost ?? 0));
-    setPartnerMaterialsCost(0);
     void loadLineItems(quote.id, quote);
-    if (quote.quote_type === "partner") {
-      void getBidsByQuoteId(quote.id)
-        .then((bids) => {
-          const approved = bids.find((b) => b.status === "approved");
-          if (!approved) return;
-          const { labour, materials } = splitBidPartnerCosts(approved.bid_amount, parseBidProposalFromNotes(approved.notes));
-          setPartnerLabourCost(labour);
-          setPartnerMaterialsCost(materials);
-        })
-        .catch(() => {});
-    }
   }, [quote]);
 
   useEffect(() => {
@@ -986,7 +987,7 @@ function QuoteDetailDrawer({
       const items = lineItems.map((li) => {
         const qty = Number(li.quantity) || 1;
         const unit = Number(li.unitPrice) || 0;
-        return { description: li.description, quantity: qty, unitPrice: unit, total: qty * unit };
+        return { description: lineItemDescriptionForCustomer(li), quantity: qty, unitPrice: unit, total: qty * unit };
       });
       Promise.all([
         fetch(`/api/quotes/preview-links?quoteId=${encodeURIComponent(quote.id)}`).then((r) => r.ok ? r.json() : null),
@@ -1020,18 +1021,22 @@ function QuoteDetailDrawer({
     const supabase = getSupabase();
     const { data } = await supabase.from("quote_line_items").select("*").eq("quote_id", quoteId).order("sort_order");
     if (data && data.length > 0) {
-      let rows = data.map((li: { description: string; quantity: number; unit_price: number }) => ({
-        description: bidPayloadTrimmedString(li.description as unknown),
-        quantity: String(li.quantity ?? 1),
-        unitPrice: String(li.unit_price ?? 0),
-      }));
+      let rows: ProposalLineRow[] = data.map(
+        (li: { description: string; quantity: number; unit_price: number; partner_unit_cost?: number | null; notes?: string | null }) => ({
+          description: bidPayloadTrimmedString(li.description as unknown),
+          quantity: String(li.quantity ?? 1),
+          unitPrice: String(li.unit_price ?? 0),
+          partnerUnitCost: String(li.partner_unit_cost ?? 0),
+          notes: bidPayloadTrimmedString(li.notes as unknown),
+        }),
+      );
       const padStatuses = ["draft", "in_survey", "bidding", "awaiting_customer"];
       if (rows.length < 2 && padStatuses.includes(q.status)) {
         const title = bidPayloadTrimmedString(q.title as unknown) || "Type of work";
         if (rows.length === 0) {
           rows = defaultProposalLineItems(q);
         } else {
-          rows = [...rows, { description: "Materials", quantity: "1", unitPrice: "0" }];
+          rows = [...rows, { description: "Materials", quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" }];
           if (!bidPayloadTrimmedString(rows[0].description as unknown)) rows[0] = { ...rows[0], description: title };
         }
       }
@@ -1061,28 +1066,15 @@ function QuoteDetailDrawer({
   }, []);
 
   useEffect(() => {
-    if (tab === "bids") loadBids(quote.id);
-  }, [quote.id, tab, loadBids]);
+    if (quote.quote_type === "partner") loadBids(quote.id);
+  }, [quote.id, quote.quote_type, loadBids]);
 
   useEffect(() => {
     if (!isAdmin) return;
     listAssignableUsers().then(setAssignableUsers).catch(() => {});
   }, [isAdmin]);
 
-  const handleDrawerSellFromMargin = useCallback((v: number) => {
-    setPanelSellPrice(String(v));
-  }, []);
-
-  const handleDrawerMarginPct = useCallback(() => {}, []);
-
-  const drawerInitialMarginPct = useMemo(() => {
-    const sp = Number(quote.sell_price ?? quote.total_value ?? 0);
-    const pc = Number(quote.partner_cost ?? quote.cost ?? 0);
-    if (sp <= 0 || !Number.isFinite(sp)) return 40;
-    const raw = Math.round(((sp - pc) / sp) * 1000) / 10;
-    if (!Number.isFinite(raw)) return 40;
-    return Math.min(99.9, Math.max(0, raw));
-  }, [quote]);
+  const approvedBid = useMemo(() => bids.find((b) => b.status === "approved") ?? null, [bids]);
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
   const actions = getQuoteActions(quote);
@@ -1091,10 +1083,13 @@ function QuoteDetailDrawer({
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const proposalLine0Sell = (Number(lineItems[0]?.quantity) || 0) * (Number(lineItems[0]?.unitPrice) || 0);
   const proposalLine1Sell = (Number(lineItems[1]?.quantity) || 0) * (Number(lineItems[1]?.unitPrice) || 0);
-  const proposalMarginLabourPct = marginPctOnSell(proposalLine0Sell, partnerLabourCost);
-  const proposalMarginMaterialsPct = marginPctOnSell(proposalLine1Sell, partnerMaterialsCost);
-  const proposalPartnerTotal = partnerLabourCost + partnerMaterialsCost;
-  const canUseProposalMarginSlider = proposalPartnerTotal > 0;
+  const proposalLine0Partner = linePartnerSubtotal(lineItems[0]);
+  const proposalLine1Partner = linePartnerSubtotal(lineItems[1]);
+  const proposalMarginLabourPct = marginPctOnSell(proposalLine0Sell, proposalLine0Partner);
+  const proposalMarginMaterialsPct = marginPctOnSell(proposalLine1Sell, proposalLine1Partner);
+  const proposalPartnerTotal = lineItems.reduce((s, li) => s + linePartnerSubtotal(li), 0);
+  const partnerBasisLines01 = proposalLine0Partner + proposalLine1Partner;
+  const canUseProposalMarginSlider = partnerBasisLines01 > 0;
 
   // Email flow step-by-step (only relevant when quote.status === "awaiting_customer")
   const sendStep1Ready =
@@ -1115,7 +1110,8 @@ function QuoteDetailDrawer({
 
   const guidance = getStageGuidance(quote.status);
 
-  const addLineItem = () => setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0" }]);
+  const addLineItem = () =>
+    setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" }]);
   const removeLineItem = (idx: number) => {
     setLineItems((prev) => {
       if (prev.length <= 2 && ["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status)) {
@@ -1126,9 +1122,11 @@ function QuoteDetailDrawer({
     });
   };
 
-  const recalcCustomerLinePricesFromPartnerScale = useCallback((scalePct: number, labourP: number, materialsP: number) => {
+  const recalcCustomerLinePricesFromPartnerScale = useCallback((scalePct: number) => {
     const m = scalePct / 100;
     setLineItems((prev) => {
+      const labourP = linePartnerSubtotal(prev[0]);
+      const materialsP = linePartnerSubtotal(prev[1]);
       const q0 = Number(prev[0]?.quantity) || 1;
       const q1 = Number(prev[1]?.quantity) || 1;
       const sell0 = labourP * (1 + BID_DEFAULT_LABOUR_MARKUP) * m;
@@ -1136,8 +1134,8 @@ function QuoteDetailDrawer({
       const u0 = q0 > 0 ? Math.round((sell0 / q0) * 100) / 100 : 0;
       const u1 = q1 > 0 ? Math.round((sell1 / q1) * 100) / 100 : 0;
       const next = [...prev];
-      if (next[0]) next[0] = { ...next[0], unitPrice: String(u0) };
-      if (next[1]) next[1] = { ...next[1], unitPrice: String(u1) };
+      if (next[0]) next[0] = { ...next[0], unitPrice: String(u0), notes: next[0].notes ?? "" };
+      if (next[1]) next[1] = { ...next[1], unitPrice: String(u1), notes: next[1].notes ?? "" };
       return next;
     });
   }, []);
@@ -1157,7 +1155,8 @@ function QuoteDetailDrawer({
     const d1 = opts?.startDate1Override !== undefined ? opts.startDate1Override : startDate1;
     const d2 = opts?.startDate2Override !== undefined ? opts.startDate2Override : startDate2;
     const dep = opts?.depositOverride !== undefined ? opts.depositOverride : depositRequired;
-    const partnerTotal = opts?.partnerCostOverride ?? Number(quote.partner_cost ?? quote.cost ?? 0);
+    const partnerTotalFromLines = lines.reduce((s, li) => s + linePartnerSubtotal(li), 0);
+    const partnerTotal = opts?.partnerCostOverride ?? partnerTotalFromLines;
 
     const supabase = getSupabase();
     await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
@@ -1166,7 +1165,9 @@ function QuoteDetailDrawer({
       description: li.description,
       quantity: Number(li.quantity) || 1,
       unit_price: Number(li.unitPrice) || 0,
+      partner_unit_cost: Number(li.partnerUnitCost) || 0,
       sort_order: i,
+      notes: bidPayloadTrimmedString(li.notes as unknown) || null,
     }));
     if (rows.length > 0) await supabase.from("quote_line_items").insert(rows);
 
@@ -1175,6 +1176,7 @@ function QuoteDetailDrawer({
       lineTot > 0 && partnerTotal >= 0 ? Math.round(((lineTot - partnerTotal) / lineTot) * 1000) / 10 : 0;
 
     return updateQuote(quote.id, {
+      partner_cost: partnerTotal,
       total_value: lineTot,
       sell_price: lineTot,
       margin_percent: marginPct,
@@ -1209,7 +1211,7 @@ function QuoteDetailDrawer({
       const items = lineItems.map((li) => {
         const qty = Number(li.quantity) || 1;
         const unit = Number(li.unitPrice) || 0;
-        return { description: li.description, quantity: qty, unitPrice: unit, total: qty * unit };
+        return { description: lineItemDescriptionForCustomer(li), quantity: qty, unitPrice: unit, total: qty * unit };
       });
       const res = await fetch("/api/quotes/send-pdf", {
         method: "POST",
@@ -1384,45 +1386,123 @@ function QuoteDetailDrawer({
                   <div className="flex items-center gap-2 min-w-0">
                     <SlidersHorizontal className="h-4 w-4 shrink-0 text-text-tertiary" />
                     <span className="text-xs font-semibold text-text-secondary">Pricing & margin</span>
-                    <span className="text-[10px] text-text-tertiary truncate">Partner cost, margin slider, save</span>
+                    <span className="text-[10px] text-text-tertiary truncate">Bid summary · customer sell scale</span>
                   </div>
                   <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="border-t border-border-light dark:border-border px-4 pb-4 space-y-3">
-                <div className="pt-1">
-                  <p className="text-[10px] text-text-secondary uppercase mb-1">Partner cost</p>
-                  <Input
-                    type="number"
+                {approvedBid ? (
+                  <div className="rounded-xl border border-primary/20 bg-primary/5 dark:bg-primary/10 px-3 py-2.5 space-y-1.5">
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Approved bid summary</p>
+                    <p className="text-sm font-semibold text-text-primary">{approvedBid.partner_name ?? approvedBid.partner_id}</p>
+                    <p className="text-xs text-text-secondary">
+                      Bid total <span className="font-bold text-primary tabular-nums">{formatCurrency(approvedBid.bid_amount)}</span>
+                      {(() => {
+                        const p = parseBidProposalFromNotes(approvedBid.notes);
+                        if (!p) return null;
+                        const { labour, materials } = splitBidPartnerCosts(approvedBid.bid_amount, p);
+                        return (
+                          <span className="text-text-tertiary">
+                            {" "}
+                            · Labour <span className="font-semibold tabular-nums">{formatCurrency(labour)}</span>
+                            {" · "}
+                            Materials <span className="font-semibold tabular-nums">{formatCurrency(materials)}</span>
+                          </span>
+                        );
+                      })()}
+                    </p>
+                    {(() => {
+                      const bidSummaryLine = summarizeBidProposalNotes(approvedBid.notes);
+                      return bidSummaryLine ? (
+                        <p className="text-[11px] text-text-tertiary leading-snug">{bidSummaryLine}</p>
+                      ) : null;
+                    })()}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-border-light bg-surface-hover/60 px-3 py-2 text-[11px] text-text-tertiary leading-snug">
+                    {quote.quote_type === "partner"
+                      ? "No approved bid yet — use the Bids tab to approve one (partner unit costs lock on the first two lines). Enter partner unit cost on each line in the proposal, then scale customer sell below."
+                      : "Manual quote — set partner unit cost and customer sell per line in the proposal section. Use the scale below to adjust customer prices; partner line costs stay fixed."}
+                  </div>
+                )}
+
+                <div className="rounded-xl border border-border-light bg-card/80 dark:bg-surface-secondary/30 p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer sell scale</p>
+                    <span className="text-xs font-bold tabular-nums text-primary">{proposalScalePercent}%</span>
+                  </div>
+                  <p className="text-[10px] text-text-tertiary leading-snug">
+                    Moves only <strong className="font-semibold text-text-secondary">customer unit sell</strong> on lines 1–2. Partner unit costs on those lines stay as set (from the bid or your edits).
+                  </p>
+                  <input
+                    type="range"
                     min={0}
-                    step={0.01}
-                    value={panelPartnerCost}
-                    onChange={(e) => setPanelPartnerCost(e.target.value)}
-                    className="text-sm font-semibold h-9 max-w-[200px]"
+                    max={1000}
+                    step={1}
+                    value={proposalScalePercent}
+                    disabled={!canUseProposalMarginSlider}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setProposalScalePercent(v);
+                      recalcCustomerLinePricesFromPartnerScale(v);
+                    }}
+                    className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-40 disabled:cursor-not-allowed bg-border dark:bg-zinc-700"
                   />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
+                      <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 1 · Labour</p>
+                      <p className="text-[11px] text-text-secondary mt-1">
+                        Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine0Partner)}</span>
+                        {" · "}
+                        Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine0Sell)}</span>
+                      </p>
+                      <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginLabourPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                        Margin {proposalMarginLabourPct}%
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
+                      <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 2 · Materials</p>
+                      <p className="text-[11px] text-text-secondary mt-1">
+                        Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine1Partner)}</span>
+                        {" · "}
+                        Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine1Sell)}</span>
+                      </p>
+                      <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginMaterialsPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                        Margin {proposalMarginMaterialsPct}%
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <MarginCalculator
-                  key={`margin-drawer-${quote.id}-${quote.updated_at}`}
-                  cost={Number(panelPartnerCost) || 0}
-                  initialMarginPct={drawerInitialMarginPct}
-                  anchorSellPrice={Number(panelSellPrice) || 0}
-                  onSellPriceChange={handleDrawerSellFromMargin}
-                  onMarginChange={handleDrawerMarginPct}
-                />
+
+                <div className="rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2 space-y-1">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase">Totals (all lines)</p>
+                  <p className="text-sm text-text-secondary">
+                    Partner <span className="font-bold tabular-nums text-text-primary">{formatCurrency(proposalPartnerTotal)}</span>
+                    {" · "}
+                    Customer <span className="font-bold tabular-nums text-primary">{formatCurrency(lineTotal)}</span>
+                    {" · "}
+                    Margin on sell{" "}
+                    <span className="font-bold tabular-nums">
+                      {lineTotal > 0 ? Math.round(((lineTotal - proposalPartnerTotal) / lineTotal) * 1000) / 10 : 0}%
+                    </span>
+                  </p>
+                </div>
+
                 <Button
                   size="sm"
                   variant="primary"
-                  className="mt-3 w-full"
+                  className="mt-1 w-full"
                   disabled={panelSaving}
                   icon={panelSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
                   onClick={async () => {
-                    const pc = Number(panelPartnerCost) || 0;
-                    const sp = Number(panelSellPrice) || 0;
+                    const pc = proposalPartnerTotal;
+                    const sp = lineTotal;
                     const marginPct = sp > 0 ? Math.round(((sp - pc) / sp) * 1000) / 10 : 0;
                     const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
                     const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
                     setPanelSaving(true);
                     try {
-                      const updated = await updateQuote(quote.id, { partner_cost: pc, sell_price: sp, margin_percent: marginPct, total_value: sp });
+                      const updated = await persistProposalToQuote();
                       await logAudit({
                         entityType: "quote",
                         entityId: quote.id,
@@ -1436,7 +1516,7 @@ function QuoteDetailDrawer({
                         metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
                       });
                       onQuoteUpdate?.(updated);
-                      toast.success("Quote figures updated");
+                      toast.success("Lines and quote figures saved");
                     } catch (e) {
                       toast.error(e instanceof Error ? e.message : "Failed to update");
                     } finally {
@@ -1444,7 +1524,7 @@ function QuoteDetailDrawer({
                     }
                   }}
                 >
-                  {panelSaving ? "Saving..." : "Save quote figures"}
+                  {panelSaving ? "Saving..." : "Save lines & quote figures"}
                 </Button>
                 </div>
               </details>
@@ -1476,7 +1556,7 @@ function QuoteDetailDrawer({
                       <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">Edit after sending</p>
                       <p className="text-[11px] text-amber-900/85 dark:text-amber-100/85 leading-snug">
                         You can still change <strong className="font-semibold text-amber-950 dark:text-amber-50">line items, scope, dates, deposit, message</strong> and open{" "}
-                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Pricing & margin</strong> for partner/sell figures. Use{" "}
+                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Pricing & margin</strong> for the customer sell scale and totals. Use{" "}
                         <strong className="font-semibold text-amber-950 dark:text-amber-50">Save proposal</strong> to store only, or{" "}
                         <strong className="font-semibold text-amber-950 dark:text-amber-50">Save & send PDF</strong> below to save and email an updated PDF in one step.
                       </p>
@@ -1490,57 +1570,9 @@ function QuoteDetailDrawer({
                       {quote.status === "awaiting_customer" ? (
                         <>The customer&apos;s Accept / Reject links stay the same; they receive the latest PDF each time you send or resend.</>
                       ) : (
-                        <>Two default lines match the partner app: <strong className="text-text-secondary">type of work</strong> and <strong className="text-text-secondary">Materials</strong>. Approving a bid pre-fills from the bid (+40% labour / +25% materials on partner costs). Use the slider to scale customer prices; edit lines manually anytime.</>
+                        <>Each line: <strong className="text-text-secondary">qty</strong>, <strong className="text-text-secondary">partner cost (unit)</strong>, <strong className="text-text-secondary">customer sell (unit)</strong>. Approving a bid locks partner unit cost on the first two lines; adjust customer sell in the lines or with the scale in <strong className="text-text-secondary">Pricing & margin</strong>.</>
                       )}
                     </p>
-                  </div>
-
-                  <div className="rounded-xl border border-border-light bg-card/80 dark:bg-surface-secondary/30 p-3 space-y-3">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer price scale</p>
-                      <span className="text-xs font-bold tabular-nums text-primary">{proposalScalePercent}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1000}
-                      step={1}
-                      value={proposalScalePercent}
-                      disabled={!canUseProposalMarginSlider}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        setProposalScalePercent(v);
-                        recalcCustomerLinePricesFromPartnerScale(v, partnerLabourCost, partnerMaterialsCost);
-                      }}
-                      className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-40 disabled:cursor-not-allowed bg-border dark:bg-zinc-700"
-                    />
-                    <p className="text-[10px] text-text-tertiary leading-snug">
-                      100% = +40% on partner labour and +25% on partner materials. Below 100% reduces; above increases (up to 1000%).
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                      <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
-                        <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 1 · Labour</p>
-                        <p className="text-[11px] text-text-secondary mt-1">
-                          Partner <span className="font-semibold tabular-nums">{formatCurrency(partnerLabourCost)}</span>
-                          {" · "}
-                          Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine0Sell)}</span>
-                        </p>
-                        <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginLabourPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
-                          Margin {proposalMarginLabourPct}%
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
-                        <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 2 · Materials</p>
-                        <p className="text-[11px] text-text-secondary mt-1">
-                          Partner <span className="font-semibold tabular-nums">{formatCurrency(partnerMaterialsCost)}</span>
-                          {" · "}
-                          Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine1Sell)}</span>
-                        </p>
-                        <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginMaterialsPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
-                          Margin {proposalMarginMaterialsPct}%
-                        </p>
-                      </div>
-                    </div>
                   </div>
 
                   <div>
@@ -1555,10 +1587,37 @@ function QuoteDetailDrawer({
                         <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
                           <div className="flex-1 min-w-0">
                             <Input placeholder={idx === 0 ? "Type of work / labour" : idx === 1 ? "Materials" : "Service / description"} value={item.description} onChange={(e) => updateLineItem(idx, "description", e.target.value)} className="text-xs mb-1.5" />
-                            <div className="flex gap-2 flex-wrap">
-                              <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => updateLineItem(idx, "quantity", e.target.value)} className="text-xs w-20" />
-                              <Input type="number" placeholder="Unit price (customer)" value={item.unitPrice} onChange={(e) => updateLineItem(idx, "unitPrice", e.target.value)} className="text-xs flex-1 min-w-[100px]" />
+                            <div className="flex gap-2 flex-wrap items-end">
+                              <div className="w-20 shrink-0">
+                                <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Qty</span>
+                                <Input type="number" placeholder="1" value={item.quantity} onChange={(e) => updateLineItem(idx, "quantity", e.target.value)} className="text-xs w-full" />
+                              </div>
+                              <div className="flex-1 min-w-[88px]">
+                                <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Partner / unit</span>
+                                <Input
+                                  type="number"
+                                  placeholder="0"
+                                  value={item.partnerUnitCost}
+                                  disabled={!!approvedBid && idx < 2}
+                                  onChange={(e) => updateLineItem(idx, "partnerUnitCost", e.target.value)}
+                                  className="text-xs w-full disabled:opacity-70"
+                                />
+                              </div>
+                              <div className="flex-1 min-w-[88px]">
+                                <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Sell / unit</span>
+                                <Input type="number" placeholder="0" value={item.unitPrice} onChange={(e) => updateLineItem(idx, "unitPrice", e.target.value)} className="text-xs w-full" />
+                              </div>
                             </div>
+                            <label className="block mt-1.5">
+                              <span className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Line notes</span>
+                              <textarea
+                                value={item.notes ?? ""}
+                                onChange={(e) => updateLineItem(idx, "notes", e.target.value)}
+                                placeholder="e.g. materials included, hourly detail, exclusions…"
+                                rows={2}
+                                className="mt-0.5 w-full rounded-lg border border-border-light bg-card px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
+                              />
+                            </label>
                           </div>
                           <div className="flex flex-col items-end gap-1 pt-1 shrink-0">
                             <span className="text-xs font-semibold text-text-primary tabular-nums">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
@@ -1569,8 +1628,13 @@ function QuoteDetailDrawer({
                         </div>
                       ))}
                     </div>
-                    <div className="flex justify-end mt-2 pt-2 border-t border-border-light">
-                      <span className="text-sm font-bold text-text-primary">Total: {formatCurrency(lineTotal)}</span>
+                    <div className="flex flex-col items-end gap-0.5 mt-2 pt-2 border-t border-border-light">
+                      <span className="text-xs text-text-secondary">
+                        Partner total <span className="font-bold tabular-nums text-text-primary">{formatCurrency(proposalPartnerTotal)}</span>
+                      </span>
+                      <span className="text-sm font-bold text-text-primary">
+                        Customer total <span className="tabular-nums text-primary">{formatCurrency(lineTotal)}</span>
+                      </span>
                     </div>
                   </div>
 
@@ -1910,20 +1974,12 @@ function QuoteDetailDrawer({
 
                               await loadBids(quote.id);
 
-                              const lineTot = pre.lines.reduce(
-                                (s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0),
-                                0,
-                              );
                               setLineItems(pre.lines);
                               setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
                               setStartDate1(d1);
                               setStartDate2(d2);
                               setDepositRequired(dep);
-                              setPartnerLabourCost(pre.labourP);
-                              setPartnerMaterialsCost(pre.materialsP);
                               setProposalScalePercent(100);
-                              setPanelPartnerCost(String(bid.bid_amount));
-                              setPanelSellPrice(String(lineTot));
 
                               onQuoteUpdate?.(updated);
                               setTab("overview");
@@ -2308,45 +2364,31 @@ function markupPctToGrossMarginOnSell(markupPct: number): number {
   return (markupPct / (100 + markupPct)) * 100;
 }
 
-/* ========== MARGIN CALCULATOR ========== */
+/* ========== MARGIN CALCULATOR (controlled: parent owns sell price — avoids feedback loops / flicker) ========== */
 function MarginCalculator({
   cost,
-  initialMarginPct,
-  anchorSellPrice = 0,
+  sellPrice,
   onSellPriceChange,
   onMarginChange,
 }: {
   cost: number;
-  initialMarginPct?: number;
-  /** When set (> 0), keeps markup slider aligned with partner cost and sell price typed outside the slider. */
-  anchorSellPrice?: number;
+  sellPrice: number;
   onSellPriceChange: (v: number) => void;
   onMarginChange: (v: number) => void;
 }) {
-  const [markupPct, setMarkupPct] = useState(() => grossMarginOnSellToMarkupPct(initialMarginPct ?? 40));
-  /** While editing sell manually, raw string; cleared on blur so slider stays in sync. */
   const [sellDraft, setSellDraft] = useState<string | null>(null);
 
-  const sellFromMarkup = cost > 0 ? Math.round(cost * (1 + markupPct / 100) * 100) / 100 : 0;
-  const sellPrice = sellFromMarkup;
-  const marginValue = sellPrice - cost;
+  const effectiveSell =
+    sellDraft !== null ? (Number(String(sellDraft).replace(",", ".")) || 0) : sellPrice;
+  const markupPct =
+    cost > 0 && effectiveSell > 0 ? Math.max(5, Math.round(((effectiveSell / cost - 1) * 100) * 10) / 10) : 5;
   const grossMarginPct = markupPctToGrossMarginOnSell(markupPct);
-
+  const marginValue = cost > 0 ? effectiveSell - cost : 0;
   const minSellForSlider = cost > 0 ? Math.round(cost * 1.05 * 100) / 100 : 0;
 
-  useEffect(() => {
-    if (sellDraft !== null) return;
-    if (cost <= 0 || anchorSellPrice <= 0) return;
-    const m = (anchorSellPrice / cost - 1) * 100;
-    if (!Number.isFinite(m)) return;
-    const next = Math.round(Math.max(5, m) * 10) / 10;
-    setMarkupPct(next);
-  }, [cost, anchorSellPrice, sellDraft]);
-
-  useEffect(() => {
-    onSellPriceChange(sellPrice);
-    onMarginChange(Math.round(grossMarginPct * 10) / 10);
-  }, [markupPct, sellPrice, grossMarginPct, onSellPriceChange, onMarginChange]);
+  const pushMarginLabel = (markup: number) => {
+    onMarginChange(Math.round(markupPctToGrossMarginOnSell(markup) * 10) / 10);
+  };
 
   const applySellFromInput = () => {
     if (cost <= 0) {
@@ -2359,15 +2401,25 @@ function MarginCalculator({
     const raw = Number(rawStr.replace(",", "."));
     if (!Number.isFinite(raw)) return;
     const clamped = Math.max(minSellForSlider, raw);
+    onSellPriceChange(clamped);
     const m = (clamped / cost - 1) * 100;
-    setMarkupPct(Math.round(Math.max(5, m) * 10) / 10);
+    pushMarginLabel(Math.max(5, m));
   };
+
+  const handleSliderChange = (mk: number) => {
+    setSellDraft(null);
+    const sp = cost > 0 ? Math.round(cost * (1 + mk / 100) * 100) / 100 : 0;
+    onSellPriceChange(sp);
+    pushMarginLabel(mk);
+  };
+
+  const sliderShown = Math.min(MARGIN_SLIDER_MAX_MARKUP_PCT, Math.max(5, markupPct));
 
   return (
     <div className="p-4 rounded-xl border border-border-light bg-surface-tertiary/70 dark:bg-surface-secondary dark:border-border">
       <div className="flex items-center gap-2 mb-3">
         <SlidersHorizontal className="h-4 w-4 text-text-secondary" />
-        <label className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">Margin Calculator</label>
+        <label className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">Margin calculator</label>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <div><p className="text-[10px] text-text-secondary uppercase">Partner cost</p><p className="text-sm font-bold text-text-primary">{formatCurrency(cost)}</p></div>
@@ -2413,11 +2465,8 @@ function MarginCalculator({
           min={5}
           max={MARGIN_SLIDER_MAX_MARKUP_PCT}
           step={0.5}
-          value={Math.min(MARGIN_SLIDER_MAX_MARKUP_PCT, Math.max(5, markupPct))}
-          onChange={(e) => {
-            setSellDraft(null);
-            setMarkupPct(Number(e.target.value));
-          }}
+          value={sliderShown}
+          onChange={(e) => handleSliderChange(Number(e.target.value))}
           disabled={cost <= 0}
           className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-50 disabled:cursor-not-allowed bg-border dark:bg-zinc-700"
         />
@@ -2432,7 +2481,7 @@ function MarginCalculator({
             Markup is above the slider range ({Math.round(markupPct * 10) / 10}%); drag the slider to bring it back to {MARGIN_SLIDER_MAX_MARKUP_PCT}% or less.
           </p>
         )}
-        {grossMarginPct < 40 && (
+        {grossMarginPct < 40 && cost > 0 && (
           <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">Below standard margin on sell (40%)</p>
         )}
       </div>
@@ -2445,15 +2494,14 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const [quoteType, setQuoteType] = useState<"internal" | "partner">("internal");
   const [form, setForm] = useState({ title: "", total_value: "", catalog_service_id: "" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
-  const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", unitPrice: "0" }]);
+  const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0" }]);
   const [catalogList, setCatalogList] = useState<CatalogService[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
   const [partnerDescription, setPartnerDescription] = useState("");
-  const [templateInitialMarginPct, setTemplateInitialMarginPct] = useState(40);
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
-  const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
-  const [sellPrice, setSellPrice] = useState(0);
+  const linePartnerTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.partnerUnitCost) || 0), 0);
+  const lineSellTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const [marginPct, setMarginPct] = useState(0);
   const typeOfWorkOptions = useMemo(
     () => [...new Set([...TYPE_OF_WORK_OPTIONS, ...catalogList.map((c) => c.name)])]
@@ -2502,9 +2550,10 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       client_email: clientAddress.client_email,
       property_address: clientAddress.property_address,
       catalog_service_id: quoteType === "internal" ? (cid && isUuid(cid) ? cid : null) : null,
-      total_value: quoteType === "internal" ? (sellPrice > 0 ? sellPrice : lineTotal) : 0,
-      cost: quoteType === "internal" ? lineTotal : 0,
-      sell_price: quoteType === "internal" ? (sellPrice > 0 ? sellPrice : lineTotal) : 0,
+      total_value: quoteType === "internal" ? (lineSellTotal > 0 ? lineSellTotal : linePartnerTotal) : 0,
+      cost: quoteType === "internal" ? linePartnerTotal : 0,
+      partner_cost: quoteType === "internal" ? linePartnerTotal : undefined,
+      sell_price: quoteType === "internal" ? (lineSellTotal > 0 ? lineSellTotal : linePartnerTotal) : 0,
       margin_percent: quoteType === "internal" ? marginPct : 0,
       quote_type: quoteType,
       status: quoteType === "partner" ? "bidding" : "draft",
@@ -2517,7 +2566,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
     });
     setForm({ title: "", total_value: "", catalog_service_id: "" });
     setClientAddress({ client_name: "", property_address: "" });
-    setLineItems([{ description: "", quantity: "1", unitPrice: "0" }]);
+    setLineItems([{ description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0" }]);
     setQuoteType("internal");
     setPartners([]);
     setSelectedPartnerIds(new Set());
@@ -2618,51 +2667,48 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
               if (!svc) return;
               const partnerCostTotalRaw = Number(svc.partner_cost ?? 0);
               const sellTotal = estimatedValueFromCatalog(svc);
-              // Backward-compat: if partner_cost wasn't configured yet, fall back to template value.
               const partnerCostTotal = partnerCostTotalRaw > 0 ? partnerCostTotalRaw : sellTotal;
-              const computedMarginPct = sellTotal > 0 ? Math.round(((sellTotal - partnerCostTotalRaw) / sellTotal) * 1000) / 10 : 0;
 
               const isFixed = svc.pricing_mode === "fixed";
               const qty = isFixed ? 1 : Math.max(0.25, Number(svc.default_hours) || 1);
-              const unitCost = qty > 0 ? partnerCostTotal / qty : 0;
+              const unitPartner = qty > 0 ? partnerCostTotal / qty : 0;
+              const unitSell = qty > 0 ? sellTotal / qty : 0;
               const description = svc.default_description?.trim() || (isFixed ? svc.name : `${svc.name} (labour)`);
 
-              // Keep 40% default margin if partner_cost wasn't set (raw == 0).
-              setTemplateInitialMarginPct(partnerCostTotalRaw > 0 ? computedMarginPct : 40);
               setLineItems((prev) => {
                 const rest = prev.slice(1);
-                return [{ description, quantity: String(qty), unitPrice: String(unitCost) }, ...rest];
+                return [{ description, quantity: String(qty), partnerUnitCost: String(unitPartner), unitPrice: String(unitSell) }, ...rest];
               });
+              if (sellTotal > 0 && partnerCostTotal > 0) {
+                setMarginPct(Math.round(((sellTotal - partnerCostTotal) / sellTotal) * 1000) / 10);
+              } else {
+                setMarginPct(40);
+              }
             }}
           />
           <p className="text-[10px] text-text-tertiary -mt-2">Line items stay fully editable after applying a template.</p>
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Line Items</label>
-              <button type="button" onClick={() => setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0" }])} className="text-[11px] font-medium text-primary hover:underline">+ Add Item</button>
+              <button type="button" onClick={() => setLineItems((prev) => [...prev, { description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0" }])} className="text-[11px] font-medium text-primary hover:underline">+ Add Item</button>
             </div>
             <div className="space-y-2">
               {lineItems.map((item, idx) => (
                 <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <Input placeholder="Service / Description" value={item.description} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], description: e.target.value }; setLineItems(n); }} className="text-xs mb-1.5" />
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], quantity: e.target.value }; setLineItems(n); }} className="text-xs w-20" />
-                    <Input type="number" placeholder="Partner cost" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1" />
+                      <Input type="number" placeholder="Partner / unit" value={item.partnerUnitCost} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], partnerUnitCost: e.target.value }; setLineItems(n); }} className="text-xs flex-1 min-w-[100px]" />
+                      <Input type="number" placeholder="Sell / unit" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1 min-w-[100px]" />
                     </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1 pt-1">
-                    {(() => {
-                      const partnerLine = (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0);
-                      const ratio = lineTotal > 0 ? partnerLine / lineTotal : 0;
-                      const sellLine = (Number(sellPrice) || 0) * ratio;
-                      return (
-                        <>
-                          <span className="text-[10px] text-text-tertiary">Partner: <span className="font-semibold text-text-primary">{formatCurrency(partnerLine)}</span></span>
-                          <span className="text-[10px] text-text-tertiary">Sell: <span className="font-semibold text-primary">{formatCurrency(sellLine)}</span></span>
-                        </>
-                      );
-                    })()}
+                  <div className="flex flex-col items-end gap-1 pt-1 shrink-0">
+                    <span className="text-[10px] text-text-tertiary">
+                      Sub: <span className="font-semibold text-text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.partnerUnitCost) || 0))}</span>
+                      {" → "}
+                      <span className="font-semibold text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
+                    </span>
                     {lineItems.length > 1 && <button type="button" onClick={() => setLineItems((prev) => prev.filter((_, i) => i !== idx))} className="text-text-tertiary hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>}
                   </div>
                 </div>
@@ -2670,18 +2716,37 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
             </div>
             <div className="flex justify-end mt-2 pt-2 border-t border-border-light">
               <div className="text-right space-y-0.5">
-                <p className="text-sm font-bold text-text-primary">Partner cost total: {formatCurrency(lineTotal)}</p>
-                <p className="text-sm font-bold text-primary">Sell price total: {formatCurrency(sellPrice)}</p>
+                <p className="text-sm font-bold text-text-primary">Partner total: {formatCurrency(linePartnerTotal)}</p>
+                <p className="text-sm font-bold text-primary">Sell total: {formatCurrency(lineSellTotal)}</p>
               </div>
             </div>
           </div>
-          {lineTotal >= 0 && (
+          {linePartnerTotal > 0 && (
             <MarginCalculator
-              key={`margin-${templateInitialMarginPct}`}
-              cost={lineTotal}
-              initialMarginPct={templateInitialMarginPct}
-              anchorSellPrice={sellPrice}
-              onSellPriceChange={setSellPrice}
+              key={`margin-create-${linePartnerTotal}-${lineSellTotal}`}
+              cost={linePartnerTotal}
+              sellPrice={lineSellTotal}
+              onSellPriceChange={(newSellTotal) => {
+                setLineItems((prev) => {
+                  const cur = prev.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
+                  const ptot = prev.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.partnerUnitCost) || 0), 0);
+                  if (ptot > 0 && cur < 1e-9) {
+                    return prev.map((li) => {
+                      const q = Number(li.quantity) || 0;
+                      if (q <= 0) return li;
+                      const psub = q * (Number(li.partnerUnitCost) || 0);
+                      const su = (psub / ptot) * newSellTotal / q;
+                      return { ...li, unitPrice: String(Math.round(su * 100) / 100) };
+                    });
+                  }
+                  if (cur < 1e-9) return prev;
+                  const scale = newSellTotal / cur;
+                  return prev.map((li) => {
+                    const u = Number(li.unitPrice) || 0;
+                    return { ...li, unitPrice: String(Math.round(u * scale * 100) / 100) };
+                  });
+                });
+              }}
               onMarginChange={setMarginPct}
             />
           )}
