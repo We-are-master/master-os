@@ -40,6 +40,15 @@ export const BID_DEFAULT_LABOUR_MARKUP = 0.4;
 /** Customer sell = partner materials × (1 + this). */
 export const BID_DEFAULT_MATERIALS_MARKUP = 0.25;
 
+/** Default gross margin on sell (40%) when pre-filling customer unit from partner bid / scale baseline. */
+export const BID_DEFAULT_MARGIN_ON_SELL = 0.4;
+
+/** Unit sell price = partner unit cost ÷ (1 − margin on sell). */
+export function customerUnitSellFromPartnerUnit(partnerUnit: number, marginOnSell = BID_DEFAULT_MARGIN_ON_SELL): number {
+  if (!(partnerUnit > 0) || marginOnSell >= 1 || marginOnSell <= 0) return 0;
+  return Math.round((partnerUnit / (1 - marginOnSell)) * 100) / 100;
+}
+
 export function splitBidPartnerCosts(bidAmount: number, payload: PartnerBidProposalPayload | null): { labour: number; materials: number } {
   const l = payload?.labour_cost;
   const m = payload?.materials_cost;

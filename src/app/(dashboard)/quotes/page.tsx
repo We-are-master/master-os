@@ -55,8 +55,8 @@ import {
   splitBidPartnerCosts,
   summarizeBidProposalNotes,
   bidPayloadTrimmedString,
-  BID_DEFAULT_LABOUR_MARKUP,
-  BID_DEFAULT_MATERIALS_MARKUP,
+  BID_DEFAULT_MARGIN_ON_SELL,
+  customerUnitSellFromPartnerUnit,
 } from "@/lib/quote-bid-payload";
 
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
@@ -111,10 +111,8 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
   const title = bidPayloadTrimmedString(q.title as unknown) || "Type of work";
   const line0Desc = bidPayloadTrimmedString(payload?.labour_description) || title;
   const line1Desc = bidPayloadTrimmedString(payload?.materials_description) || "Materials";
-  const sell0 = L * (1 + BID_DEFAULT_LABOUR_MARKUP);
-  const sell1 = M * (1 + BID_DEFAULT_MATERIALS_MARKUP);
-  const u0 = Math.round(sell0 * 100) / 100;
-  const u1 = Math.round(sell1 * 100) / 100;
+  const u0 = customerUnitSellFromPartnerUnit(L);
+  const u1 = customerUnitSellFromPartnerUnit(M);
   return {
     lines: [
       { description: line0Desc, quantity: "1", unitPrice: String(u0), partnerUnitCost: String(L), notes: "" },
@@ -930,8 +928,13 @@ function QuoteDetailDrawer({
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
-  /** 100 = 100% of (labour ×1.4 + materials ×1.25) customer prices; range 0–1000. */
+  /** 100 = baseline customer sell (40% margin on lines 1–2); range 0–1000 scales from that baseline. */
   const [proposalScalePercent, setProposalScalePercent] = useState(100);
+  const [quoteClientPick, setQuoteClientPick] = useState<ClientAndAddressValue>({
+    client_name: "",
+    property_address: "",
+  });
+  const [savingClient, setSavingClient] = useState(false);
   // Send to customer / preview — must stay above useLayoutEffect (Rules of Hooks).
   const [depositRequired, setDepositRequired] = useState("");
   const [startDate1, setStartDate1] = useState("");
@@ -958,17 +961,28 @@ function QuoteDetailDrawer({
     }
   }, [quote, pendingInitialTab, onConsumePendingInitialTab]);
 
+  // Only when switching to another quote — not when the same quote is refreshed after send (keeps "Resend email" label).
   useEffect(() => {
     setQuoteEmailedInSession(false);
-    setSendEmail(bidPayloadTrimmedString(quote.client_email as unknown));
     setSendState("idle");
+    setProposalScalePercent(100);
+    setQuoteClientPick({
+      client_id: quote.client_id,
+      client_address_id: quote.client_address_id,
+      client_name: quote.client_name ?? "",
+      client_email: quote.client_email ?? "",
+      property_address: quote.property_address ?? "",
+    });
+    void loadLineItems(quote.id, quote);
+  }, [quote.id]);
+
+  useEffect(() => {
+    setSendEmail(bidPayloadTrimmedString(quote.client_email as unknown));
     setScopeText(bidPayloadTrimmedString(quote.scope as unknown));
     setDepositRequired(String(quote.deposit_required ?? 0));
     setStartDate1(bidPayloadTrimmedString(quote.start_date_option_1 as unknown));
     setStartDate2(bidPayloadTrimmedString(quote.start_date_option_2 as unknown));
     setCustomMessage(bidPayloadTrimmedString(quote.email_custom_message as unknown));
-    setProposalScalePercent(100);
-    void loadLineItems(quote.id, quote);
   }, [quote]);
 
   useEffect(() => {
@@ -1129,8 +1143,10 @@ function QuoteDetailDrawer({
       const materialsP = linePartnerSubtotal(prev[1]);
       const q0 = Number(prev[0]?.quantity) || 1;
       const q1 = Number(prev[1]?.quantity) || 1;
-      const sell0 = labourP * (1 + BID_DEFAULT_LABOUR_MARKUP) * m;
-      const sell1 = materialsP * (1 + BID_DEFAULT_MATERIALS_MARKUP) * m;
+      const baseSell0 = labourP > 0 ? labourP / (1 - BID_DEFAULT_MARGIN_ON_SELL) : 0;
+      const baseSell1 = materialsP > 0 ? materialsP / (1 - BID_DEFAULT_MARGIN_ON_SELL) : 0;
+      const sell0 = baseSell0 * m;
+      const sell1 = baseSell1 * m;
       const u0 = q0 > 0 ? Math.round((sell0 / q0) * 100) / 100 : 0;
       const u1 = q1 > 0 ? Math.round((sell1 / q1) * 100) / 100 : 0;
       const next = [...prev];
@@ -1375,9 +1391,9 @@ function QuoteDetailDrawer({
                 )}
               </div>
 
-              {/* Pricing & margin — collapsed by default so the drawer feels guided, not overwhelming */}
+              {/* Bid Summary — partner submission (read-only reference); pricing control is in Customer proposal */}
               <details
-                key={`pricing-${quote.id}`}
+                key={`bid-summary-${quote.id}`}
                 className="group rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary open:shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:open:shadow-md dark:open:shadow-black/20"
                 open={pricingOpen}
                 onToggle={(e) => setPricingOpen(e.currentTarget.open)}
@@ -1385,159 +1401,136 @@ function QuoteDetailDrawer({
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
                   <div className="flex items-center gap-2 min-w-0">
                     <SlidersHorizontal className="h-4 w-4 shrink-0 text-text-tertiary" />
-                    <span className="text-xs font-semibold text-text-secondary">Pricing & margin</span>
-                    <span className="text-[10px] text-text-tertiary truncate">Bid summary · customer sell scale</span>
+                    <span className="text-xs font-semibold text-text-secondary">Bid Summary</span>
+                    <span className="text-[10px] text-text-tertiary truncate">Labour · materials · scope · dates</span>
                   </div>
                   <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="border-t border-border-light dark:border-border px-4 pb-4 space-y-3">
                 {approvedBid ? (
-                  <div className="rounded-xl border border-primary/20 bg-primary/5 dark:bg-primary/10 px-3 py-2.5 space-y-1.5">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Approved bid summary</p>
-                    <p className="text-sm font-semibold text-text-primary">{approvedBid.partner_name ?? approvedBid.partner_id}</p>
-                    <p className="text-xs text-text-secondary">
-                      Bid total <span className="font-bold text-primary tabular-nums">{formatCurrency(approvedBid.bid_amount)}</span>
-                      {(() => {
-                        const p = parseBidProposalFromNotes(approvedBid.notes);
-                        if (!p) return null;
-                        const { labour, materials } = splitBidPartnerCosts(approvedBid.bid_amount, p);
-                        return (
-                          <span className="text-text-tertiary">
-                            {" "}
-                            · Labour <span className="font-semibold tabular-nums">{formatCurrency(labour)}</span>
-                            {" · "}
-                            Materials <span className="font-semibold tabular-nums">{formatCurrency(materials)}</span>
-                          </span>
-                        );
-                      })()}
-                    </p>
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-primary/20 bg-primary/5 dark:bg-primary/10 px-3 py-2.5 space-y-1">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
+                      <p className="text-sm font-semibold text-text-primary">{approvedBid.partner_name ?? approvedBid.partner_id}</p>
+                      <p className="text-xs text-text-secondary">
+                        Bid total{" "}
+                        <span className="font-bold text-primary tabular-nums">{formatCurrency(approvedBid.bid_amount)}</span>
+                      </p>
+                    </div>
                     {(() => {
-                      const bidSummaryLine = summarizeBidProposalNotes(approvedBid.notes);
-                      return bidSummaryLine ? (
-                        <p className="text-[11px] text-text-tertiary leading-snug">{bidSummaryLine}</p>
-                      ) : null;
+                      const p = parseBidProposalFromNotes(approvedBid.notes);
+                      const { labour, materials } = splitBidPartnerCosts(approvedBid.bid_amount, p);
+                      const d1 = bidPayloadTrimmedString(p?.start_date_option_1 as unknown).slice(0, 10);
+                      const d2 = bidPayloadTrimmedString(p?.start_date_option_2 as unknown).slice(0, 10);
+                      const labourDesc = p ? bidPayloadTrimmedString(p.labour_description as unknown) : "";
+                      const matDesc = p ? bidPayloadTrimmedString(p.materials_description as unknown) : "";
+                      const scopeBid = p ? bidPayloadTrimmedString(p.scope as unknown) : "";
+                      return (
+                        <div className="rounded-xl border border-border-light bg-card/80 dark:bg-surface-secondary/30 px-3 py-2.5 space-y-3 text-sm">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Labour price</p>
+                              <p className="text-base font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(labour)}</p>
+                              {labourDesc ? <p className="text-[11px] text-text-secondary mt-1.5 whitespace-pre-wrap leading-snug">{labourDesc}</p> : null}
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Materials price</p>
+                              <p className="text-base font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(materials)}</p>
+                              {matDesc ? <p className="text-[11px] text-text-secondary mt-1.5 whitespace-pre-wrap leading-snug">{matDesc}</p> : null}
+                            </div>
+                          </div>
+                          {scopeBid ? (
+                            <div>
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope / line items (from bid)</p>
+                              <p className="text-[11px] text-text-secondary whitespace-pre-wrap leading-snug mt-1">{scopeBid}</p>
+                            </div>
+                          ) : null}
+                          <div className="space-y-1.5">
+                            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Available start dates</p>
+                            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 text-[11px] text-text-secondary">
+                              {d1 ? (
+                                <span className="rounded-lg border border-border-light bg-surface-hover/80 px-2 py-1">
+                                  Option 1: <strong className="text-text-primary">{d1}</strong>
+                                </span>
+                              ) : (
+                                <span className="text-text-tertiary">Option 1 — not set in bid</span>
+                              )}
+                              {d2 ? (
+                                <span className="rounded-lg border border-border-light bg-surface-hover/80 px-2 py-1">
+                                  Option 2: <strong className="text-text-primary">{d2}</strong>
+                                </span>
+                              ) : (
+                                <span className="text-text-tertiary">Option 2 — not set in bid</span>
+                              )}
+                            </div>
+                          </div>
+                          {p?.deposit_required != null && Number.isFinite(Number(p.deposit_required)) && Number(p.deposit_required) > 0 ? (
+                            <p className="text-[11px] text-text-secondary">
+                              Deposit in bid:{" "}
+                              <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(Number(p.deposit_required))}</span>
+                            </p>
+                          ) : null}
+                        </div>
+                      );
                     })()}
+                    {!parseBidProposalFromNotes(approvedBid.notes) && bidPayloadTrimmedString(approvedBid.notes as unknown) ? (
+                      <p className="text-[11px] text-text-tertiary whitespace-pre-wrap leading-snug">{bidPayloadTrimmedString(approvedBid.notes as unknown)}</p>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="rounded-xl border border-border-light bg-surface-hover/60 px-3 py-2 text-[11px] text-text-tertiary leading-snug">
                     {quote.quote_type === "partner"
-                      ? "No approved bid yet — use the Bids tab to approve one (partner unit costs lock on the first two lines). Enter partner unit cost on each line in the proposal, then scale customer sell below."
-                      : "Manual quote — set partner unit cost and customer sell per line in the proposal section. Use the scale below to adjust customer prices; partner line costs stay fixed."}
+                      ? "No approved bid yet — open the Bids tab to review and approve one. Partner unit costs on the first two proposal lines will lock from the bid; customer sell and scale are set in Customer proposal below."
+                      : "Manual quote — set partner unit cost and customer sell per line in Customer proposal. The scale uses a 40% margin baseline on lines 1–2."}
                   </div>
                 )}
-
-                <div className="rounded-xl border border-border-light bg-card/80 dark:bg-surface-secondary/30 p-3 space-y-3">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer sell scale</p>
-                    <span className="text-xs font-bold tabular-nums text-primary">{proposalScalePercent}%</span>
-                  </div>
-                  <p className="text-[10px] text-text-tertiary leading-snug">
-                    Moves only <strong className="font-semibold text-text-secondary">customer unit sell</strong> on lines 1–2. Partner unit costs on those lines stay as set (from the bid or your edits).
-                  </p>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1000}
-                    step={1}
-                    value={proposalScalePercent}
-                    disabled={!canUseProposalMarginSlider}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      setProposalScalePercent(v);
-                      recalcCustomerLinePricesFromPartnerScale(v);
-                    }}
-                    className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-40 disabled:cursor-not-allowed bg-border dark:bg-zinc-700"
-                  />
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                    <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
-                      <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 1 · Labour</p>
-                      <p className="text-[11px] text-text-secondary mt-1">
-                        Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine0Partner)}</span>
-                        {" · "}
-                        Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine0Sell)}</span>
-                      </p>
-                      <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginLabourPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
-                        Margin {proposalMarginLabourPct}%
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
-                      <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 2 · Materials</p>
-                      <p className="text-[11px] text-text-secondary mt-1">
-                        Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine1Partner)}</span>
-                        {" · "}
-                        Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine1Sell)}</span>
-                      </p>
-                      <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginMaterialsPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
-                        Margin {proposalMarginMaterialsPct}%
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2 space-y-1">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase">Totals (all lines)</p>
-                  <p className="text-sm text-text-secondary">
-                    Partner <span className="font-bold tabular-nums text-text-primary">{formatCurrency(proposalPartnerTotal)}</span>
-                    {" · "}
-                    Customer <span className="font-bold tabular-nums text-primary">{formatCurrency(lineTotal)}</span>
-                    {" · "}
-                    Margin on sell{" "}
-                    <span className="font-bold tabular-nums">
-                      {lineTotal > 0 ? Math.round(((lineTotal - proposalPartnerTotal) / lineTotal) * 1000) / 10 : 0}%
-                    </span>
-                  </p>
-                </div>
-
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="mt-1 w-full"
-                  disabled={panelSaving}
-                  icon={panelSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
-                  onClick={async () => {
-                    const pc = proposalPartnerTotal;
-                    const sp = lineTotal;
-                    const marginPct = sp > 0 ? Math.round(((sp - pc) / sp) * 1000) / 10 : 0;
-                    const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
-                    const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
-                    setPanelSaving(true);
-                    try {
-                      const updated = await persistProposalToQuote();
-                      await logAudit({
-                        entityType: "quote",
-                        entityId: quote.id,
-                        entityRef: quote.reference,
-                        action: "updated",
-                        fieldName: "quote_figures",
-                        oldValue: oldSummary,
-                        newValue: newSummary,
-                        userId: profile?.id,
-                        userName: profile?.full_name,
-                        metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
-                      });
-                      onQuoteUpdate?.(updated);
-                      toast.success("Lines and quote figures saved");
-                    } catch (e) {
-                      toast.error(e instanceof Error ? e.message : "Failed to update");
-                    } finally {
-                      setPanelSaving(false);
-                    }
-                  }}
-                >
-                  {panelSaving ? "Saving..." : "Save lines & quote figures"}
-                </Button>
                 </div>
               </details>
 
-              <div>
-                <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
-                <div className="flex items-center gap-3 mt-2">
-                  <div className="h-10 w-10 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center"><Building2 className="h-5 w-5 text-blue-600" /></div>
-                  <div>
-                    <p className="text-sm font-semibold text-text-primary">{quote.client_name}</p>
-                    {quote.client_email && <div className="flex items-center gap-1 mt-0.5"><Mail className="h-3 w-3 text-text-tertiary" /><p className="text-xs text-text-tertiary">{quote.client_email}</p></div>}
-                  </div>
+              <div className="rounded-xl border border-border-light bg-surface-hover/40 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-blue-600 shrink-0" />
+                  <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client on this quote</label>
                 </div>
+                <div className="text-[11px] text-text-tertiary">Change the client or property if you need to send the proposal to someone else.</div>
+                <ClientAddressPicker
+                  value={quoteClientPick}
+                  onChange={setQuoteClientPick}
+                  labelClient="Client"
+                  labelAddress="Property address"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={savingClient}
+                  icon={savingClient ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+                  onClick={async () => {
+                    if (!quoteClientPick.client_id || !quoteClientPick.property_address?.trim()) {
+                      toast.error("Select a client and property address");
+                      return;
+                    }
+                    setSavingClient(true);
+                    try {
+                      const updated = await updateQuote(quote.id, {
+                        client_id: quoteClientPick.client_id,
+                        client_address_id: quoteClientPick.client_address_id,
+                        client_name: quoteClientPick.client_name,
+                        client_email: quoteClientPick.client_email ?? "",
+                        property_address: quoteClientPick.property_address,
+                      });
+                      onQuoteUpdate?.(updated);
+                      setSendEmail(bidPayloadTrimmedString(updated.client_email as unknown));
+                      toast.success("Client updated on this quote");
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Failed to update client");
+                    } finally {
+                      setSavingClient(false);
+                    }
+                  }}
+                >
+                  {savingClient ? "Saving…" : "Save client to quote"}
+                </Button>
               </div>
 
               {convertedJob && (
@@ -1555,8 +1548,8 @@ function QuoteDetailDrawer({
                     <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 dark:bg-amber-950/25 dark:border-amber-800/50 px-3 py-2.5 space-y-1">
                       <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">Edit after sending</p>
                       <p className="text-[11px] text-amber-900/85 dark:text-amber-100/85 leading-snug">
-                        You can still change <strong className="font-semibold text-amber-950 dark:text-amber-50">line items, scope, dates, deposit, message</strong> and open{" "}
-                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Pricing & margin</strong> for the customer sell scale and totals. Use{" "}
+                        You can still change <strong className="font-semibold text-amber-950 dark:text-amber-50">line items, scope, dates, deposit, message</strong>, use the{" "}
+                        <strong className="font-semibold text-amber-950 dark:text-amber-50">customer sell scale</strong> below, and review <strong className="font-semibold text-amber-950 dark:text-amber-50">Bid Summary</strong>. Use{" "}
                         <strong className="font-semibold text-amber-950 dark:text-amber-50">Save proposal</strong> to store only, or{" "}
                         <strong className="font-semibold text-amber-950 dark:text-amber-50">Save & send PDF</strong> below to save and email an updated PDF in one step.
                       </p>
@@ -1570,9 +1563,61 @@ function QuoteDetailDrawer({
                       {quote.status === "awaiting_customer" ? (
                         <>The customer&apos;s Accept / Reject links stay the same; they receive the latest PDF each time you send or resend.</>
                       ) : (
-                        <>Each line: <strong className="text-text-secondary">qty</strong>, <strong className="text-text-secondary">partner cost (unit)</strong>, <strong className="text-text-secondary">customer sell (unit)</strong>. Approving a bid locks partner unit cost on the first two lines; adjust customer sell in the lines or with the scale in <strong className="text-text-secondary">Pricing & margin</strong>.</>
+                        <>
+                          Lines 1–2: partner unit costs come from the approved bid (locked); customer unit sell defaults to{" "}
+                          <strong className="text-text-secondary">{Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin on sell</strong>. Use the scale below to adjust sell; edit rows directly if needed.
+                        </>
                       )}
                     </p>
+                  </div>
+
+                  <div className="rounded-xl border border-border-light bg-card/80 dark:bg-surface-secondary/30 p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer sell scale</p>
+                      <span className="text-xs font-bold tabular-nums text-primary">{proposalScalePercent}%</span>
+                    </div>
+                    <p className="text-[10px] text-text-tertiary leading-snug">
+                      Baseline at 100% = <strong className="font-semibold text-text-secondary">{Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin on sell</strong> on lines 1–2. Moves only{" "}
+                      <strong className="font-semibold text-text-secondary">customer unit sell</strong>; partner unit costs on those lines stay fixed (from the bid or your edits).
+                    </p>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1000}
+                      step={1}
+                      value={proposalScalePercent}
+                      disabled={!canUseProposalMarginSlider}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setProposalScalePercent(v);
+                        recalcCustomerLinePricesFromPartnerScale(v);
+                      }}
+                      className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-40 disabled:cursor-not-allowed bg-border dark:bg-zinc-700"
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
+                        <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 1 · Labour</p>
+                        <p className="text-[11px] text-text-secondary mt-1">
+                          Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine0Partner)}</span>
+                          {" · "}
+                          Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine0Sell)}</span>
+                        </p>
+                        <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginLabourPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                          Margin {proposalMarginLabourPct}%
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
+                        <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 2 · Materials</p>
+                        <p className="text-[11px] text-text-secondary mt-1">
+                          Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine1Partner)}</span>
+                          {" · "}
+                          Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine1Sell)}</span>
+                        </p>
+                        <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginMaterialsPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                          Margin {proposalMarginMaterialsPct}%
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -1628,13 +1673,60 @@ function QuoteDetailDrawer({
                         </div>
                       ))}
                     </div>
-                    <div className="flex flex-col items-end gap-0.5 mt-2 pt-2 border-t border-border-light">
-                      <span className="text-xs text-text-secondary">
-                        Partner total <span className="font-bold tabular-nums text-text-primary">{formatCurrency(proposalPartnerTotal)}</span>
-                      </span>
-                      <span className="text-sm font-bold text-text-primary">
-                        Customer total <span className="tabular-nums text-primary">{formatCurrency(lineTotal)}</span>
-                      </span>
+                    <div className="rounded-xl border border-border-light bg-surface-hover/50 px-3 py-2.5 space-y-2 mt-2">
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="text-xs text-text-secondary">
+                          Partner total <span className="font-bold tabular-nums text-text-primary">{formatCurrency(proposalPartnerTotal)}</span>
+                        </span>
+                        <span className="text-sm font-bold text-text-primary">
+                          Customer total <span className="tabular-nums text-primary">{formatCurrency(lineTotal)}</span>
+                        </span>
+                        <span className="text-[11px] text-text-tertiary">
+                          Margin on sell{" "}
+                          <span className="font-bold tabular-nums text-text-primary">
+                            {lineTotal > 0 ? Math.round(((lineTotal - proposalPartnerTotal) / lineTotal) * 1000) / 10 : 0}%
+                          </span>
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="primary"
+                        className="w-full"
+                        disabled={panelSaving}
+                        icon={panelSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+                        onClick={async () => {
+                          const pc = proposalPartnerTotal;
+                          const sp = lineTotal;
+                          const marginPct = sp > 0 ? Math.round(((sp - pc) / sp) * 1000) / 10 : 0;
+                          const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
+                          const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
+                          setPanelSaving(true);
+                          try {
+                            const updated = await persistProposalToQuote();
+                            await logAudit({
+                              entityType: "quote",
+                              entityId: quote.id,
+                              entityRef: quote.reference,
+                              action: "updated",
+                              fieldName: "quote_figures",
+                              oldValue: oldSummary,
+                              newValue: newSummary,
+                              userId: profile?.id,
+                              userName: profile?.full_name,
+                              metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
+                            });
+                            onQuoteUpdate?.(updated);
+                            toast.success("Lines and quote figures saved");
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : "Failed to update");
+                          } finally {
+                            setPanelSaving(false);
+                          }
+                        }}
+                      >
+                        {panelSaving ? "Saving…" : "Save lines & quote figures"}
+                      </Button>
                     </div>
                   </div>
 
@@ -1984,7 +2076,7 @@ function QuoteDetailDrawer({
                               onQuoteUpdate?.(updated);
                               setTab("overview");
                               toast.success(
-                                "Bid approved. Customer proposal pre-filled (40% labour / 25% materials markup). Adjust on Review & Send if needed, then send to the customer.",
+                                "Bid approved. Partner unit costs and customer sell (40% margin on sell) are pre-filled. Adjust on Review & Send if needed, then send to the customer.",
                               );
                             } catch (e) {
                               toast.error(e instanceof Error ? e.message : "Failed to approve bid");
