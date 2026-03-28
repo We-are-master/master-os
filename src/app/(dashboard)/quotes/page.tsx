@@ -102,9 +102,12 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
     ],
     labourP: L,
     materialsP: M,
-    scopeText: payload?.scope?.trim() || undefined,
-    startDate1: payload?.start_date_option_1?.trim().slice(0, 10),
-    startDate2: payload?.start_date_option_2?.trim().slice(0, 10),
+    scopeText: (() => {
+      const s = bidPayloadTrimmedString(payload?.scope);
+      return s || undefined;
+    })(),
+    startDate1: bidPayloadTrimmedString(payload?.start_date_option_1).slice(0, 10) || undefined,
+    startDate2: bidPayloadTrimmedString(payload?.start_date_option_2).slice(0, 10) || undefined,
     depositRequired:
       payload?.deposit_required != null && Number.isFinite(Number(payload.deposit_required))
         ? String(payload.deposit_required)
@@ -944,13 +947,13 @@ function QuoteDetailDrawer({
   useEffect(() => {
     if (quote) {
       setQuoteEmailedInSession(false);
-      setSendEmail(quote.client_email ?? "");
+      setSendEmail(bidPayloadTrimmedString(quote.client_email as unknown));
       setSendState("idle");
-      setScopeText(quote.scope ?? "");
+      setScopeText(bidPayloadTrimmedString(quote.scope as unknown));
       setDepositRequired(String(quote.deposit_required ?? 0));
-      setStartDate1(quote.start_date_option_1 ?? "");
-      setStartDate2(quote.start_date_option_2 ?? "");
-      setCustomMessage(quote.email_custom_message ?? "");
+      setStartDate1(bidPayloadTrimmedString(quote.start_date_option_1 as unknown));
+      setStartDate2(bidPayloadTrimmedString(quote.start_date_option_2 as unknown));
+      setCustomMessage(bidPayloadTrimmedString(quote.email_custom_message as unknown));
       setPanelPartnerCost(String(quote.partner_cost ?? quote.cost ?? 0));
       setPanelSellPrice(String(quote.sell_price ?? quote.total_value ?? 0));
       setProposalScalePercent(100);
@@ -1020,9 +1023,9 @@ function QuoteDetailDrawer({
     const { data } = await supabase.from("quote_line_items").select("*").eq("quote_id", quoteId).order("sort_order");
     if (data && data.length > 0) {
       let rows = data.map((li: { description: string; quantity: number; unit_price: number }) => ({
-        description: li.description,
-        quantity: String(li.quantity),
-        unitPrice: String(li.unit_price),
+        description: bidPayloadTrimmedString(li.description as unknown),
+        quantity: String(li.quantity ?? 1),
+        unitPrice: String(li.unit_price ?? 0),
       }));
       const padStatuses = ["draft", "in_survey", "bidding", "awaiting_customer"];
       if (rows.length < 2 && padStatuses.includes(q.status)) {
@@ -1098,7 +1101,9 @@ function QuoteDetailDrawer({
   const canUseProposalMarginSlider = proposalPartnerTotal > 0;
 
   // Email flow step-by-step (only relevant when quote.status === "awaiting_customer")
-  const sendStep1Ready = scopeText.trim().length > 0 || lineItems.some((li) => li.description.trim().length > 0);
+  const sendStep1Ready =
+    bidPayloadTrimmedString(scopeText as unknown).length > 0 ||
+    lineItems.some((li) => bidPayloadTrimmedString(li.description as unknown).length > 0);
   const sendStep2Ready = !!startDate1 || !!startDate2;
   const sendDepositNumber = Number(depositRequired);
   const sendStep3Ready =
@@ -1870,8 +1875,9 @@ function QuoteDetailDrawer({
                           if (bidNoteSummary) {
                             return <p className="text-xs text-text-tertiary mt-1">{bidNoteSummary}</p>;
                           }
-                          if (bid.notes?.trim()) {
-                            return <p className="text-xs text-text-tertiary mt-1 whitespace-pre-wrap">{bid.notes}</p>;
+                          const notesPlain = bidPayloadTrimmedString(bid.notes as unknown);
+                          if (notesPlain) {
+                            return <p className="text-xs text-text-tertiary mt-1 whitespace-pre-wrap">{notesPlain}</p>;
                           }
                           return null;
                         })()}
@@ -1984,10 +1990,10 @@ function QuoteDetailDrawer({
 
 /** Required fields before leaving draft/survey; bidding is optional — you can go straight to awaiting_customer with your own figures. */
 function quoteBasicsForPipeline(quote: Quote): { ok: boolean; message?: string } {
-  if (!quote.client_name?.trim()) return { ok: false, message: "Fill client name (Step 1: Job details)." };
-  if (!quote.client_email?.trim()) return { ok: false, message: "Fill client email (Step 1: Job details)." };
-  if (!quote.property_address?.trim()) return { ok: false, message: "Fill property address (Step 1: Job details)." };
-  if (!quote.title?.trim()) return { ok: false, message: "Fill job title / service (Step 1: Job details)." };
+  if (!bidPayloadTrimmedString(quote.client_name as unknown)) return { ok: false, message: "Fill client name (Step 1: Job details)." };
+  if (!bidPayloadTrimmedString(quote.client_email as unknown)) return { ok: false, message: "Fill client email (Step 1: Job details)." };
+  if (!bidPayloadTrimmedString(quote.property_address as unknown)) return { ok: false, message: "Fill property address (Step 1: Job details)." };
+  if (!bidPayloadTrimmedString(quote.title as unknown)) return { ok: false, message: "Fill job title / service (Step 1: Job details)." };
   if (Number(quote.total_value) <= 0 && Number(quote.cost) <= 0) {
     return { ok: false, message: "Set price or add line items before advancing." };
   }
@@ -1996,7 +2002,7 @@ function quoteBasicsForPipeline(quote: Quote): { ok: boolean; message?: string }
 
 /** Scope/line total, dates, deposit and email must be on the quote before moving to Awaiting Customer. */
 function proposalFieldsReadyForQuote(quote: Quote): { ok: boolean; message?: string } {
-  const hasScope = !!(quote.scope && quote.scope.trim());
+  const hasScope = !!bidPayloadTrimmedString(quote.scope as unknown);
   const hasValue = Number(quote.total_value) > 0;
   if (!hasScope && !hasValue) {
     return { ok: false, message: "Add scope of work or line items with a total before sending to customer." };
@@ -2008,7 +2014,7 @@ function proposalFieldsReadyForQuote(quote: Quote): { ok: boolean; message?: str
   if (Number.isNaN(dep) || dep < 0) {
     return { ok: false, message: "Set the deposit required (use 0 if none)." };
   }
-  const email = (quote.client_email ?? "").trim();
+  const email = bidPayloadTrimmedString(quote.client_email as unknown);
   if (!email.includes("@")) {
     return { ok: false, message: "Set a valid customer email before sending to customer." };
   }
@@ -2094,7 +2100,7 @@ function getQuoteActions(quote: Quote) {
 /* ========== CREATE JOB FROM QUOTE MODAL ========== */
 /** Client preferred start date from quote (YYYY-MM-DD for date inputs). */
 function preferredScheduleDateFromQuote(q: Quote): string {
-  const raw = (q.start_date_option_1?.trim() || q.start_date_option_2?.trim()) ?? "";
+  const raw = bidPayloadTrimmedString(q.start_date_option_1 as unknown) || bidPayloadTrimmedString(q.start_date_option_2 as unknown);
   if (!raw) return "";
   return raw.slice(0, 10);
 }
