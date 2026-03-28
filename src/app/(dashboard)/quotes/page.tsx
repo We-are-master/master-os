@@ -49,6 +49,7 @@ import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { isUuid } from "@/lib/utils";
+import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback } from "@/lib/type-of-work";
 
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
 
@@ -1791,6 +1792,11 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     }
   }, [quote]);
 
+  const typeOfWorkOptions = useMemo(
+    () => withTypeOfWorkFallback(form.title).map((name) => ({ value: name, label: name })),
+    [form.title]
+  );
+
   if (!quote) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const handleSubmit = (e: React.FormEvent) => {
@@ -1837,7 +1843,15 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   return (
     <Modal open={!!quote} onClose={onClose} title="Create Job from Quote" subtitle={`${quote.reference} — create job`} size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Job title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} required /></div>
+        <Select
+          label="Type of work *"
+          value={form.title}
+          onChange={(e) => update("title", e.target.value)}
+          options={[
+            { value: "", label: "Select type of work..." },
+            ...typeOfWorkOptions,
+          ]}
+        />
         <Select
           label="Work phases *"
           value={form.total_phases}
@@ -2020,6 +2034,12 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const [sellPrice, setSellPrice] = useState(0);
   const [marginPct, setMarginPct] = useState(0);
+  const typeOfWorkOptions = useMemo(
+    () => [...new Set([...TYPE_OF_WORK_OPTIONS, ...catalogList.map((c) => c.name)])]
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => ({ value: name, label: name })),
+    [catalogList]
+  );
 
   useEffect(() => {
     listCatalogServicesForPicker().then(setCatalogList).catch(() => setCatalogList([]));
@@ -2153,7 +2173,15 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
         </div>
       )}
 
-      <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Quote title *</label><Input value={form.title} onChange={(e) => update("title", e.target.value)} placeholder="e.g. Commercial HVAC Refurbishment" required /></div>
+      <Select
+        label="Type of work *"
+        value={form.title}
+        onChange={(e) => update("title", e.target.value)}
+        options={[
+          { value: "", label: "Select type of work..." },
+          ...typeOfWorkOptions,
+        ]}
+      />
       <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
       {quoteType === "internal" ? (
         <>
