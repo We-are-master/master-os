@@ -797,6 +797,8 @@ export default function RequestsPage() {
               partner_cost: 0,
               property_address: clientAddress.property_address,
               scope: req.scope,
+              owner_id: profile?.id,
+              owner_name: profile?.full_name,
             });
             await updateRequestStatus(req.id, "converted_to_quote");
             await logAudit({
@@ -850,6 +852,8 @@ export default function RequestsPage() {
               partner_cost: 0,
               property_address: clientAddress.property_address,
               scope: req.scope,
+              owner_id: profile?.id,
+              owner_name: profile?.full_name,
             });
             const supabase = getSupabase();
             const items = lineItems.map((li, i) => ({
