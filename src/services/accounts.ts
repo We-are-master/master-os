@@ -88,22 +88,34 @@ export async function updateAccount(id: string, input: Partial<Account>): Promis
   return data as Account;
 }
 
-/** Jobs whose client is linked to this corporate account (`clients.source_account_id`). */
-export async function listJobsLinkedToAccount(accountId: string): Promise<Job[]> {
+/** Jobs whose client is linked to this corporate account.
+ *  Uses a server-side RPC (JOIN in Postgres) to avoid huge IN() URLs when
+ *  there are many linked clients. Falls back to client_name ILIKE match. */
+export async function listJobsLinkedToAccount(
+  accountId: string,
+  companyName?: string,
+): Promise<Job[]> {
   const supabase = getSupabase();
-  const { data: clients, error: cErr } = await supabase.from("clients").select("id").eq("source_account_id", accountId);
-  if (cErr) throw new Error(cErr.message);
-  const clientIds = (clients ?? []).map((c: { id: string }) => c.id);
-  if (clientIds.length === 0) return [];
-  const { data: jobs, error: jErr } = await supabase
-    .from("jobs")
-    .select("*")
-    .in("client_id", clientIds)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(100);
-  if (jErr) throw new Error(jErr.message);
-  return (jobs ?? []) as Job[];
+
+  // Resolve company name if not supplied
+  let name = companyName ?? "";
+  if (!name) {
+    const { data: acctData } = await supabase
+      .from("accounts")
+      .select("company_name")
+      .eq("id", accountId)
+      .maybeSingle();
+    name = (acctData as { company_name?: string } | null)?.company_name ?? "";
+  }
+
+  // Use RPC to do the JOIN server-side — avoids URL length 400 errors with many clients
+  const { data, error } = await supabase.rpc("get_jobs_for_account", {
+    p_account_id: accountId,
+    p_company_name: name,
+  });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Job[];
 }
 
 export async function countClientsLinkedToAccount(accountId: string): Promise<number> {
@@ -111,21 +123,104 @@ export async function countClientsLinkedToAccount(accountId: string): Promise<nu
   const { count, error } = await supabase
     .from("clients")
     .select("id", { count: "exact", head: true })
-    .eq("source_account_id", accountId);
+    .eq("source_account_id", accountId)
+    .is("deleted_at", null);
   if (error) throw new Error(error.message);
   return count ?? 0;
 }
 
-/** Clients with `source_account_id` = this corporate account. */
-export async function listClientsLinkedToAccount(accountId: string): Promise<Client[]> {
+/** Paginated client list for an account drawer.
+ *  Tries FK (`source_account_id`) first; falls back to `full_name ILIKE %name%`. */
+export async function listClientsLinkedToAccountPaged(
+  accountId: string,
+  companyName: string,
+  page: number,
+  pageSize: number,
+): Promise<{ rows: Client[]; total: number; usedFallback: boolean }> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
+  const from = page * pageSize;
+  const to = from + pageSize - 1;
+
+  // Primary: FK-based with exact count
+  const { data: fkData, count: fkCount, error: fkErr } = await supabase
+    .from("clients")
+    .select("*", { count: "exact" })
+    .eq("source_account_id", accountId)
+    .is("deleted_at", null)
+    .order("full_name")
+    .range(from, to);
+  if (fkErr) throw new Error(fkErr.message);
+
+  if ((fkCount ?? 0) > 0 || page > 0) {
+    return { rows: (fkData ?? []) as Client[], total: fkCount ?? 0, usedFallback: false };
+  }
+
+  // Fallback: name-based
+  if (!companyName) return { rows: [], total: 0, usedFallback: false };
+
+  const { data: nameData, count: nameCount, error: nameErr } = await supabase
+    .from("clients")
+    .select("*", { count: "exact" })
+    .ilike("full_name", `%${companyName}%`)
+    .is("deleted_at", null)
+    .order("full_name")
+    .range(from, to);
+  if (nameErr) throw new Error(nameErr.message);
+
+  return { rows: (nameData ?? []) as Client[], total: nameCount ?? 0, usedFallback: true };
+}
+
+/** Clients with `source_account_id` = this corporate account.
+ *  Falls back to matching `full_name` ≈ account company name when no FK link exists.
+ *  Accepts optional `companyName` to avoid a redundant account fetch. */
+export async function listClientsLinkedToAccount(
+  accountId: string,
+  companyName?: string,
+): Promise<Client[]> {
+  const supabase = getSupabase();
+
+  // 1. Clients linked via FK
+  const { data: byFk, error: fkErr } = await supabase
     .from("clients")
     .select("*")
     .eq("source_account_id", accountId)
-    .order("full_name", { ascending: true });
-  if (error) throw new Error(error.message);
-  return (data ?? []) as Client[];
+    .is("deleted_at", null)
+    .order("full_name");
+  if (fkErr) throw new Error(fkErr.message);
+
+  // 2. If caller didn't supply company name, fetch it once
+  let name = companyName ?? "";
+  if (!name) {
+    const { data: acctData } = await supabase
+      .from("accounts")
+      .select("company_name")
+      .eq("id", accountId)
+      .maybeSingle();
+    name = (acctData as { company_name?: string } | null)?.company_name ?? "";
+  }
+
+  // 3. Fallback: clients whose full_name contains the account name
+  const fallback: Client[] = [];
+  if (name) {
+    const { data: byName } = await supabase
+      .from("clients")
+      .select("*")
+      .ilike("full_name", `%${name}%`)
+      .is("deleted_at", null)
+      .order("full_name");
+    fallback.push(...((byName ?? []) as Client[]));
+  }
+
+  // Merge & deduplicate
+  const seen = new Set<string>();
+  const merged: Client[] = [];
+  for (const c of [...(byFk ?? []), ...fallback]) {
+    if (!seen.has(c.id)) {
+      seen.add(c.id);
+      merged.push(c);
+    }
+  }
+  return merged.sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""));
 }
 
 /** Invoices whose `job_reference` matches any of the given job references. */
