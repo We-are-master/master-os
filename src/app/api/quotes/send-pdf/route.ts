@@ -8,8 +8,6 @@ import { createQuoteResponseToken } from "@/lib/quote-response-token";
 import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
 import { createServiceClient } from "@/lib/supabase/service";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
@@ -126,6 +124,15 @@ export async function POST(req: NextRequest) {
     const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
 
     const fromEmail = process.env.RESEND_FROM_EMAIL ?? `${branding.companyName} <quotes@${branding.website ?? "mastergroup.com"}>`;
+
+    const resendKey = process.env.RESEND_API_KEY?.trim();
+    if (!resendKey) {
+      return NextResponse.json(
+        { pdfGenerated: true, emailSent: false, reason: "RESEND_API_KEY not configured" },
+        { status: 200 },
+      );
+    }
+    const resend = new Resend(resendKey);
 
     const { data: emailResult, error: emailError } = await resend.emails.send({
       from: fromEmail,

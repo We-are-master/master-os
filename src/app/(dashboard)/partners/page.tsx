@@ -47,6 +47,7 @@ import {
   type TeamMember,
 } from "@/services/partner-detail";
 import { LocationMiniMapByCoords } from "@/components/ui/location-picker";
+import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
@@ -67,10 +68,37 @@ const tradeColors: Record<string, string> = {
   Painter: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 ring-yellow-200/50",
 };
 
-const TRADES = [
-  "HVAC", "Electrical", "Plumbing", "Painting", "Carpentry",
-  "Handyman", "Cleaning", "Builder", "Painter",
-];
+const TRADES = [...TYPE_OF_WORK_OPTIONS];
+const KNOWN_TRADES = new Set<string>(TRADES);
+
+const LEGACY_TRADE_ALIASES: Record<string, string> = {
+  electrical: "Electrician",
+  plumbing: "Plumber",
+  painting: "Painter",
+  carpentry: "Carpenter",
+  handyman: "General Maintenance",
+  hvac: "General Maintenance",
+};
+
+function normalizeTradeName(value?: string | null): string | null {
+  const raw = (value ?? "").trim();
+  if (!raw) return null;
+  if (KNOWN_TRADES.has(raw)) return raw;
+  return LEGACY_TRADE_ALIASES[raw.toLowerCase()] ?? null;
+}
+
+function normalizeTrades(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = normalizeTradeName(value);
+    if (normalized) seen.add(normalized);
+  }
+  return seen.size > 0 ? Array.from(seen) : [TRADES[0]];
+}
+
+function getPartnerTrades(partner: Pick<Partner, "trade" | "trades">): string[] {
+  return normalizeTrades(partner.trades?.length ? partner.trades : [partner.trade]);
+}
 
 interface PartnerJobRow {
   id: string;
