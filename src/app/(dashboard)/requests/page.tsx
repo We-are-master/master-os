@@ -1223,7 +1223,7 @@ function ConvertToJobModal({
   onConvert: (data: { client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_value?: number; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number; total_phases?: number; job_type?: "fixed" | "hourly"; scheduled_date?: string; scheduled_start_at?: string }) => void;
 }) {
   const [form, setForm] = useState({
-    partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", total_phases: "2", job_type: "fixed",
+    partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", job_type: "fixed",
     scheduled_date: "", scheduled_time: "",
   });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -1233,7 +1233,7 @@ function ConvertToJobModal({
     if (!request) return;
     setForm({
       partner_value: "", partner_id: "", scope: "", notes: "", internal_notes: "",
-      client_price: String(request.estimated_value ?? 0), partner_cost: "", total_phases: "2", job_type: "fixed",
+      client_price: String(request.estimated_value ?? 0), partner_cost: "", job_type: "fixed",
       scheduled_date: "", scheduled_time: "",
     });
     setClientAddress(serviceRequestToClientAddressValue(request));
@@ -1284,7 +1284,7 @@ function ConvertToJobModal({
       internal_notes: form.internal_notes || undefined,
       client_price: Number(form.client_price) || 0,
       partner_cost: Number(form.partner_cost) || 0,
-      total_phases: normalizeTotalPhases(Number(form.total_phases)),
+      total_phases: normalizeTotalPhases(2),
       job_type: form.job_type as "fixed" | "hourly",
       scheduled_date,
       scheduled_start_at,
@@ -1299,15 +1299,6 @@ function ConvertToJobModal({
           <ClientAddressPicker value={clientAddress} onChange={setClientAddress} lockClient={!!request.client_id} />
         </div>
         <Select
-          label="Work phases *"
-          value={form.total_phases}
-          onChange={(e) => update("total_phases", e.target.value)}
-          options={[
-            { value: "2", label: "2 phases — start & final (reports 1 & 2)" },
-          ]}
-        />
-        <p className="text-[10px] text-text-tertiary -mt-2">Report 1 is for start day; Report 2 unlocks the final step.</p>
-        <Select
           label="Job type"
           value={form.job_type}
           onChange={(e) => update("job_type", e.target.value)}
@@ -1318,41 +1309,41 @@ function ConvertToJobModal({
         />
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Valor ao cliente</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Client price</label>
             <Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} placeholder="0.00" min={0} step="0.01" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Valor parceiro</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner value</label>
             <Input type="number" value={form.partner_value} onChange={(e) => update("partner_value", e.target.value)} placeholder="0.00" min={0} step="0.01" />
           </div>
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Custo parceiro</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost</label>
           <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} placeholder="0.00" min={0} step="0.01" />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Data agendada {form.partner_id ? "*" : ""}</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled date {form.partner_id ? "*" : ""}</label>
             <Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} className="h-10" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Hora início</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Start time</label>
             <Input type="time" value={form.scheduled_time} onChange={(e) => update("scheduled_time", e.target.value)} className="h-10" />
           </div>
         </div>
-        <p className="text-[10px] text-text-tertiary -mt-2">Obrigatório com parceiro: data (e escopo abaixo).</p>
-        <Select label="Parceiro" options={[{ value: "", label: "Nenhum" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
+        <p className="text-[10px] text-text-tertiary -mt-2">Required when a partner is assigned: date (and scope below).</p>
+        <Select label="Partner" options={[{ value: "", label: "None" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Escopo</label>
-          <textarea value={form.scope} onChange={(e) => update("scope", e.target.value)} rows={2} placeholder="Descreva o escopo do trabalho..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope</label>
+          <textarea value={form.scope} onChange={(e) => update("scope", e.target.value)} rows={2} placeholder="Describe the work scope..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Notas internas</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Internal notes</label>
           <textarea value={form.internal_notes} onChange={(e) => update("internal_notes", e.target.value)} rows={2} placeholder="Internal use only..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
         </div>
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose} type="button">Cancelar</Button>
-          <Button type="submit" icon={<Briefcase className="h-3.5 w-3.5" />}>Criar Job</Button>
+          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button type="submit" icon={<Briefcase className="h-3.5 w-3.5" />}>Create Job</Button>
         </div>
       </form>
     </Modal>
