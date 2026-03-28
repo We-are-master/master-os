@@ -458,7 +458,7 @@ export default function JobsPage() {
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
   const [form, setForm] = useState({
-    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", finish_date: "", finish_time: "", total_phases: "3", job_type: "fixed", scope: "",
+    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", finish_date: "", finish_time: "", job_type: "fixed", scope: "",
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -473,7 +473,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title) { toast.error("Job title is required"); return; }
+    if (!form.title) { toast.error("Type of work is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
     if ((form.scheduled_date && !form.finish_date) || (!form.scheduled_date && form.finish_date)) {
       toast.error("Arrival window requires both start and finish dates.");
@@ -523,15 +523,15 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       scheduled_date,
       scheduled_start_at,
       scheduled_end_at,
-      total_phases: normalizeTotalPhases(Number(form.total_phases)),
+      total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
     });
-    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", finish_date: "", finish_time: "", total_phases: "3", job_type: "fixed", scope: "" });
+    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", scheduled_time: "", finish_date: "", finish_time: "", job_type: "fixed", scope: "" });
     setClientAddress({ client_name: "", property_address: "" });
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Novo Job" subtitle="Criar um novo job" size="lg">
+    <Modal open={open} onClose={onClose} title="New Job" subtitle="Create a new job" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
         <Select
           label="Type of work *"
@@ -542,15 +542,6 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
           ]}
         />
-        <Select
-          label="Work phases *"
-          value={form.total_phases}
-          onChange={(e) => update("total_phases", e.target.value)}
-          options={[
-            { value: "2", label: "2 phases — start & final (reports 1 & 2)" },
-          ]}
-        />
-        <p className="text-[10px] text-text-tertiary -mt-2">Report 1 is for start day; Report 2 unlocks the final step.</p>
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date</label><Input type="date" className="h-9 text-sm" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
