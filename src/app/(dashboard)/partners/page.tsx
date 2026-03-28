@@ -69,6 +69,7 @@ const tradeColors: Record<string, string> = {
 };
 
 const TRADES = [...TYPE_OF_WORK_OPTIONS];
+const KNOWN_TRADES = new Set<string>(TRADES);
 
 const LEGACY_TRADE_ALIASES: Record<string, string> = {
   electrical: "Electrician",
@@ -82,7 +83,7 @@ const LEGACY_TRADE_ALIASES: Record<string, string> = {
 function normalizeTradeName(value?: string | null): string | null {
   const raw = (value ?? "").trim();
   if (!raw) return null;
-  if (TRADES.includes(raw)) return raw;
+  if (KNOWN_TRADES.has(raw)) return raw;
   return LEGACY_TRADE_ALIASES[raw.toLowerCase()] ?? null;
 }
 
