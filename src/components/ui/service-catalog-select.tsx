@@ -7,6 +7,8 @@ import type { CatalogService } from "@/types/database";
 
 type Props = {
   label?: string;
+  /** First option when no catalog row is selected (default: optional custom / no template). */
+  emptyOptionLabel?: string;
   catalog: CatalogService[];
   value: string;
   onChange: (catalogId: string, service: CatalogService | null) => void;
@@ -15,6 +17,7 @@ type Props = {
 
 export function ServiceCatalogSelect({
   label = "From catalog (optional)",
+  emptyOptionLabel = "— Custom only (no template) —",
   catalog,
   value,
   onChange,
@@ -31,7 +34,7 @@ export function ServiceCatalogSelect({
         onChange(id, svc);
       }}
       options={[
-        { value: "", label: "— Custom only (no template) —" },
+        { value: "", label: emptyOptionLabel },
         ...catalog.map((c) => ({
           value: c.id,
           label: `${c.name} — Sell: ${formatCurrency(estimatedValueFromCatalog(c))}${

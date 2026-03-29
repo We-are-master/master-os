@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { PageHeader } from "@/components/layout/page-header";
-import { PageTransition } from "@/components/layout/page-transition";
+import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
+import { KpiCard } from "@/components/ui/kpi-card";
 import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
@@ -17,6 +18,7 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, MapPin, Phone, Mail, CheckCircle2, XCircle,
   ArrowRight, Briefcase, FileText, Users, Send, PenLine,
+  Inbox, Percent, CalendarRange,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
@@ -38,7 +40,7 @@ import { normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
-import { estimatedValueFromCatalog, lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
+import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { isUuid } from "@/lib/utils";
@@ -46,6 +48,7 @@ import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   new: { label: "New", variant: "primary" },
@@ -62,6 +65,19 @@ const priorityConfig: Record<string, { label: string; variant: "default" | "prim
   urgent: { label: "Urgent", variant: "danger" },
 };
 
+/** Show linked account name only (no "Account:" prefix); strips accidental prefix from legacy text. */
+function linkedAccountDisplay(name: string | null | undefined): string {
+  const t = name?.trim() ?? "";
+  if (!t) return "";
+  return t.replace(/^account:\s*/i, "").trim();
+}
+
+/** Quote vs work UI: prefer stored `request_kind`, else infer from catalog link (legacy). */
+function resolveRequestKind(r: ServiceRequest): "quote" | "work" {
+  if (r.request_kind === "quote" || r.request_kind === "work") return r.request_kind;
+  return r.catalog_service_id ? "work" : "quote";
+}
+
 const serviceColors: Record<string, string> = {
   "HVAC Installation": "bg-blue-50 dark:bg-blue-950/30 text-blue-700 ring-blue-200/50",
   "HVAC Maintenance": "bg-blue-50 dark:bg-blue-950/30 text-blue-700 ring-blue-200/50",
@@ -74,10 +90,33 @@ const serviceColors: Record<string, string> = {
 
 export default function RequestsPage() {
   const router = useRouter();
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const createdAtRangeFilter = useMemo(() => {
+    let fromY = dateFrom.trim();
+    let toY = dateTo.trim();
+    if (fromY && toY && fromY > toY) {
+      const t = fromY;
+      fromY = toY;
+      toY = t;
+    }
+    if (!fromY && !toY) return undefined;
+    return {
+      dateColumn: "created_at" as const,
+      dateFrom: fromY ? localYmdStartIso(fromY) : undefined,
+      dateTo: toY ? localYmdEndIso(toY) : undefined,
+    };
+  }, [dateFrom, dateTo]);
+
   const {
     data, loading, page, totalPages, totalItems,
     setPage, search, setSearch, status, setStatus, refresh, refreshSilent,
-  } = useSupabaseList<ServiceRequest>({ fetcher: listRequests, realtimeTable: "service_requests" });
+  } = useSupabaseList<ServiceRequest>({
+    fetcher: listRequests,
+    realtimeTable: "service_requests",
+    listParams: createdAtRangeFilter ?? {},
+  });
 
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [selectedRequest, setSelectedRequest] = useState<ServiceRequest | null>(null);
@@ -86,7 +125,6 @@ export default function RequestsPage() {
     postcode: "",
     service_type: "",
     description: "",
-    estimated_value: "",
     catalog_service_id: "",
   });
   const [drawerSaving, setDrawerSaving] = useState(false);
@@ -108,6 +146,8 @@ export default function RequestsPage() {
 
   const { profile } = useProfile();
   const isAdmin = profile?.role === "admin";
+
+  const selectedAccountLabel = linkedAccountDisplay(selectedRequest?.source_account_name);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -131,14 +171,32 @@ export default function RequestsPage() {
     });
   }, [data, filterPriority, filterService]);
 
+  const requestKpis = useMemo(() => {
+    const c = statusCounts;
+    const total = c.all ?? 0;
+    const newReq = c.new ?? 0;
+    const approved = c.approved ?? 0;
+    const declined = c.declined ?? 0;
+    const toQuote = c.converted_to_quote ?? 0;
+    const toJob = c.converted_to_job ?? 0;
+    const decided = approved + declined;
+    const approvalPct = decided > 0 ? Math.round((approved / decided) * 1000) / 10 : null;
+    const quotePct = total > 0 ? Math.round((toQuote / total) * 1000) / 10 : null;
+    const jobPct = total > 0 ? Math.round((toJob / total) * 1000) / 10 : null;
+    return { total, newReq, approvalPct, quotePct, jobPct, toQuote, toJob, approved, declined, decided };
+  }, [statusCounts]);
+
   const loadCounts = useCallback(async () => {
     try {
-      const counts = await getStatusCounts("service_requests", [
-        "new", "approved", "declined", "converted_to_quote", "converted_to_job",
-      ]);
+      const counts = await getStatusCounts(
+        "service_requests",
+        ["new", "approved", "declined", "converted_to_quote", "converted_to_job"],
+        "status",
+        createdAtRangeFilter
+      );
       setStatusCounts(counts);
     } catch { /* cosmetic */ }
-  }, []);
+  }, [createdAtRangeFilter]);
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
   useEffect(() => {
@@ -152,7 +210,6 @@ export default function RequestsPage() {
       postcode: selectedRequest.postcode ?? "",
       service_type: selectedRequest.service_type ?? "",
       description: selectedRequest.description ?? "",
-      estimated_value: selectedRequest.estimated_value != null ? String(selectedRequest.estimated_value) : "",
       catalog_service_id: selectedRequest.catalog_service_id ?? "",
     });
   }, [
@@ -160,7 +217,6 @@ export default function RequestsPage() {
     selectedRequest?.postcode,
     selectedRequest?.service_type,
     selectedRequest?.description,
-    selectedRequest?.estimated_value,
     selectedRequest?.catalog_service_id,
   ]);
 
@@ -181,15 +237,20 @@ export default function RequestsPage() {
 
   const handleSaveRequestDetails = useCallback(async () => {
     if (!selectedRequest) return;
+    const kind = resolveRequestKind(selectedRequest);
+    const cid = drawerFields.catalog_service_id.trim();
+    if (kind === "work" && (!cid || !isUuid(cid))) {
+      toast.error("Work requests need a Call Out type from Services.");
+      return;
+    }
     setDrawerSaving(true);
     try {
-      const cid = drawerFields.catalog_service_id.trim();
       const updated = await updateRequest(selectedRequest.id, {
         postcode: drawerFields.postcode.trim() || undefined,
         service_type: drawerFields.service_type.trim(),
         description: drawerFields.description,
-        estimated_value: drawerFields.estimated_value.trim() ? Number(drawerFields.estimated_value) : undefined,
         catalog_service_id: cid && isUuid(cid) ? cid : null,
+        request_kind: kind,
       });
       setSelectedRequest(updated);
       refreshSilent();
@@ -220,6 +281,7 @@ export default function RequestsPage() {
       toast.success(`${selectedIds.size} requests updated to ${newStatus}`);
       setSelectedIds(new Set());
       refreshSilent();
+      void loadCounts();
     } catch { toast.error("Failed to update requests"); }
   };
 
@@ -336,6 +398,8 @@ export default function RequestsPage() {
           catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
             ? String(formData.catalog_service_id).trim()
             : null,
+          request_kind:
+            formData.request_kind === "quote" || formData.request_kind === "work" ? formData.request_kind : null,
         });
         await logAudit({
           entityType: "request", entityId: result.id, entityRef: result.reference,
@@ -358,34 +422,37 @@ export default function RequestsPage() {
 
   const columns: Column<ServiceRequest>[] = [
     {
-      key: "reference", label: "Request ID", width: "140px",
+      key: "reference",
+      label: "Request ID",
+      minWidth: "132px",
+      cellClassName: "min-w-[8rem] max-w-[14rem] sm:max-w-[16rem]",
       render: (item) => (
-        <div>
-          <p className="text-sm font-semibold text-text-primary">{item.reference}</p>
-          <p className="text-[11px] text-text-tertiary truncate max-w-[200px]">{item.description}</p>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-text-primary truncate">{item.reference}</p>
+          <p className="text-[11px] text-text-tertiary line-clamp-2 break-words">{item.description}</p>
         </div>
       ),
     },
     {
       key: "client_name", label: "Client",
-      render: (item) => (
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Avatar name={item.client_name} size="sm" />
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
-            <p className="text-[11px] text-text-tertiary truncate" title={item.source_account_name ?? undefined}>
-              {item.source_account_name?.trim() ? (
-                <>
-                  <span className="text-text-tertiary/80">Account:</span>{" "}
-                  <span className="font-medium text-text-secondary">{item.source_account_name}</span>
-                </>
-              ) : (
-                <span className="italic">No linked account</span>
-              )}
-            </p>
+      render: (item) => {
+        const acct = linkedAccountDisplay(item.source_account_name);
+        return (
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Avatar name={item.client_name} size="sm" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
+              <p className="text-[11px] text-text-tertiary truncate" title={acct || undefined}>
+                {acct ? (
+                  <span className="font-medium text-text-secondary">{acct}</span>
+                ) : (
+                  <span className="italic">No linked account</span>
+                )}
+              </p>
+            </div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: "property_address", label: "Property",
@@ -438,9 +505,36 @@ export default function RequestsPage() {
         <PageHeader title="Requests" subtitle="Manage incoming service requests and leads.">
           <div className="relative flex items-center gap-2" ref={filterRef}>
             <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-            {(filterPriority !== "all" || filterService !== "all") && <span className="text-[10px] font-medium text-primary">Active</span>}
+            {(filterPriority !== "all" || filterService !== "all" || dateFrom || dateTo) && (
+              <span className="text-[10px] font-medium text-primary">Active</span>
+            )}
             {filterOpen && (
-              <div className="absolute top-full right-0 mt-1 w-52 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+              <div className="absolute top-full right-0 mt-1 w-[min(100vw-2rem,18rem)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
+                  <CalendarRange className="h-3.5 w-3.5 shrink-0" />
+                  Created date
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-text-tertiary mb-1">From</label>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      className="w-full h-8 rounded-lg border border-border bg-card text-xs text-text-primary px-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-text-tertiary mb-1">To</label>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                      className="w-full h-8 rounded-lg border border-border bg-card text-xs text-text-primary px-2"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-text-tertiary leading-snug">Filters the list and KPI counts by request creation date (inclusive).</p>
                 <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Priority</p>
                 <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value as "all" | "high" | "urgent")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
                   <option value="all">All</option>
@@ -454,12 +548,75 @@ export default function RequestsPage() {
                     <option key={name} value={name}>{name}</option>
                   ))}
                 </select>
-                <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPriority("all"); setFilterService("all"); }}>Clear filters</Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    setFilterPriority("all");
+                    setFilterService("all");
+                    setDateFrom("");
+                    setDateTo("");
+                  }}
+                >
+                  Clear filters
+                </Button>
               </div>
             )}
           </div>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Request</Button>
         </PageHeader>
+
+        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
+          <KpiCard
+            className="min-h-[128px] h-full"
+            title="New requests"
+            value={requestKpis.newReq}
+            format="number"
+            icon={Inbox}
+            accent="blue"
+            description="Awaiting triage"
+          />
+          <KpiCard
+            className="min-h-[128px] h-full"
+            title="Approval rate"
+            value={requestKpis.approvalPct ?? "—"}
+            format={requestKpis.approvalPct != null ? "percent" : "none"}
+            icon={Percent}
+            accent="emerald"
+            description={
+              requestKpis.decided === 0
+                ? "No approved / declined yet"
+                : `${requestKpis.approved} approved · ${requestKpis.declined} declined`
+            }
+          />
+          <KpiCard
+            className="min-h-[128px] h-full"
+            title="Request → quote"
+            value={requestKpis.quotePct ?? "—"}
+            format={requestKpis.quotePct != null ? "percent" : "none"}
+            icon={FileText}
+            accent="purple"
+            description={
+              requestKpis.total === 0
+                ? "No requests yet"
+                : `${requestKpis.toQuote} converted · ${requestKpis.total} total`
+            }
+          />
+          <KpiCard
+            className="min-h-[128px] h-full"
+            title="Request → job"
+            value={requestKpis.jobPct ?? "—"}
+            format={requestKpis.jobPct != null ? "percent" : "none"}
+            icon={Briefcase}
+            accent="amber"
+            description={
+              requestKpis.total === 0
+                ? "No requests yet"
+                : `${requestKpis.toJob} direct jobs · ${requestKpis.total} total`
+            }
+          />
+        </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <div className="flex items-center justify-between mb-4">
@@ -524,11 +681,8 @@ export default function RequestsPage() {
                       <div>
                         <p className="text-base font-semibold text-text-primary">{selectedRequest.client_name}</p>
                         <p className="text-sm text-text-secondary">
-                          {selectedRequest.source_account_name?.trim() ? (
-                            <>
-                              <span className="text-text-tertiary">Account: </span>
-                              {selectedRequest.source_account_name}
-                            </>
+                          {selectedAccountLabel ? (
+                            selectedAccountLabel
                           ) : (
                             <span className="text-text-tertiary italic">No linked account</span>
                           )}
@@ -610,55 +764,50 @@ export default function RequestsPage() {
 
                   <div className="rounded-xl border border-border bg-card/50 p-4 space-y-3">
                     <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Service &amp; pricing</p>
-                    <ServiceCatalogSelect
-                      catalog={catalogServices}
-                      value={drawerFields.catalog_service_id}
-                      onChange={(id, svc) => {
-                        setDrawerFields((f) => ({
-                          ...f,
-                          catalog_service_id: id,
-                          ...(svc
-                            ? {
-                                service_type: svc.name,
-                                description: (svc.default_description?.trim() || f.description) ?? "",
-                                estimated_value: String(estimatedValueFromCatalog(svc)),
-                              }
-                            : {}),
-                        }));
-                      }}
-                    />
-                    <Select
-                      label="Type of work"
-                      value={drawerFields.service_type}
-                      onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
-                      options={[
-                        { value: "", label: "Select type of work..." },
-                        ...[...new Set([...TYPE_OF_WORK_OPTIONS, ...catalogServices.map((c) => c.name)])]
-                          .sort((a, b) => a.localeCompare(b))
-                          .map((name) => ({ value: name, label: name })),
-                      ]}
-                    />
+                    {resolveRequestKind(selectedRequest) === "work" ? (
+                      <ServiceCatalogSelect
+                        label="Call Out type"
+                        emptyOptionLabel="Select call out type..."
+                        catalog={catalogServices}
+                        value={drawerFields.catalog_service_id}
+                        onChange={(id, svc) => {
+                          setDrawerFields((f) => ({
+                            ...f,
+                            catalog_service_id: id,
+                            ...(svc
+                              ? {
+                                  service_type: svc.name,
+                                  description: (svc.default_description?.trim() || f.description) ?? "",
+                                }
+                              : {}),
+                          }));
+                        }}
+                      />
+                    ) : (
+                      <Select
+                        label="Type of work"
+                        value={drawerFields.service_type}
+                        onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
+                        options={[
+                          { value: "", label: "Select type of work..." },
+                          ...[...new Set([...TYPE_OF_WORK_OPTIONS, ...catalogServices.map((c) => c.name)])]
+                            .sort((a, b) => a.localeCompare(b))
+                            .map((name) => ({ value: name, label: name })),
+                        ]}
+                      />
+                    )}
                     <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Description of the issue</label>
                       <textarea
                         value={drawerFields.description}
                         onChange={(e) => setDrawerFields((f) => ({ ...f, description: e.target.value }))}
                         rows={4}
-                        className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Estimated value</label>
-                      <Input
-                        type="number"
-                        value={drawerFields.estimated_value}
-                        onChange={(e) => setDrawerFields((f) => ({ ...f, estimated_value: e.target.value }))}
-                        placeholder="0"
-                        className="max-w-[160px]"
+                        placeholder="Describe the issue — what the client needs, access, urgency…"
+                        className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
                       />
                     </div>
                     <Button variant="primary" size="sm" onClick={handleSaveRequestDetails} disabled={drawerSaving}>
-                      {drawerSaving ? "Saving…" : "Save service & postcode"}
+                      {drawerSaving ? "Updating…" : "Save & Update"}
                     </Button>
                   </div>
                   <div className="flex items-center gap-2 text-sm text-text-secondary">
@@ -803,6 +952,7 @@ export default function RequestsPage() {
               client_name: clientAddress.client_name,
               client_email: clientAddress.client_email ?? req.client_email,
               request_id: req.id,
+              service_type: req.service_type?.trim() || null,
               catalog_service_id: req.catalog_service_id ?? null,
               status: "bidding",
               total_value: req.estimated_value ?? 0,
@@ -858,6 +1008,7 @@ export default function RequestsPage() {
               client_name: clientAddress.client_name,
               client_email: clientAddress.client_email ?? req.client_email,
               request_id: req.id,
+              service_type: req.service_type?.trim() || null,
               catalog_service_id: catalogServiceId ?? req.catalog_service_id ?? null,
               status: "draft",
               total_value: total,
@@ -1490,6 +1641,7 @@ function CreateRequestModal({
       service_type: form.service_type.trim(),
       description: form.description,
       priority: form.priority as ServiceRequest["priority"],
+      request_kind: form.request_kind as "quote" | "work",
     });
   };
 
@@ -1558,7 +1710,7 @@ function CreateRequestModal({
                   })),
                 ]}
               />
-              <p className="text-[10px] text-text-tertiary">Template text is loaded from Services; you can edit the description below.</p>
+              <p className="text-[10px] text-text-tertiary">Template text is loaded from Services; you can edit the issue description below.</p>
             </>
           ) : form.request_kind === "quote" ? (
             <Select
@@ -1581,8 +1733,8 @@ function CreateRequestModal({
           ]} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
-          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} placeholder="Describe the service needed..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none" />
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Description of the issue</label>
+          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} placeholder="Describe the issue — what the client needs, access, urgency…" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none" />
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose} type="button">Cancel</Button>

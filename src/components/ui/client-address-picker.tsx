@@ -719,7 +719,15 @@ export function ClientAddressPicker({
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setCreateClientOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreateClient} loading={creating} disabled={!createClientForm.full_name.trim()}>
+            <Button
+              onClick={handleCreateClient}
+              loading={creating}
+              disabled={
+                creating ||
+                !createClientForm.full_name.trim() ||
+                !createClientForm.source_account_id.trim()
+              }
+            >
               Create client
             </Button>
           </div>

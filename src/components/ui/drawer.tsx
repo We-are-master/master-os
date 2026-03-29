@@ -51,14 +51,17 @@ export function Drawer({
             )}
           >
             {title && (
-              <div className="flex items-center justify-between px-6 py-4 border-b border-border-light shrink-0">
-                <div>
-                  <h3 className="text-base font-semibold text-text-primary">{title}</h3>
-                  {subtitle && <p className="text-xs text-text-tertiary mt-0.5">{subtitle}</p>}
+              <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-border-light shrink-0">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-base font-semibold text-text-primary truncate">{title}</h3>
+                  {subtitle && (
+                    <p className="text-xs text-text-tertiary mt-0.5 line-clamp-2 break-words">{subtitle}</p>
+                  )}
                 </div>
                 <button
+                  type="button"
                   onClick={onClose}
-                  className="h-8 w-8 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary transition-colors"
+                  className="h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary transition-colors"
                 >
                   <X className="h-4 w-4" />
                 </button>

@@ -54,6 +54,9 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   const scheduleRangeKey = listParams?.scheduleRange
     ? `${listParams.scheduleRange.from}|${listParams.scheduleRange.to}`
     : "";
+  const dateRangeKey = listParams?.dateColumn
+    ? `${listParams.dateColumn}|${listParams.dateFrom ?? ""}|${listParams.dateTo ?? ""}`
+    : "";
   const prevRangeKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (prevRangeKeyRef.current === null) {
@@ -64,6 +67,16 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     prevRangeKeyRef.current = scheduleRangeKey;
     setPage(1);
   }, [scheduleRangeKey]);
+  const prevDateRangeKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevDateRangeKeyRef.current === null) {
+      prevDateRangeKeyRef.current = dateRangeKey;
+      return;
+    }
+    if (prevDateRangeKeyRef.current === dateRangeKey) return;
+    prevDateRangeKeyRef.current = dateRangeKey;
+    setPage(1);
+  }, [dateRangeKey]);
 
   const setSearch = useCallback((s: string) => {
     setSearchRaw(s);
@@ -122,7 +135,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     return () => {
       cancelled = true;
     };
-  }, [page, pageSize, search, status, tick, scheduleRangeKey]);
+  }, [page, pageSize, search, status, tick, scheduleRangeKey, dateRangeKey]);
 
   const refreshSilentRef = useRef(refreshSilent);
   refreshSilentRef.current = refreshSilent;

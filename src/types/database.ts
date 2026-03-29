@@ -83,6 +83,8 @@ export interface ServiceRequest {
   postcode?: string;
   /** When set, request was started from this catalog template (service_type/description/value may differ if customised). */
   catalog_service_id?: string | null;
+  /** Set at creation: quote (type-of-work lead) vs work (call-out from Services catalog). Legacy rows may be null until backfill or save. */
+  request_kind?: "quote" | "work" | null;
   service_type: string;
   description: string;
   status: RequestStatus;
