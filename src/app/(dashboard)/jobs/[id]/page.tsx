@@ -58,6 +58,7 @@ import {
   normalizeTotalPhases,
   reportPhaseIndices,
   reportPhaseLabel,
+  shouldAutoAdvanceToFinalCheckAfterMerge,
 } from "@/lib/job-phases";
 import {
   jobBillableRevenue,
@@ -74,7 +75,7 @@ import {
   computePartnerLiveTimerActiveMs,
   formatPartnerLiveTimer,
   isPartnerLiveTimerRunning,
-  officePartnerTimerStartPatch,
+  statusChangePartnerTimerPatch,
 } from "@/lib/partner-live-timer";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
 import {
@@ -98,6 +99,19 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   cancelled: { label: "Cancelled", variant: "danger", dot: true },
 };
 
+const JOB_FLOW_STEPS: { label: string; statuses: Job["status"][] }[] = [
+  { label: "Booked", statuses: ["unassigned", "scheduled", "late"] },
+  { label: "On site", statuses: ["in_progress_phase1", "in_progress_phase2", "in_progress_phase3"] },
+  { label: "Final check", statuses: ["final_check"] },
+  { label: "Awaiting payment", statuses: ["awaiting_payment", "need_attention"] },
+  { label: "Completed", statuses: ["completed"] },
+];
+
+function jobFlowActiveStepIndex(status: Job["status"]): number {
+  if (status === "cancelled") return -1;
+  const i = JOB_FLOW_STEPS.findIndex((s) => s.statuses.includes(status));
+  return i >= 0 ? i : 0;
+}
 
 export default function JobDetailPage() {
   const params = useParams();
@@ -404,6 +418,7 @@ export default function JobDetailPage() {
     const current = jobRef.current;
     try {
       let payload: Partial<Job> = { ...updates };
+      let didAutoFinalCheck = false;
       if (current && current.id === jobId) {
         const merged = { ...current, ...updates } as Job;
         const touchesMargin =
@@ -424,11 +439,48 @@ export default function JobDetailPage() {
           return;
         }
       }
+      if (current && current.id === jobId) {
+        const mergedFull = { ...current, ...payload } as Job;
+        if (shouldAutoAdvanceToFinalCheckAfterMerge(mergedFull, updates, current.status)) {
+          didAutoFinalCheck = true;
+          payload = {
+            ...payload,
+            status: "final_check",
+            ...statusChangePartnerTimerPatch(mergedFull, "final_check"),
+          };
+        }
+      }
       const updated = await updateJob(jobId, payload);
       setJob(updated);
-      toast.success("Job updated");
+      if (didAutoFinalCheck) {
+        toast.success("All reports validated — job moved to Final check.");
+        await logAudit({
+          entityType: "job",
+          entityId: jobId,
+          entityRef: updated.reference,
+          action: "status_changed",
+          fieldName: "status",
+          oldValue: current?.status,
+          newValue: "final_check",
+          userId: profile?.id,
+          userName: profile?.full_name,
+        });
+        if (updated.partner_id) {
+          notifyAssignedPartnerAboutJob({
+            partnerId: updated.partner_id,
+            job: updated,
+            kind: "job_status_changed",
+            statusLabel: statusConfig.final_check?.label ?? "Final check",
+          });
+        }
+      } else {
+        toast.success("Job updated");
+      }
 
-      const wantNotify = opts?.notifyPartner !== false && !updatesOnlyIrrelevantToPartner(updates);
+      const wantNotify =
+        opts?.notifyPartner !== false &&
+        !didAutoFinalCheck &&
+        !updatesOnlyIrrelevantToPartner(updates);
       if (wantNotify) {
         const prevPid = current?.id === jobId ? (current.partner_id ?? null) : null;
         const newPid = updated.partner_id ?? null;
@@ -448,7 +500,7 @@ export default function JobDetailPage() {
     } catch {
       toast.error("Failed to update");
     }
-  }, []);
+  }, [profile?.id, profile?.full_name]);
 
   const handleSaveFinancials = useCallback(async () => {
     if (!job) return;
@@ -519,6 +571,7 @@ export default function JobDetailPage() {
         cancellation_reason: reasonText,
         cancelled_at: now,
         cancelled_by: profile?.id ?? null,
+        ...statusChangePartnerTimerPatch(job, "cancelled"),
       };
       const updated = await updateJob(job.id, statusPatch);
       await logAudit({
@@ -575,7 +628,7 @@ export default function JobDetailPage() {
       const statusPatch: Partial<Job> = {
         status: newStatus,
         ...(selfBillId ? { self_bill_id: selfBillId } : {}),
-        ...(newStatus === "in_progress_phase1" && !j.partner_timer_started_at ? officePartnerTimerStartPatch() : {}),
+        ...statusChangePartnerTimerPatch(j, newStatus),
       };
       const updated = await updateJob(j.id, statusPatch);
       await logAudit({ entityType: "job", entityId: j.id, entityRef: j.reference, action: "status_changed", fieldName: "status", oldValue: j.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
@@ -931,6 +984,7 @@ export default function JobDetailPage() {
   const phaseCount = normalizeTotalPhases(job.total_phases);
   const displayPhase = phaseCount === 2 ? (job.report_2_uploaded ? 2 : 1) : 1;
   const sendReportFinalCheck = canSendReportAndRequestFinalPayment(job);
+  const flowStep = jobFlowActiveStepIndex(job.status);
 
   return (
     <PageTransition>
@@ -954,7 +1008,7 @@ export default function JobDetailPage() {
               <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface-secondary/60 px-3 py-2 text-sm">
                 <Timer className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
                 <span className="text-text-secondary">
-                  {job.partner_timer_ended_at ? "Partner work time (last session)" : "Partner on site — active time"}
+                  {job.partner_timer_ended_at ? "On-site work time (ended)" : "On site — live timer"}
                 </span>
                 <span className="font-mono font-semibold tabular-nums text-text-primary">
                   {formatPartnerLiveTimer(partnerLiveActiveMs)}
@@ -965,7 +1019,7 @@ export default function JobDetailPage() {
               </div>
             ) : isJobInProgressStatus(job.status) || job.status === "awaiting_payment" ? (
               <p className="mt-2 max-w-xl text-xs text-text-tertiary">
-                On-site work time appears once the job is moved to <strong className="text-text-secondary">In progress (phase 1)</strong> here or when the partner starts the job in the app. If this stays empty, apply DB migrations{" "}
+                The live timer starts when you use <strong className="text-text-secondary">Start job</strong> here or when the partner starts in the app. It stops when work is finished (final check, pause, invoice, or cancel). If the timer never appears, apply DB migrations{" "}
                 <code className="rounded bg-surface-tertiary px-1">062</code>–<code className="rounded bg-surface-tertiary px-1">063</code> on Supabase.
               </p>
             ) : null}
@@ -1014,6 +1068,58 @@ export default function JobDetailPage() {
             ))}
           </div>
         </div>
+
+        {job.status !== "cancelled" ? (
+          <div
+            className="rounded-xl border border-border-subtle bg-surface-secondary/40 px-3 py-3 sm:px-4"
+            aria-label="Job workflow stages"
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2.5">Progress</p>
+            <ol className="flex flex-wrap items-center gap-y-2 gap-x-0">
+              {JOB_FLOW_STEPS.map((step, idx) => {
+                const done = flowStep > idx;
+                const current = flowStep === idx;
+                return (
+                  <li key={step.label} className="flex items-center min-w-0">
+                    {idx > 0 ? (
+                      <span
+                        className={cn(
+                          "hidden sm:block w-5 md:w-8 h-px shrink-0 mx-1.5",
+                          done ? "bg-emerald-500/45" : "bg-border-subtle",
+                        )}
+                        aria-hidden
+                      />
+                    ) : null}
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap",
+                        current && "bg-primary/15 text-text-primary ring-1 ring-primary/25",
+                        done && !current && "text-emerald-700 dark:text-emerald-400",
+                        !done && !current && "text-text-tertiary",
+                      )}
+                    >
+                      {done ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                      ) : (
+                        <span
+                          className={cn(
+                            "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold tabular-nums",
+                            current ? "bg-primary/20 text-text-primary" : "bg-surface-tertiary text-text-tertiary",
+                          )}
+                        >
+                          {idx + 1}
+                        </span>
+                      )}
+                      {step.label}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        ) : (
+          <p className="text-sm text-text-tertiary">This job was cancelled — workflow stopped.</p>
+        )}
 
         {/* ── Job amount / margin (same metrics as jobs board cards) ── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-3">
@@ -1282,71 +1388,76 @@ export default function JobDetailPage() {
             </div>
 
             {/* MANUAL REPORT + AI ANALYSIS */}
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
-                <FileText className="h-3.5 w-3.5" /> Manual report analysis (AI)
-              </p>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Report file</label>
-                <input
-                  id="manual-report-file"
-                  type="file"
-                  accept=".pdf,.doc,.docx,image/jpeg,image/jpg,image/png,image/webp,image/gif"
-                  className="sr-only"
-                  onChange={(e) => setManualReportFile(e.target.files?.[0] ?? null)}
-                />
-                <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/40 p-3">
-                  <div className="flex items-center gap-2">
-                    <label
-                      htmlFor="manual-report-file"
-                      className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30 hover:bg-surface-hover transition-colors"
-                    >
-                      <Upload className="h-3.5 w-3.5" />
-                      {manualReportFile ? "Change file" : "Choose file"}
-                    </label>
-                    {manualReportFile && (
-                      <button
-                        type="button"
-                        onClick={() => setManualReportFile(null)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+            <details className="group rounded-xl border border-border-light bg-card overflow-hidden">
+              <summary className="flex list-none items-center justify-between gap-3 p-4 cursor-pointer select-none [&::-webkit-details-marker]:hidden">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5 min-w-0">
+                  <FileText className="h-3.5 w-3.5 shrink-0" /> Manual report analysis (AI)
+                </p>
+                <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" aria-hidden />
+              </summary>
+              <div className="space-y-3 border-t border-border-light px-4 pb-4 pt-4">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Report file</label>
+                  <input
+                    id="manual-report-file"
+                    type="file"
+                    accept=".pdf,.doc,.docx,image/jpeg,image/jpg,image/png,image/webp,image/gif"
+                    className="sr-only"
+                    onChange={(e) => setManualReportFile(e.target.files?.[0] ?? null)}
+                  />
+                  <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/40 p-3">
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="manual-report-file"
+                        className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30 hover:bg-surface-hover transition-colors"
                       >
-                        <X className="h-3 w-3" /> Remove
-                      </button>
-                    )}
+                        <Upload className="h-3.5 w-3.5" />
+                        {manualReportFile ? "Change file" : "Choose file"}
+                      </label>
+                      {manualReportFile && (
+                        <button
+                          type="button"
+                          onClick={() => setManualReportFile(null)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+                        >
+                          <X className="h-3 w-3" /> Remove
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs text-text-tertiary truncate">{manualReportFile?.name ?? "No file selected"}</p>
                   </div>
-                  <p className="mt-2 text-xs text-text-tertiary truncate">{manualReportFile?.name ?? "No file selected"}</p>
+                  <p className="text-[11px] text-text-tertiary mt-1">Supported: PDF, DOC, DOCX or images (max 10MB).</p>
                 </div>
-                <p className="text-[11px] text-text-tertiary mt-1">Supported: PDF, DOC, DOCX or images (max 10MB).</p>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Ops notes (recommended)</label>
-                <textarea
-                  value={manualReportNotes}
-                  onChange={(e) => setManualReportNotes(e.target.value)}
-                  rows={3}
-                  placeholder="Add context, what was done, issues found, materials used, safety notes..."
-                  className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  loading={analyzingManualReport}
-                  disabled={!manualReportFile}
-                  icon={<Upload className="h-3.5 w-3.5" />}
-                  onClick={() => void handleManualReportAnalyze()}
-                >
-                  Upload & Analyze
-                </Button>
-                {manualReportFile && <span className="text-xs text-text-tertiary truncate">{manualReportFile.name}</span>}
-              </div>
-              {manualReportResult && (
-                <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
-                  <p className="text-xs font-semibold text-text-secondary mb-1">AI response</p>
-                  <pre className="text-xs whitespace-pre-wrap text-text-primary">{manualReportResult}</pre>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Ops notes (recommended)</label>
+                  <textarea
+                    value={manualReportNotes}
+                    onChange={(e) => setManualReportNotes(e.target.value)}
+                    rows={3}
+                    placeholder="Add context, what was done, issues found, materials used, safety notes..."
+                    className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
                 </div>
-              )}
-            </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    loading={analyzingManualReport}
+                    disabled={!manualReportFile}
+                    icon={<Upload className="h-3.5 w-3.5" />}
+                    onClick={() => void handleManualReportAnalyze()}
+                  >
+                    Upload & Analyze
+                  </Button>
+                  {manualReportFile && <span className="text-xs text-text-tertiary truncate">{manualReportFile.name}</span>}
+                </div>
+                {manualReportResult && (
+                  <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
+                    <p className="text-xs font-semibold text-text-secondary mb-1">AI response</p>
+                    <pre className="text-xs whitespace-pre-wrap text-text-primary">{manualReportResult}</pre>
+                  </div>
+                )}
+              </div>
+            </details>
 
             {/* FINANCIAL SETUP (admin edit) */}
             <details className="group rounded-xl border border-border-light bg-card overflow-hidden">

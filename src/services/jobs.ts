@@ -1,6 +1,6 @@
 import { getSupabase, queryList, applyJobsScheduleRangeToQuery, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
-import { JOB_IN_PROGRESS_STATUSES } from "@/lib/job-phases";
+import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
 import {
   applyJobDbCompat,
   isLegacyJobSchema,
@@ -86,7 +86,18 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(
       "jobs",
-      { ...rest, statusIn: [...JOB_IN_PROGRESS_STATUSES] },
+      { ...rest, statusIn: [...JOB_ONSITE_PROGRESS_STATUSES] },
+      {
+        searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+        defaultSort: "created_at",
+      }
+    );
+  }
+  if (params.status === "scheduled") {
+    const { status: _omit, ...rest } = params;
+    return queryList<Job>(
+      "jobs",
+      { ...rest, statusIn: ["scheduled", "late"] },
       {
         searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
         defaultSort: "created_at",

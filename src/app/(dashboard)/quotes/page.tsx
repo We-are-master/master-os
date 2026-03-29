@@ -1078,6 +1078,7 @@ function QuoteDetailDrawer({
   const proposalMarginLabourPct = marginPctOnSell(proposalLine0Sell, proposalLine0Partner);
   const proposalMarginMaterialsPct = marginPctOnSell(proposalLine1Sell, proposalLine1Partner);
   const proposalPartnerTotal = lineItems.reduce((s, li) => s + linePartnerSubtotal(li), 0);
+  const proposalSummaryMarginPct = marginPctOnSell(lineTotal, proposalPartnerTotal);
   const partnerBasisLines01 = proposalLine0Partner + proposalLine1Partner;
   const canUseProposalMarginSlider = partnerBasisLines01 > 0;
 
@@ -1665,21 +1666,51 @@ function QuoteDetailDrawer({
                         </div>
                       ))}
                     </div>
-                    <div className="rounded-xl border border-border-light bg-surface-hover/50 px-3 py-2.5 space-y-2 mt-2">
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span className="text-xs text-text-secondary">
-                          Partner total <span className="font-bold tabular-nums text-text-primary">{formatCurrency(proposalPartnerTotal)}</span>
-                        </span>
-                        <span className="text-sm font-bold text-text-primary">
-                          Customer total <span className="tabular-nums text-primary">{formatCurrency(lineTotal)}</span>
-                        </span>
-                        <span className="text-[11px] text-text-tertiary">
-                          Margin on sell{" "}
-                          <span className="font-bold tabular-nums text-text-primary">
-                            {lineTotal > 0 ? Math.round(((lineTotal - proposalPartnerTotal) / lineTotal) * 1000) / 10 : 0}%
-                          </span>
-                        </span>
-                      </div>
+                    <div className="mt-2 overflow-hidden rounded-xl border border-border-light bg-card shadow-sm">
+                      <p className="border-b border-border-subtle bg-surface-secondary/50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Quote totals
+                      </p>
+                      <dl className="divide-y divide-border-subtle/80">
+                        <div className="flex items-baseline justify-between gap-4 px-3 py-2.5">
+                          <dt className="min-w-0 text-[11px] leading-snug text-text-secondary">
+                            <span className="font-medium text-text-primary">Partner total</span>
+                            <span className="mt-0.5 block text-[10px] font-normal text-text-tertiary">Your cost (all lines)</span>
+                          </dt>
+                          <dd className="shrink-0 text-right text-sm font-semibold tabular-nums text-text-primary">
+                            {formatCurrency(proposalPartnerTotal)}
+                          </dd>
+                        </div>
+                        <div className="bg-primary/[0.06] px-3 py-3 dark:bg-primary/[0.1]">
+                          <div className="flex items-baseline justify-between gap-4">
+                            <dt className="min-w-0 text-xs font-semibold leading-snug text-text-primary">
+                              Customer total
+                              <span className="mt-0.5 block text-[10px] font-normal text-text-tertiary">Quoted to the customer</span>
+                            </dt>
+                            <dd className="shrink-0 text-right text-lg font-bold leading-none tracking-tight tabular-nums text-primary">
+                              {formatCurrency(lineTotal)}
+                            </dd>
+                          </div>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-4 px-3 py-2.5">
+                          <dt className="min-w-0 text-[11px] leading-snug text-text-secondary">
+                            <span className="font-medium text-text-primary">Margin on sell</span>
+                            <span className="mt-0.5 block text-[10px] font-normal text-text-tertiary">Profit vs customer total</span>
+                          </dt>
+                          <dd
+                            className={cn(
+                              "shrink-0 text-right text-sm font-bold tabular-nums",
+                              proposalSummaryMarginPct >= 20
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : proposalSummaryMarginPct >= 0
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-red-600 dark:text-red-400",
+                            )}
+                          >
+                            {proposalSummaryMarginPct}%
+                          </dd>
+                        </div>
+                      </dl>
+                      <div className="border-t border-border-subtle bg-surface-secondary/40 p-2 dark:bg-surface-secondary/20">
                       <Button
                         type="button"
                         size="sm"
@@ -1690,7 +1721,7 @@ function QuoteDetailDrawer({
                         onClick={async () => {
                           const pc = proposalPartnerTotal;
                           const sp = lineTotal;
-                          const marginPct = sp > 0 ? Math.round(((sp - pc) / sp) * 1000) / 10 : 0;
+                          const marginPct = marginPctOnSell(sp, pc);
                           const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
                           const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
                           setPanelSaving(true);
@@ -1719,6 +1750,7 @@ function QuoteDetailDrawer({
                       >
                         {panelSaving ? "Saving…" : "Save lines & quote figures"}
                       </Button>
+                      </div>
                     </div>
                   </div>
 
