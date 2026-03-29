@@ -1667,38 +1667,38 @@ function QuoteDetailDrawer({
                         </div>
                       ))}
                     </div>
-                    <div className="mt-2 overflow-hidden rounded-2xl border border-border-light/90 bg-card shadow-sm">
-                      <div className="px-4 pt-4 pb-3">
-                        <p className="text-xs font-semibold text-text-primary">Quote totals</p>
-                        <p className="mt-0.5 text-[11px] text-text-tertiary">Sell price, your cost, and margin at a glance.</p>
+                    <div className="mt-2 overflow-hidden rounded-xl border border-border-subtle/50 bg-card">
+                      <div className="px-3 pt-3 pb-2 sm:px-3.5">
+                        <p className="text-[11px] font-semibold text-text-primary">Quote totals</p>
+                        <p className="mt-0.5 text-[10px] leading-snug text-text-tertiary">Sell, cost and margin.</p>
                       </div>
 
-                      <div className="px-3 pb-3">
-                        <div className="rounded-xl bg-gradient-to-br from-primary/[0.08] via-primary/[0.04] to-transparent px-4 py-4 ring-1 ring-primary/15 dark:from-primary/[0.12] dark:via-primary/[0.06]">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/90">Customer total</p>
-                          <p className="mt-1 text-[clamp(1.5rem,5vw,2rem)] font-bold leading-tight tabular-nums tracking-tight text-primary">
+                      <div className="space-y-2 px-3 pb-3 sm:px-3.5">
+                        <div className="rounded-lg bg-emerald-500/[0.07] px-3 py-2.5 dark:bg-emerald-500/[0.09]">
+                          <p className="text-[9px] font-semibold uppercase tracking-wider text-emerald-700/90 dark:text-emerald-400/95">Customer total</p>
+                          <p className="mt-0.5 text-xl sm:text-2xl font-bold leading-tight tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400">
                             {formatCurrency(lineTotal)}
                           </p>
                         </div>
 
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          <div className="rounded-xl bg-surface-hover/70 px-3 py-3 ring-1 ring-border-subtle/70 dark:bg-surface-secondary/40">
-                            <div className="flex items-center gap-1.5 text-text-tertiary">
-                              <Wallet className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
-                              <span className="text-[10px] font-semibold uppercase tracking-wide">Your cost</span>
+                        <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+                          <div className="rounded-lg bg-surface-hover/50 px-2.5 py-2 dark:bg-surface-secondary/30">
+                            <div className="flex items-center gap-1 text-text-tertiary">
+                              <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                              <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
                             </div>
-                            <p className="mt-2 text-base font-semibold tabular-nums text-text-primary">
+                            <p className="mt-1 text-sm font-semibold tabular-nums text-text-primary">
                               {formatCurrency(proposalPartnerTotal)}
                             </p>
                           </div>
-                          <div className="rounded-xl bg-surface-hover/70 px-3 py-3 ring-1 ring-border-subtle/70 dark:bg-surface-secondary/40">
-                            <div className="flex items-center gap-1.5 text-text-tertiary">
-                              <Percent className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
-                              <span className="text-[10px] font-semibold uppercase tracking-wide">Margin</span>
+                          <div className="rounded-lg bg-surface-hover/50 px-2.5 py-2 dark:bg-surface-secondary/30">
+                            <div className="flex items-center gap-1 text-text-tertiary">
+                              <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                              <span className="text-[9px] font-medium uppercase tracking-wide">Margin</span>
                             </div>
                             <p
                               className={cn(
-                                "mt-2 text-base font-bold tabular-nums",
+                                "mt-1 text-sm font-bold tabular-nums",
                                 proposalSummaryMarginPct >= 20
                                   ? "text-emerald-600 dark:text-emerald-400"
                                   : proposalSummaryMarginPct >= 0
@@ -1712,46 +1712,46 @@ function QuoteDetailDrawer({
                         </div>
                       </div>
 
-                      <div className="border-t border-border-subtle/70 bg-surface-secondary/30 p-3 dark:bg-surface-secondary/15">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="primary"
-                        className="w-full"
-                        disabled={panelSaving}
-                        icon={panelSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
-                        onClick={async () => {
-                          const pc = proposalPartnerTotal;
-                          const sp = lineTotal;
-                          const marginPct = marginPctOnSell(sp, pc);
-                          const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
-                          const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
-                          setPanelSaving(true);
-                          try {
-                            const updated = await persistProposalToQuote();
-                            await logAudit({
-                              entityType: "quote",
-                              entityId: quote.id,
-                              entityRef: quote.reference,
-                              action: "updated",
-                              fieldName: "quote_figures",
-                              oldValue: oldSummary,
-                              newValue: newSummary,
-                              userId: profile?.id,
-                              userName: profile?.full_name,
-                              metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
-                            });
-                            onQuoteUpdate?.(updated);
-                            toast.success("Lines and quote figures saved");
-                          } catch (e) {
-                            toast.error(e instanceof Error ? e.message : "Failed to update");
-                          } finally {
-                            setPanelSaving(false);
-                          }
-                        }}
-                      >
-                        {panelSaving ? "Saving…" : "Save lines & quote figures"}
-                      </Button>
+                      <div className="px-3 pb-3 pt-1 sm:px-3.5">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="primary"
+                          className="w-full"
+                          disabled={panelSaving}
+                          icon={panelSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+                          onClick={async () => {
+                            const pc = proposalPartnerTotal;
+                            const sp = lineTotal;
+                            const marginPct = marginPctOnSell(sp, pc);
+                            const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
+                            const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
+                            setPanelSaving(true);
+                            try {
+                              const updated = await persistProposalToQuote();
+                              await logAudit({
+                                entityType: "quote",
+                                entityId: quote.id,
+                                entityRef: quote.reference,
+                                action: "updated",
+                                fieldName: "quote_figures",
+                                oldValue: oldSummary,
+                                newValue: newSummary,
+                                userId: profile?.id,
+                                userName: profile?.full_name,
+                                metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
+                              });
+                              onQuoteUpdate?.(updated);
+                              toast.success("Lines and quote figures saved");
+                            } catch (e) {
+                              toast.error(e instanceof Error ? e.message : "Failed to update");
+                            } finally {
+                              setPanelSaving(false);
+                            }
+                          }}
+                        >
+                          {panelSaving ? "Saving…" : "Save lines & quote figures"}
+                        </Button>
                       </div>
                     </div>
                   </div>
