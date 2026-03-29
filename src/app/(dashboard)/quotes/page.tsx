@@ -65,11 +65,26 @@ import {
 
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
 
+/**
+ * Label for proposal line 1: type of work only.
+ * Quote `title` often includes client (e.g. "Electrical — Jane Doe"); prefer `service_type`, else strip after " — ".
+ */
+function proposalFirstLineLabel(q: Quote): string {
+  const st = bidPayloadTrimmedString(q.service_type as unknown);
+  if (st) return st;
+  const t = bidPayloadTrimmedString(q.title as unknown);
+  if (!t) return "Type of work";
+  const sep = " — ";
+  const i = t.indexOf(sep);
+  if (i > 0) return t.slice(0, i).trim();
+  return t;
+}
+
 /** Two starter rows: type of work + materials (partner app aligns with this shape). */
 function defaultProposalLineItems(q: Quote): ProposalLineRow[] {
-  const title = bidPayloadTrimmedString(q.title as unknown) || "Type of work";
+  const first = proposalFirstLineLabel(q);
   return [
-    { description: title, quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" },
+    { description: first, quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" },
     { description: "Materials", quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" },
   ];
 }
@@ -112,8 +127,7 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
 } {
   const payload = parseBidProposalFromNotes(bid.notes);
   const { labour: L, materials: M } = splitBidPartnerCosts(bid.bid_amount, payload);
-  const title = bidPayloadTrimmedString(q.title as unknown) || "Type of work";
-  const line0Desc = bidPayloadTrimmedString(payload?.labour_description) || title;
+  const line0Desc = bidPayloadTrimmedString(payload?.labour_description) || proposalFirstLineLabel(q);
   const line1Desc = bidPayloadTrimmedString(payload?.materials_description) || "Materials";
   const u0 = customerUnitSellFromPartnerUnit(L);
   const u1 = customerUnitSellFromPartnerUnit(M);
@@ -1025,12 +1039,12 @@ function QuoteDetailDrawer({
       );
       const padStatuses = ["draft", "in_survey", "bidding", "awaiting_customer"];
       if (rows.length < 2 && padStatuses.includes(q.status)) {
-        const title = bidPayloadTrimmedString(q.title as unknown) || "Type of work";
+        const firstLine = proposalFirstLineLabel(q);
         if (rows.length === 0) {
           rows = defaultProposalLineItems(q);
         } else {
           rows = [...rows, { description: "Materials", quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" }];
-          if (!bidPayloadTrimmedString(rows[0].description as unknown)) rows[0] = { ...rows[0], description: title };
+          if (!bidPayloadTrimmedString(rows[0].description as unknown)) rows[0] = { ...rows[0], description: firstLine };
         }
       }
       setLineItems(rows);
@@ -1623,9 +1637,9 @@ function QuoteDetailDrawer({
                     role="region"
                     aria-label="Quote summary"
                   >
-                    <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-end min-[420px]:justify-between min-[420px]:gap-3">
+                    <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between min-[420px]:gap-3">
                       <div className="min-w-0">
-                        <p className="text-[9px] font-semibold uppercase tracking-wider text-emerald-800/90 dark:text-emerald-400/95">Customer total</p>
+                        <p className="text-[10px] font-semibold text-emerald-800/90 dark:text-emerald-400/95">Total Price</p>
                         <p className="mt-0.5 text-lg min-[420px]:text-xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400 leading-none">
                           {formatCurrency(lineTotal)}
                         </p>
