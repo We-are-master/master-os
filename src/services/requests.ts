@@ -1,6 +1,48 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { ServiceRequest } from "@/types/database";
 
+/** Nullable UUID columns: empty string breaks PostgREST (invalid uuid) — coerce to null. */
+const UUID_NULLABLE = new Set([
+  "client_id",
+  "client_address_id",
+  "catalog_service_id",
+  "owner_id",
+  "assigned_to",
+]);
+
+function postgrestErrorMessage(err: { message?: string; details?: string; hint?: string }): string {
+  const parts = [err.message, err.details, err.hint]
+    .map((s) => (typeof s === "string" ? s.trim() : ""))
+    .filter(Boolean);
+  return parts.length ? parts.join(" — ") : "Database request failed";
+}
+
+function buildServiceRequestInsertPayload(
+  input: Omit<ServiceRequest, "id" | "reference" | "created_at" | "updated_at">,
+  reference: string,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...input, reference };
+  delete merged.source_account_name;
+
+  for (const key of UUID_NULLABLE) {
+    const v = merged[key];
+    if (typeof v === "string" && v.trim() === "") {
+      merged[key] = null;
+    }
+  }
+
+  const rk = merged.request_kind;
+  if (rk !== "quote" && rk !== "work") {
+    merged.request_kind = "quote";
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(merged)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
 /** Enrich rows with `accounts.company_name` via client → `source_account_id`. */
 async function enrichRequestsWithAccountNames(requests: ServiceRequest[]): Promise<ServiceRequest[]> {
   const clientIds = [...new Set(requests.map((r) => r.client_id).filter(Boolean))] as string[];
@@ -57,13 +99,14 @@ export async function createRequest(
   input: Omit<ServiceRequest, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<ServiceRequest> {
   const supabase = getSupabase();
-  const { data: ref } = await supabase.rpc("next_request_ref");
-  const { data, error } = await supabase
-    .from("service_requests")
-    .insert({ ...input, reference: ref })
-    .select()
-    .single();
-  if (error) throw error;
+  const { data: ref, error: refErr } = await supabase.rpc("next_request_ref");
+  if (refErr) throw new Error(postgrestErrorMessage(refErr));
+  if (ref == null || String(ref).trim() === "") {
+    throw new Error("Could not generate request reference (next_request_ref).");
+  }
+  const payload = buildServiceRequestInsertPayload(input, String(ref));
+  const { data, error } = await supabase.from("service_requests").insert(payload).select().single();
+  if (error) throw new Error(postgrestErrorMessage(error));
   const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
   return enriched ?? (data as ServiceRequest);
 }
@@ -73,13 +116,21 @@ export async function updateRequest(
   input: Partial<ServiceRequest>
 ): Promise<ServiceRequest> {
   const supabase = getSupabase();
+  const patch: Record<string, unknown> = { ...input };
+  delete patch.source_account_name;
+  for (const key of UUID_NULLABLE) {
+    const v = patch[key];
+    if (typeof v === "string" && v.trim() === "") {
+      patch[key] = null;
+    }
+  }
   const { data, error } = await supabase
     .from("service_requests")
-    .update(input)
+    .update(patch)
     .eq("id", id)
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw new Error(postgrestErrorMessage(error));
   const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
   return enriched ?? (data as ServiceRequest);
 }

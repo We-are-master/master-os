@@ -82,18 +82,20 @@ export function extractUkPostcodeFromAddress(address: string): string {
 }
 
 /**
- * Calendar bar text: `PL · Alex · SW1A 1AA`
- * — partner = first name (or first token), postcode from property line.
+ * Calendar bar text: `JOB-12 · PL · Alex · SW1A 1AA`
+ * — reference first, then abbr; partner = first name (or first token); postcode from property line.
  */
 export function formatScheduleCalendarBarCompact(job: {
+  reference: string;
   title: string;
   partner_name?: string | null;
   property_address?: string | null;
 }): string {
+  const ref = job.reference?.trim() || "—";
   const abbr = scheduleJobAbbrevFromTitle(job.title);
   const partner = job.partner_name?.trim()
     ? job.partner_name.trim().split(/\s+/)[0]!.slice(0, 14)
     : "—";
   const pc = extractUkPostcodeFromAddress(job.property_address ?? "");
-  return `${abbr} · ${partner} · ${pc}`;
+  return `${ref} · ${abbr} · ${partner} · ${pc}`;
 }

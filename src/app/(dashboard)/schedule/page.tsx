@@ -118,6 +118,7 @@ export default function SchedulePage() {
   const [loading, setLoading] = useState(true);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedJobAccountName, setSelectedJobAccountName] = useState<string | null>(null);
+  const [legendBarChipsOpen, setLegendBarChipsOpen] = useState(false);
 
   const loadJobs = useCallback(async () => {
     setLoading(true);
@@ -331,19 +332,42 @@ export default function SchedulePage() {
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />}>New Booking</Button>
         </PageHeader>
 
-        <div className="rounded-xl border border-border-light bg-card/60 px-4 py-3">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Legend — bar chips</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-1.5 text-[11px] text-text-secondary">
-            {Object.entries(SCHEDULE_TYPE_ABBR).map(([label, abbr]) => (
-              <div key={label} className="flex items-baseline gap-2 min-w-0">
-                <span className="font-mono font-semibold text-text-primary shrink-0 tabular-nums">{abbr}</span>
-                <span className="truncate">{label}</span>
-              </div>
-            ))}
-          </div>
-          <p className="text-[10px] text-text-tertiary mt-2 leading-snug">
-            Each cell shows <span className="font-mono text-text-secondary">abbr · partner · postcode</span>. Types not listed use two letters from the job title. Colours = job stage (scheduled, in progress, completed, …).
-          </p>
+        <div className="rounded-xl border border-border-light bg-card/60 px-4 py-2">
+          <button
+            type="button"
+            onClick={() => setLegendBarChipsOpen((o) => !o)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg py-1.5 text-left -mx-1 px-1 hover:bg-surface-hover/60 transition-colors"
+            aria-expanded={legendBarChipsOpen}
+          >
+            <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Legend — bar chips</span>
+            <ChevronRight
+              className={cn(
+                "h-4 w-4 shrink-0 text-text-tertiary transition-transform duration-200",
+                legendBarChipsOpen && "rotate-90",
+              )}
+              aria-hidden
+            />
+          </button>
+          <AnimatePresence initial={false}>
+            {legendBarChipsOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-1.5 text-[11px] text-text-secondary pt-2 pb-1">
+                  {Object.entries(SCHEDULE_TYPE_ABBR).map(([label, abbr]) => (
+                    <div key={label} className="flex items-baseline gap-2 min-w-0">
+                      <span className="font-mono font-semibold text-text-primary shrink-0 tabular-nums">{abbr}</span>
+                      <span className="truncate">{label}</span>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -502,14 +526,16 @@ export default function SchedulePage() {
               </p>
             </div>
 
-            {selectedJob.scope?.trim() && (
-              <div>
-                <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Scope</label>
+            <div>
+              <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Scope of work</label>
+              {selectedJob.scope?.trim() ? (
                 <p className="text-sm text-text-primary mt-1 whitespace-pre-wrap break-words max-h-32 overflow-y-auto rounded-lg border border-border-light bg-surface-hover/50 px-2.5 py-2">
                   {selectedJob.scope.trim()}
                 </p>
-              </div>
-            )}
+              ) : (
+                <p className="text-sm text-text-tertiary italic mt-1">No scope of work recorded</p>
+              )}
+            </div>
 
             <div>
               <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Property (full address)</label>
