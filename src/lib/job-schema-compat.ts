@@ -21,6 +21,39 @@ const JOB_DB_COMPAT_STRIP_KEYS = [
   "client_address_id",
 ] as const;
 
+/**
+ * Migration `070_job_operational_flow` columns. If the DB was not migrated, PostgREST returns 400 on PATCH.
+ * Stripped by default; set `NEXT_PUBLIC_JOB_OPERATIONAL_SCHEMA=true` after applying 070 to persist reports/timers.
+ */
+const JOB_OPERATIONAL_FLOW_STRIP_KEYS = [
+  "start_report",
+  "start_report_submitted",
+  "start_report_skipped",
+  "final_report",
+  "final_report_submitted",
+  "final_report_skipped",
+  "timer_elapsed_seconds",
+  "timer_last_started_at",
+  "timer_is_running",
+  "review_sent_at",
+  "review_send_method",
+  "internal_report_approved",
+  "internal_invoice_approved",
+  "operational_checklist",
+] as const;
+
+/** When true, operational-flow columns are sent on insert/update (requires DB migration 070). */
+export function isJobOperationalSchemaEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_JOB_OPERATIONAL_SCHEMA === "true";
+}
+
+function stripOperationalFlowKeysIfDisabled(out: Record<string, unknown>): void {
+  if (isJobOperationalSchemaEnabled()) return;
+  for (const k of JOB_OPERATIONAL_FLOW_STRIP_KEYS) {
+    if (k in out) delete out[k];
+  }
+}
+
 function mapUnassignedStatus(status: unknown): unknown {
   return status === "unassigned" ? "scheduled" : status;
 }
@@ -30,6 +63,7 @@ export function applyJobDbCompat(row: Record<string, unknown>): Record<string, u
   const out = { ...row };
   for (const k of JOB_DB_COMPAT_STRIP_KEYS) delete out[k];
   if ("status" in out) out.status = mapUnassignedStatus(out.status);
+  stripOperationalFlowKeysIfDisabled(out);
   return out;
 }
 
@@ -41,20 +75,24 @@ function mapStatusForLegacyEnvOnly(status: unknown): unknown {
 /** Full row going to `jobs.insert` */
 export function prepareJobRowForInsert(row: Record<string, unknown>): Record<string, unknown> {
   const out = { ...row };
-  if (!isLegacyJobSchema()) return out;
-  for (const k of JOB_DB_COMPAT_STRIP_KEYS) delete out[k];
-  if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
+  if (isLegacyJobSchema()) {
+    for (const k of JOB_DB_COMPAT_STRIP_KEYS) delete out[k];
+    if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
+  }
+  stripOperationalFlowKeysIfDisabled(out);
   return out;
 }
 
 /** Partial row for `jobs.update` */
 export function prepareJobRowForUpdate(patch: Record<string, unknown>): Record<string, unknown> {
   const out = { ...patch };
-  if (!isLegacyJobSchema()) return out;
-  for (const k of JOB_DB_COMPAT_STRIP_KEYS) {
-    if (k in out) delete out[k];
+  if (isLegacyJobSchema()) {
+    for (const k of JOB_DB_COMPAT_STRIP_KEYS) {
+      if (k in out) delete out[k];
+    }
+    if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   }
-  if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
+  stripOperationalFlowKeysIfDisabled(out);
   return out;
 }
 
