@@ -38,6 +38,7 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, isJobInProgressStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
+import { prepareJobRowForUpdate } from "@/lib/job-schema-compat";
 import {
   formatJobScheduleLine,
   jobFinishYmd,
@@ -533,11 +534,14 @@ function JobsPageContent() {
           if (!row.partner_timer_started_at) {
             Object.assign(patch, officePartnerTimerStartPatch());
           }
-          const { error: upErr } = await supabase.from("jobs").update(patch).eq("id", rid);
+          const { error: upErr } = await supabase.from("jobs").update(prepareJobRowForUpdate(patch)).eq("id", rid);
           if (upErr) throw upErr;
         }
       } else {
-        const { error } = await supabase.from("jobs").update({ status: newStatus }).in("id", ids);
+        const { error } = await supabase
+          .from("jobs")
+          .update(prepareJobRowForUpdate({ status: newStatus }))
+          .in("id", ids);
         if (error) throw error;
       }
       await logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);

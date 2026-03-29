@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabase } from "@/services/base";
 import { motion } from "framer-motion";
 import { useDashboardDateRangeOptional } from "@/hooks/use-dashboard-date-range";
+import { isLegacyJobSchema } from "@/lib/job-schema-compat";
 
 interface FunnelStep {
   label: string;
@@ -58,28 +59,32 @@ export function QuoteFunnel() {
         let quotesQ = supabase.from("quotes").select("id", { count: "exact" });
         let jobsQ = supabase.from("jobs").select("id", { count: "exact" });
 
+        const legacy = isLegacyJobSchema();
+
         let quotesConvertedQ = supabase
           .from("quotes")
           .select("id", { count: "exact" })
           .eq("status", "converted_to_job");
 
-        let jobsFromQuotesQ = supabase
-          .from("jobs")
-          .select("id", { count: "exact" })
-          .not("quote_id", "is", null);
+        let jobsFromQuotesQ = legacy
+          ? supabase.from("quotes").select("id", { count: "exact" }).eq("status", "converted_to_job")
+          : supabase.from("jobs").select("id", { count: "exact" }).not("quote_id", "is", null);
 
-        let jobsFromQuotesStatusesQ = supabase
-          .from("jobs")
-          .select("status")
-          .not("quote_id", "is", null);
+        let jobsFromQuotesStatusesQ = legacy
+          ? supabase.from("jobs").select("status").eq("id", "00000000-0000-0000-0000-000000000001")
+          : supabase.from("jobs").select("status").not("quote_id", "is", null);
 
         if (fromIso && toIso) {
           reqQ = reqQ.gte("created_at", fromIso).lte("created_at", toIso);
           quotesQ = quotesQ.gte("created_at", fromIso).lte("created_at", toIso);
           jobsQ = jobsQ.gte("created_at", fromIso).lte("created_at", toIso);
           quotesConvertedQ = quotesConvertedQ.gte("updated_at", fromIso).lte("updated_at", toIso);
-          jobsFromQuotesQ = jobsFromQuotesQ.gte("created_at", fromIso).lte("created_at", toIso);
-          jobsFromQuotesStatusesQ = jobsFromQuotesStatusesQ.gte("created_at", fromIso).lte("created_at", toIso);
+          if (legacy) {
+            jobsFromQuotesQ = jobsFromQuotesQ.gte("updated_at", fromIso).lte("updated_at", toIso);
+          } else {
+            jobsFromQuotesQ = jobsFromQuotesQ.gte("created_at", fromIso).lte("created_at", toIso);
+            jobsFromQuotesStatusesQ = jobsFromQuotesStatusesQ.gte("created_at", fromIso).lte("created_at", toIso);
+          }
         }
 
         const [

@@ -11,6 +11,7 @@ import {
   TrendingUp,
   FileText,
 } from "lucide-react";
+import { isLegacyJobSchema } from "@/lib/job-schema-compat";
 
 interface DashboardStats {
   jobsRevenue: number;
@@ -113,6 +114,21 @@ export function StatsGrid() {
         }
 
         async function quoteConversion(fromIso: string, toIsoInner: string): Promise<{ requests: number; quotes: number; jobsFromQuotes: number; rate: number }> {
+          const legacy = isLegacyJobSchema();
+          const jobsFromQuotesQ = legacy
+            ? supabase
+                .from("quotes")
+                .select("id", { count: "exact" })
+                .eq("status", "converted_to_job")
+                .gte("updated_at", fromIso)
+                .lte("updated_at", toIsoInner)
+            : supabase
+                .from("jobs")
+                .select("id", { count: "exact" })
+                .not("quote_id", "is", null)
+                .gte("created_at", fromIso)
+                .lte("created_at", toIsoInner);
+
           const [reqRes, quotesRes, jobsFromQuotesRes] = await Promise.all([
             supabase
               .from("service_requests")
@@ -124,12 +140,7 @@ export function StatsGrid() {
               .select("id", { count: "exact" })
               .gte("created_at", fromIso)
               .lte("created_at", toIsoInner),
-            supabase
-              .from("jobs")
-              .select("id", { count: "exact" })
-              .not("quote_id", "is", null)
-              .gte("created_at", fromIso)
-              .lte("created_at", toIsoInner),
+            jobsFromQuotesQ,
           ]);
 
           const requests = reqRes.count ?? 0;
