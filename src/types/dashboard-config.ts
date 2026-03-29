@@ -200,7 +200,7 @@ export interface WidgetMeta {
 }
 
 export const WIDGET_CATALOG: WidgetMeta[] = [
-  { type: "stats_grid",          label: "KPI Cards",             description: "Revenue, Jobs, Quotes, Partners, Win Rate",          icon: "BarChart2",     defaultSize: "full" },
+  { type: "stats_grid",          label: "Overview executive",    description: "Revenue, margins, tier vs billing, top partner & accounts, cashflow", icon: "BarChart2", defaultSize: "full" },
   { type: "revenue_chart",       label: "Revenue Chart",         description: "Collected vs invoiced revenue per month",            icon: "TrendingUp",    defaultSize: "two_thirds" },
   { type: "quote_funnel",        label: "Quote → Job Funnel",    description: "End-to-end conversion: request → quote → job",      icon: "Filter",        defaultSize: "one_third" },
   { type: "jobs_status_donut",   label: "Jobs by Status",        description: "Donut chart of all jobs by current status",         icon: "PieChart",      defaultSize: "one_third" },

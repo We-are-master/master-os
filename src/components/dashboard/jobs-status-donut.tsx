@@ -1,47 +1,72 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { useState, useEffect, useMemo } from "react";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabase } from "@/services/base";
+import { useDashboardDateRangeOptional } from "@/hooks/use-dashboard-date-range";
 
 const STATUS_COLORS: Record<string, string> = {
-  draft:            "#94a3b8",
-  scheduled:        "#60a5fa",
-  in_progress:      "#f97316",
+  unassigned: "#fbbf24",
+  scheduled: "#60a5fa",
+  late: "#fb923c",
+  in_progress_phase1: "#f97316",
+  in_progress_phase2: "#ea580c",
+  in_progress_phase3: "#c2410c",
+  final_check: "#a78bfa",
   awaiting_payment: "#fbbf24",
-  completed:        "#34d399",
-  cancelled:        "#f87171",
-  on_hold:          "#a78bfa",
+  need_attention: "#f87171",
+  completed: "#34d399",
+  cancelled: "#94a3b8",
+  draft: "#94a3b8",
+  in_progress: "#f97316",
+  on_hold: "#a78bfa",
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  draft:            "Draft",
-  scheduled:        "Scheduled",
-  in_progress:      "In Progress",
-  awaiting_payment: "Awaiting Payment",
-  completed:        "Completed",
-  cancelled:        "Cancelled",
-  on_hold:          "On Hold",
+  unassigned: "Unassigned",
+  scheduled: "Scheduled",
+  late: "Late",
+  in_progress_phase1: "In progress (P1)",
+  in_progress_phase2: "In progress (P2)",
+  in_progress_phase3: "In progress (P3)",
+  final_check: "Final check",
+  awaiting_payment: "Awaiting payment",
+  need_attention: "Need attention",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  draft: "Draft",
+  in_progress: "In progress",
+  on_hold: "On hold",
 };
 
 export function JobsStatusDonut() {
   const [data, setData] = useState<{ name: string; value: number; color: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
+  const dateCtx = useDashboardDateRangeOptional();
+  const boundsKey = useMemo(() => {
+    const b = dateCtx?.bounds ?? null;
+    return b ? `${b.fromIso}|${b.toIso}` : "all";
+  }, [dateCtx]);
 
   useEffect(() => {
     async function load() {
       const supabase = getSupabase();
+      setLoading(true);
       try {
-        const { data: jobs } = await supabase.from("jobs").select("status");
+        const b = dateCtx?.bounds ?? null;
+        let q = supabase.from("jobs").select("status");
+        if (b) q = q.gte("created_at", b.fromIso).lte("created_at", b.toIso);
+        const { data: jobs } = await q;
         const counts: Record<string, number> = {};
-        for (const j of (jobs ?? [])) {
-          counts[j.status] = (counts[j.status] ?? 0) + 1;
+        for (const j of jobs ?? []) {
+          const s = (j as { status: string }).status;
+          counts[s] = (counts[s] ?? 0) + 1;
         }
         const chartData = Object.entries(counts)
           .map(([status, count]) => ({
-            name: STATUS_LABELS[status] ?? status,
+            name: STATUS_LABELS[status] ?? status.replace(/_/g, " "),
             value: count,
             color: STATUS_COLORS[status] ?? "#94a3b8",
           }))
@@ -54,16 +79,16 @@ export function JobsStatusDonut() {
         setLoading(false);
       }
     }
-    load();
-  }, []);
+    void load();
+  }, [boundsKey, dateCtx]);
 
   return (
     <Card padding="none" className="h-full">
       <CardHeader className="px-5 pt-5">
         <div>
-          <CardTitle>Jobs por Status</CardTitle>
+          <CardTitle>Jobs by status</CardTitle>
           <p className="text-xs text-text-tertiary mt-0.5">
-            {loading ? "Loading..." : `${total} jobs in total`}
+            {loading ? "Loading..." : `${total} jobs${dateCtx?.bounds ? " created in range" : ""}`}
           </p>
         </div>
       </CardHeader>
@@ -99,7 +124,6 @@ export function JobsStatusDonut() {
                 />
               </PieChart>
             </ResponsiveContainer>
-            {/* centre label */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
               <span className="text-2xl font-bold text-text-primary">{total}</span>
               <span className="text-[10px] text-text-tertiary font-medium uppercase tracking-wide">Jobs</span>

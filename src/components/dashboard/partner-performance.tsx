@@ -1,10 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabase } from "@/services/base";
 import { formatCurrency } from "@/lib/utils";
 import { TrendingUp, Star } from "lucide-react";
+import { useDashboardDateRangeOptional } from "@/hooks/use-dashboard-date-range";
+import { jobBillableRevenue } from "@/lib/job-financials";
+import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 
 interface PartnerStat {
   name: string;
@@ -17,22 +20,49 @@ interface PartnerStat {
 export function PartnerPerformance() {
   const [data, setData] = useState<PartnerStat[]>([]);
   const [loading, setLoading] = useState(true);
+  const dateCtx = useDashboardDateRangeOptional();
+  const boundsKey = useMemo(() => {
+    const b = dateCtx?.bounds ?? null;
+    return b ? `${b.fromIso}|${b.toIso}` : "all";
+  }, [dateCtx]);
 
   useEffect(() => {
     async function load() {
       const supabase = getSupabase();
+      setLoading(true);
       try {
-        const { data: jobs } = await supabase
-          .from("jobs")
-          .select("partner_name, client_price, margin_percent, status")
-          .not("partner_name", "is", null);
+        const b = dateCtx?.bounds ?? null;
+        const selFull = "partner_name, client_price, extras_amount, margin_percent, status";
+        const selLegacy = "partner_name, client_price, margin_percent, status";
+
+        async function runSelect(columns: string) {
+          let q = supabase.from("jobs").select(columns).not("partner_name", "is", null);
+          if (b) q = q.gte("created_at", b.fromIso).lte("created_at", b.toIso);
+          return q;
+        }
+
+        let res = await runSelect(selFull);
+        if (res.error && isPostgrestWriteRetryableError(res.error)) {
+          res = await runSelect(selLegacy);
+        }
+        if (res.error) {
+          setData([]);
+          return;
+        }
+        const jobs = (res.data ?? []) as unknown as {
+          partner_name: string;
+          client_price?: number;
+          extras_amount?: number | null;
+          margin_percent?: number;
+          status: string;
+        }[];
 
         const map = new Map<string, PartnerStat>();
-        for (const j of (jobs ?? []) as { partner_name: string; client_price?: number; margin_percent?: number; status: string }[]) {
+        for (const j of jobs) {
           const name = j.partner_name;
           const existing = map.get(name) ?? { name, jobCount: 0, revenue: 0, avgMargin: 0, completedCount: 0 };
           existing.jobCount++;
-          existing.revenue += Number(j.client_price ?? 0);
+          existing.revenue += jobBillableRevenue(j as Parameters<typeof jobBillableRevenue>[0]);
           existing.avgMargin += Number(j.margin_percent ?? 0);
           if (j.status === "completed") existing.completedCount++;
           map.set(name, existing);
@@ -45,13 +75,13 @@ export function PartnerPerformance() {
 
         setData(result);
       } catch {
-        // non-critical
+        setData([]);
       } finally {
         setLoading(false);
       }
     }
-    load();
-  }, []);
+    void load();
+  }, [boundsKey, dateCtx]);
 
   const maxRevenue = Math.max(...data.map((d) => d.revenue), 1);
 
@@ -60,7 +90,9 @@ export function PartnerPerformance() {
       <CardHeader className="px-5 pt-5">
         <div>
           <CardTitle>Top Partners</CardTitle>
-          <p className="text-xs text-text-tertiary mt-0.5">Ranked by revenue generated</p>
+          <p className="text-xs text-text-tertiary mt-0.5">
+            Billable revenue{dateCtx?.bounds ? " · jobs created in range" : ""}
+          </p>
         </div>
         <TrendingUp className="h-4 w-4 text-text-tertiary" />
       </CardHeader>
@@ -83,13 +115,17 @@ export function PartnerPerformance() {
             )
           : data.map((partner, i) => (
               <div key={partner.name} className="flex items-center gap-3 py-1.5 group">
-                {/* rank badge */}
-                <div className={`h-7 w-7 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-bold ${
-                  i === 0 ? "bg-amber-100 text-amber-700" :
-                  i === 1 ? "bg-slate-100 text-slate-600" :
-                  i === 2 ? "bg-orange-100 text-orange-700" :
-                  "bg-surface-hover text-text-tertiary"
-                }`}>
+                <div
+                  className={`h-7 w-7 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-bold ${
+                    i === 0
+                      ? "bg-amber-100 text-amber-700"
+                      : i === 1
+                        ? "bg-slate-100 text-slate-600"
+                        : i === 2
+                          ? "bg-orange-100 text-orange-700"
+                          : "bg-surface-hover text-text-tertiary"
+                  }`}
+                >
                   {i === 0 ? <Star className="h-3.5 w-3.5" /> : i + 1}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -106,7 +142,9 @@ export function PartnerPerformance() {
                   <div className="flex items-center gap-3 mt-0.5">
                     <span className="text-[10px] text-text-tertiary">{partner.jobCount} jobs</span>
                     <span className="text-[10px] text-text-tertiary">{partner.completedCount} completed</span>
-                    <span className={`text-[10px] font-medium ${partner.avgMargin >= 20 ? "text-emerald-600" : "text-red-500"}`}>
+                    <span
+                      className={`text-[10px] font-medium ${partner.avgMargin >= 20 ? "text-emerald-600" : "text-red-500"}`}
+                    >
                       {partner.avgMargin}% margin
                     </span>
                   </div>
