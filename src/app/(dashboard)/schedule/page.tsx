@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -31,9 +32,12 @@ import {
 import {
   formatScheduleCalendarBarCompact,
   scheduleJobStatusColorClasses,
+  SCHEDULE_TYPE_ABBR,
+  resolveScheduleJobTypeKey,
+  scheduleJobAbbrevFromTitle,
 } from "@/lib/schedule-job-type-style";
 import { isJobInProgressStatus } from "@/lib/job-phases";
-import { jobBillableRevenue } from "@/lib/job-financials";
+import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financials";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -106,12 +110,14 @@ function jobCalendarSortKey(job: Job): string {
 }
 
 export default function SchedulePage() {
+  const router = useRouter();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [selectedJobAccountName, setSelectedJobAccountName] = useState<string | null>(null);
 
   const loadJobs = useCallback(async () => {
     setLoading(true);
@@ -207,6 +213,39 @@ export default function SchedulePage() {
     loadAllJobs();
   }, [loadAllJobs]);
 
+  useEffect(() => {
+    const clientId = selectedJob?.client_id?.trim();
+    if (!clientId) {
+      setSelectedJobAccountName(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const supabase = getSupabase();
+      const { data: client } = await supabase
+        .from("clients")
+        .select("source_account_id")
+        .eq("id", clientId)
+        .is("deleted_at", null)
+        .maybeSingle();
+      const aid = client?.source_account_id as string | undefined;
+      if (!aid) {
+        if (!cancelled) setSelectedJobAccountName(null);
+        return;
+      }
+      const { data: acc } = await supabase
+        .from("accounts")
+        .select("company_name")
+        .eq("id", aid)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (!cancelled) setSelectedJobAccountName((acc?.company_name as string | undefined)?.trim() || null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedJob?.client_id, selectedJob?.id]);
+
   const goToday = () => {
     setYear(now.getFullYear());
     setMonth(now.getMonth());
@@ -291,6 +330,21 @@ export default function SchedulePage() {
         <PageHeader title="Schedule & Dispatch" subtitle="Manage job scheduling, partner assignments and dispatch.">
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />}>New Booking</Button>
         </PageHeader>
+
+        <div className="rounded-xl border border-border-light bg-card/60 px-4 py-3">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Legend — bar chips</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-1.5 text-[11px] text-text-secondary">
+            {Object.entries(SCHEDULE_TYPE_ABBR).map(([label, abbr]) => (
+              <div key={label} className="flex items-baseline gap-2 min-w-0">
+                <span className="font-mono font-semibold text-text-primary shrink-0 tabular-nums">{abbr}</span>
+                <span className="truncate">{label}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-text-tertiary mt-2 leading-snug">
+            Each cell shows <span className="font-mono text-text-secondary">abbr · partner · postcode</span>. Types not listed use two letters from the job title. Colours = job stage (scheduled, in progress, completed, …).
+          </p>
+        </div>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Active" value={stats.active} format="number" icon={Briefcase} accent="blue" />
@@ -429,13 +483,39 @@ export default function SchedulePage() {
             <div>
               <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
               <p className="text-sm font-semibold text-text-primary mt-1">{selectedJob.client_name}</p>
+              <p className="text-xs text-text-secondary mt-1">
+                {selectedJobAccountName ? (
+                  <span>{selectedJobAccountName}</span>
+                ) : selectedJob.client_id ? (
+                  <span className="text-text-tertiary italic">No linked account</span>
+                ) : (
+                  <span className="text-text-tertiary italic">—</span>
+                )}
+              </p>
             </div>
 
             <div>
-              <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Property</label>
+              <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Type of work</label>
+              <p className="text-sm text-text-primary mt-1">
+                {resolveScheduleJobTypeKey(selectedJob.title)}
+                <span className="text-text-tertiary text-xs ml-2 font-mono">({scheduleJobAbbrevFromTitle(selectedJob.title)})</span>
+              </p>
+            </div>
+
+            {selectedJob.scope?.trim() && (
+              <div>
+                <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Scope</label>
+                <p className="text-sm text-text-primary mt-1 whitespace-pre-wrap break-words max-h-32 overflow-y-auto rounded-lg border border-border-light bg-surface-hover/50 px-2.5 py-2">
+                  {selectedJob.scope.trim()}
+                </p>
+              </div>
+            )}
+
+            <div>
+              <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Property (full address)</label>
               <div className="flex items-start gap-2 mt-1">
                 <MapPin className="h-4 w-4 text-text-tertiary mt-0.5 shrink-0" />
-                <p className="text-sm text-text-primary">{selectedJob.property_address}</p>
+                <p className="text-sm text-text-primary break-words">{selectedJob.property_address}</p>
               </div>
             </div>
 
@@ -464,16 +544,24 @@ export default function SchedulePage() {
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-gradient-to-br from-surface-hover to-surface-tertiary/50 border border-border-light">
-              <div className="flex items-center gap-2 mb-2">
+            <div className="p-4 rounded-xl bg-gradient-to-br from-surface-hover to-surface-tertiary/50 border border-border-light space-y-2">
+              <div className="flex items-center gap-2 mb-1">
                 <DollarSign className="h-4 w-4 text-text-tertiary" />
-                <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial</label>
+                <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial snapshot</label>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-text-secondary">Value</span>
-                <span className="text-lg font-bold text-text-primary">{formatCurrency(selectedJob.client_price)}</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-text-secondary">Price (customer)</span>
+                <span className="text-base font-bold text-text-primary tabular-nums">{formatCurrency(jobBillableRevenue(selectedJob))}</span>
               </div>
-              <div className="flex items-center justify-between mt-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-text-secondary">Cost (partner + materials)</span>
+                <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(jobDirectCost(selectedJob))}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-1 border-t border-border-light/80">
+                <span className="text-sm text-text-secondary">Gross profit</span>
+                <span className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(jobProfit(selectedJob))}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-sm text-text-secondary">Margin</span>
                 <span className={`text-sm font-semibold ${selectedJob.margin_percent >= 20 ? "text-emerald-600" : "text-amber-600"}`}>
                   {selectedJob.margin_percent}%
@@ -494,8 +582,9 @@ export default function SchedulePage() {
               <Button
                 className="w-full"
                 onClick={() => {
+                  const id = selectedJob.id;
                   setSelectedJob(null);
-                  window.location.href = "/jobs";
+                  router.push(`/jobs/${id}`);
                 }}
               >
                 Open in Jobs Management
