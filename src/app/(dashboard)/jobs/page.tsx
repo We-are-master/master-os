@@ -580,36 +580,129 @@ function JobsPageContent() {
   }, [selectedIds, refresh, loadDashboardStats]);
 
   const columns: Column<Job>[] = [
-    { key: "reference", label: "Job", width: "180px", render: (item) => (<div><p className="text-sm font-semibold text-text-primary">{item.reference}</p><p className="text-[11px] text-text-tertiary">{item.title}</p></div>) },
-    { key: "client_name", label: "Client / Property", render: (item) => (<div><p className="text-sm font-medium text-text-primary">{item.client_name}</p><p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{item.property_address}</p></div>) },
-    { key: "partner_name", label: "Partner", render: (item) => item.partner_name ? (<div className="flex items-center gap-2"><Avatar name={item.partner_name} size="xs" /><span className="text-sm text-text-secondary">{item.partner_name}</span></div>) : <span className="text-xs text-text-tertiary italic">Unassigned</span> },
+    {
+      key: "reference",
+      label: "Job",
+      minWidth: "132px",
+      cellClassName: "min-w-[8rem]",
+      render: (item) => (
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-text-primary truncate">{item.reference}</p>
+          <p className="text-[11px] text-text-tertiary line-clamp-2 break-words">{item.title}</p>
+        </div>
+      ),
+    },
+    {
+      key: "client_name",
+      label: "Client / Property",
+      minWidth: "160px",
+      cellClassName: "min-w-[10rem] max-w-[14rem] sm:max-w-[16rem]",
+      render: (item) => (
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
+          <p className="text-[11px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
+        </div>
+      ),
+    },
+    {
+      key: "partner_name",
+      label: "Partner",
+      minWidth: "120px",
+      cellClassName: "whitespace-nowrap",
+      render: (item) =>
+        item.partner_name ? (
+          <div className="flex items-center gap-2 min-w-0">
+            <Avatar name={item.partner_name} size="xs" />
+            <span className="text-sm text-text-secondary truncate max-w-[7rem] sm:max-w-[9rem]">{item.partner_name}</span>
+          </div>
+        ) : (
+          <span className="text-xs text-text-tertiary italic">Unassigned</span>
+        ),
+    },
     {
       key: "schedule",
       label: "Schedule",
-      width: "240px",
+      minWidth: "200px",
+      cellClassName: "min-w-[12.5rem] max-w-[16rem]",
       render: (item) => {
         const line = formatJobScheduleLine(item);
         return line ? (
-          <span className="text-xs text-text-secondary leading-snug block max-w-[240px] whitespace-normal">{line}</span>
+          <span className="text-xs text-text-secondary leading-snug block whitespace-normal break-words">{line}</span>
         ) : (
           <span className="text-xs text-text-tertiary">—</span>
         );
       },
     },
-    { key: "status", label: "Status", render: (item) => { const c = statusConfig[item.status] ?? { label: item.status, variant: "default" as const }; return <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>; } },
-    { key: "account", label: "Account", render: (item) => item.client_id && clientAccountMap[item.client_id] ? <span className="text-sm text-text-primary">{clientAccountMap[item.client_id]}</span> : <span className="text-xs text-text-tertiary italic">No account</span> },
-    { key: "margin_percent", label: "Job Amount", render: (item) => (<div><p className="text-sm font-semibold text-text-primary">{formatCurrency(item.client_price + Number(item.extras_amount ?? 0))}</p><span className={`text-[11px] font-medium ${item.margin_percent >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{item.margin_percent}% margin</span></div>) },
+    {
+      key: "status",
+      label: "Status",
+      minWidth: "118px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap",
+      render: (item) => {
+        const c = statusConfig[item.status] ?? { label: item.status, variant: "default" as const };
+        return <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>;
+      },
+    },
+    {
+      key: "account",
+      label: "Account",
+      minWidth: "100px",
+      cellClassName: "min-w-[6.25rem] max-w-[8rem]",
+      render: (item) =>
+        item.client_id && clientAccountMap[item.client_id] ? (
+          <span className="text-sm text-text-primary block truncate" title={clientAccountMap[item.client_id]}>
+            {clientAccountMap[item.client_id]}
+          </span>
+        ) : (
+          <span className="text-xs text-text-tertiary italic">No account</span>
+        ),
+    },
+    {
+      key: "margin_percent",
+      label: "Job Amount",
+      minWidth: "112px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap",
+      render: (item) => (
+        <div>
+          <p className="text-sm font-semibold text-text-primary">{formatCurrency(item.client_price + Number(item.extras_amount ?? 0))}</p>
+          <span className={`text-[11px] font-medium ${item.margin_percent >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{item.margin_percent}% margin</span>
+        </div>
+      ),
+    },
     {
       key: "amount_due",
       label: "Amount Due",
+      minWidth: "96px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap",
       render: (item) => {
         const paid = (item.customer_deposit_paid ? Number(item.customer_deposit ?? 0) : 0) + (item.customer_final_paid ? Number(item.customer_final_payment ?? 0) : 0);
         const due = Math.max(0, Number(item.client_price ?? 0) + Number(item.extras_amount ?? 0) - paid);
         return <span className="text-sm font-semibold text-text-primary">{formatCurrency(due)}</span>;
       },
     },
-    { key: "finance_status", label: "Finance", render: (item) => { const fs = item.finance_status ?? "unpaid"; return <Badge variant={fs === "paid" ? "success" : fs === "partial" ? "warning" : "default"} size="sm">{fs === "paid" ? "Paid" : fs === "partial" ? "Partial" : "Unpaid"}</Badge>; } },
-    { key: "actions", label: "", width: "40px", render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" /> },
+    {
+      key: "finance_status",
+      label: "Finance",
+      minWidth: "88px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap",
+      render: (item) => {
+        const fs = item.finance_status ?? "unpaid";
+        return <Badge variant={fs === "paid" ? "success" : fs === "partial" ? "warning" : "default"} size="sm">{fs === "paid" ? "Paid" : fs === "partial" ? "Partial" : "Unpaid"}</Badge>;
+      },
+    },
+    {
+      key: "actions",
+      label: "",
+      width: "44px",
+      minWidth: "44px",
+      cellClassName: "w-11 px-2 sm:px-3 text-center align-middle",
+      headerClassName: "w-11",
+      render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />,
+    },
   ];
 
   const scheduleSubtitleText = scheduleFilterSubtitle(scheduleDatePreset, scheduleRange);
@@ -726,15 +819,17 @@ function JobsPageContent() {
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex items-center justify-between mb-4">
-            <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
+            <div className="min-w-0 overflow-x-auto pb-1 -mb-1">
+              <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
                 {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: MapIcon }].map(({ id, icon: Icon }) => (
                   <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
                 ))}
               </div>
-              <SearchInput placeholder="Search jobs..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <SearchInput placeholder="Search jobs..." className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           </div>
           {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /><BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" /></div>} />}
