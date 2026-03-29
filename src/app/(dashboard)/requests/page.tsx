@@ -399,7 +399,7 @@ export default function RequestsPage() {
             ? String(formData.catalog_service_id).trim()
             : null,
           request_kind:
-            formData.request_kind === "quote" || formData.request_kind === "work" ? formData.request_kind : null,
+            formData.request_kind === "quote" || formData.request_kind === "work" ? formData.request_kind : "quote",
         });
         await logAudit({
           entityType: "request", entityId: result.id, entityRef: result.reference,
