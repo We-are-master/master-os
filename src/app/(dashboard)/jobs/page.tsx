@@ -38,7 +38,8 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, isJobInProgressStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
-import { prepareJobRowForUpdate } from "@/lib/job-schema-compat";
+import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
+import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import {
   formatJobScheduleLine,
   jobFinishYmd,
@@ -534,14 +535,25 @@ function JobsPageContent() {
           if (!row.partner_timer_started_at) {
             Object.assign(patch, officePartnerTimerStartPatch());
           }
-          const { error: upErr } = await supabase.from("jobs").update(prepareJobRowForUpdate(patch)).eq("id", rid);
+          let { error: upErr } = await supabase.from("jobs").update(prepareJobRowForUpdate(patch)).eq("id", rid);
+          if (upErr && isPostgrestWriteRetryableError(upErr)) {
+            const r = await supabase.from("jobs").update(applyJobDbCompat({ ...patch })).eq("id", rid);
+            upErr = r.error;
+          }
           if (upErr) throw upErr;
         }
       } else {
-        const { error } = await supabase
+        let { error } = await supabase
           .from("jobs")
           .update(prepareJobRowForUpdate({ status: newStatus }))
           .in("id", ids);
+        if (error && isPostgrestWriteRetryableError(error)) {
+          const r = await supabase
+            .from("jobs")
+            .update(applyJobDbCompat({ status: newStatus }))
+            .in("id", ids);
+          error = r.error;
+        }
         if (error) throw error;
       }
       await logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);

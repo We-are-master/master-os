@@ -3,7 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
 import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
-import { prepareJobRowForInsert } from "@/lib/job-schema-compat";
+import { applyJobDbCompat, prepareJobRowForInsert } from "@/lib/job-schema-compat";
+import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 
 function getServiceSupabase() {
   return createClient(
@@ -128,7 +129,7 @@ export async function POST(req: NextRequest) {
       const dueDateStr = dueDate.toISOString().split("T")[0];
 
       const hasPartner = !!(quote.partner_id?.trim() || (quote.partner_name && String(quote.partner_name).trim()));
-      const jobInsert = prepareJobRowForInsert({
+      const baseJobRow: Record<string, unknown> = {
         reference: jobReference,
         title: quote.title ?? "Job from quote",
         client_name: quote.client_name ?? "",
@@ -172,12 +173,22 @@ export async function POST(req: NextRequest) {
         commission: 0,
         vat: 0,
         scope: quote.scope ?? null,
-      });
-      const { data: job, error: jobError } = await supabase
+      };
+      const jobInsert = prepareJobRowForInsert(baseJobRow);
+      let { data: job, error: jobError } = await supabase
         .from("jobs")
         .insert(jobInsert)
         .select("id, reference")
         .single();
+      if (jobError && isPostgrestWriteRetryableError(jobError)) {
+        const retry = await supabase
+          .from("jobs")
+          .insert(applyJobDbCompat(baseJobRow))
+          .select("id, reference")
+          .single();
+        job = retry.data;
+        jobError = retry.error;
+      }
 
       if (jobError || !job) {
         console.error("Quote accept: job creation failed", jobError);
