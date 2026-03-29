@@ -115,23 +115,16 @@ export function jobIntersectsLocalMonth(
   return s <= me && e >= ms;
 }
 
-/** Schedule month cell label: `7 Mar 2026 - Plumber - ACME Ltd` or `UNASSIGNED`. */
-export function formatScheduleCalendarBarLabel(job: {
+/** Hover tooltip: reference, full title, partner, address. */
+export function formatScheduleCalendarBarTooltip(job: {
+  reference: string;
   title: string;
   partner_name?: string | null;
-  scheduled_date?: string | null;
-  scheduled_start_at?: string | null;
+  property_address?: string | null;
 }): string {
-  const start = jobScheduleYmd(job);
-  const startLabel = start
-    ? new Date(start.y, start.m - 1, start.d).toLocaleDateString(undefined, {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      })
-    : "—";
-  const assign = job.partner_name?.trim() ? job.partner_name.trim() : "UNASSIGNED";
-  return `${startLabel} - ${job.title} - ${assign}`;
+  const partner = job.partner_name?.trim() ? job.partner_name.trim() : "No partner";
+  const addr = (job.property_address ?? "").trim();
+  return `${job.reference} · ${job.title} · ${partner}${addr ? ` · ${addr}` : ""}`;
 }
 
 function scheduleLineFinishSuffix(job: { scheduled_finish_date?: string | null }): string {

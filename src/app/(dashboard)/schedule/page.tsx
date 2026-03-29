@@ -16,18 +16,22 @@ import {
   Plus, ChevronLeft, ChevronRight, Calendar as CalIcon,
   Briefcase, AlertTriangle, MapPin, DollarSign, User,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import type { Job } from "@/types/database";
 import {
   formatJobScheduleLine,
   formatLocalYmd,
-  formatScheduleCalendarBarLabel,
+  formatScheduleCalendarBarTooltip,
   jobFinishYmd,
   jobIntersectsLocalMonth,
   jobScheduleYmd,
   localYmdBoundsToUtcIso,
 } from "@/lib/schedule-calendar";
+import {
+  formatScheduleCalendarBarCompact,
+  scheduleJobStatusColorClasses,
+} from "@/lib/schedule-job-type-style";
 import { isJobInProgressStatus } from "@/lib/job-phases";
 import { jobBillableRevenue } from "@/lib/job-financials";
 
@@ -38,26 +42,16 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-const tradeColors: Record<string, string> = {
-  "HVAC": "bg-blue-100 text-blue-700 border-blue-200",
-  "Electrical": "bg-purple-100 text-purple-700 border-purple-200",
-  "Plumbing": "bg-teal-100 text-teal-700 border-teal-200",
-  "Painting": "bg-emerald-100 text-emerald-700 border-emerald-200",
-  "Carpentry": "bg-amber-100 text-amber-700 border-amber-200",
-  "General": "bg-surface-tertiary text-text-primary border-border",
-};
-
-function getJobColor(title: string): string {
-  const key = Object.keys(tradeColors).find((k) => title.toLowerCase().includes(k.toLowerCase()));
-  return key ? tradeColors[key] : "bg-indigo-100 text-indigo-700 border-indigo-200";
-}
-
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" }> = {
-  pending_schedule: { label: "Pending Schedule", variant: "warning" },
   unassigned: { label: "Unassigned", variant: "warning" },
   scheduled: { label: "Scheduled", variant: "default" },
-  in_progress: { label: "In Progress", variant: "primary" },
-  on_hold: { label: "On Hold", variant: "danger" },
+  late: { label: "Late", variant: "danger" },
+  in_progress_phase1: { label: "In progress", variant: "primary" },
+  in_progress_phase2: { label: "In progress", variant: "primary" },
+  in_progress_phase3: { label: "In progress", variant: "primary" },
+  final_check: { label: "Final check", variant: "warning" },
+  awaiting_payment: { label: "Awaiting payment", variant: "danger" },
+  need_attention: { label: "Need attention", variant: "warning" },
   completed: { label: "Completed", variant: "success" },
   cancelled: { label: "Cancelled", variant: "default" },
 };
@@ -75,8 +69,9 @@ function scheduleBarSegment(
   const hasOn = (cell: number | null | undefined) => typeof cell === "number" && days.has(cell);
   let left = false;
   let right = false;
-  if (dayGridIndex % 7 !== 0) left = hasOn(calendarDays[dayGridIndex - 1]);
-  if (dayGridIndex % 7 !== 6) right = hasOn(calendarDays[dayGridIndex + 1]);
+  /** Adjacent calendar cell (works across Sat→Sun and week rows), not just same week row. */
+  if (dayGridIndex > 0) left = hasOn(calendarDays[dayGridIndex - 1]);
+  if (dayGridIndex < calendarDays.length - 1) right = hasOn(calendarDays[dayGridIndex + 1]);
   if (!left && !right) return "only";
   if (!left && right) return "first";
   if (left && right) return "middle";
@@ -84,7 +79,10 @@ function scheduleBarSegment(
 }
 
 function scheduleBarSegmentClass(segment: ScheduleBarSegment, colorClasses: string): string {
-  const base = `block w-full px-1.5 py-0.5 text-[10px] font-medium border truncate cursor-pointer hover:opacity-80 transition-opacity ${colorClasses}`;
+  const base = cn(
+    "flex w-full min-w-0 items-center px-1.5 py-0.5 text-[9px] font-semibold leading-tight border cursor-pointer hover:opacity-90 transition-opacity",
+    colorClasses,
+  );
   switch (segment) {
     case "only":
       return `${base} rounded-md`;
@@ -380,10 +378,10 @@ export default function SchedulePage() {
                               whileHover={{ scale: 1.01 }}
                               whileTap={{ scale: 0.99 }}
                               onClick={() => setSelectedJob(job)}
-                              title={formatScheduleCalendarBarLabel(job)}
-                              className={scheduleBarSegmentClass(segment, getJobColor(job.title))}
+                              title={formatScheduleCalendarBarTooltip(job)}
+                              className={scheduleBarSegmentClass(segment, scheduleJobStatusColorClasses(job.status))}
                             >
-                              <span className="block truncate">{formatScheduleCalendarBarLabel(job)}</span>
+                              <span className="min-w-0 flex-1 truncate">{formatScheduleCalendarBarCompact(job)}</span>
                             </motion.div>
                           ))}
                           {dayJobs.length > 3 && (
