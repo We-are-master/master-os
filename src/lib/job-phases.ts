@@ -4,12 +4,11 @@ import type { LucideIcon } from "lucide-react";
 import {
   Play,
   Pause,
-  TrendingUp,
   RotateCcw,
   CheckCircle2,
-  CreditCard,
   ShieldCheck,
   XCircle,
+  Send,
 } from "lucide-react";
 
 export const JOB_PHASE_COUNT_MIN = 1;
@@ -57,11 +56,19 @@ export function allConfiguredReportsApproved(job: Job): boolean {
   return true;
 }
 
+/** Header actions that need custom handling on the job detail page (modals / send flow). */
+export type JobStatusActionSpecial =
+  | "start_job_report_modal"
+  | "completion_report_modal"
+  | "final_review_send_modal";
+
 export type JobStatusAction = {
   label: string;
   status: Job["status"];
   icon: LucideIcon;
   primary: boolean;
+  destructive?: boolean;
+  special?: JobStatusActionSpecial;
 };
 
 /** Primary actions for advancing / rewinding job workflow, respecting `total_phases`. */
@@ -69,10 +76,11 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
   const tp = normalizeTotalPhases(job.total_phases);
   const last = lastInProgressStatusForTotal(tp);
   const cancelAction: JobStatusAction = {
-    label: "Cancel job",
+    label: "Cancel Job",
     status: "cancelled",
     icon: XCircle,
     primary: false,
+    destructive: true,
   };
 
   switch (job.status) {
@@ -81,24 +89,40 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     case "scheduled":
     case "late":
       return [
-        { label: "Start Job", status: "in_progress_phase1", icon: Play, primary: true },
+        {
+          label: "Start Job",
+          status: "in_progress_phase1",
+          icon: Play,
+          primary: true,
+          special: "start_job_report_modal",
+        },
         cancelAction,
       ];
     case "in_progress_phase1":
     case "in_progress_phase2":
     case "in_progress_phase3": {
-      const finishLabel = allConfiguredReportsApproved(job) ? "Finish on site" : "Final check";
       return [
-        { label: finishLabel, status: "final_check", icon: CheckCircle2, primary: true },
-        { label: "Pause", status: "scheduled", icon: Pause, primary: false },
+        {
+          label: "Complete Job",
+          status: "final_check",
+          icon: CheckCircle2,
+          primary: true,
+          special: "completion_report_modal",
+        },
+        { label: "Pause Job", status: "scheduled", icon: Pause, primary: false },
         cancelAction,
       ];
     }
     case "final_check": {
-      const backLabel = "Back to Phase 1";
       return [
-        { label: "Awaiting Payment", status: "awaiting_payment", icon: CreditCard, primary: true },
-        { label: backLabel, status: last, icon: RotateCcw, primary: false },
+        {
+          label: "Review & Send",
+          status: "awaiting_payment",
+          icon: Send,
+          primary: true,
+          special: "final_review_send_modal",
+        },
+        { label: "Reopen Job", status: last, icon: RotateCcw, primary: false },
         cancelAction,
       ];
     }
@@ -151,22 +175,26 @@ export function canAdvanceJob(
   }
 
   if (nextStatus === "in_progress_phase1") {
+    if (job.status === "final_check") {
+      return { ok: true };
+    }
     if (!job.partner_id && !job.partner_name?.trim()) return { ok: false, message: "Assign a partner before starting the job." };
     if (!job.scheduled_date && !job.scheduled_start_at) return { ok: false, message: "Set scheduled date before starting the job." };
   }
   if (nextStatus === "final_check") {
-    let allUploaded = true;
-    for (let n = 1; n <= tp; n++) {
-      if (!job[`report_${n}_uploaded` as keyof Job]) { allUploaded = false; break; }
+    if (!isJobOnSiteWorkStatus(job.status)) {
+      return { ok: false, message: "Move to Final Check from the on-site (In progress) step." };
     }
-    if (!allUploaded) return { ok: false, message: `Upload all ${tp} post-job report${tp > 1 ? "s" : ""} before Final Check.` };
+    return { ok: true };
   }
   if (nextStatus === "awaiting_payment") {
     let allApproved = true;
     for (let n = 1; n <= tp; n++) {
       if (!job[`report_${n}_approved` as keyof Job]) { allApproved = false; break; }
     }
-    if (!allApproved) return { ok: false, message: "Ops must approve all reports before Awaiting Payment." };
+    if (allApproved) return { ok: true };
+    if (job.status === "final_check") return { ok: true };
+    return { ok: false, message: "Ops must approve all reports before Awaiting Payment." };
   }
 
   if (nextStatus === "completed") {
@@ -287,17 +315,22 @@ export function canApproveReport(job: Job, reportSlotIndex: number): { ok: boole
  * (avoids skipping on-site work while still on Scheduled).
  */
 export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; message?: string } {
-  if (!allConfiguredReportsApproved(job)) {
+  if (allConfiguredReportsApproved(job)) {
+    if (job.status !== "final_check" && !isJobOnSiteWorkStatus(job.status)) {
+      return {
+        ok: false,
+        message: "Job must be in Final check or on site before sending the report and invoice.",
+      };
+    }
+    return { ok: true };
+  }
+  if (job.status === "final_check") {
+    return { ok: true };
+  }
+  if (isJobOnSiteWorkStatus(job.status)) {
     return { ok: false, message: "All reports must be uploaded and approved first." };
   }
-  // Final check is set automatically when the last report is validated; allow send from there or still in on-site phases before UI refresh.
-  if (job.status !== "final_check" && !isJobOnSiteWorkStatus(job.status)) {
-    return {
-      ok: false,
-      message: "Job must be in Final check or on site before sending the report and invoice.",
-    };
-  }
-  return { ok: true };
+  return { ok: false, message: "All reports must be uploaded and approved first." };
 }
 
 /** True while partner is doing on-site work (not final check / payment). */

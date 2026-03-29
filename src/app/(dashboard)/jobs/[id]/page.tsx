@@ -77,6 +77,14 @@ import {
   isPartnerLiveTimerRunning,
   statusChangePartnerTimerPatch,
 } from "@/lib/partner-live-timer";
+import {
+  computeOfficeTimerElapsedSeconds,
+  formatOfficeTimer,
+  statusChangeOfficeTimerPatch,
+} from "@/lib/office-job-timer";
+import { StartJobReportModal } from "@/components/jobs/start-job-report-modal";
+import { CompletionReportModal } from "@/components/jobs/completion-report-modal";
+import { FinalReviewSendModal } from "@/components/jobs/final-review-send-modal";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
 import {
   OFFICE_JOB_CANCELLATION_REASONS,
@@ -175,6 +183,10 @@ export default function JobDetailPage() {
   const [analyzingManualReport, setAnalyzingManualReport] = useState(false);
   const [phaseReportFiles, setPhaseReportFiles] = useState<Record<number, File | null>>({});
   const [analyzingPhase, setAnalyzingPhase] = useState<number | null>(null);
+  const [startJobReportOpen, setStartJobReportOpen] = useState(false);
+  const [completionReportOpen, setCompletionReportOpen] = useState(false);
+  const [finalReviewSendOpen, setFinalReviewSendOpen] = useState(false);
+  const [operationalFlowBusy, setOperationalFlowBusy] = useState(false);
   const [scopeDraft, setScopeDraft] = useState("");
   const [savingScope, setSavingScope] = useState(false);
   const isAdmin = profile?.role === "admin";
@@ -204,11 +216,29 @@ export default function JobDetailPage() {
     return () => window.clearInterval(poll);
   }, [id, job?.partner_timer_started_at, job?.partner_timer_ended_at]);
 
+  const [officeTimerTick, setOfficeTimerTick] = useState(0);
+  useEffect(() => {
+    if (!job?.timer_is_running || !job.timer_last_started_at) return;
+    const t = window.setInterval(() => setOfficeTimerTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [job?.timer_is_running, job?.timer_last_started_at, job?.id]);
+
   const partnerLiveActiveMs = useMemo(() => {
     void partnerTimerTick;
     if (!job?.partner_timer_started_at) return null;
     return computePartnerLiveTimerActiveMs(job);
   }, [job, partnerTimerTick]);
+
+  const officeTimerDisplaySeconds = useMemo(() => {
+    void officeTimerTick;
+    if (!job) return null;
+    const useOffice =
+      job.timer_is_running ||
+      (Number(job.timer_elapsed_seconds ?? 0) > 0) ||
+      !!job.timer_last_started_at;
+    if (!useOffice) return null;
+    return computeOfficeTimerElapsedSeconds(job);
+  }, [job, officeTimerTick]);
 
   const loadPayments = useCallback(async (jobId: string) => {
     setLoadingPayments(true);
@@ -414,7 +444,7 @@ export default function JobDetailPage() {
     setScopeDraft(job.scope ?? "");
   }, [job?.id, job?.scope]);
 
-  const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>, opts?: { notifyPartner?: boolean }) => {
+  const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>, opts?: { notifyPartner?: boolean }): Promise<Job | undefined> => {
     const current = jobRef.current;
     try {
       let payload: Partial<Job> = { ...updates };
@@ -436,7 +466,7 @@ export default function JobDetailPage() {
         const block = getPartnerAssignmentBlockReason(mergedForGate);
         if (block) {
           toast.error(block);
-          return;
+          return undefined;
         }
       }
       if (current && current.id === jobId) {
@@ -447,6 +477,7 @@ export default function JobDetailPage() {
             ...payload,
             status: "final_check",
             ...statusChangePartnerTimerPatch(mergedFull, "final_check"),
+            ...statusChangeOfficeTimerPatch(mergedFull, "final_check"),
           };
         }
       }
@@ -497,8 +528,10 @@ export default function JobDetailPage() {
           });
         }
       }
+      return updated;
     } catch {
       toast.error("Failed to update");
+      return undefined;
     }
   }, [profile?.id, profile?.full_name]);
 
@@ -572,6 +605,7 @@ export default function JobDetailPage() {
         cancelled_at: now,
         cancelled_by: profile?.id ?? null,
         ...statusChangePartnerTimerPatch(job, "cancelled"),
+        ...statusChangeOfficeTimerPatch(job, "cancelled"),
       };
       const updated = await updateJob(job.id, statusPatch);
       await logAudit({
@@ -604,14 +638,14 @@ export default function JobDetailPage() {
     }
   }, [job, cancelPresetId, cancelDetail, profile?.id, profile?.full_name]);
 
-  const handleStatusChange = useCallback(async (j: Job, newStatus: Job["status"]) => {
+  const handleStatusChange = useCallback(async (j: Job, newStatus: Job["status"]): Promise<Job | null> => {
     const check = canAdvanceJob(j, newStatus, {
       customerPayments: customerPayments.map((p) => ({ type: p.type, amount: p.amount })),
       partnerPayments: partnerPayments.map((p) => ({ type: p.type, amount: p.amount })),
     });
     if (!check.ok) {
       toast.error(check.message ?? "Complete the current step before advancing.");
-      return;
+      return null;
     }
     try {
       let selfBillId: string | undefined = j.self_bill_id ?? undefined;
@@ -629,6 +663,7 @@ export default function JobDetailPage() {
         status: newStatus,
         ...(selfBillId ? { self_bill_id: selfBillId } : {}),
         ...statusChangePartnerTimerPatch(j, newStatus),
+        ...statusChangeOfficeTimerPatch(j, newStatus),
       };
       const updated = await updateJob(j.id, statusPatch);
       await logAudit({ entityType: "job", entityId: j.id, entityRef: j.reference, action: "status_changed", fieldName: "status", oldValue: j.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
@@ -642,8 +677,10 @@ export default function JobDetailPage() {
           statusLabel: statusConfig[newStatus]?.label ?? newStatus,
         });
       }
+      return updated;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
+      return null;
     }
   }, [profile?.id, profile?.full_name, customerPayments, partnerPayments]);
 
@@ -891,44 +928,214 @@ export default function JobDetailPage() {
     }
   }, [job, manualReportFile, manualReportNotes, handleJobUpdate]);
 
-  const handlePhaseReportUploadAnalyze = useCallback(async (phase: number) => {
-    if (!job) return;
-    const file = phaseReportFiles[phase] ?? null;
-    if (!file) {
-      toast.error("Select a report file first.");
+  const handlePhaseReportUploadAnalyze = useCallback(
+    async (phase: number, jobContext?: Job): Promise<Job | null> => {
+      const j = jobContext ?? job;
+      if (!j) return null;
+      const file = phaseReportFiles[phase] ?? null;
+      if (!file) {
+        toast.error("Select a report file first.");
+        return null;
+      }
+      setAnalyzingPhase(phase);
+      try {
+        const uploaded = await uploadManualJobReport(j.id, file);
+        const res = await fetch("/api/jobs/analyze-report", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobReference: j.reference,
+            fileUrl: uploaded.publicUrl,
+            mimeType: uploaded.mimeType,
+            notes: `Phase ${phase} report.`,
+          }),
+        });
+        const body = (await res.json()) as { analysis?: string; error?: string };
+        if (!res.ok) throw new Error(body.error || "Failed to analyse report");
+        const analysis = body.analysis ?? "";
+        const updated = await handleJobUpdate(j.id, {
+          [`report_${phase}_uploaded`]: true,
+          [`report_${phase}_uploaded_at`]: new Date().toISOString(),
+          report_notes: [j.report_notes, `Phase ${phase} report analysis (${new Date().toLocaleString()}):`, analysis]
+            .filter(Boolean)
+            .join("\n\n"),
+        } as Partial<Job>);
+        setPhaseReportFiles((prev) => ({ ...prev, [phase]: null }));
+        toast.success(`Phase ${phase} report uploaded and analysed.`);
+        return updated ?? null;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to upload/analyse report");
+        return null;
+      } finally {
+        setAnalyzingPhase(null);
+      }
+    },
+    [job, phaseReportFiles, handleJobUpdate],
+  );
+
+  const handleSendReportAndInvoice = useCallback(async (opts?: {
+    reviewSentAt?: string;
+    reviewSendMethod?: "email" | "manual";
+    jobOverride?: Job;
+  }) => {
+    const j = opts?.jobOverride ?? jobRef.current;
+    if (!j) return;
+    const gate = canSendReportAndRequestFinalPayment(j);
+    if (!gate.ok) {
+      toast.error(gate.message ?? "Cannot proceed");
       return;
     }
-    setAnalyzingPhase(phase);
-    try {
-      const uploaded = await uploadManualJobReport(job.id, file);
-      const res = await fetch("/api/jobs/analyze-report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobReference: job.reference,
-          fileUrl: uploaded.publicUrl,
-          mimeType: uploaded.mimeType,
-          notes: `Phase ${phase} report.`,
-        }),
+    const updated = await handleJobUpdate(
+      j.id,
+      {
+        report_submitted: true,
+        report_submitted_at: new Date().toISOString(),
+        internal_report_approved: true,
+        internal_invoice_approved: true,
+        ...(opts?.reviewSentAt ? { review_sent_at: opts.reviewSentAt } : {}),
+        ...(opts?.reviewSendMethod ? { review_send_method: opts.reviewSendMethod } : {}),
+      } as Partial<Job>,
+      { notifyPartner: false },
+    );
+    if (!updated) return;
+    const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
+    const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
+    const paid = depositPaid + finalPaid;
+    const bill = jobBillableRevenue(updated);
+    const dueAfter = Math.max(0, bill - paid);
+    if (dueAfter > 0.02) {
+      await handleStatusChange(updated, "awaiting_payment");
+    } else {
+      const completeCheck = canAdvanceJob(updated, "completed", {
+        customerPayments: customerPayments.map((p) => ({ type: p.type, amount: p.amount })),
+        partnerPayments: partnerPayments.map((p) => ({ type: p.type, amount: p.amount })),
       });
-      const body = (await res.json()) as { analysis?: string; error?: string };
-      if (!res.ok) throw new Error(body.error || "Failed to analyse report");
-      const analysis = body.analysis ?? "";
-      await handleJobUpdate(job.id, {
-        [`report_${phase}_uploaded`]: true,
-        [`report_${phase}_uploaded_at`]: new Date().toISOString(),
-        report_notes: [job.report_notes, `Phase ${phase} report analysis (${new Date().toLocaleString()}):`, analysis]
-          .filter(Boolean)
-          .join("\n\n"),
-      } as Partial<Job>);
-      setPhaseReportFiles((prev) => ({ ...prev, [phase]: null }));
-      toast.success(`Phase ${phase} report uploaded and analysed.`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to upload/analyse report");
-    } finally {
-      setAnalyzingPhase(null);
+      if (completeCheck.ok) {
+        await handleStatusChange(updated, "completed");
+        toast.success("Report sent — no customer balance due; job marked completed.");
+      } else {
+        await handleStatusChange(updated, "awaiting_payment");
+        toast.info(completeCheck.message ?? "Moved to Awaiting payment to settle partner / admin checks.");
+      }
     }
-  }, [job, phaseReportFiles, handleJobUpdate]);
+  }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments]);
+
+  const handleStartJobSubmit = useCallback(
+    async (payload: import("@/components/jobs/start-job-report-modal").StartReportPayload) => {
+      if (!job) return;
+      setOperationalFlowBusy(true);
+      try {
+        const start_report = {
+          photo_urls: payload.photo_urls,
+          notes: payload.notes,
+          checklist: payload.checklist,
+        };
+        const u = await handleJobUpdate(job.id, {
+          start_report: start_report as unknown as Job["start_report"],
+          start_report_submitted: true,
+          start_report_skipped: false,
+        } as Partial<Job>);
+        if (!u) return;
+        const moved = await handleStatusChange(u, "in_progress_phase1");
+        if (moved) setStartJobReportOpen(false);
+      } finally {
+        setOperationalFlowBusy(false);
+      }
+    },
+    [job, handleJobUpdate, handleStatusChange],
+  );
+
+  const handleStartJobSkip = useCallback(async () => {
+    if (!job) return;
+    setOperationalFlowBusy(true);
+    try {
+      const u = await handleJobUpdate(job.id, {
+        start_report_submitted: false,
+        start_report_skipped: true,
+      } as Partial<Job>);
+      if (!u) return;
+      const moved = await handleStatusChange(u, "in_progress_phase1");
+      if (moved) setStartJobReportOpen(false);
+    } finally {
+      setOperationalFlowBusy(false);
+    }
+  }, [job, handleJobUpdate, handleStatusChange]);
+
+  const handleCompletionSubmit = useCallback(
+    async (payload: import("@/components/jobs/completion-report-modal").FinalReportPayload) => {
+      if (!job) return;
+      setOperationalFlowBusy(true);
+      try {
+        const final_report = {
+          photo_urls: payload.photo_urls,
+          work_summary: payload.work_summary,
+          materials_used: payload.materials_used,
+          issues_notes: payload.issues_notes,
+        };
+        const u = await handleJobUpdate(job.id, {
+          final_report: final_report as unknown as Job["final_report"],
+          final_report_submitted: true,
+          final_report_skipped: false,
+        } as Partial<Job>);
+        if (!u) return;
+        const moved = await handleStatusChange(u, "final_check");
+        if (moved) setCompletionReportOpen(false);
+      } finally {
+        setOperationalFlowBusy(false);
+      }
+    },
+    [job, handleJobUpdate, handleStatusChange],
+  );
+
+  const handleCompletionSkip = useCallback(async () => {
+    if (!job) return;
+    setOperationalFlowBusy(true);
+    try {
+      const u = await handleJobUpdate(job.id, {
+        final_report_submitted: false,
+        final_report_skipped: true,
+      } as Partial<Job>);
+      if (!u) return;
+      const moved = await handleStatusChange(u, "final_check");
+      if (moved) setCompletionReportOpen(false);
+    } finally {
+      setOperationalFlowBusy(false);
+    }
+  }, [job, handleJobUpdate, handleStatusChange]);
+
+  const handleFinalReviewSendEmail = useCallback(async () => {
+    const j = jobRef.current;
+    if (!j) return;
+    setOperationalFlowBusy(true);
+    try {
+      const res = await fetch(`/api/jobs/${j.id}/send-review-email`, { method: "POST", credentials: "include" });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        toast.error(body.error ?? "Failed to send email");
+        return;
+      }
+      const now = new Date().toISOString();
+      await handleSendReportAndInvoice({ reviewSentAt: now, reviewSendMethod: "email", jobOverride: j });
+      setFinalReviewSendOpen(false);
+      toast.success("Email sent to client.");
+    } finally {
+      setOperationalFlowBusy(false);
+    }
+  }, [handleSendReportAndInvoice]);
+
+  const handleFinalReviewMarkSent = useCallback(async () => {
+    const j = jobRef.current;
+    if (!j) return;
+    setOperationalFlowBusy(true);
+    try {
+      const now = new Date().toISOString();
+      await handleSendReportAndInvoice({ reviewSentAt: now, reviewSendMethod: "manual", jobOverride: j });
+      setFinalReviewSendOpen(false);
+      toast.success("Marked as sent.");
+    } finally {
+      setOperationalFlowBusy(false);
+    }
+  }, [handleSendReportAndInvoice]);
 
   if (loading || !id) {
     return (
@@ -1009,16 +1216,24 @@ export default function JobDetailPage() {
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
             </div>
             <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
-            {partnerLiveActiveMs != null ? (
+            {officeTimerDisplaySeconds != null || partnerLiveActiveMs != null ? (
               <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface-secondary/60 px-3 py-2 text-sm">
                 <Timer className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
                 <span className="text-text-secondary">
-                  {job.partner_timer_ended_at ? "On-site work time (ended)" : "On site — live timer"}
+                  {officeTimerDisplaySeconds != null
+                    ? job.timer_is_running
+                      ? "On site — office timer"
+                      : "On-site work time (saved)"
+                    : job.partner_timer_ended_at
+                      ? "On-site work time (ended)"
+                      : "On site — live timer"}
                 </span>
                 <span className="font-mono font-semibold tabular-nums text-text-primary">
-                  {formatPartnerLiveTimer(partnerLiveActiveMs)}
+                  {officeTimerDisplaySeconds != null
+                    ? formatOfficeTimer(officeTimerDisplaySeconds)
+                    : formatPartnerLiveTimer(partnerLiveActiveMs!)}
                 </span>
-                {job.partner_timer_is_paused && !job.partner_timer_ended_at ? (
+                {job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null ? (
                   <Badge variant="warning" size="sm">Paused</Badge>
                 ) : null}
               </div>
@@ -1054,18 +1269,32 @@ export default function JobDetailPage() {
           <div className="flex items-center gap-2 flex-wrap justify-end sm:justify-start">
             {statusActions.map((action, idx) => (
               <Button
-                key={`${action.status}-${idx}`}
-                variant={action.primary ? "primary" : "outline"}
+                key={`${action.special ?? action.status}-${idx}`}
+                variant={action.destructive ? "danger" : action.primary ? "primary" : "outline"}
                 size="sm"
                 icon={<action.icon className="h-3.5 w-3.5" />}
+                disabled={action.special === "final_review_send_modal" ? !sendReportFinalCheck.ok : false}
+                title={action.special === "final_review_send_modal" ? sendReportFinalCheck.message : undefined}
                 onClick={() => {
                   if (action.status === "cancelled") {
                     setCancelPresetId(OFFICE_JOB_CANCELLATION_REASONS[0].id);
                     setCancelDetail("");
                     setCancelJobOpen(true);
-                  } else {
-                    void handleStatusChange(job, action.status as Job["status"]);
+                    return;
                   }
+                  if (action.special === "start_job_report_modal") {
+                    setStartJobReportOpen(true);
+                    return;
+                  }
+                  if (action.special === "completion_report_modal") {
+                    setCompletionReportOpen(true);
+                    return;
+                  }
+                  if (action.special === "final_review_send_modal") {
+                    setFinalReviewSendOpen(true);
+                    return;
+                  }
+                  void handleStatusChange(job, action.status as Job["status"]);
                 }}
               >
                 {action.label}
@@ -1389,9 +1618,17 @@ export default function JobDetailPage() {
               {allConfiguredReportsApproved(job) && (
                 <div className="mt-3 p-3 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center gap-3">
                   <p className="flex-1 text-sm font-medium text-text-primary">All reports validated — ready to send report & request final payment.</p>
-                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} disabled={!sendReportFinalCheck.ok} title={sendReportFinalCheck.message}
-                    onClick={() => { if (!sendReportFinalCheck.ok) { toast.error(sendReportFinalCheck.message ?? "Cannot proceed"); return; } void handleJobUpdate(job.id, { report_submitted: true, report_submitted_at: new Date().toISOString() } as Partial<Job>, { notifyPartner: false }); void handleStatusChange(job, "awaiting_payment"); }}>
-                    Send Report & Invoice
+                  <Button
+                    size="sm"
+                    icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                    disabled={!sendReportFinalCheck.ok}
+                    title={sendReportFinalCheck.message}
+                    onClick={() => {
+                      if (!sendReportFinalCheck.ok) return;
+                      setFinalReviewSendOpen(true);
+                    }}
+                  >
+                    Review & Send
                   </Button>
                 </div>
               )}
@@ -1776,6 +2013,31 @@ export default function JobDetailPage() {
           </div>
         </div>
       </div>
+
+      <StartJobReportModal
+        job={job}
+        open={startJobReportOpen}
+        onClose={() => setStartJobReportOpen(false)}
+        busy={operationalFlowBusy}
+        onSubmitWithData={handleStartJobSubmit}
+        onSkip={handleStartJobSkip}
+      />
+      <CompletionReportModal
+        job={job}
+        open={completionReportOpen}
+        onClose={() => setCompletionReportOpen(false)}
+        busy={operationalFlowBusy}
+        onSubmitWithData={handleCompletionSubmit}
+        onSkip={handleCompletionSkip}
+      />
+      <FinalReviewSendModal
+        job={job}
+        open={finalReviewSendOpen}
+        onClose={() => setFinalReviewSendOpen(false)}
+        busy={operationalFlowBusy}
+        onSendEmail={handleFinalReviewSendEmail}
+        onMarkSent={handleFinalReviewMarkSent}
+      />
 
       <Modal
         open={cancelJobOpen}

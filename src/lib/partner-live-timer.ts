@@ -73,6 +73,28 @@ export function statusChangePartnerTimerPatch(
   const wasOnSite = isJobOnSiteWorkStatus(job.status);
   const running = isPartnerLiveTimerRunning(job);
 
+  /** Reopen from final check — resume without resetting partner start / accum. */
+  if (newStatus === "in_progress_phase1" && job.status === "final_check") {
+    return {
+      partner_timer_ended_at: null,
+      partner_timer_is_paused: false,
+      partner_timer_pause_began_at: null,
+    };
+  }
+
+  /** Resume after office pause (scheduled) — do not apply fresh start patch if work already ended once. */
+  if (
+    newStatus === "in_progress_phase1" &&
+    (job.status === "scheduled" || job.status === "late") &&
+    job.partner_timer_ended_at
+  ) {
+    return {
+      partner_timer_ended_at: null,
+      partner_timer_is_paused: false,
+      partner_timer_pause_began_at: null,
+    };
+  }
+
   if (newStatus === "in_progress_phase1" && (!wasOnSite || job.partner_timer_ended_at)) {
     Object.assign(patch, officePartnerTimerStartPatch());
   }
