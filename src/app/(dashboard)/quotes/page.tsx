@@ -25,6 +25,7 @@ import {
   Mail, Building2,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
   ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
+  Wallet, Percent,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -1666,51 +1667,52 @@ function QuoteDetailDrawer({
                         </div>
                       ))}
                     </div>
-                    <div className="mt-2 overflow-hidden rounded-xl border border-border-light bg-card shadow-sm">
-                      <p className="border-b border-border-subtle bg-surface-secondary/50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        Quote totals
-                      </p>
-                      <dl className="divide-y divide-border-subtle/80">
-                        <div className="flex items-baseline justify-between gap-4 px-3 py-2.5">
-                          <dt className="min-w-0 text-[11px] leading-snug text-text-secondary">
-                            <span className="font-medium text-text-primary">Partner total</span>
-                            <span className="mt-0.5 block text-[10px] font-normal text-text-tertiary">Your cost (all lines)</span>
-                          </dt>
-                          <dd className="shrink-0 text-right text-sm font-semibold tabular-nums text-text-primary">
-                            {formatCurrency(proposalPartnerTotal)}
-                          </dd>
+                    <div className="mt-2 overflow-hidden rounded-2xl border border-border-light/90 bg-card shadow-sm">
+                      <div className="px-4 pt-4 pb-3">
+                        <p className="text-xs font-semibold text-text-primary">Quote totals</p>
+                        <p className="mt-0.5 text-[11px] text-text-tertiary">Sell price, your cost, and margin at a glance.</p>
+                      </div>
+
+                      <div className="px-3 pb-3">
+                        <div className="rounded-xl bg-gradient-to-br from-primary/[0.08] via-primary/[0.04] to-transparent px-4 py-4 ring-1 ring-primary/15 dark:from-primary/[0.12] dark:via-primary/[0.06]">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/90">Customer total</p>
+                          <p className="mt-1 text-[clamp(1.5rem,5vw,2rem)] font-bold leading-tight tabular-nums tracking-tight text-primary">
+                            {formatCurrency(lineTotal)}
+                          </p>
                         </div>
-                        <div className="bg-primary/[0.06] px-3 py-3 dark:bg-primary/[0.1]">
-                          <div className="flex items-baseline justify-between gap-4">
-                            <dt className="min-w-0 text-xs font-semibold leading-snug text-text-primary">
-                              Customer total
-                              <span className="mt-0.5 block text-[10px] font-normal text-text-tertiary">Quoted to the customer</span>
-                            </dt>
-                            <dd className="shrink-0 text-right text-lg font-bold leading-none tracking-tight tabular-nums text-primary">
-                              {formatCurrency(lineTotal)}
-                            </dd>
+
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <div className="rounded-xl bg-surface-hover/70 px-3 py-3 ring-1 ring-border-subtle/70 dark:bg-surface-secondary/40">
+                            <div className="flex items-center gap-1.5 text-text-tertiary">
+                              <Wallet className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
+                              <span className="text-[10px] font-semibold uppercase tracking-wide">Your cost</span>
+                            </div>
+                            <p className="mt-2 text-base font-semibold tabular-nums text-text-primary">
+                              {formatCurrency(proposalPartnerTotal)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl bg-surface-hover/70 px-3 py-3 ring-1 ring-border-subtle/70 dark:bg-surface-secondary/40">
+                            <div className="flex items-center gap-1.5 text-text-tertiary">
+                              <Percent className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
+                              <span className="text-[10px] font-semibold uppercase tracking-wide">Margin</span>
+                            </div>
+                            <p
+                              className={cn(
+                                "mt-2 text-base font-bold tabular-nums",
+                                proposalSummaryMarginPct >= 20
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : proposalSummaryMarginPct >= 0
+                                    ? "text-amber-600 dark:text-amber-400"
+                                    : "text-red-600 dark:text-red-400",
+                              )}
+                            >
+                              {proposalSummaryMarginPct}%
+                            </p>
                           </div>
                         </div>
-                        <div className="flex items-baseline justify-between gap-4 px-3 py-2.5">
-                          <dt className="min-w-0 text-[11px] leading-snug text-text-secondary">
-                            <span className="font-medium text-text-primary">Margin on sell</span>
-                            <span className="mt-0.5 block text-[10px] font-normal text-text-tertiary">Profit vs customer total</span>
-                          </dt>
-                          <dd
-                            className={cn(
-                              "shrink-0 text-right text-sm font-bold tabular-nums",
-                              proposalSummaryMarginPct >= 20
-                                ? "text-emerald-600 dark:text-emerald-400"
-                                : proposalSummaryMarginPct >= 0
-                                  ? "text-amber-600 dark:text-amber-400"
-                                  : "text-red-600 dark:text-red-400",
-                            )}
-                          >
-                            {proposalSummaryMarginPct}%
-                          </dd>
-                        </div>
-                      </dl>
-                      <div className="border-t border-border-subtle bg-surface-secondary/40 p-2 dark:bg-surface-secondary/20">
+                      </div>
+
+                      <div className="border-t border-border-subtle/70 bg-surface-secondary/30 p-3 dark:bg-surface-secondary/15">
                       <Button
                         type="button"
                         size="sm"

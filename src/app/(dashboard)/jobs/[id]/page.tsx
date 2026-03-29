@@ -1092,33 +1092,6 @@ export default function JobDetailPage() {
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
             </div>
             <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
-            {officeTimerDisplaySeconds != null || partnerLiveActiveMs != null ? (
-              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface-secondary/60 px-3 py-2 text-sm">
-                <Timer className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
-                <span className="text-text-secondary">
-                  {officeTimerDisplaySeconds != null
-                    ? job.timer_is_running
-                      ? "On site — office timer"
-                      : "On-site work time (saved)"
-                    : job.partner_timer_ended_at
-                      ? "On-site work time (ended)"
-                      : "On site — live timer"}
-                </span>
-                <span className="font-mono font-semibold tabular-nums text-text-primary">
-                  {officeTimerDisplaySeconds != null
-                    ? formatOfficeTimer(officeTimerDisplaySeconds)
-                    : formatPartnerLiveTimer(partnerLiveActiveMs!)}
-                </span>
-                {job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null ? (
-                  <Badge variant="warning" size="sm">Paused</Badge>
-                ) : null}
-              </div>
-            ) : isJobInProgressStatus(job.status) || job.status === "awaiting_payment" ? (
-              <p className="mt-2 max-w-xl text-xs text-text-tertiary">
-                The live timer starts when you use <strong className="text-text-secondary">Start job</strong> here or when the partner starts in the app. It stops when work is finished (final check, pause, invoice, or cancel). If the timer never appears, apply DB migrations{" "}
-                <code className="rounded bg-surface-tertiary px-1">062</code>–<code className="rounded bg-surface-tertiary px-1">063</code> on Supabase.
-              </p>
-            ) : null}
             {job.status === "cancelled" && job.partner_cancelled_at ? (
               <div className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-text-secondary max-w-xl">
                 <p className="font-semibold text-text-primary">Partner cancellation</p>
@@ -1172,53 +1145,132 @@ export default function JobDetailPage() {
         </div>
 
         {job.status !== "cancelled" ? (
-          <div
-            className="rounded-xl border border-border-subtle bg-surface-secondary/40 px-3 py-3 sm:px-4"
-            aria-label="Job workflow stages"
+          <section
+            className="rounded-2xl border border-border-light bg-card shadow-sm overflow-hidden"
+            aria-label="Work time and job progress"
           >
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2.5">Progress</p>
-            <ol className="flex flex-wrap items-center gap-y-2 gap-x-0">
-              {JOB_FLOW_STEPS.map((step, idx) => {
-                const done = flowStep > idx;
-                const current = flowStep === idx;
-                return (
-                  <li key={step.label} className="flex items-center min-w-0">
-                    {idx > 0 ? (
-                      <span
-                        className={cn(
-                          "hidden sm:block w-5 md:w-8 h-px shrink-0 mx-1.5",
-                          done ? "bg-emerald-500/45" : "bg-border-subtle",
-                        )}
-                        aria-hidden
-                      />
-                    ) : null}
-                    <span
+            {(officeTimerDisplaySeconds != null || partnerLiveActiveMs != null) && (
+              <div className="relative border-b border-border-subtle/80 bg-gradient-to-br from-primary/[0.06] via-surface-secondary/80 to-transparent px-4 py-3.5 sm:px-5 sm:py-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
                       className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap",
-                        current && "bg-primary/15 text-text-primary ring-1 ring-primary/25",
-                        done && !current && "text-emerald-700 dark:text-emerald-400",
-                        !done && !current && "text-text-tertiary",
+                        "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-sm",
+                        job.timer_is_running || (partnerLiveActiveMs != null && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null)
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 ring-1 ring-emerald-500/25"
+                          : "bg-surface-tertiary/80 text-text-secondary ring-1 ring-border-subtle",
                       )}
+                      aria-hidden
                     >
-                      {done ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
-                      ) : (
+                      <Timer className="h-5 w-5" strokeWidth={2} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">Work time</p>
+                      <p className="text-sm text-text-secondary truncate">
+                        {officeTimerDisplaySeconds != null
+                          ? job.timer_is_running
+                            ? "Timer running"
+                            : "Time recorded (paused or ended)"
+                          : job.partner_timer_ended_at
+                            ? "On-site period ended"
+                            : "Live timer"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                    {job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null ? (
+                      <Badge variant="warning" size="sm">
+                        Paused
+                      </Badge>
+                    ) : null}
+                    <span className="text-2xl sm:text-3xl font-bold tabular-nums tracking-tight text-text-primary">
+                      {officeTimerDisplaySeconds != null
+                        ? formatOfficeTimer(officeTimerDisplaySeconds)
+                        : formatPartnerLiveTimer(partnerLiveActiveMs!)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="px-3 py-4 sm:px-5 sm:py-5">
+              <div className="flex flex-wrap items-end justify-between gap-2 mb-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">Job progress</p>
+                  <p className="text-xs text-text-secondary mt-0.5">Step {Math.min(flowStep + 1, JOB_FLOW_STEPS.length)} of {JOB_FLOW_STEPS.length}</p>
+                </div>
+                <span className="text-[11px] font-medium tabular-nums text-text-tertiary">
+                  {Math.round(((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}% through
+                </span>
+              </div>
+
+              <div className="relative h-2 rounded-full bg-surface-tertiary/90 dark:bg-surface-tertiary/50 mb-4 overflow-hidden ring-1 ring-border-subtle/50">
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-emerald-500 via-emerald-500/90 to-primary transition-[width] duration-500 ease-out"
+                  style={{ width: `${Math.min(100, ((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%` }}
+                />
+              </div>
+
+              <div className="overflow-x-auto overscroll-x-contain -mx-1 px-1 pb-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border-subtle">
+                <ol className="flex min-w-max sm:min-w-0 sm:flex-wrap sm:justify-between items-stretch gap-1 sm:gap-0">
+                  {JOB_FLOW_STEPS.map((step, idx) => {
+                    const done = flowStep > idx;
+                    const current = flowStep === idx;
+                    return (
+                      <li key={step.label} className="flex items-center shrink-0">
+                        {idx > 0 ? (
+                          <span
+                            className={cn(
+                              "hidden sm:block w-3 md:w-6 lg:w-10 h-0.5 shrink-0 mx-0.5 md:mx-1 self-center mt-[1.125rem]",
+                              done ? "bg-emerald-500/50" : "bg-border-subtle",
+                            )}
+                            aria-hidden
+                          />
+                        ) : null}
                         <span
                           className={cn(
-                            "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold tabular-nums",
-                            current ? "bg-primary/20 text-text-primary" : "bg-surface-tertiary text-text-tertiary",
+                            "flex flex-col items-center gap-1.5 rounded-xl px-2.5 py-2 sm:px-3 sm:py-2.5 min-w-[4.75rem] sm:min-w-0 max-w-[7.5rem] text-center transition-colors",
+                            current &&
+                              "bg-primary/[0.12] text-text-primary ring-2 ring-primary/25 shadow-sm",
+                            done && !current && "text-emerald-700 dark:text-emerald-400",
+                            !done && !current && "text-text-tertiary opacity-90",
                           )}
                         >
-                          {idx + 1}
+                          {done ? (
+                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/15 ring-1 ring-emerald-500/30">
+                              <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                            </span>
+                          ) : (
+                            <span
+                              className={cn(
+                                "flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold tabular-nums ring-1",
+                                current
+                                  ? "bg-primary/20 text-primary ring-primary/30"
+                                  : "bg-surface-tertiary text-text-tertiary ring-border-subtle",
+                              )}
+                            >
+                              {idx + 1}
+                            </span>
+                          )}
+                          <span className="text-[10px] sm:text-xs font-medium leading-snug px-0.5">
+                            {step.label}
+                          </span>
                         </span>
-                      )}
-                      {step.label}
-                    </span>
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+
+              {officeTimerDisplaySeconds == null &&
+              partnerLiveActiveMs == null &&
+              (isJobInProgressStatus(job.status) || job.status === "awaiting_payment") ? (
+                <p className="mt-4 text-[11px] leading-relaxed text-text-tertiary border-t border-border-subtle/60 pt-3">
+                  Timer appears after <strong className="font-medium text-text-secondary">Start Job</strong> (dashboard) or when the partner starts in the app. It stops at final check, pause, invoice, or cancel.
+                </p>
+              ) : null}
+            </div>
+          </section>
         ) : (
           <p className="text-sm text-text-tertiary">This job was cancelled — workflow stopped.</p>
         )}
@@ -1493,7 +1545,7 @@ export default function JobDetailPage() {
                     title={sendReportFinalCheck.message}
                     onClick={() => void handleSendReportAndInvoice()}
                   >
-                    Review & Send
+                    Approve & Send Final Invoice
                   </Button>
                 </div>
               )}
