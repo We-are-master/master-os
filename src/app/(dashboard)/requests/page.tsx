@@ -369,11 +369,20 @@ export default function RequestsPage() {
     {
       key: "client_name", label: "Client",
       render: (item) => (
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
           <Avatar name={item.client_name} size="sm" />
-          <div>
-            <p className="text-sm font-medium text-text-primary">{item.client_name}</p>
-            <p className="text-[11px] text-text-tertiary">{item.client_email}</p>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
+            <p className="text-[11px] text-text-tertiary truncate" title={item.source_account_name ?? undefined}>
+              {item.source_account_name?.trim() ? (
+                <>
+                  <span className="text-text-tertiary/80">Account:</span>{" "}
+                  <span className="font-medium text-text-secondary">{item.source_account_name}</span>
+                </>
+              ) : (
+                <span className="italic">No linked account</span>
+              )}
+            </p>
           </div>
         </div>
       ),
@@ -514,7 +523,16 @@ export default function RequestsPage() {
                       <Avatar name={selectedRequest.client_name} size="lg" />
                       <div>
                         <p className="text-base font-semibold text-text-primary">{selectedRequest.client_name}</p>
-                        <p className="text-sm text-text-secondary">{selectedRequest.client_email}</p>
+                        <p className="text-sm text-text-secondary">
+                          {selectedRequest.source_account_name?.trim() ? (
+                            <>
+                              <span className="text-text-tertiary">Account: </span>
+                              {selectedRequest.source_account_name}
+                            </>
+                          ) : (
+                            <span className="text-text-tertiary italic">No linked account</span>
+                          )}
+                        </p>
                       </div>
                     </div>
                   </div>

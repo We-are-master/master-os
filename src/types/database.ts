@@ -77,6 +77,8 @@ export interface ServiceRequest {
   client_name: string;
   client_email: string;
   client_phone?: string;
+  /** Set when listing via join: client linked corporate account (`accounts.company_name`). */
+  source_account_name?: string | null;
   property_address: string;
   postcode?: string;
   /** When set, request was started from this catalog template (service_type/description/value may differ if customised). */
