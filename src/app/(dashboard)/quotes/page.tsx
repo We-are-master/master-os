@@ -1094,6 +1094,8 @@ function QuoteDetailDrawer({
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
   const actions = getQuoteActions(quote);
+  /** Start Bidding lives on the Bids tab, not under Review & Send. */
+  const overviewActions = actions.filter((a) => a.status !== "bidding");
   const stepMap: Record<string, number> = { draft: 0, in_survey: 1, bidding: 2, awaiting_customer: 3, accepted: 4, rejected: -1, converted_to_job: 5 };
   const currentStep = stepMap[quote.status] ?? 0;
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
@@ -1897,7 +1899,7 @@ function QuoteDetailDrawer({
                           : "Email PDF to customer"}
                     </Button>
                   )}
-                  {actions.map((action) => (
+                  {overviewActions.map((action) => (
                     <Button
                       key={action.status}
                       variant={action.primary ? "primary" : "outline"}
@@ -1941,6 +1943,22 @@ function QuoteDetailDrawer({
               <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="w-full">
                 Invite more partners
               </Button>
+              {quote.quote_type === "partner" && (quote.status === "draft" || quote.status === "in_survey") && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  disabled={proposalSaving}
+                  icon={<Send className="h-3.5 w-3.5" />}
+                  onClick={async () => {
+                    const result = await Promise.resolve(onStatusChange(quote, "bidding"));
+                    if (result === false) return;
+                  }}
+                >
+                  Start Bidding
+                </Button>
+              )}
               <div className="p-4 rounded-xl bg-surface-hover border border-border-light">
                 <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
                 <p className="text-xs text-text-tertiary mt-0.5">
