@@ -982,6 +982,11 @@ export default function JobDetailPage() {
 
   const statusActions = getJobStatusActions(job);
   const phaseCount = normalizeTotalPhases(job.total_phases);
+  const reportsValidatedCount = reportPhaseIndices(phaseCount).filter(
+    (n) => Boolean(job[`report_${n}_approved` as keyof Job]),
+  ).length;
+  const reportsProgressPercent =
+    phaseCount > 0 ? Math.min(100, Math.round((reportsValidatedCount / phaseCount) * 100)) : 0;
   const displayPhase = phaseCount === 2 ? (job.report_2_uploaded ? 2 : 1) : 1;
   const sendReportFinalCheck = canSendReportAndRequestFinalPayment(job);
   const flowStep = jobFlowActiveStepIndex(job.status);
@@ -1284,8 +1289,13 @@ export default function JobDetailPage() {
                   <FileText className="h-3.5 w-3.5" /> Reports
                 </p>
                 <div className="flex items-center gap-2 shrink-0">
-                  <Progress value={job.progress} size="sm" color={job.progress === 100 ? "emerald" : "primary"} className="w-24 min-w-[6rem]" />
-                  <span className="text-[11px] font-semibold text-text-primary tabular-nums">{job.progress}%</span>
+                  <Progress
+                    value={reportsProgressPercent}
+                    size="sm"
+                    color={reportsProgressPercent === 100 ? "emerald" : "primary"}
+                    className="w-24 min-w-[6rem]"
+                  />
+                  <span className="text-[11px] font-semibold text-text-primary tabular-nums">{reportsProgressPercent}%</span>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
