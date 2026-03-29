@@ -99,10 +99,36 @@ function scheduleLineFinishSuffix(job: { scheduled_finish_date?: string | null }
   const p = parseIsoDateOnlyPrefix(job.scheduled_finish_date);
   if (!p) return "";
   const endLabel = new Date(p.y, p.m - 1, p.d).toLocaleDateString(undefined, { dateStyle: "medium" });
-  return ` · ends ${endLabel}`;
+  return ` · Expected finish ${endLabel}`;
 }
 
-/** Format date + optional time for schedule drawer / lists (local). */
+/** Compact 12h label for client/partner-facing copy (e.g. `11AM`, `2:30PM`). */
+export function formatHourMinuteAmPm(d: Date): string {
+  const h24 = d.getHours();
+  const m = d.getMinutes();
+  const isPm = h24 >= 12;
+  const h12 = h24 % 12 || 12;
+  const suf = isPm ? "PM" : "AM";
+  if (m === 0) return `${h12}${suf}`;
+  return `${h12}:${String(m).padStart(2, "0")}${suf}`;
+}
+
+/** Arrival window as shown to client & partner, e.g. `11AM – 2PM`. */
+export function formatArrivalTimeRange(startIso: string, endIso: string): string | null {
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return `${formatHourMinuteAmPm(start)} – ${formatHourMinuteAmPm(end)}`;
+}
+
+function formatMediumDateFromLocalDate(d: Date): string {
+  return d.toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+/**
+ * One line for lists, emails, pushes: start date + arrival time range + optional expected finish (date only).
+ * Example: `4 Apr 2026 · Arrival time 11AM – 2PM · Expected finish 6 Apr 2026`
+ */
 export function formatJobScheduleLine(job: {
   scheduled_date?: string | null;
   scheduled_start_at?: string | null;
@@ -113,12 +139,16 @@ export function formatJobScheduleLine(job: {
     const start = new Date(job.scheduled_start_at);
     const end = new Date(job.scheduled_end_at);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
-    return `${start.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} – ${end.toLocaleTimeString(undefined, { timeStyle: "short" })}${scheduleLineFinishSuffix(job)}`;
+    const range = formatArrivalTimeRange(job.scheduled_start_at, job.scheduled_end_at);
+    if (!range) return null;
+    const dateStr = formatMediumDateFromLocalDate(start);
+    return `${dateStr} · Arrival time ${range}${scheduleLineFinishSuffix(job)}`;
   }
   if (job.scheduled_start_at) {
     const dt = new Date(job.scheduled_start_at);
     if (Number.isNaN(dt.getTime())) return null;
-    return `${dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}${scheduleLineFinishSuffix(job)}`;
+    const dateStr = formatMediumDateFromLocalDate(dt);
+    return `${dateStr} · Arrival time ${formatHourMinuteAmPm(dt)}${scheduleLineFinishSuffix(job)}`;
   }
   if (job.scheduled_date) {
     const p = parseIsoDateOnlyPrefix(job.scheduled_date);

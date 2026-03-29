@@ -23,7 +23,6 @@ import {
   ShieldCheck,
   Plus,
   ExternalLink,
-  Info,
   AlertTriangle,
   CreditCard,
   RefreshCw,
@@ -83,6 +82,7 @@ import {
   buildOfficeCancellationReasonText,
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
+import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
@@ -112,7 +112,6 @@ export default function JobDetailPage() {
   const [scheduleWindowMins, setScheduleWindowMins] = useState("");
   /** Civil end day for calendar (`scheduled_finish_date`). */
   const [scheduleExpectedFinishDate, setScheduleExpectedFinishDate] = useState("");
-  const [tasklineOpen, setTasklineOpen] = useState(true);
   const [partnerPayments, setPartnerPayments] = useState<JobPayment[]>([]);
   const [customerPayments, setCustomerPayments] = useState<JobPayment[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
@@ -673,6 +672,22 @@ export default function JobDetailPage() {
     [handleJobUpdate],
   );
 
+  const clientVisibleArrivalPreview = useMemo(() => {
+    const d = scheduleDate.trim();
+    const t = scheduleTime.trim();
+    const wm = scheduleWindowMins.trim();
+    if (!d || !t) return null;
+    const windowMins = wm ? Number(wm) : NaN;
+    const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
+    const startIso = `${d}T${t}:00`;
+    if (!hasWindow) {
+      return `Client & partner will see: Arrival time ${formatHourMinuteAmPm(new Date(startIso))} — add a window length (2–3h typical) for a clear range.`;
+    }
+    const endIso = scheduledEndFromWindow(d, t, windowMins);
+    const range = formatArrivalTimeRange(startIso, endIso);
+    return range ? `Client & partner will see: Arrival time (${range})` : null;
+  }, [scheduleDate, scheduleTime, scheduleWindowMins]);
+
   const handleAddPayment = useCallback(async () => {
     if (!job || !addPaymentAmount || Number(addPaymentAmount) <= 0) return;
     const amount = Number(addPaymentAmount);
@@ -1045,10 +1060,10 @@ export default function JobDetailPage() {
             {/* MAP + CLIENT IDENTITY */}
             <div className="rounded-xl border border-border-light bg-card overflow-hidden">
               <div className="flex flex-col">
-                <div className="relative w-full aspect-[2/1] min-h-[200px] max-h-[min(360px,55vw)] bg-surface-hover/30 border-b border-border-light">
+                <div className="relative w-full aspect-[5/2] min-h-[160px] max-h-[min(260px,42vw)] bg-surface-hover/30 border-b border-border-light">
                   <LocationMiniMap
                     address={job.property_address}
-                    className="h-full w-full min-h-[200px]"
+                    className="h-full w-full min-h-[160px]"
                     mapHeight="100%"
                     showAddressBelowMap={false}
                     lazy
@@ -1064,7 +1079,7 @@ export default function JobDetailPage() {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border-light">
                     <div>
-                      <p className="text-[10px] text-text-tertiary">Arrival date</p>
+                      <p className="text-[10px] text-text-tertiary">Start date</p>
                       <Input
                         type="date"
                         value={scheduleDate}
@@ -1075,7 +1090,7 @@ export default function JobDetailPage() {
                     </div>
                     <div>
                       <TimeSelect
-                        label="Arrival from"
+                        label="Arrival time (from)"
                         value={scheduleTime}
                         disabled={job.status === "cancelled"}
                         className="mt-0.5"
@@ -1083,7 +1098,7 @@ export default function JobDetailPage() {
                       />
                     </div>
                     <Select
-                      label="Arrival window"
+                      label="Arrival window length"
                       value={scheduleWindowMins}
                       disabled={job.status === "cancelled"}
                       onChange={(e) => {
@@ -1094,7 +1109,7 @@ export default function JobDetailPage() {
                       options={[...ARRIVAL_WINDOW_OPTIONS]}
                     />
                     <div>
-                      <p className="text-[10px] text-text-tertiary">Expected finish date</p>
+                      <p className="text-[10px] text-text-tertiary">Expected finish (date only)</p>
                       <Input
                         type="date"
                         value={scheduleExpectedFinishDate}
@@ -1104,8 +1119,11 @@ export default function JobDetailPage() {
                       />
                     </div>
                   </div>
+                  {clientVisibleArrivalPreview ? (
+                    <p className="text-[11px] font-medium text-text-secondary -mt-1">{clientVisibleArrivalPreview}</p>
+                  ) : null}
                   <p className="text-[10px] text-text-tertiary -mt-1">
-                    End of arrival window is calculated from start time + window length (same as New Job). Expected finish is for the calendar only; late still uses window end.
+                    Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time. Expected finish is calendar-only (no time); late is still based on window end.
                   </p>
                   <div className="pt-1 border-t border-border-light">
                     {job.client_id && propertyEdit ? (
@@ -1153,58 +1171,17 @@ export default function JobDetailPage() {
               </Button>
             </div>
 
-            {/* OPERATIONAL TASKLINE */}
+            {/* REPORTS */}
             <div className="rounded-xl border border-border-light bg-card p-4">
-              <button
-                type="button"
-                onClick={() => setTasklineOpen((v) => !v)}
-                className="w-full flex items-center justify-between mb-3"
-              >
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
-                  <Info className="h-3.5 w-3.5" /> Operational taskline
+                  <FileText className="h-3.5 w-3.5" /> Reports
                 </p>
-                <div className="flex items-center gap-2">
-                  <Progress value={job.progress} size="sm" color={job.progress === 100 ? "emerald" : "primary"} className="w-24" />
+                <div className="flex items-center gap-2 shrink-0">
+                  <Progress value={job.progress} size="sm" color={job.progress === 100 ? "emerald" : "primary"} className="w-24 min-w-[6rem]" />
                   <span className="text-[11px] font-semibold text-text-primary tabular-nums">{job.progress}%</span>
-                  <ChevronDown className={`h-4 w-4 text-text-tertiary transition-transform ${tasklineOpen ? "rotate-180" : ""}`} />
                 </div>
-              </button>
-              {tasklineOpen && (
-                <div className="space-y-2">
-                  {reportPhaseIndices(job.total_phases).map((n) => {
-                    const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
-                    const approved = job[`report_${n}_approved` as keyof Job] as boolean;
-                    const uploadedAt = job[`report_${n}_uploaded_at` as keyof Job] as string | undefined;
-                    const approvedAt = job[`report_${n}_approved_at` as keyof Job] as string | undefined;
-                    const phaseLabel = reportPhaseLabel(n, job.total_phases);
-                    const uploadCheck = canMarkReportUploaded(job, n);
-                    const isActive = !approved && !uploaded && uploadCheck.ok;
-                    return (
-                      <div key={n} className={`flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors ${approved ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/20" : isActive ? "border-primary/40 bg-primary/5" : "border-border-light bg-surface-hover/40"}`}>
-                        <div className={`h-5 w-5 rounded-md border-2 flex items-center justify-center shrink-0 ${approved ? "border-emerald-500 bg-emerald-500" : uploaded ? "border-amber-400 bg-amber-400" : "border-border"}`}>
-                          {approved && <CheckCircle2 className="h-3 w-3 text-white" />}
-                          {uploaded && !approved && <Upload className="h-3 w-3 text-white" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-text-primary truncate">{phaseLabel}</p>
-                          {approvedAt && <p className="text-[11px] text-emerald-600">Approved {new Date(approvedAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}</p>}
-                          {uploadedAt && !approvedAt && <p className="text-[11px] text-amber-600">Uploaded {new Date(uploadedAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}</p>}
-                        </div>
-                        <Badge variant={approved ? "success" : uploaded ? "warning" : isActive ? "primary" : "default"} size="sm">
-                          {approved ? "Validated" : uploaded ? "Pending review" : isActive ? "Active" : "Waiting"}
-                        </Badge>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* PHASE REPORTS */}
-            <div className="rounded-xl border border-border-light bg-card p-4">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                <FileText className="h-3.5 w-3.5" /> Phase reports
-              </p>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {reportPhaseIndices(job.total_phases).map((n) => {
                   const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;

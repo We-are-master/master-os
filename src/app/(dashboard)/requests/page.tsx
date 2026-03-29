@@ -43,6 +43,7 @@ import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { isUuid } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { formatArrivalTimeRange } from "@/lib/schedule-calendar";
 import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
@@ -1248,6 +1249,15 @@ function ConvertToJobModal({
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
   }, [request]);
 
+  const clientArrivalPreview = useMemo(() => {
+    const d = form.scheduled_date?.trim();
+    const f = form.arrival_from?.trim();
+    const t = form.arrival_to?.trim();
+    if (!d || !f || !t) return null;
+    const range = formatArrivalTimeRange(`${d}T${f}:00`, `${d}T${t}:00`);
+    return range ? `Client & partner will see: Arrival time (${range})` : null;
+  }, [form.scheduled_date, form.arrival_from, form.arrival_to]);
+
   if (!request) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedPartner = partners.find((p) => p.id === form.partner_id);
@@ -1356,25 +1366,32 @@ function ConvertToJobModal({
           </div>
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled date {form.partner_id ? "*" : ""}</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Start date {form.partner_id ? "*" : ""}</label>
           <Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} className="h-10 max-w-[200px]" />
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival window from</label>
-            <Input type="time" value={form.arrival_from} onChange={(e) => update("arrival_from", e.target.value)} className="h-10" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival window to</label>
-            <Input type="time" value={form.arrival_to} onChange={(e) => update("arrival_to", e.target.value)} className="h-10" />
+        <div>
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Arrival time (range)</p>
+          <p className="text-[10px] text-text-tertiary mb-2">From / to — shown to clients and partners as a single range (e.g. 11AM – 2PM).</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">From</label>
+              <Input type="time" value={form.arrival_from} onChange={(e) => update("arrival_from", e.target.value)} className="h-10" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">To</label>
+              <Input type="time" value={form.arrival_to} onChange={(e) => update("arrival_to", e.target.value)} className="h-10" />
+            </div>
           </div>
         </div>
+        {clientArrivalPreview ? (
+          <p className="text-[11px] font-medium text-text-secondary -mt-2">{clientArrivalPreview}</p>
+        ) : null}
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish date</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish (date only)</label>
           <Input type="date" value={form.expected_finish_date} onChange={(e) => update("expected_finish_date", e.target.value)} className="h-10 max-w-[200px]" />
         </div>
         <p className="text-[10px] text-text-tertiary -mt-2">
-          Typical slots (e.g. 09:00–10:00). With a partner, date and both window times are required. Jobs move to Late after the window ends, not at the start. Expected finish is the day the job is planned to end (for the calendar); it is separate from the arrival window.
+          With a partner, start date and both arrival times are required. Jobs go Late after the window ends. Expected finish is calendar-only (no time), separate from the arrival window.
         </p>
         <Select label="Partner" options={[{ value: "", label: "None" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         <div>

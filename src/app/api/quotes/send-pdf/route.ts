@@ -156,9 +156,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const sentAt = new Date().toISOString();
     await supabase
       .from("quotes")
-      .update({ status: "awaiting_customer" })
+      .update({ status: "awaiting_customer", customer_pdf_sent_at: sentAt })
       .eq("id", quoteId);
 
     await supabase.from("audit_logs").insert({

@@ -1,6 +1,12 @@
 import type { Job } from "@/types/database";
+import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 
 const PARTNER_IRRELEVANT_ONLY = new Set(["owner_id", "owner_name"]);
+
+type JobPushScheduleFields = Pick<
+  Job,
+  "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"
+>;
 
 /** True when every touched field is internal (office owner) — partner does not need a push. */
 export function updatesOnlyIrrelevantToPartner(updates: Partial<Job>): boolean {
@@ -18,7 +24,7 @@ export type PartnerJobPushKind =
 
 export function notifyAssignedPartnerAboutJob(options: {
   partnerId: string;
-  job: Pick<Job, "id" | "reference" | "title" | "property_address" | "status">;
+  job: Pick<Job, "id" | "reference" | "title" | "property_address" | "status"> & JobPushScheduleFields;
   kind: PartnerJobPushKind;
   statusLabel?: string;
   /** Shown in push body when the office cancels (same text as `jobs.cancellation_reason`). */
@@ -28,13 +34,15 @@ export function notifyAssignedPartnerAboutJob(options: {
   if (typeof window === "undefined" || !partnerId) return;
   const head = [job.reference, job.title].filter(Boolean).join(" · ") || "Job";
   const loc = job.property_address ? ` · ${job.property_address}` : "";
+  const schedLine = formatJobScheduleLine(job);
+  const schedSuffix = schedLine ? `\n${schedLine}` : "";
 
   let title: string;
   let body: string;
   switch (kind) {
     case "job_assigned":
       title = "Job assigned";
-      body = `${head}${loc}`;
+      body = `${head}${loc}${schedSuffix}`;
       break;
     case "job_unassigned":
       title = "Job unassigned";

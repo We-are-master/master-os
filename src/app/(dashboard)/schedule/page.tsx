@@ -319,7 +319,7 @@ export default function SchedulePage() {
                                     : "bg-amber-100 text-amber-700 border-amber-200"
                               }`}
                             >
-                              {kind === "start" ? "Arrival" : kind === "end" ? "Expected finish" : "Ongoing"} · {job.title}
+                              {kind === "start" ? "Start / arrival" : kind === "end" ? "Expected finish" : "Ongoing"} · {job.title}
                               {!job.partner_name && <span className="italic opacity-70"> (unasgn.)</span>}
                             </motion.div>
                           ))}
