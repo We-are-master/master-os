@@ -48,7 +48,7 @@ import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
-import { isUuid } from "@/lib/utils";
+import { getErrorMessage, isUuid, isValidIsoDateTime, parseIsoDateOnly } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback } from "@/lib/type-of-work";
 import {
   parseBidProposalFromNotes,
@@ -245,7 +245,7 @@ function getStageGuidance(status: string): {
     case "awaiting_customer":
       return {
         headline: "Waiting on the customer",
-        detail: "You can still edit the proposal or pricing, then Save & send PDF (or Resend email) so the client gets an updated attachment — links stay the same.",
+        detail: "You can still edit the proposal or pricing, then Save & send PDF (or Resend Quote) so the client gets an updated attachment — links stay the same.",
       };
     case "accepted":
       return {
@@ -468,12 +468,25 @@ function QuotesPageContent() {
       if (!quoteToConvert) return;
       const effectivePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
       const jobScope = (formData.scope ?? "").trim() || (quoteToConvert.scope ?? "").trim();
+      const scheduled_date = parseIsoDateOnly(formData.scheduled_date ?? "") || undefined;
+      let scheduled_start_at: string | undefined = formData.scheduled_start_at;
+      let scheduled_end_at: string | undefined = formData.scheduled_end_at;
+      if (!scheduled_date) {
+        scheduled_start_at = undefined;
+        scheduled_end_at = undefined;
+      } else {
+        if (!isValidIsoDateTime(scheduled_start_at)) scheduled_start_at = undefined;
+        if (!isValidIsoDateTime(scheduled_end_at)) scheduled_end_at = undefined;
+      }
+      const finishRaw = formData.scheduled_finish_date;
+      const scheduled_finish_date =
+        finishRaw == null || finishRaw === "" ? null : parseIsoDateOnly(String(finishRaw)) || null;
       if (effectivePartnerId) {
         const block = getPartnerAssignmentBlockReason({
           property_address: formData.property_address,
           scope: jobScope,
-          scheduled_date: formData.scheduled_date,
-          scheduled_start_at: formData.scheduled_start_at,
+          scheduled_date,
+          scheduled_start_at,
           partner_id: effectivePartnerId,
           partner_ids: [],
         });
@@ -506,10 +519,10 @@ function QuotesPageContent() {
           partner_cost: formData.partner_cost,
           materials_cost: formData.materials_cost,
           margin_percent: margin,
-          scheduled_date: formData.scheduled_date,
-          scheduled_start_at: formData.scheduled_start_at,
-          scheduled_end_at: formData.scheduled_end_at,
-          scheduled_finish_date: formData.scheduled_finish_date ?? null,
+          scheduled_date,
+          scheduled_start_at,
+          scheduled_end_at,
+          scheduled_finish_date,
           owner_id: profile?.id, owner_name: profile?.full_name,
           job_type: formData.job_type ?? "fixed",
           cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
@@ -570,7 +583,9 @@ function QuotesPageContent() {
         toast.success(`Job ${job.reference} created`);
         refresh(); loadCounts();
         router.push(`/jobs?jobId=${job.id}`);
-      } catch (err) { toast.error(err instanceof Error ? err.message : "Failed to create job"); }
+      } catch (err) {
+        toast.error(getErrorMessage(err, "Failed to create job"));
+      }
     },
     [quoteToConvert, refresh, loadCounts, profile?.id, profile?.full_name, router]
   );
@@ -1902,7 +1917,7 @@ function QuoteDetailDrawer({
                   {(sendState === "sent" || quoteEmailedInSession) && (
                     <p className="text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
                       <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                      Last PDF emailed to {sendEmail}. Edit anything above, then use this button again or <strong className="font-semibold">Resend email</strong> next to Mark Accepted.
+                      Last PDF emailed to {sendEmail}. Edit anything above, then use this button again or <strong className="font-semibold">Resend Quote</strong> next to Mark Accepted.
                     </p>
                   )}
                 </div>
@@ -1912,7 +1927,7 @@ function QuoteDetailDrawer({
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Move this quote</p>
                 <p className="text-[11px] text-text-tertiary -mt-1 mb-1">
                   {quote.status === "awaiting_customer" ? (
-                    <>The customer uses <strong className="text-text-secondary">Accept</strong> or <strong className="text-text-secondary">Reject</strong> in the email. You can edit the quote anytime, then <strong className="text-text-secondary">Save & send PDF</strong> or <strong className="text-text-secondary">Resend email</strong> here.</>
+                    <>The customer uses <strong className="text-text-secondary">Accept</strong> or <strong className="text-text-secondary">Reject</strong> in the email. You can edit the quote anytime, then <strong className="text-text-secondary">Save & send PDF</strong> or <strong className="text-text-secondary">Resend Quote</strong> here.</>
                   ) : (
                     <>After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer, then email the PDF from the section below.</>
                   )}
@@ -1930,9 +1945,7 @@ function QuoteDetailDrawer({
                     >
                       {sendState === "sending"
                         ? "Saving…"
-                        : quoteEmailedInSession || sendState === "sent"
-                          ? "Resend email"
-                          : "Send email"}
+                        : "Resend Quote"}
                     </Button>
                   )}
                   {actions.map((action) => (
@@ -2251,8 +2264,7 @@ function getQuoteActions(quote: Quote) {
 /** Client preferred start date from quote (YYYY-MM-DD for date inputs). */
 function preferredScheduleDateFromQuote(q: Quote): string {
   const raw = bidPayloadTrimmedString(q.start_date_option_1 as unknown) || bidPayloadTrimmedString(q.start_date_option_2 as unknown);
-  if (!raw) return "";
-  return raw.slice(0, 10);
+  return parseIsoDateOnly(raw);
 }
 
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
@@ -2299,7 +2311,11 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     if (!form.title?.trim()) { toast.error("Job title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
-    const scheduled_date = form.scheduled_date || undefined;
+    const scheduled_date = parseIsoDateOnly(form.scheduled_date) || undefined;
+    if (form.scheduled_date?.trim() && !scheduled_date) {
+      toast.error("Scheduled date must be a complete day (YYYY-MM-DD). Fix the date or clear the field.");
+      return;
+    }
     const hasFrom = !!form.arrival_from?.trim();
     const hasTo = !!form.arrival_to?.trim();
     if ((hasFrom && !hasTo) || (!hasFrom && hasTo)) {
@@ -2323,7 +2339,11 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
         return;
       }
     }
-    const expected_finish = form.expected_finish_date?.trim() || undefined;
+    const expected_finish = parseIsoDateOnly(form.expected_finish_date) || undefined;
+    if (form.expected_finish_date?.trim() && !expected_finish) {
+      toast.error("Expected finish must be a complete date (YYYY-MM-DD) or left empty.");
+      return;
+    }
     if (expected_finish && scheduled_date && expected_finish < scheduled_date) {
       toast.error("Expected finish date must be on or after the scheduled date.");
       return;
