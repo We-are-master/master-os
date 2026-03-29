@@ -69,6 +69,41 @@ export function formatPercent(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
+/**
+ * Normalizes quote/job date fields to YYYY-MM-DD only when the value is a real calendar day.
+ * Rejects year-only (e.g. "2026"), partial strings, and invalid dates so Postgres date columns are not fed garbage.
+ */
+export function parseIsoDateOnly(input: string | undefined | null): string {
+  if (input == null) return "";
+  const s = String(input).trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return "";
+  const y = Number(s.slice(0, 4));
+  const m = Number(s.slice(5, 7));
+  const d = Number(s.slice(8, 10));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return "";
+  if (m < 1 || m > 12 || d < 1 || d > 31) return "";
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return "";
+  return s;
+}
+
+/** True if string is a parseable ISO-like datetime (timestamptz-safe for Supabase). */
+export function isValidIsoDateTime(input: string | undefined | null): boolean {
+  if (input == null || !String(input).trim()) return false;
+  const t = Date.parse(String(input).trim());
+  return Number.isFinite(t);
+}
+
+/** Supabase Postgrest errors are plain objects — surface `.message` in toasts. */
+export function getErrorMessage(err: unknown, fallback = "Something went wrong"): string {
+  if (err instanceof Error && err.message.trim()) return err.message;
+  if (typeof err === "object" && err !== null && "message" in err) {
+    const m = (err as { message: unknown }).message;
+    if (typeof m === "string" && m.trim()) return m;
+  }
+  return fallback;
+}
+
 export function formatDate(date: Date | string): string {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
