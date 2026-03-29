@@ -122,11 +122,12 @@ export default function RequestsPage() {
   const [selectedRequest, setSelectedRequest] = useState<ServiceRequest | null>(null);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const [drawerFields, setDrawerFields] = useState({
-    postcode: "",
+    property_address: "",
     service_type: "",
     description: "",
     catalog_service_id: "",
   });
+  const [propertyAddressEditing, setPropertyAddressEditing] = useState(false);
   const [drawerSaving, setDrawerSaving] = useState(false);
   const [drawerTab, setDrawerTab] = useState("details");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -205,16 +206,19 @@ export default function RequestsPage() {
 
   useEffect(() => { setDrawerTab("details"); }, [selectedRequest?.id]);
   useEffect(() => {
+    setPropertyAddressEditing(false);
+  }, [selectedRequest?.id]);
+  useEffect(() => {
     if (!selectedRequest) return;
     setDrawerFields({
-      postcode: selectedRequest.postcode ?? "",
+      property_address: selectedRequest.property_address ?? "",
       service_type: selectedRequest.service_type ?? "",
       description: selectedRequest.description ?? "",
       catalog_service_id: selectedRequest.catalog_service_id ?? "",
     });
   }, [
     selectedRequest?.id,
-    selectedRequest?.postcode,
+    selectedRequest?.property_address,
     selectedRequest?.service_type,
     selectedRequest?.description,
     selectedRequest?.catalog_service_id,
@@ -245,14 +249,18 @@ export default function RequestsPage() {
     }
     setDrawerSaving(true);
     try {
+      const addr = drawerFields.property_address.trim();
+      const pc = extractUkPostcode(addr);
       const updated = await updateRequest(selectedRequest.id, {
-        postcode: drawerFields.postcode.trim() || undefined,
+        property_address: addr,
+        postcode: pc || undefined,
         service_type: drawerFields.service_type.trim(),
         description: drawerFields.description,
         catalog_service_id: cid && isUuid(cid) ? cid : null,
         request_kind: kind,
       });
       setSelectedRequest(updated);
+      setPropertyAddressEditing(false);
       refreshSilent();
       toast.success("Request updated");
     } catch {
@@ -746,20 +754,57 @@ export default function RequestsPage() {
                     )}
                   </div>
                   <div>
-                    <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Property</label>
-                    <div className="flex items-start gap-2 mt-1.5">
-                      <MapPin className="h-4 w-4 text-text-tertiary mt-0.5 shrink-0" />
-                      <p className="text-sm text-text-primary">{selectedRequest.property_address}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Property</label>
+                      {!propertyAddressEditing ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs shrink-0"
+                          icon={<PenLine className="h-3 w-3" />}
+                          onClick={() => setPropertyAddressEditing(true)}
+                        >
+                          Edit address
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs shrink-0"
+                          onClick={() => {
+                            setDrawerFields((f) => ({ ...f, property_address: selectedRequest.property_address ?? "" }));
+                            setPropertyAddressEditing(false);
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      )}
                     </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <Input
-                        value={drawerFields.postcode}
-                        onChange={(e) => setDrawerFields((f) => ({ ...f, postcode: e.target.value.toUpperCase() }))}
-                        placeholder="Postcode (required for Convert to Quote)"
-                        className="max-w-[140px]"
-                      />
-                    </div>
-                    <LocationMiniMap address={selectedRequest.property_address} className="mt-2" />
+                    {!propertyAddressEditing ? (
+                      <div className="flex items-start gap-2 mt-1.5">
+                        <MapPin className="h-4 w-4 text-text-tertiary mt-0.5 shrink-0" />
+                        <p className="text-sm text-text-primary break-words">{selectedRequest.property_address?.trim() || "—"}</p>
+                      </div>
+                    ) : (
+                      <div className="mt-1.5 space-y-1.5">
+                        <textarea
+                          value={drawerFields.property_address}
+                          onChange={(e) => setDrawerFields((f) => ({ ...f, property_address: e.target.value }))}
+                          rows={3}
+                          placeholder="Full property address (include UK postcode if possible)…"
+                          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
+                        />
+                        <p className="text-[10px] text-text-tertiary leading-snug">
+                          Use when the client asks to change the property. Postcode is taken from the address text when you save. Click <strong className="text-text-secondary">Save &amp; Update</strong> below to apply.
+                        </p>
+                      </div>
+                    )}
+                    <LocationMiniMap
+                      address={drawerFields.property_address.trim() || selectedRequest.property_address || ""}
+                      className="mt-2"
+                    />
                   </div>
 
                   <div className="rounded-xl border border-border bg-card/50 p-4 space-y-3">

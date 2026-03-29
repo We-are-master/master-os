@@ -21,6 +21,7 @@ import type { DashboardView, WidgetConfig } from "@/types/dashboard-config";
 import {
   LayoutDashboard, DollarSign, Briefcase, BarChart2, PieChart,
   Activity, Users, Settings, Layers, Plus, Pencil, SlidersHorizontal,
+  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { dashboardJobsFilterSelectColumns, isLegacyJobSchema } from "@/lib/job-schema-compat";
@@ -68,6 +69,7 @@ function DashboardInner() {
 
   const [activeFilters, setActiveFilters] = useState<Set<DashboardFilter>>(new Set());
   const [filterCounts, setFilterCounts] = useState<Record<string, number>>({});
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingView, setEditingView] = useState<DashboardView | null>(null);
@@ -207,40 +209,77 @@ function DashboardInner() {
 
         <DashboardDateToolbar />
 
-        {/* ── Filter chips ─────────────────────────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mr-1 flex items-center gap-1">
-            <SlidersHorizontal className="h-3 w-3" /> Filters:
-          </span>
-          {FILTER_CHIPS.map((chip) => {
-            const isActive = activeFilters.has(chip.id);
-            const count = filterCounts[chip.id] ?? 0;
-            return (
-              <button
-                key={chip.id}
-                onClick={() => toggleFilter(chip.id)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border transition-all ${
-                  isActive ? "bg-primary text-white border-primary shadow-sm" : chip.color
-                }`}
-              >
-                {chip.label}
-                {count > 0 && (
-                  <span className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold ${
-                    isActive ? "bg-white/20 text-white" : "bg-black/10 text-current"
-                  }`}>
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-          {activeFilters.size > 0 && (
-            <button
-              onClick={() => setActiveFilters(new Set())}
-              className="text-xs font-medium text-text-tertiary hover:text-primary underline underline-offset-2 ml-1"
-            >
-              Clear all
-            </button>
+        {/* ── Job filters (dropdown; counts respect date range) ───────── */}
+        <div className="relative inline-block">
+          <button
+            type="button"
+            onClick={() => setFilterMenuOpen((o) => !o)}
+            className={cn(
+              "inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium border transition-all",
+              activeFilters.size > 0
+                ? "border-primary bg-primary/5 text-primary"
+                : "border-border bg-card text-text-secondary hover:bg-surface-hover",
+            )}
+            aria-expanded={filterMenuOpen}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Job filters
+            {activeFilters.size > 0 && (
+              <span className="text-xs font-semibold tabular-nums bg-primary/15 px-1.5 py-0.5 rounded-md">{activeFilters.size}</span>
+            )}
+            <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", filterMenuOpen && "rotate-180")} />
+          </button>
+          {filterMenuOpen && (
+            <>
+              <button type="button" className="fixed inset-0 z-40 cursor-default" aria-label="Close filters" onClick={() => setFilterMenuOpen(false)} />
+              <div className="absolute left-0 top-full z-50 mt-1 w-[min(100vw-2rem,22rem)] rounded-xl border border-border-light bg-card shadow-lg py-2 max-h-[min(70vh,420px)] overflow-y-auto">
+                <div className="px-3 pb-2 flex items-center justify-between gap-2 border-b border-border-light mb-1">
+                  <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Highlight jobs</span>
+                  {activeFilters.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveFilters(new Set())}
+                      className="text-[11px] font-medium text-primary hover:underline"
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
+                <div className="px-1">
+                  {FILTER_CHIPS.map((chip) => {
+                    const isActive = activeFilters.has(chip.id);
+                    const count = filterCounts[chip.id] ?? 0;
+                    return (
+                      <button
+                        key={chip.id}
+                        type="button"
+                        onClick={() => toggleFilter(chip.id)}
+                        className={cn(
+                          "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-sm transition-colors",
+                          isActive ? "bg-primary/10 text-primary" : "hover:bg-surface-hover text-text-primary",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "h-4 w-4 rounded border flex-shrink-0 flex items-center justify-center text-[10px]",
+                            isActive ? "border-primary bg-primary text-white" : "border-border",
+                          )}
+                        >
+                          {isActive ? "✓" : ""}
+                        </span>
+                        <span className="flex-1 min-w-0">{chip.label}</span>
+                        {count > 0 && (
+                          <span className="text-xs font-bold tabular-nums text-text-tertiary">{count}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="px-3 pt-2 pb-1 text-[10px] text-text-tertiary leading-snug border-t border-border-light mt-1">
+                  Counts follow the dashboard date range above.
+                </p>
+              </div>
+            </>
           )}
         </div>
 
