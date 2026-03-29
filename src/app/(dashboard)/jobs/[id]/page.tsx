@@ -1146,7 +1146,7 @@ export default function JobDetailPage() {
 
         {job.status !== "cancelled" ? (
           <section
-            className="rounded-xl border border-border-subtle/70 bg-card overflow-hidden"
+            className="rounded-xl bg-card overflow-hidden shadow-[0_4px_24px_-8px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_28px_-6px_rgba(0,0,0,0.45)]"
             aria-label="Work time and job progress"
           >
             <div className="px-3 py-2.5 sm:px-4 sm:py-3 space-y-2.5">
@@ -1170,7 +1170,9 @@ export default function JobDetailPage() {
                         {officeTimerDisplaySeconds != null
                           ? job.timer_is_running
                             ? "Timer running"
-                            : "Time recorded"
+                            : job.status === "scheduled" && (Number(job.timer_elapsed_seconds ?? 0) > 0)
+                              ? "Paused — resume with Start Job"
+                              : "Time recorded"
                           : job.partner_timer_ended_at
                             ? "On-site ended"
                             : "Live timer"}
@@ -1178,7 +1180,11 @@ export default function JobDetailPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null ? (
+                    {(job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null) ||
+                    (officeTimerDisplaySeconds != null &&
+                      !job.timer_is_running &&
+                      job.status === "scheduled" &&
+                      (Number(job.timer_elapsed_seconds ?? 0) > 0)) ? (
                       <Badge variant="warning" size="sm">
                         Paused
                       </Badge>
@@ -1267,7 +1273,10 @@ export default function JobDetailPage() {
               partnerLiveActiveMs == null &&
               (isJobInProgressStatus(job.status) || job.status === "awaiting_payment") ? (
                 <p className="text-[10px] leading-snug text-text-tertiary pt-1">
-                  Timer after <strong className="font-medium text-text-secondary">Start Job</strong> or partner start; stops at final check, pause, or invoice.
+                  <strong className="font-medium text-text-secondary">Start Job</strong> begins the timer;{" "}
+                  <strong className="font-medium text-text-secondary">Pause Job</strong> freezes it;{" "}
+                  <strong className="font-medium text-text-secondary">Complete Job</strong> records the total;{" "}
+                  <strong className="font-medium text-text-secondary">Reopen</strong> then Start Job continues from that total.
                 </p>
               ) : null}
             </div>
@@ -1278,16 +1287,16 @@ export default function JobDetailPage() {
 
         {/* ── Job amount / margin (same metrics as jobs board cards) ── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-3">
-          <div className="min-w-0 rounded-xl border border-border-light bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-sm">
+          <div className="min-w-0 rounded-xl bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-[0_2px_16px_-4px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-4px_rgba(0,0,0,0.4)]">
             <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
             <p className="mt-1 text-base sm:text-lg font-bold text-text-primary tabular-nums leading-tight break-words">{formatCurrency(billableRevenue)}</p>
             <p className="text-[10px] text-text-tertiary mt-1 leading-snug">Incl. extras</p>
           </div>
-          <div className="min-w-0 rounded-xl border border-border-light bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-sm">
+          <div className="min-w-0 rounded-xl bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-[0_2px_16px_-4px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-4px_rgba(0,0,0,0.4)]">
             <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Partner cost</p>
             <p className="mt-1 text-base sm:text-lg font-bold text-text-secondary tabular-nums leading-tight break-words">{formatCurrency(Number(job.partner_cost ?? 0))}</p>
           </div>
-          <div className="min-w-0 rounded-xl border border-border-light bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-sm">
+          <div className="min-w-0 rounded-xl bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-[0_2px_16px_-4px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-4px_rgba(0,0,0,0.4)]">
             <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin</p>
             <p
               className={cn(
@@ -1299,7 +1308,7 @@ export default function JobDetailPage() {
             </p>
             <p className="text-[10px] text-text-tertiary mt-1 leading-snug">After partner + materials</p>
           </div>
-          <div className="min-w-0 rounded-xl border border-border-light bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-sm">
+          <div className="min-w-0 rounded-xl bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-[0_2px_16px_-4px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-4px_rgba(0,0,0,0.4)]">
             <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin %</p>
             <p
               className={cn(
@@ -1546,7 +1555,7 @@ export default function JobDetailPage() {
                     title={sendReportFinalCheck.message}
                     onClick={() => void handleSendReportAndInvoice()}
                   >
-                    Approve & Send Final Invoice
+                    Review & Approve
                   </Button>
                 </div>
               )}
