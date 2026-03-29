@@ -160,17 +160,28 @@ export async function updateJob(
   const supabase = getSupabase();
   const basePatch = input as Record<string, unknown>;
   const patch = prepareJobRowForUpdate(basePatch);
-  let { data, error } = await supabase.from("jobs").update(patch).eq("id", id).select().single();
+
+  /**
+   * Avoid `.select().single()` on PATCH: PostgREST returns **406 Not Acceptable** when the
+   * `Accept: application/vnd.pgrst.object+json` singular response gets 0 rows (RLS, or empty RETURNING).
+   * We verify with a plural `.select("id")`, then reload the full row via `getJob`.
+   */
+  async function runUpdate(row: Record<string, unknown>) {
+    return supabase.from("jobs").update(row).eq("id", id).select("id");
+  }
+
+  let { data: idRows, error } = await runUpdate(patch);
   if (error && isPostgrestWriteRetryableError(error)) {
-    const retry = await supabase
-      .from("jobs")
-      .update(applyJobDbCompat({ ...basePatch }))
-      .eq("id", id)
-      .select()
-      .single();
-    data = retry.data;
+    const retry = await runUpdate(applyJobDbCompat({ ...basePatch }));
+    idRows = retry.data;
     error = retry.error;
   }
   if (error) throw error;
-  return data as Job;
+  if (!idRows?.length) {
+    throw new Error("Job update did not affect any row (check permissions or job id).");
+  }
+
+  const row = await getJob(id);
+  if (!row) throw new Error("Job not found after update");
+  return row;
 }
