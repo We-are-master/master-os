@@ -19,7 +19,15 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import type { Job } from "@/types/database";
-import { formatJobScheduleLine, formatLocalYmd, jobFinishYmd, jobScheduleYmd } from "@/lib/schedule-calendar";
+import {
+  formatJobScheduleLine,
+  formatLocalYmd,
+  formatScheduleCalendarBarLabel,
+  jobFinishYmd,
+  jobIntersectsLocalMonth,
+  jobScheduleYmd,
+  localYmdBoundsToUtcIso,
+} from "@/lib/schedule-calendar";
 import { isJobInProgressStatus } from "@/lib/job-phases";
 import { jobBillableRevenue } from "@/lib/job-financials";
 
@@ -54,6 +62,51 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   cancelled: { label: "Cancelled", variant: "default" },
 };
 
+type ScheduleBarSegment = "only" | "first" | "middle" | "last";
+
+function scheduleBarSegment(
+  job: Job,
+  dayGridIndex: number,
+  calendarDays: (number | null)[],
+  jobDaysInMonth: Map<string, Set<number>>,
+): ScheduleBarSegment {
+  const days = jobDaysInMonth.get(job.id);
+  if (!days || days.size <= 1) return "only";
+  const hasOn = (cell: number | null | undefined) => typeof cell === "number" && days.has(cell);
+  let left = false;
+  let right = false;
+  if (dayGridIndex % 7 !== 0) left = hasOn(calendarDays[dayGridIndex - 1]);
+  if (dayGridIndex % 7 !== 6) right = hasOn(calendarDays[dayGridIndex + 1]);
+  if (!left && !right) return "only";
+  if (!left && right) return "first";
+  if (left && right) return "middle";
+  return "last";
+}
+
+function scheduleBarSegmentClass(segment: ScheduleBarSegment, colorClasses: string): string {
+  const base = `block w-full px-1.5 py-0.5 text-[10px] font-medium border truncate cursor-pointer hover:opacity-80 transition-opacity ${colorClasses}`;
+  switch (segment) {
+    case "only":
+      return `${base} rounded-md`;
+    case "first":
+      return `${base} rounded-l-md rounded-r-none border-r-0 -mr-px`;
+    case "middle":
+      return `${base} rounded-none border-x-0 -mx-px`;
+    case "last":
+      return `${base} rounded-r-md rounded-l-none border-l-0 -ml-px`;
+    default:
+      return `${base} rounded-md`;
+  }
+}
+
+function jobCalendarSortKey(job: Job): string {
+  const start = jobScheduleYmd(job);
+  const prefix = start
+    ? `${start.y}-${String(start.m).padStart(2, "0")}-${String(start.d).padStart(2, "0")}`
+    : "";
+  return `${prefix}\0${job.title}\0${job.id}`;
+}
+
 export default function SchedulePage() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -66,45 +119,54 @@ export default function SchedulePage() {
     setLoading(true);
     const supabase = getSupabase();
     try {
-      const startDate = formatLocalYmd(new Date(year, month, 1));
-      const endDate = formatLocalYmd(new Date(year, month + 1, 0));
-      const monthStartInstant = new Date(year, month, 1, 0, 0, 0, 0).toISOString();
-      const nextMonthStartInstant = new Date(year, month + 1, 1, 0, 0, 0, 0).toISOString();
+      const padStart = formatLocalYmd(new Date(year, month, 1 - 62));
+      const padEnd = formatLocalYmd(new Date(year, month + 1, 62));
+      const { startIso: padStartUtc, endIso: padEndUtc } = localYmdBoundsToUtcIso(padStart, padEnd);
 
-      const [byScheduledDate, byStartAt, byEndAt] = await Promise.all([
+      const [byScheduledDate, byFinishDate, byStartAt, byEndAt] = await Promise.all([
         supabase
           .from("jobs")
           .select("*")
           .is("deleted_at", null)
-          .gte("scheduled_date", startDate)
-          .lte("scheduled_date", endDate)
+          .gte("scheduled_date", padStart)
+          .lte("scheduled_date", padEnd)
           .order("scheduled_date", { ascending: true }),
         supabase
           .from("jobs")
           .select("*")
           .is("deleted_at", null)
+          .not("scheduled_finish_date", "is", null)
+          .gte("scheduled_finish_date", padStart)
+          .lte("scheduled_finish_date", padEnd)
+          .order("scheduled_finish_date", { ascending: true }),
+        supabase
+          .from("jobs")
+          .select("*")
+          .is("deleted_at", null)
           .not("scheduled_start_at", "is", null)
-          .gte("scheduled_start_at", monthStartInstant)
-          .lt("scheduled_start_at", nextMonthStartInstant)
+          .gte("scheduled_start_at", padStartUtc)
+          .lte("scheduled_start_at", padEndUtc)
           .order("scheduled_start_at", { ascending: true }),
         supabase
           .from("jobs")
           .select("*")
           .is("deleted_at", null)
           .not("scheduled_end_at", "is", null)
-          .gte("scheduled_end_at", monthStartInstant)
-          .lt("scheduled_end_at", nextMonthStartInstant)
+          .gte("scheduled_end_at", padStartUtc)
+          .lte("scheduled_end_at", padEndUtc)
           .order("scheduled_end_at", { ascending: true }),
       ]);
 
       const merged = new Map<string, Job>();
-      for (const row of [...(byScheduledDate.data ?? []), ...(byStartAt.data ?? []), ...(byEndAt.data ?? [])]) {
+      for (const row of [
+        ...(byScheduledDate.data ?? []),
+        ...(byFinishDate.data ?? []),
+        ...(byStartAt.data ?? []),
+        ...(byEndAt.data ?? []),
+      ]) {
         merged.set(row.id, row as Job);
       }
-      const list = Array.from(merged.values()).filter((j) => {
-        const ymd = jobScheduleYmd(j);
-        return ymd && ymd.y === year && ymd.m === month + 1;
-      });
+      const list = Array.from(merged.values()).filter((j) => jobIntersectsLocalMonth(j, year, month));
       list.sort((a, b) => {
         const ka = a.scheduled_start_at ?? (a.scheduled_date ? `${a.scheduled_date}T00:00:00` : "");
         const kb = b.scheduled_start_at ?? (b.scheduled_date ? `${b.scheduled_date}T00:00:00` : "");
@@ -177,38 +239,45 @@ export default function SchedulePage() {
   }, [firstDayOfWeek, daysInMonth]);
 
   const jobsByDay = useMemo(() => {
-    const map: Record<number, Array<{ job: Job; kind: "start" | "end" | "span" }>> = {};
+    const monthStart = new Date(year, month, 1);
+    const monthEnd = new Date(year, month + 1, 0);
+    const jobDaysInMonth = new Map<string, Set<number>>();
     for (const job of jobs) {
+      if (!jobIntersectsLocalMonth(job, year, month)) continue;
       const start = jobScheduleYmd(job);
       if (!start) continue;
-      const finish = jobFinishYmd(job);
-      const startsThisMonth = start.y === year && start.m === month + 1;
-      const finishesThisMonth = !!finish && finish.y === year && finish.m === month + 1;
-
-      if (startsThisMonth) {
-        if (!map[start.d]) map[start.d] = [];
-        map[start.d].push({ job, kind: "start" });
+      const finish = jobFinishYmd(job) ?? start;
+      const s = new Date(start.y, start.m - 1, start.d);
+      const e = new Date(finish.y, finish.m - 1, finish.d);
+      const set = new Set<number>();
+      const c = new Date(Math.max(s.getTime(), monthStart.getTime()));
+      const endClamp = new Date(Math.min(e.getTime(), monthEnd.getTime()));
+      while (c <= endClamp) {
+        if (c.getFullYear() === year && c.getMonth() === month) set.add(c.getDate());
+        c.setDate(c.getDate() + 1);
       }
-      if (finishesThisMonth) {
-        if (!map[finish!.d]) map[finish!.d] = [];
-        map[finish!.d].push({ job, kind: "end" });
-      }
+      if (set.size) jobDaysInMonth.set(job.id, set);
+    }
 
-      if (!finish) continue;
-      const cursor = new Date(start.y, start.m - 1, start.d);
-      const endDate = new Date(finish.y, finish.m - 1, finish.d);
-      cursor.setDate(cursor.getDate() + 1);
-      while (cursor < endDate) {
-        if (cursor.getFullYear() === year && cursor.getMonth() === month) {
-          const d = cursor.getDate();
-          if (!map[d]) map[d] = [];
-          map[d].push({ job, kind: "span" });
-        }
-        cursor.setDate(cursor.getDate() + 1);
+    const map: Record<number, Array<{ job: Job; segment: ScheduleBarSegment }>> = {};
+    for (const job of jobs) {
+      const days = jobDaysInMonth.get(job.id);
+      if (!days) continue;
+      for (const d of days) {
+        const dayIndex = calendarDays.findIndex((cell) => cell === d);
+        if (dayIndex < 0) continue;
+        if (!map[d]) map[d] = [];
+        map[d].push({
+          job,
+          segment: scheduleBarSegment(job, dayIndex, calendarDays, jobDaysInMonth),
+        });
       }
     }
+    for (const k of Object.keys(map)) {
+      map[Number(k)].sort((a, b) => jobCalendarSortKey(a.job).localeCompare(jobCalendarSortKey(b.job)));
+    }
     return map;
-  }, [jobs, year, month]);
+  }, [jobs, year, month, calendarDays]);
 
   const selectedScheduleLine = selectedJob ? formatJobScheduleLine(selectedJob) : null;
 
@@ -304,23 +373,17 @@ export default function SchedulePage() {
                             <span className="text-[10px] text-text-tertiary">{dayJobs.length}</span>
                           )}
                         </div>
-                        <div className="space-y-0.5">
-                          {dayJobs.slice(0, 3).map(({ job, kind }, idx) => (
+                        <div className="space-y-0.5 min-w-0">
+                          {dayJobs.slice(0, 3).map(({ job, segment }, idx) => (
                             <motion.div
-                              key={`${job.id}-${kind}-${idx}`}
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
+                              key={`${job.id}-${day}-${segment}-${idx}`}
+                              whileHover={{ scale: 1.01 }}
+                              whileTap={{ scale: 0.99 }}
                               onClick={() => setSelectedJob(job)}
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-medium border truncate cursor-pointer hover:opacity-80 transition-opacity ${
-                                kind === "start"
-                                  ? `${getJobColor(job.title)}`
-                                  : kind === "end"
-                                    ? "bg-emerald-100 text-emerald-700 border-emerald-200"
-                                    : "bg-amber-100 text-amber-700 border-amber-200"
-                              }`}
+                              title={formatScheduleCalendarBarLabel(job)}
+                              className={scheduleBarSegmentClass(segment, getJobColor(job.title))}
                             >
-                              {kind === "start" ? "Start / arrival" : kind === "end" ? "Expected finish" : "Ongoing"} · {job.title}
-                              {!job.partner_name && <span className="italic opacity-70"> (unasgn.)</span>}
+                              <span className="block truncate">{formatScheduleCalendarBarLabel(job)}</span>
                             </motion.div>
                           ))}
                           {dayJobs.length > 3 && (

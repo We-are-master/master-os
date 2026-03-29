@@ -43,7 +43,8 @@ import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { isUuid } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
-import { formatArrivalTimeRange } from "@/lib/schedule-calendar";
+import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
+import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
@@ -1233,7 +1234,7 @@ function ConvertToJobModal({
 }) {
   const [form, setForm] = useState({
     partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", job_type: "fixed",
-    scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "",
+    scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "",
   });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -1243,20 +1244,11 @@ function ConvertToJobModal({
     setForm({
       partner_id: "", scope: "", notes: "", internal_notes: "",
       client_price: String(request.estimated_value ?? 0), partner_cost: "", job_type: "fixed",
-      scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "",
+      scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "",
     });
     setClientAddress(serviceRequestToClientAddressValue(request));
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
   }, [request]);
-
-  const clientArrivalPreview = useMemo(() => {
-    const d = form.scheduled_date?.trim();
-    const f = form.arrival_from?.trim();
-    const t = form.arrival_to?.trim();
-    if (!d || !f || !t) return null;
-    const range = formatArrivalTimeRange(`${d}T${f}:00`, `${d}T${t}:00`);
-    return range ? `Client & partner will see: Arrival time (${range})` : null;
-  }, [form.scheduled_date, form.arrival_from, form.arrival_to]);
 
   if (!request) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
@@ -1268,41 +1260,23 @@ function ConvertToJobModal({
       toast.error("Select a client from the list (click the name) and choose or add a property address.");
       return;
     }
-    const scheduled_date = form.scheduled_date || undefined;
-    const hasFrom = !!form.arrival_from?.trim();
-    const hasTo = !!form.arrival_to?.trim();
-    if ((hasFrom && !hasTo) || (!hasFrom && hasTo)) {
-      toast.error("Set both arrival window start and end, or leave both empty.");
+    const sched = resolveJobModalSchedule({
+      scheduled_date: form.scheduled_date,
+      arrival_from: form.arrival_from,
+      arrival_window_mins: form.arrival_window_mins,
+      hasPartner: !!form.partner_id,
+    });
+    if (!sched.ok) {
+      toast.error(sched.error);
       return;
     }
-    if (form.partner_id) {
-      if (!scheduled_date?.trim()) {
-        toast.error("Set a scheduled date before assigning a partner.");
-        return;
-      }
-      if (!hasFrom || !hasTo) {
-        toast.error("Set the arrival window (from and to) when assigning a partner.");
-        return;
-      }
-      const startMs = new Date(`${scheduled_date}T${form.arrival_from}:00`).getTime();
-      const endMs = new Date(`${scheduled_date}T${form.arrival_to}:00`).getTime();
-      if (!(endMs > startMs)) {
-        toast.error("Arrival window end must be after start.");
-        return;
-      }
-    }
+    const scheduled_date = sched.scheduled_date;
+    const scheduled_start_at = sched.scheduled_start_at;
+    const scheduled_end_at = sched.scheduled_end_at;
     const expected_finish = form.expected_finish_date?.trim() || undefined;
     if (expected_finish && scheduled_date && expected_finish < scheduled_date) {
       toast.error("Expected finish date must be on or after the scheduled date.");
       return;
-    }
-    let scheduled_start_at: string | undefined;
-    let scheduled_end_at: string | undefined;
-    if (scheduled_date && hasFrom && hasTo) {
-      scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
-      scheduled_end_at = `${scheduled_date}T${form.arrival_to}:00`;
-    } else if (scheduled_date && hasFrom) {
-      scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
     }
     if (form.partner_id) {
       const block = getPartnerAssignmentBlockReason({
@@ -1365,34 +1339,14 @@ function ConvertToJobModal({
             <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} placeholder="0.00" min={0} step="0.01" />
           </div>
         </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Start date {form.partner_id ? "*" : ""}</label>
-          <Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} className="h-10 max-w-[200px]" />
-        </div>
-        <div>
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Arrival time (range)</p>
-          <p className="text-[10px] text-text-tertiary mb-2">From / to — shown to clients and partners as a single range (e.g. 11AM – 2PM).</p>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">From</label>
-              <Input type="time" value={form.arrival_from} onChange={(e) => update("arrival_from", e.target.value)} className="h-10" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">To</label>
-              <Input type="time" value={form.arrival_to} onChange={(e) => update("arrival_to", e.target.value)} className="h-10" />
-            </div>
-          </div>
-        </div>
-        {clientArrivalPreview ? (
-          <p className="text-[11px] font-medium text-text-secondary -mt-2">{clientArrivalPreview}</p>
-        ) : null}
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish (date only)</label>
-          <Input type="date" value={form.expected_finish_date} onChange={(e) => update("expected_finish_date", e.target.value)} className="h-10 max-w-[200px]" />
-        </div>
-        <p className="text-[10px] text-text-tertiary -mt-2">
-          With a partner, start date and both arrival times are required. Jobs go Late after the window ends. Expected finish is calendar-only (no time), separate from the arrival window.
-        </p>
+        <JobModalScheduleFields
+          scheduledDate={form.scheduled_date}
+          arrivalFrom={form.arrival_from}
+          arrivalWindowMins={form.arrival_window_mins}
+          expectedFinishDate={form.expected_finish_date}
+          onChange={(field, v) => update(field, v)}
+          startDateRequired={!!form.partner_id}
+        />
         <Select label="Partner" options={[{ value: "", label: "None" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope</label>

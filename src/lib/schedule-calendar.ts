@@ -94,6 +94,46 @@ export function jobFinishYmd(job: {
   return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
 }
 
+/** True if the job’s inclusive [start, finish] range overlaps a calendar month (month is 0-based). */
+export function jobIntersectsLocalMonth(
+  job: {
+    scheduled_date?: string | null;
+    scheduled_start_at?: string | null;
+    scheduled_finish_date?: string | null;
+    scheduled_end_at?: string | null;
+  },
+  year: number,
+  month: number,
+): boolean {
+  const start = jobScheduleYmd(job);
+  if (!start) return false;
+  const finish = jobFinishYmd(job) ?? start;
+  const ms = new Date(year, month, 1);
+  const me = new Date(year, month + 1, 0);
+  const s = new Date(start.y, start.m - 1, start.d);
+  const e = new Date(finish.y, finish.m - 1, finish.d);
+  return s <= me && e >= ms;
+}
+
+/** Schedule month cell label: `7 Mar 2026 - Plumber - ACME Ltd` or `UNASSIGNED`. */
+export function formatScheduleCalendarBarLabel(job: {
+  title: string;
+  partner_name?: string | null;
+  scheduled_date?: string | null;
+  scheduled_start_at?: string | null;
+}): string {
+  const start = jobScheduleYmd(job);
+  const startLabel = start
+    ? new Date(start.y, start.m - 1, start.d).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : "—";
+  const assign = job.partner_name?.trim() ? job.partner_name.trim() : "UNASSIGNED";
+  return `${startLabel} - ${job.title} - ${assign}`;
+}
+
 function scheduleLineFinishSuffix(job: { scheduled_finish_date?: string | null }): string {
   if (!job.scheduled_finish_date) return "";
   const p = parseIsoDateOnlyPrefix(job.scheduled_finish_date);
