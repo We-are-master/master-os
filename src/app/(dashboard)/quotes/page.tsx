@@ -1565,6 +1565,87 @@ function QuoteDetailDrawer({
                     </p>
                   </div>
 
+                  <div
+                    className="rounded-xl px-2.5 py-2 sm:px-3 sm:py-2.5 bg-emerald-500/[0.07] dark:bg-emerald-500/[0.09]"
+                    role="region"
+                    aria-label="Quote summary"
+                  >
+                    <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-end min-[420px]:justify-between min-[420px]:gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-emerald-800/90 dark:text-emerald-400/95">Customer total</p>
+                        <p className="mt-0.5 text-lg min-[420px]:text-xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400 leading-none">
+                          {formatCurrency(lineTotal)}
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5 min-[420px]:min-w-[200px] min-[420px]:max-w-[min(100%,280px)] min-[420px]:shrink-0">
+                        <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
+                          <div className="flex items-center gap-1 text-text-tertiary">
+                            <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                            <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
+                          </div>
+                          <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(proposalPartnerTotal)}</p>
+                        </div>
+                        <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
+                          <div className="flex items-center gap-1 text-text-tertiary">
+                            <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                            <span className="text-[9px] font-medium uppercase tracking-wide">Margin</span>
+                          </div>
+                          <p
+                            className={cn(
+                              "mt-0.5 text-sm font-bold tabular-nums",
+                              proposalSummaryMarginPct >= 20
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : proposalSummaryMarginPct >= 0
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-red-600 dark:text-red-400",
+                            )}
+                          >
+                            {proposalSummaryMarginPct}%
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      className="mt-2 w-full"
+                      disabled={panelSaving}
+                      icon={panelSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+                      onClick={async () => {
+                        const pc = proposalPartnerTotal;
+                        const sp = lineTotal;
+                        const marginPct = marginPctOnSell(sp, pc);
+                        const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
+                        const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
+                        setPanelSaving(true);
+                        try {
+                          const updated = await persistProposalToQuote();
+                          await logAudit({
+                            entityType: "quote",
+                            entityId: quote.id,
+                            entityRef: quote.reference,
+                            action: "updated",
+                            fieldName: "quote_figures",
+                            oldValue: oldSummary,
+                            newValue: newSummary,
+                            userId: profile?.id,
+                            userName: profile?.full_name,
+                            metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
+                          });
+                          onQuoteUpdate?.(updated);
+                          toast.success("Lines and quote figures saved");
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Failed to update");
+                        } finally {
+                          setPanelSaving(false);
+                        }
+                      }}
+                    >
+                      {panelSaving ? "Saving…" : "Save lines & quote figures"}
+                    </Button>
+                  </div>
+
                   <div className="rounded-xl border border-border-light bg-card/80 dark:bg-surface-secondary/30 p-3 space-y-3">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer sell scale</p>
@@ -1666,93 +1747,6 @@ function QuoteDetailDrawer({
                           </div>
                         </div>
                       ))}
-                    </div>
-                    <div className="mt-2 overflow-hidden rounded-xl border border-border-subtle/50 bg-card">
-                      <div className="px-3 pt-3 pb-2 sm:px-3.5">
-                        <p className="text-[11px] font-semibold text-text-primary">Quote totals</p>
-                        <p className="mt-0.5 text-[10px] leading-snug text-text-tertiary">Sell, cost and margin.</p>
-                      </div>
-
-                      <div className="space-y-2 px-3 pb-3 sm:px-3.5">
-                        <div className="rounded-lg bg-emerald-500/[0.07] px-3 py-2.5 dark:bg-emerald-500/[0.09]">
-                          <p className="text-[9px] font-semibold uppercase tracking-wider text-emerald-700/90 dark:text-emerald-400/95">Customer total</p>
-                          <p className="mt-0.5 text-xl sm:text-2xl font-bold leading-tight tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400">
-                            {formatCurrency(lineTotal)}
-                          </p>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
-                          <div className="rounded-lg bg-surface-hover/50 px-2.5 py-2 dark:bg-surface-secondary/30">
-                            <div className="flex items-center gap-1 text-text-tertiary">
-                              <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                              <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
-                            </div>
-                            <p className="mt-1 text-sm font-semibold tabular-nums text-text-primary">
-                              {formatCurrency(proposalPartnerTotal)}
-                            </p>
-                          </div>
-                          <div className="rounded-lg bg-surface-hover/50 px-2.5 py-2 dark:bg-surface-secondary/30">
-                            <div className="flex items-center gap-1 text-text-tertiary">
-                              <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                              <span className="text-[9px] font-medium uppercase tracking-wide">Margin</span>
-                            </div>
-                            <p
-                              className={cn(
-                                "mt-1 text-sm font-bold tabular-nums",
-                                proposalSummaryMarginPct >= 20
-                                  ? "text-emerald-600 dark:text-emerald-400"
-                                  : proposalSummaryMarginPct >= 0
-                                    ? "text-amber-600 dark:text-amber-400"
-                                    : "text-red-600 dark:text-red-400",
-                              )}
-                            >
-                              {proposalSummaryMarginPct}%
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="px-3 pb-3 pt-1 sm:px-3.5">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="primary"
-                          className="w-full"
-                          disabled={panelSaving}
-                          icon={panelSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
-                          onClick={async () => {
-                            const pc = proposalPartnerTotal;
-                            const sp = lineTotal;
-                            const marginPct = marginPctOnSell(sp, pc);
-                            const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
-                            const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
-                            setPanelSaving(true);
-                            try {
-                              const updated = await persistProposalToQuote();
-                              await logAudit({
-                                entityType: "quote",
-                                entityId: quote.id,
-                                entityRef: quote.reference,
-                                action: "updated",
-                                fieldName: "quote_figures",
-                                oldValue: oldSummary,
-                                newValue: newSummary,
-                                userId: profile?.id,
-                                userName: profile?.full_name,
-                                metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
-                              });
-                              onQuoteUpdate?.(updated);
-                              toast.success("Lines and quote figures saved");
-                            } catch (e) {
-                              toast.error(e instanceof Error ? e.message : "Failed to update");
-                            } finally {
-                              setPanelSaving(false);
-                            }
-                          }}
-                        >
-                          {panelSaving ? "Saving…" : "Save lines & quote figures"}
-                        </Button>
-                      </div>
                     </div>
                   </div>
 

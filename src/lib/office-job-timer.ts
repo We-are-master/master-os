@@ -41,6 +41,16 @@ export function statusChangeOfficeTimerPatch(
     }
   }
 
+  /** Mark completed — freeze elapsed (awaiting_payment is not on-site, so handle explicitly). */
+  if (job.status === "awaiting_payment" && newStatus === "completed") {
+    return stopRunningPreserve();
+  }
+
+  /** Reopen completed (or payment step) to scheduled — keep total frozen until Start Job resumes. */
+  if (newStatus === "scheduled" && (job.status === "completed" || job.status === "awaiting_payment")) {
+    return stopRunningPreserve();
+  }
+
   if ((job.status === "scheduled" || job.status === "late") && newStatus === "in_progress_phase1") {
     const elapsed = Number(job.timer_elapsed_seconds ?? 0) || 0;
     const hasPriorWork = elapsed > 0;
