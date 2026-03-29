@@ -82,9 +82,6 @@ import {
   formatOfficeTimer,
   statusChangeOfficeTimerPatch,
 } from "@/lib/office-job-timer";
-import { StartJobReportModal } from "@/components/jobs/start-job-report-modal";
-import { CompletionReportModal } from "@/components/jobs/completion-report-modal";
-import { FinalReviewSendModal } from "@/components/jobs/final-review-send-modal";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
 import {
   OFFICE_JOB_CANCELLATION_REASONS,
@@ -183,10 +180,6 @@ export default function JobDetailPage() {
   const [analyzingManualReport, setAnalyzingManualReport] = useState(false);
   const [phaseReportFiles, setPhaseReportFiles] = useState<Record<number, File | null>>({});
   const [analyzingPhase, setAnalyzingPhase] = useState<number | null>(null);
-  const [startJobReportOpen, setStartJobReportOpen] = useState(false);
-  const [completionReportOpen, setCompletionReportOpen] = useState(false);
-  const [finalReviewSendOpen, setFinalReviewSendOpen] = useState(false);
-  const [operationalFlowBusy, setOperationalFlowBusy] = useState(false);
   const [scopeDraft, setScopeDraft] = useState("");
   const [savingScope, setSavingScope] = useState(false);
   const isAdmin = profile?.role === "admin";
@@ -1020,123 +1013,6 @@ export default function JobDetailPage() {
     }
   }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments]);
 
-  const handleStartJobSubmit = useCallback(
-    async (payload: import("@/components/jobs/start-job-report-modal").StartReportPayload) => {
-      if (!job) return;
-      setOperationalFlowBusy(true);
-      try {
-        const start_report = {
-          photo_urls: payload.photo_urls,
-          notes: payload.notes,
-          checklist: payload.checklist,
-        };
-        const u = await handleJobUpdate(job.id, {
-          start_report: start_report as unknown as Job["start_report"],
-          start_report_submitted: true,
-          start_report_skipped: false,
-        } as Partial<Job>);
-        if (!u) return;
-        const moved = await handleStatusChange(u, "in_progress_phase1");
-        if (moved) setStartJobReportOpen(false);
-      } finally {
-        setOperationalFlowBusy(false);
-      }
-    },
-    [job, handleJobUpdate, handleStatusChange],
-  );
-
-  const handleStartJobSkip = useCallback(async () => {
-    if (!job) return;
-    setOperationalFlowBusy(true);
-    try {
-      const u = await handleJobUpdate(job.id, {
-        start_report_submitted: false,
-        start_report_skipped: true,
-      } as Partial<Job>);
-      if (!u) return;
-      const moved = await handleStatusChange(u, "in_progress_phase1");
-      if (moved) setStartJobReportOpen(false);
-    } finally {
-      setOperationalFlowBusy(false);
-    }
-  }, [job, handleJobUpdate, handleStatusChange]);
-
-  const handleCompletionSubmit = useCallback(
-    async (payload: import("@/components/jobs/completion-report-modal").FinalReportPayload) => {
-      if (!job) return;
-      setOperationalFlowBusy(true);
-      try {
-        const final_report = {
-          photo_urls: payload.photo_urls,
-          work_summary: payload.work_summary,
-          materials_used: payload.materials_used,
-          issues_notes: payload.issues_notes,
-        };
-        const u = await handleJobUpdate(job.id, {
-          final_report: final_report as unknown as Job["final_report"],
-          final_report_submitted: true,
-          final_report_skipped: false,
-        } as Partial<Job>);
-        if (!u) return;
-        const moved = await handleStatusChange(u, "final_check");
-        if (moved) setCompletionReportOpen(false);
-      } finally {
-        setOperationalFlowBusy(false);
-      }
-    },
-    [job, handleJobUpdate, handleStatusChange],
-  );
-
-  const handleCompletionSkip = useCallback(async () => {
-    if (!job) return;
-    setOperationalFlowBusy(true);
-    try {
-      const u = await handleJobUpdate(job.id, {
-        final_report_submitted: false,
-        final_report_skipped: true,
-      } as Partial<Job>);
-      if (!u) return;
-      const moved = await handleStatusChange(u, "final_check");
-      if (moved) setCompletionReportOpen(false);
-    } finally {
-      setOperationalFlowBusy(false);
-    }
-  }, [job, handleJobUpdate, handleStatusChange]);
-
-  const handleFinalReviewSendEmail = useCallback(async () => {
-    const j = jobRef.current;
-    if (!j) return;
-    setOperationalFlowBusy(true);
-    try {
-      const res = await fetch(`/api/jobs/${j.id}/send-review-email`, { method: "POST", credentials: "include" });
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        toast.error(body.error ?? "Failed to send email");
-        return;
-      }
-      const now = new Date().toISOString();
-      await handleSendReportAndInvoice({ reviewSentAt: now, reviewSendMethod: "email", jobOverride: j });
-      setFinalReviewSendOpen(false);
-      toast.success("Email sent to client.");
-    } finally {
-      setOperationalFlowBusy(false);
-    }
-  }, [handleSendReportAndInvoice]);
-
-  const handleFinalReviewMarkSent = useCallback(async () => {
-    const j = jobRef.current;
-    if (!j) return;
-    setOperationalFlowBusy(true);
-    try {
-      const now = new Date().toISOString();
-      await handleSendReportAndInvoice({ reviewSentAt: now, reviewSendMethod: "manual", jobOverride: j });
-      setFinalReviewSendOpen(false);
-      toast.success("Marked as sent.");
-    } finally {
-      setOperationalFlowBusy(false);
-    }
-  }, [handleSendReportAndInvoice]);
-
   if (loading || !id) {
     return (
       <PageTransition>
@@ -1273,8 +1149,8 @@ export default function JobDetailPage() {
                 variant={action.destructive ? "danger" : action.primary ? "primary" : "outline"}
                 size="sm"
                 icon={<action.icon className="h-3.5 w-3.5" />}
-                disabled={action.special === "final_review_send_modal" ? !sendReportFinalCheck.ok : false}
-                title={action.special === "final_review_send_modal" ? sendReportFinalCheck.message : undefined}
+                disabled={action.special === "send_report_invoice" ? !sendReportFinalCheck.ok : false}
+                title={action.special === "send_report_invoice" ? sendReportFinalCheck.message : undefined}
                 onClick={() => {
                   if (action.status === "cancelled") {
                     setCancelPresetId(OFFICE_JOB_CANCELLATION_REASONS[0].id);
@@ -1282,16 +1158,8 @@ export default function JobDetailPage() {
                     setCancelJobOpen(true);
                     return;
                   }
-                  if (action.special === "start_job_report_modal") {
-                    setStartJobReportOpen(true);
-                    return;
-                  }
-                  if (action.special === "completion_report_modal") {
-                    setCompletionReportOpen(true);
-                    return;
-                  }
-                  if (action.special === "final_review_send_modal") {
-                    setFinalReviewSendOpen(true);
+                  if (action.special === "send_report_invoice") {
+                    void handleSendReportAndInvoice();
                     return;
                   }
                   void handleStatusChange(job, action.status as Job["status"]);
@@ -1623,10 +1491,7 @@ export default function JobDetailPage() {
                     icon={<CheckCircle2 className="h-3.5 w-3.5" />}
                     disabled={!sendReportFinalCheck.ok}
                     title={sendReportFinalCheck.message}
-                    onClick={() => {
-                      if (!sendReportFinalCheck.ok) return;
-                      setFinalReviewSendOpen(true);
-                    }}
+                    onClick={() => void handleSendReportAndInvoice()}
                   >
                     Review & Send
                   </Button>
@@ -2013,31 +1878,6 @@ export default function JobDetailPage() {
           </div>
         </div>
       </div>
-
-      <StartJobReportModal
-        job={job}
-        open={startJobReportOpen}
-        onClose={() => setStartJobReportOpen(false)}
-        busy={operationalFlowBusy}
-        onSubmitWithData={handleStartJobSubmit}
-        onSkip={handleStartJobSkip}
-      />
-      <CompletionReportModal
-        job={job}
-        open={completionReportOpen}
-        onClose={() => setCompletionReportOpen(false)}
-        busy={operationalFlowBusy}
-        onSubmitWithData={handleCompletionSubmit}
-        onSkip={handleCompletionSkip}
-      />
-      <FinalReviewSendModal
-        job={job}
-        open={finalReviewSendOpen}
-        onClose={() => setFinalReviewSendOpen(false)}
-        busy={operationalFlowBusy}
-        onSendEmail={handleFinalReviewSendEmail}
-        onMarkSent={handleFinalReviewMarkSent}
-      />
 
       <Modal
         open={cancelJobOpen}

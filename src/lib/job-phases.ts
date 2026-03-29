@@ -56,11 +56,8 @@ export function allConfiguredReportsApproved(job: Job): boolean {
   return true;
 }
 
-/** Header actions that need custom handling on the job detail page (modals / send flow). */
-export type JobStatusActionSpecial =
-  | "start_job_report_modal"
-  | "completion_report_modal"
-  | "final_review_send_modal";
+/** Header actions that need custom handling on the job detail page (e.g. send + invoice flow). */
+export type JobStatusActionSpecial = "send_report_invoice";
 
 export type JobStatusAction = {
   label: string;
@@ -94,7 +91,6 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           status: "in_progress_phase1",
           icon: Play,
           primary: true,
-          special: "start_job_report_modal",
         },
         cancelAction,
       ];
@@ -107,7 +103,6 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           status: "final_check",
           icon: CheckCircle2,
           primary: true,
-          special: "completion_report_modal",
         },
         { label: "Pause Job", status: "scheduled", icon: Pause, primary: false },
         cancelAction,
@@ -120,7 +115,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           status: "awaiting_payment",
           icon: Send,
           primary: true,
-          special: "final_review_send_modal",
+          special: "send_report_invoice",
         },
         { label: "Reopen Job", status: last, icon: RotateCcw, primary: false },
         cancelAction,
