@@ -946,6 +946,7 @@ function QuoteDetailDrawer({
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
+  const [ownerOpen, setOwnerOpen] = useState(false);
   /** 100 = baseline customer sell (40% margin on lines 1–2); range 0–1000 scales from that baseline. */
   const [proposalScalePercent, setProposalScalePercent] = useState(100);
   const [quoteClientPick, setQuoteClientPick] = useState<ClientAndAddressValue>({
@@ -980,6 +981,8 @@ function QuoteDetailDrawer({
     setQuoteEmailedInSession(false);
     setSendState("idle");
     setProposalScalePercent(100);
+    setOwnerOpen(false);
+    setPricingOpen(false);
     setQuoteClientPick({
       client_id: quote.client_id,
       client_address_id: quote.client_address_id,
@@ -1316,6 +1319,54 @@ function QuoteDetailDrawer({
           {/* OVERVIEW TAB: Status + Details together */}
           {tab === "overview" && (
             <div className="p-6 space-y-6">
+              <details
+                key={`owner-${quote.id}`}
+                className="group rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary open:shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:open:shadow-md dark:open:shadow-black/20"
+                open={ownerOpen}
+                onToggle={(e) => setOwnerOpen(e.currentTarget.open)}
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <UserRound className="h-4 w-4 shrink-0 text-text-tertiary" />
+                    <span className="text-xs font-semibold text-text-secondary">Owner</span>
+                    <span className="text-[10px] text-text-tertiary truncate">
+                      {quote.owner_name?.trim() || "Unassigned"}
+                    </span>
+                  </div>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="border-t border-border-light dark:border-border px-4 pb-4 pt-1">
+                  {isAdmin ? (
+                    <div className="pt-2">
+                      <JobOwnerSelect
+                        value={quote.owner_id}
+                        fallbackName={quote.owner_name}
+                        users={assignableUsers}
+                        disabled={savingOwner}
+                        onChange={async (ownerId) => {
+                          const owner = assignableUsers.find((u) => u.id === ownerId);
+                          setSavingOwner(true);
+                          try {
+                            const updated = await updateQuote(quote.id, {
+                              owner_id: ownerId,
+                              owner_name: owner?.full_name,
+                            });
+                            onQuoteUpdate?.(updated);
+                            toast.success("Owner updated");
+                          } catch {
+                            toast.error("Failed to update owner");
+                          } finally {
+                            setSavingOwner(false);
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-sm font-semibold text-text-primary pt-2">{quote.owner_name || "No owner"}</p>
+                  )}
+                </div>
+              </details>
+
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-light bg-surface-hover/80 px-4 py-3">
                 <div>
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Current stage</p>
@@ -1385,37 +1436,6 @@ function QuoteDetailDrawer({
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Bids received</p>
                   <p className="text-xl font-bold text-text-primary mt-1 tabular-nums">{bidsReceivedCount}</p>
                 </div>
-              </div>
-              <div className="p-4 rounded-xl bg-surface-hover">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Owner</p>
-                {isAdmin ? (
-                  <div className="mt-2">
-                    <JobOwnerSelect
-                      value={quote.owner_id}
-                      fallbackName={quote.owner_name}
-                      users={assignableUsers}
-                      disabled={savingOwner}
-                      onChange={async (ownerId) => {
-                        const owner = assignableUsers.find((u) => u.id === ownerId);
-                        setSavingOwner(true);
-                        try {
-                          const updated = await updateQuote(quote.id, {
-                            owner_id: ownerId,
-                            owner_name: owner?.full_name,
-                          });
-                          onQuoteUpdate?.(updated);
-                          toast.success("Owner updated");
-                        } catch {
-                          toast.error("Failed to update owner");
-                        } finally {
-                          setSavingOwner(false);
-                        }
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <p className="text-sm font-semibold text-text-primary mt-1">{quote.owner_name || "No owner"}</p>
-                )}
               </div>
 
               {/* Bid Summary — partner submission (read-only reference); pricing control is in Customer proposal */}
