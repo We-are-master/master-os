@@ -47,7 +47,7 @@ export function Badge({
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       className={cn(
-        "inline-flex items-center gap-1.5 font-medium ring-1 ring-inset",
+        "inline-flex items-center gap-1.5 font-medium ring-1 ring-inset whitespace-nowrap shrink-0",
         size === "sm" && "px-2 py-0.5 text-[11px] rounded-md",
         size === "md" && "px-2.5 py-1 text-xs rounded-lg",
         variantStyles[variant],

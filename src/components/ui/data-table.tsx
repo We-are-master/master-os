@@ -9,8 +9,11 @@ export interface Column<T> {
   key: string;
   label: string;
   width?: string;
+  minWidth?: string;
   sortable?: boolean;
   align?: "left" | "center" | "right";
+  headerClassName?: string;
+  cellClassName?: string;
   render?: (item: T, index: number) => React.ReactNode;
 }
 
@@ -32,6 +35,8 @@ interface DataTableProps<T> {
   selectedIds?: Set<string>;
   onSelectionChange?: (ids: Set<string>) => void;
   bulkActions?: React.ReactNode;
+  /** Applied to the inner `<table>` so wide tables scroll horizontally instead of crushing cells. */
+  tableClassName?: string;
 }
 
 function Checkbox({ checked, indeterminate, onChange, className }: {
@@ -81,6 +86,7 @@ export function DataTable<T>({
   selectedIds,
   onSelectionChange,
   bulkActions,
+  tableClassName,
 }: DataTableProps<T>) {
   const allIds = data.map((item, i) => getRowId?.(item) ?? String(i));
   const allSelected = selectable && allIds.length > 0 && allIds.every((id) => selectedIds?.has(id));
@@ -139,12 +145,12 @@ export function DataTable<T>({
         )}
       </AnimatePresence>
 
-      <div className="overflow-x-auto">
-        <table className="w-full">
+      <div className="overflow-x-auto -mx-px sm:mx-0">
+        <table className={cn("w-full min-w-[1080px]", tableClassName)}>
           <thead>
             <tr className="border-b border-border-light">
               {selectable && (
-                <th className="w-12 px-4 py-3">
+                <th className="w-12 px-3 sm:px-4 py-3">
                   <Checkbox
                     checked={allSelected}
                     indeterminate={someSelected && !allSelected}
@@ -155,10 +161,11 @@ export function DataTable<T>({
               {columns.map((col) => (
                 <th
                   key={col.key}
-                  style={{ width: col.width }}
+                  style={{ width: col.width, minWidth: col.minWidth }}
                   className={cn(
-                    "px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary",
-                    col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"
+                    "px-3 sm:px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary",
+                    col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
+                    col.headerClassName
                   )}
                 >
                   {col.label}
@@ -172,12 +179,12 @@ export function DataTable<T>({
                 {Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b border-border-light/50">
                     {selectable && (
-                      <td className="px-4 py-4">
+                      <td className="px-3 sm:px-4 py-4">
                         <div className="h-4 w-4 bg-surface-tertiary rounded animate-shimmer" />
                       </td>
                     )}
                     {columns.map((col) => (
-                      <td key={col.key} className="px-5 py-4">
+                      <td key={col.key} className="px-3 sm:px-5 py-4">
                         <div className="h-4 bg-surface-tertiary rounded animate-shimmer" style={{ width: `${60 + Math.random() * 30}%` }} />
                       </td>
                     ))}
@@ -226,16 +233,18 @@ export function DataTable<T>({
                       )}
                     >
                       {selectable && (
-                        <td className="w-12 px-4 py-3.5">
+                        <td className="w-12 px-3 sm:px-4 py-3.5">
                           <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
                         </td>
                       )}
                       {columns.map((col) => (
                         <td
                           key={col.key}
+                          style={{ minWidth: col.minWidth }}
                           className={cn(
-                            "px-5 py-3.5 text-sm",
-                            col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left"
+                            "px-3 sm:px-5 py-3.5 text-sm align-top",
+                            col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
+                            col.cellClassName
                           )}
                         >
                           {col.render

@@ -23,6 +23,7 @@ import {
   Activity, Users, Settings, Layers, Plus, Pencil, SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { dashboardJobsFilterSelectColumns, isLegacyJobSchema } from "@/lib/job-schema-compat";
 
 // ─── Icon map ────────────────────────────────────────────────────────────────
 const ICON_MAP: Record<string, React.ElementType> = {
@@ -95,9 +96,7 @@ function DashboardInner() {
   const loadFilterCounts = useCallback(async () => {
     const supabase = getSupabase();
     try {
-      let jobsQuery = supabase
-        .from("jobs")
-        .select("id, status, partner_id, partner_name, quote_id, margin_percent, finance_status, report_submitted, commission, created_at");
+      let jobsQuery = supabase.from("jobs").select(dashboardJobsFilterSelectColumns());
       if (bounds) {
         jobsQuery = jobsQuery.gte("created_at", bounds.fromIso).lte("created_at", bounds.toIso);
       }
@@ -105,7 +104,7 @@ function DashboardInner() {
         jobsQuery,
         supabase.from("invoices").select("id, job_reference"),
       ]);
-      const jobs = (jobsRes.data ?? []) as {
+      const jobs = (jobsRes.data ?? []) as unknown as {
         id: string; status: string; partner_id?: string; partner_name?: string;
         quote_id?: string; margin_percent: number; finance_status?: string;
         report_submitted?: boolean; commission?: number;
@@ -118,7 +117,7 @@ function DashboardInner() {
         without_selfbill:   jobs.filter((j) => !!j.partner_name && j.status === "completed").length,
         without_report:     jobs.filter((j) => !j.report_submitted && !["completed", "scheduled"].includes(j.status)).length,
         without_partner:    jobs.filter((j) => !j.partner_id && !j.partner_name).length,
-        without_quote:      jobs.filter((j) => !j.quote_id).length,
+        without_quote:      isLegacyJobSchema() ? 0 : jobs.filter((j) => !j.quote_id).length,
         low_margin:         jobs.filter((j) => j.margin_percent < 20 && j.margin_percent > 0).length,
         financial_status:   jobs.filter((j) => j.finance_status !== "paid" && !["completed", "scheduled"].includes(j.status)).length,
       });

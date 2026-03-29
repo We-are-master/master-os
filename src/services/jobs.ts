@@ -1,6 +1,11 @@
 import { getSupabase, queryList, applyJobsScheduleRangeToQuery, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
 import { JOB_IN_PROGRESS_STATUSES } from "@/lib/job-phases";
+import {
+  isLegacyJobSchema,
+  prepareJobRowForInsert,
+  prepareJobRowForUpdate,
+} from "@/lib/job-schema-compat";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
@@ -97,6 +102,7 @@ export async function getJob(id: string): Promise<Job | null> {
 }
 
 export async function getJobByQuoteId(quoteId: string): Promise<Job | null> {
+  if (isLegacyJobSchema()) return null;
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("jobs")
@@ -114,11 +120,8 @@ export async function createJob(
 ): Promise<Job> {
   const supabase = getSupabase();
   const { data: ref } = await supabase.rpc("next_job_ref");
-  const { data, error } = await supabase
-    .from("jobs")
-    .insert({ ...input, reference: ref })
-    .select()
-    .single();
+  const row = prepareJobRowForInsert({ ...input, reference: ref } as Record<string, unknown>);
+  const { data, error } = await supabase.from("jobs").insert(row).select().single();
   if (error) throw error;
   return data as Job;
 }
@@ -129,9 +132,10 @@ export async function updateJob(
   input: Partial<Job>
 ): Promise<Job> {
   const supabase = getSupabase();
+  const patch = prepareJobRowForUpdate(input as Record<string, unknown>);
   const { data, error } = await supabase
     .from("jobs")
-    .update(input)
+    .update(patch)
     .eq("id", id)
     .select()
     .single();

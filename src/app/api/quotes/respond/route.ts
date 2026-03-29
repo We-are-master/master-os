@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
 import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
+import { prepareJobRowForInsert } from "@/lib/job-schema-compat";
 
 function getServiceSupabase() {
   return createClient(
@@ -127,53 +128,54 @@ export async function POST(req: NextRequest) {
       const dueDateStr = dueDate.toISOString().split("T")[0];
 
       const hasPartner = !!(quote.partner_id?.trim() || (quote.partner_name && String(quote.partner_name).trim()));
+      const jobInsert = prepareJobRowForInsert({
+        reference: jobReference,
+        title: quote.title ?? "Job from quote",
+        client_name: quote.client_name ?? "",
+        property_address: quote.property_address ?? "Address to be confirmed",
+        partner_id: quote.partner_id ?? null,
+        partner_name: quote.partner_name ?? null,
+        quote_id: quoteId,
+        status: hasPartner ? "scheduled" : "unassigned",
+        progress: 0,
+        current_phase: 0,
+        total_phases: 2,
+        job_type: "fixed",
+        client_price: totalValue,
+        extras_amount: 0,
+        partner_cost: Number(quote.partner_cost ?? 0),
+        materials_cost: 0,
+        margin_percent: 0,
+        partner_agreed_value: Number(quote.partner_cost ?? 0),
+        finance_status: "unpaid",
+        service_value: totalValue,
+        report_submitted: false,
+        report_1_uploaded: false,
+        report_1_approved: false,
+        report_2_uploaded: false,
+        report_2_approved: false,
+        report_3_uploaded: false,
+        report_3_approved: false,
+        partner_payment_1: 0,
+        partner_payment_1_paid: false,
+        partner_payment_2: 0,
+        partner_payment_2_paid: false,
+        partner_payment_3: 0,
+        partner_payment_3_paid: false,
+        customer_deposit: depositRequired,
+        customer_deposit_paid: false,
+        customer_final_payment: finalBalance,
+        customer_final_paid: false,
+        cash_in: 0,
+        cash_out: 0,
+        expenses: 0,
+        commission: 0,
+        vat: 0,
+        scope: quote.scope ?? null,
+      });
       const { data: job, error: jobError } = await supabase
         .from("jobs")
-        .insert({
-          reference: jobReference,
-          title: quote.title ?? "Job from quote",
-          client_name: quote.client_name ?? "",
-          property_address: quote.property_address ?? "Address to be confirmed",
-          partner_id: quote.partner_id ?? null,
-          partner_name: quote.partner_name ?? null,
-          quote_id: quoteId,
-          status: hasPartner ? "scheduled" : "unassigned",
-          progress: 0,
-          current_phase: 0,
-          total_phases: 2,
-          job_type: "fixed",
-          client_price: totalValue,
-          extras_amount: 0,
-          partner_cost: Number(quote.partner_cost ?? 0),
-          materials_cost: 0,
-          margin_percent: 0,
-          partner_agreed_value: Number(quote.partner_cost ?? 0),
-          finance_status: "unpaid",
-          service_value: totalValue,
-          report_submitted: false,
-          report_1_uploaded: false,
-          report_1_approved: false,
-          report_2_uploaded: false,
-          report_2_approved: false,
-          report_3_uploaded: false,
-          report_3_approved: false,
-          partner_payment_1: 0,
-          partner_payment_1_paid: false,
-          partner_payment_2: 0,
-          partner_payment_2_paid: false,
-          partner_payment_3: 0,
-          partner_payment_3_paid: false,
-          customer_deposit: depositRequired,
-          customer_deposit_paid: false,
-          customer_final_payment: finalBalance,
-          customer_final_paid: false,
-          cash_in: 0,
-          cash_out: 0,
-          expenses: 0,
-          commission: 0,
-          vat: 0,
-          scope: quote.scope ?? null,
-        })
+        .insert(jobInsert)
         .select("id, reference")
         .single();
 

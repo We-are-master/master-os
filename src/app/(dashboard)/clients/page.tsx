@@ -42,6 +42,7 @@ import {
 import type { ClientAddress } from "@/types/database";
 import { listClientSourceAccounts, createClientSourceAccount } from "@/services/client-source-accounts";
 import { getStatusCounts, getSupabase } from "@/services/base";
+import { clientsJobHistorySelectColumns } from "@/lib/job-schema-compat";
 import { logAudit, logBulkAction } from "@/services/audit";
 
 const CLIENT_STATUSES = ["active", "inactive", "vip", "blocked"] as const;
@@ -720,7 +721,7 @@ function ClientDetailDrawer({
     setLoadingHistory(true);
 
     const supabase = getSupabase();
-    const jobFields = "id, reference, title, status, client_price, customer_deposit_paid, customer_final_payment, scheduled_date, scheduled_start_at, scheduled_end_at, scheduled_finish_date, property_address, partner_name, job_type";
+    const jobFields = clientsJobHistorySelectColumns();
 
     // Two queries per entity: by client_id (reliable FK) + by client_name (legacy/fallback).
     // Merged and deduplicated client-side to avoid PostgREST OR filter issues with names
@@ -736,7 +737,12 @@ function ClientDetailDrawer({
       const mergeById = <T extends { id: string }>(a: T[], b: T[]) =>
         Array.from(new Map([...a, ...b].map((x) => [x.id, x])).values());
 
-      setJobs(mergeById((jobsById.data ?? []) as typeof jobs, (jobsByName.data ?? []) as typeof jobs));
+      setJobs(
+        mergeById(
+          (jobsById.data ?? []) as unknown as typeof jobs,
+          (jobsByName.data ?? []) as unknown as typeof jobs
+        )
+      );
       setQuotes(mergeById((quotesById.data ?? []) as typeof quotes, (quotesByName.data ?? []) as typeof quotes));
       setRequests(mergeById((reqsById.data ?? []) as typeof requests, (reqsByName.data ?? []) as typeof requests));
     }).finally(() => setLoadingHistory(false));
