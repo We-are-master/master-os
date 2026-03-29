@@ -25,7 +25,7 @@ import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage } from "@/li
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob, fetchAllJobsFinancialKpiRows } from "@/services/jobs";
-import { officePartnerTimerStartPatch } from "@/lib/partner-live-timer";
+import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById, type ListParams } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
@@ -35,7 +35,7 @@ import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
-import { canAdvanceJob, isJobInProgressStatus, normalizeTotalPhases } from "@/lib/job-phases";
+import { canAdvanceJob, isJobOnSiteWorkStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
@@ -220,14 +220,39 @@ function JobsPageContent() {
   }, [data, filterPartner, filterScheduled]);
 
   const kanbanColumns = useMemo(() => {
-    const ids = ["unassigned", "scheduled", "late", "in_progress", "awaiting_payment", "completed", "cancelled", "need_attention"] as const;
+    const ids = [
+      "unassigned",
+      "scheduled",
+      "in_progress",
+      "final_check",
+      "awaiting_payment",
+      "completed",
+      "cancelled",
+      "need_attention",
+    ] as const;
     return ids.map((id) => {
       if (id === "in_progress") {
         return {
           id,
           title: "In progress",
           color: "bg-primary",
-          items: filteredData.filter((j) => isJobInProgressStatus(j.status)),
+          items: filteredData.filter((j) => isJobOnSiteWorkStatus(j.status)),
+        };
+      }
+      if (id === "scheduled") {
+        return {
+          id,
+          title: "Scheduled",
+          color: "bg-sky-600",
+          items: filteredData.filter((j) => j.status === "scheduled" || j.status === "late"),
+        };
+      }
+      if (id === "final_check") {
+        return {
+          id,
+          title: "Final checks",
+          color: "bg-amber-500",
+          items: filteredData.filter((j) => j.status === "final_check"),
         };
       }
       return {
@@ -238,15 +263,13 @@ function JobsPageContent() {
             ? "bg-emerald-500"
             : id === "cancelled"
               ? "bg-stone-500"
-              : id === "late"
-                ? "bg-red-500"
-                : id === "need_attention"
-                  ? "bg-amber-500"
-                  : id === "awaiting_payment"
-                    ? "bg-amber-500"
-                    : id === "unassigned"
-                      ? "bg-slate-500"
-                      : "bg-primary",
+              : id === "need_attention"
+                ? "bg-orange-500"
+                : id === "awaiting_payment"
+                  ? "bg-amber-600"
+                  : id === "unassigned"
+                    ? "bg-slate-500"
+                    : "bg-primary",
         items: filteredData.filter((j) => j.status === id),
       };
     });
@@ -301,22 +324,23 @@ function JobsPageContent() {
   }, [loadDashboardStats]);
 
   const inProgressTabCount =
-    (tabCounts.in_progress_phase1 ?? 0) +
-    (tabCounts.in_progress_phase2 ?? 0) +
-    (tabCounts.in_progress_phase3 ?? 0) +
-    (tabCounts.final_check ?? 0);
+    (tabCounts.in_progress_phase1 ?? 0) + (tabCounts.in_progress_phase2 ?? 0) + (tabCounts.in_progress_phase3 ?? 0);
+
+  const scheduledTabCount = (tabCounts.scheduled ?? 0) + (tabCounts.late ?? 0);
+
+  const finalChecksTabCount = tabCounts.final_check ?? 0;
 
   const activeJobsKpiCount = useMemo(() => {
-    const ip =
+    const onSite =
       (tabCounts.in_progress_phase1 ?? 0) +
       (tabCounts.in_progress_phase2 ?? 0) +
-      (tabCounts.in_progress_phase3 ?? 0) +
-      (tabCounts.final_check ?? 0);
+      (tabCounts.in_progress_phase3 ?? 0);
     return (
       (tabCounts.unassigned ?? 0) +
       (tabCounts.scheduled ?? 0) +
       (tabCounts.late ?? 0) +
-      ip +
+      onSite +
+      (tabCounts.final_check ?? 0) +
       (tabCounts.awaiting_payment ?? 0) +
       (tabCounts.need_attention ?? 0)
     );
@@ -325,13 +349,12 @@ function JobsPageContent() {
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0 },
     { id: "unassigned", label: "Unassigned", count: tabCounts.unassigned ?? 0 },
-    { id: "scheduled", label: "Scheduled", count: tabCounts.scheduled ?? 0 },
-    { id: "late", label: "Late", count: tabCounts.late ?? 0 },
-    { id: "in_progress", label: "In progress", count: inProgressTabCount },
+    { id: "scheduled", label: "Scheduled", count: scheduledTabCount },
+    { id: "in_progress", label: "In Progress", count: inProgressTabCount },
+    { id: "final_check", label: "Final Checks", count: finalChecksTabCount },
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
     { id: "completed", label: "Completed", count: tabCounts.completed ?? 0 },
     { id: "cancelled", label: "Cancelled", count: tabCounts.cancelled ?? 0 },
-    { id: "need_attention", label: "Need attention", count: tabCounts.need_attention ?? 0 },
   ];
 
   useEffect(() => {
@@ -462,7 +485,7 @@ function JobsPageContent() {
       const statusPatch: Partial<Job> = {
         status: newStatus,
         ...(selfBillId ? { self_bill_id: selfBillId } : {}),
-        ...(newStatus === "in_progress_phase1" && !job.partner_timer_started_at ? officePartnerTimerStartPatch() : {}),
+        ...statusChangePartnerTimerPatch(job, newStatus),
       };
       const updated = await updateJob(job.id, statusPatch);
       await logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "status_changed", fieldName: "status", oldValue: job.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
@@ -482,7 +505,10 @@ function JobsPageContent() {
     if (selectedIds.size === 0) return;
     const supabase = getSupabase();
     const ids = Array.from(selectedIds);
+    const ns = newStatus as Job["status"];
     try {
+      let rows: Job[] = [];
+
       if (newStatus === "completed") {
         const { data: jobRows, error: jobErr } = await supabase.from("jobs").select("*").in("id", ids);
         if (jobErr) throw jobErr;
@@ -524,40 +550,39 @@ function JobsPageContent() {
           toast.error(`${missing.length} selected job(s) not found.`);
           return;
         }
-      }
-      if (newStatus === "in_progress_phase1") {
-        const { data: rows, error: fetchErr } = await supabase
-          .from("jobs")
-          .select("id, partner_timer_started_at")
-          .in("id", ids);
-        if (fetchErr) throw fetchErr;
-        for (const row of rows ?? []) {
-          const rid = row.id as string;
-          const patch: Record<string, unknown> = { status: newStatus };
-          if (!row.partner_timer_started_at) {
-            Object.assign(patch, officePartnerTimerStartPatch());
-          }
-          let { error: upErr } = await supabase.from("jobs").update(prepareJobRowForUpdate(patch)).eq("id", rid);
-          if (upErr && isPostgrestWriteRetryableError(upErr)) {
-            const r = await supabase.from("jobs").update(applyJobDbCompat({ ...patch })).eq("id", rid);
-            upErr = r.error;
-          }
-          if (upErr) throw upErr;
-        }
+        rows = jobRows as Job[];
       } else {
-        let { error } = await supabase
+        const { data, error } = await supabase
           .from("jobs")
-          .update(prepareJobRowForUpdate({ status: newStatus }))
+          .select("id, status, reference, partner_timer_started_at, partner_timer_ended_at")
           .in("id", ids);
-        if (error && isPostgrestWriteRetryableError(error)) {
-          const r = await supabase
-            .from("jobs")
-            .update(applyJobDbCompat({ status: newStatus }))
-            .in("id", ids);
-          error = r.error;
-        }
         if (error) throw error;
+        if (!data?.length) {
+          toast.error("No jobs found for selection.");
+          return;
+        }
+        const found = new Set((data as { id: string }[]).map((j) => j.id));
+        const missing = ids.filter((id) => !found.has(id));
+        if (missing.length) {
+          toast.error(`${missing.length} selected job(s) not found.`);
+          return;
+        }
+        rows = data as Job[];
       }
+
+      for (const j of rows) {
+        const patch: Record<string, unknown> = {
+          status: ns,
+          ...statusChangePartnerTimerPatch(j, ns),
+        };
+        let { error: upErr } = await supabase.from("jobs").update(prepareJobRowForUpdate(patch)).eq("id", j.id);
+        if (upErr && isPostgrestWriteRetryableError(upErr)) {
+          const r = await supabase.from("jobs").update(applyJobDbCompat({ ...patch })).eq("id", j.id);
+          upErr = r.error;
+        }
+        if (upErr) throw upErr;
+      }
+
       await logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
       toast.success(`${ids.length} jobs updated`);
       setSelectedIds(new Set());

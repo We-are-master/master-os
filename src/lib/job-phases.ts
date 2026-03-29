@@ -23,6 +23,13 @@ export const JOB_IN_PROGRESS_STATUSES: readonly Job["status"][] = [
   "final_check",
 ] as const;
 
+/** Partner on site only — final check has its own Job Management tab. */
+export const JOB_ONSITE_PROGRESS_STATUSES: readonly Job["status"][] = [
+  "in_progress_phase1",
+  "in_progress_phase2",
+  "in_progress_phase3",
+] as const;
+
 export function isJobInProgressStatus(status: Job["status"]): boolean {
   return (JOB_IN_PROGRESS_STATUSES as readonly string[]).includes(status);
 }
@@ -38,6 +45,16 @@ export function lastInProgressStatusForTotal(totalPhases: number): Job["status"]
   // With the new model, the workflow stays "In progress" while reports are collected.
   // So we always go back to Phase 1 (the in-progress work state).
   return "in_progress_phase1";
+}
+
+export function allConfiguredReportsApproved(job: Job): boolean {
+  const tp = normalizeTotalPhases(job.total_phases);
+  for (let n = 1; n <= tp; n++) {
+    const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
+    const approved = job[`report_${n}_approved` as keyof Job] as boolean;
+    if (!uploaded || !approved) return false;
+  }
+  return true;
 }
 
 export type JobStatusAction = {
@@ -68,23 +85,15 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
         cancelAction,
       ];
     case "in_progress_phase1":
-      return [
-        { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
-        { label: "Pause", status: "scheduled", icon: Pause, primary: false },
-        cancelAction,
-      ];
     case "in_progress_phase2":
+    case "in_progress_phase3": {
+      const finishLabel = allConfiguredReportsApproved(job) ? "Finish on site" : "Final check";
       return [
-        { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
+        { label: finishLabel, status: "final_check", icon: CheckCircle2, primary: true },
         { label: "Pause", status: "scheduled", icon: Pause, primary: false },
         cancelAction,
       ];
-    case "in_progress_phase3":
-      return [
-        { label: "Final Check", status: "final_check", icon: CheckCircle2, primary: true },
-        { label: "Pause", status: "scheduled", icon: Pause, primary: false },
-        cancelAction,
-      ];
+    }
     case "final_check": {
       const backLabel = "Back to Phase 1";
       return [
@@ -190,16 +199,6 @@ export function reportPhaseLabel(phaseIndex: number, totalPhases: number): strin
   return "Report 2 — job complete";
 }
 
-export function allConfiguredReportsApproved(job: Job): boolean {
-  const tp = normalizeTotalPhases(job.total_phases);
-  for (let n = 1; n <= tp; n++) {
-    const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
-    const approved = job[`report_${n}_approved` as keyof Job] as boolean;
-    if (!uploaded || !approved) return false;
-  }
-  return true;
-}
-
 /** Monotonic workflow order for gating report actions (higher = further along). */
 export function jobStatusRank(status: Job["status"]): number {
   switch (status) {
@@ -291,11 +290,37 @@ export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; me
   if (!allConfiguredReportsApproved(job)) {
     return { ok: false, message: "All reports must be uploaded and approved first." };
   }
-  if (job.status !== "final_check") {
+  // Final check is set automatically when the last report is validated; allow send from there or still in on-site phases before UI refresh.
+  if (job.status !== "final_check" && !isJobOnSiteWorkStatus(job.status)) {
     return {
       ok: false,
-      message: "Move the job to Final Check (header action) before sending the report and requesting final payment.",
+      message: "Job must be in Final check or on site before sending the report and invoice.",
     };
   }
   return { ok: true };
+}
+
+/** True while partner is doing on-site work (not final check / payment). */
+export function isJobOnSiteWorkStatus(status: Job["status"]): boolean {
+  return status === "in_progress_phase1" || status === "in_progress_phase2" || status === "in_progress_phase3";
+}
+
+/** When ops validates the last report, move to final_check and stop the on-site timer in the same update. */
+export function shouldAutoAdvanceToFinalCheckAfterMerge(
+  merged: Job,
+  updates: Partial<Job>,
+  statusBefore: Job["status"],
+): boolean {
+  if (updates.status !== undefined) return false;
+  const tp = normalizeTotalPhases(merged.total_phases);
+  const touchedApprove = Array.from({ length: tp }, (_, i) => i + 1).some(
+    (n) =>
+      updates[`report_${n}_approved` as keyof Job] !== undefined ||
+      updates[`report_${n}_approved_at` as keyof Job] !== undefined,
+  );
+  if (!touchedApprove) return false;
+  if (!allConfiguredReportsApproved(merged)) return false;
+  if (!isJobOnSiteWorkStatus(merged.status)) return false;
+  if (statusBefore === "final_check") return false;
+  return true;
 }

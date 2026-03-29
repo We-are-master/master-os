@@ -1,4 +1,5 @@
 import type { Job } from "@/types/database";
+import { isJobOnSiteWorkStatus } from "@/lib/job-phases";
 
 /** Seed live timer when staff sets job to phase 1 from Master OS (partner app uses the same columns via RPC). */
 export function officePartnerTimerStartPatch(): Pick<
@@ -14,6 +15,15 @@ export function officePartnerTimerStartPatch(): Pick<
     partner_timer_started_at: now,
     partner_timer_ended_at: null,
     partner_timer_accum_paused_ms: 0,
+    partner_timer_is_paused: false,
+    partner_timer_pause_began_at: null,
+  };
+}
+
+/** End on-site timer when work is finished (final check, invoice, completed, or pause back to scheduled). */
+export function officePartnerTimerEndPatch(): Pick<Job, "partner_timer_ended_at" | "partner_timer_is_paused" | "partner_timer_pause_began_at"> {
+  return {
+    partner_timer_ended_at: new Date().toISOString(),
     partner_timer_is_paused: false,
     partner_timer_pause_began_at: null,
   };
@@ -52,6 +62,31 @@ export function computePartnerLiveTimerActiveMs(job: TimerFields, nowMs: number 
 
 export function isPartnerLiveTimerRunning(job: TimerFields): boolean {
   return !!(job.partner_timer_started_at && !job.partner_timer_ended_at);
+}
+
+/** Timer fields to merge when changing job status from office or bulk actions. */
+export function statusChangePartnerTimerPatch(
+  job: Pick<Job, "status" | "partner_timer_started_at" | "partner_timer_ended_at">,
+  newStatus: Job["status"],
+): Partial<Job> {
+  const patch: Partial<Job> = {};
+  const wasOnSite = isJobOnSiteWorkStatus(job.status);
+  const running = isPartnerLiveTimerRunning(job);
+
+  if (newStatus === "in_progress_phase1" && (!wasOnSite || job.partner_timer_ended_at)) {
+    Object.assign(patch, officePartnerTimerStartPatch());
+  }
+  if (
+    running &&
+    (newStatus === "final_check" ||
+      newStatus === "awaiting_payment" ||
+      newStatus === "completed" ||
+      (newStatus === "scheduled" && wasOnSite) ||
+      newStatus === "cancelled")
+  ) {
+    Object.assign(patch, officePartnerTimerEndPatch());
+  }
+  return patch;
 }
 
 export function formatPartnerLiveTimer(ms: number): string {
