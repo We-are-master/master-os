@@ -49,6 +49,7 @@ import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { getErrorMessage, isUuid, isValidIsoDateTime, parseIsoDateOnly } from "@/lib/utils";
+import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback } from "@/lib/type-of-work";
 import {
   parseBidProposalFromNotes,
@@ -1200,7 +1201,20 @@ function QuoteDetailDrawer({
       sort_order: i,
       notes: bidPayloadTrimmedString(li.notes as unknown) || null,
     }));
-    if (rows.length > 0) await supabase.from("quote_line_items").insert(rows);
+    if (rows.length > 0) {
+      let ins = await supabase.from("quote_line_items").insert(rows);
+      if (ins.error && isPostgrestWriteRetryableError(ins.error)) {
+        const slim = rows.map((r) => ({
+          quote_id: r.quote_id,
+          description: r.description,
+          quantity: r.quantity,
+          unit_price: r.unit_price,
+          sort_order: r.sort_order,
+        }));
+        ins = await supabase.from("quote_line_items").insert(slim);
+      }
+      if (ins.error) throw ins.error;
+    }
 
     const lineTot = lines.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
     const marginPct =

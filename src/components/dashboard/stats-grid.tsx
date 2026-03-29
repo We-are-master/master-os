@@ -12,6 +12,7 @@ import {
   FileText,
 } from "lucide-react";
 import { isLegacyJobSchema } from "@/lib/job-schema-compat";
+import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 
 interface DashboardStats {
   jobsRevenue: number;
@@ -74,25 +75,32 @@ export function StatsGrid() {
         const partnerPayoutStatuses = ["awaiting_payment", "ready_to_pay", "paid"] as const;
 
         async function jobRevenueAndSales(fromIso: string, toIsoInner: string): Promise<{ revenue: number; salesCount: number }> {
-          const [awaitingRes, completedPaidRes] = await Promise.all([
-            supabase
-              .from("jobs")
-              .select("client_price, extras_amount")
-              .in("status", awaitingPaymentStatuses)
-              .gte("updated_at", fromIso)
-              .lte("updated_at", toIsoInner),
-            supabase
-              .from("jobs")
-              .select("client_price, extras_amount")
-              .eq("status", "completed")
-              .eq("finance_status", "paid")
-              .not("completed_date", "is", null)
-              .gte("completed_date", fromIso)
-              .lte("completed_date", toIsoInner),
-          ]);
+          const fetchPair = (sel: string) =>
+            Promise.all([
+              supabase
+                .from("jobs")
+                .select(sel)
+                .in("status", awaitingPaymentStatuses)
+                .gte("updated_at", fromIso)
+                .lte("updated_at", toIsoInner),
+              supabase
+                .from("jobs")
+                .select(sel)
+                .eq("status", "completed")
+                .eq("finance_status", "paid")
+                .not("completed_date", "is", null)
+                .gte("completed_date", fromIso)
+                .lte("completed_date", toIsoInner),
+            ]);
 
-          const awaitingRows = (awaitingRes.data ?? []) as { client_price: number; extras_amount?: number | null }[];
-          const completedRows = (completedPaidRes.data ?? []) as { client_price: number; extras_amount?: number | null }[];
+          let [awaitingRes, completedPaidRes] = await fetchPair("client_price, extras_amount");
+          const firstErr = awaitingRes.error ?? completedPaidRes.error;
+          if (firstErr && isPostgrestWriteRetryableError(firstErr)) {
+            [awaitingRes, completedPaidRes] = await fetchPair("client_price");
+          }
+
+          const awaitingRows = (awaitingRes.data ?? []) as unknown as { client_price: number; extras_amount?: number | null }[];
+          const completedRows = (completedPaidRes.data ?? []) as unknown as { client_price: number; extras_amount?: number | null }[];
 
           const sumRevenue = (rows: { client_price: number; extras_amount?: number | null }[]) =>
             rows.reduce((s, r) => s + Number(r.client_price ?? 0) + Number(r.extras_amount ?? 0), 0);

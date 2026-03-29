@@ -2,10 +2,12 @@ import { getSupabase, queryList, applyJobsScheduleRangeToQuery, type ListParams,
 import type { Job } from "@/types/database";
 import { JOB_IN_PROGRESS_STATUSES } from "@/lib/job-phases";
 import {
+  applyJobDbCompat,
   isLegacyJobSchema,
   prepareJobRowForInsert,
   prepareJobRowForUpdate,
 } from "@/lib/job-schema-compat";
+import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
@@ -18,14 +20,21 @@ export async function fetchAllJobsFinancialKpiRows(
 ): Promise<JobFinancialKpiRow[]> {
   const supabase = getSupabase();
   const chunk = 1000;
-  const columns = "status,client_price,extras_amount,partner_cost,materials_cost";
+  let columns = "status,client_price,extras_amount,partner_cost,materials_cost";
   const all: JobFinancialKpiRow[] = [];
   for (let from = 0; ; from += chunk) {
-    let q = supabase.from("jobs").select(columns).is("deleted_at", null);
-    if (scheduleRange) q = applyJobsScheduleRangeToQuery(q, scheduleRange);
-    const { data, error } = await q.order("created_at", { ascending: false }).range(from, from + chunk - 1);
+    const run = async (cols: string) => {
+      let q = supabase.from("jobs").select(cols).is("deleted_at", null);
+      if (scheduleRange) q = applyJobsScheduleRangeToQuery(q, scheduleRange);
+      return q.order("created_at", { ascending: false }).range(from, from + chunk - 1);
+    };
+    let { data, error } = await run(columns);
+    if (error && isPostgrestWriteRetryableError(error) && columns.includes("extras_amount")) {
+      columns = "status,client_price,partner_cost,materials_cost";
+      ({ data, error } = await run(columns));
+    }
     if (error) throw error;
-    const batch = (data ?? []) as JobFinancialKpiRow[];
+    const batch = (data ?? []) as unknown as JobFinancialKpiRow[];
     all.push(...batch);
     if (batch.length < chunk) break;
   }
@@ -120,8 +129,14 @@ export async function createJob(
 ): Promise<Job> {
   const supabase = getSupabase();
   const { data: ref } = await supabase.rpc("next_job_ref");
-  const row = prepareJobRowForInsert({ ...input, reference: ref } as Record<string, unknown>);
-  const { data, error } = await supabase.from("jobs").insert(row).select().single();
+  const baseRow = { ...input, reference: ref } as Record<string, unknown>;
+  const row = prepareJobRowForInsert(baseRow);
+  let { data, error } = await supabase.from("jobs").insert(row).select().single();
+  if (error && isPostgrestWriteRetryableError(error)) {
+    const retry = await supabase.from("jobs").insert(applyJobDbCompat(baseRow)).select().single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw error;
   return data as Job;
 }
@@ -132,13 +147,19 @@ export async function updateJob(
   input: Partial<Job>
 ): Promise<Job> {
   const supabase = getSupabase();
-  const patch = prepareJobRowForUpdate(input as Record<string, unknown>);
-  const { data, error } = await supabase
-    .from("jobs")
-    .update(patch)
-    .eq("id", id)
-    .select()
-    .single();
+  const basePatch = input as Record<string, unknown>;
+  const patch = prepareJobRowForUpdate(basePatch);
+  let { data, error } = await supabase.from("jobs").update(patch).eq("id", id).select().single();
+  if (error && isPostgrestWriteRetryableError(error)) {
+    const retry = await supabase
+      .from("jobs")
+      .update(applyJobDbCompat({ ...basePatch }))
+      .eq("id", id)
+      .select()
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw error;
   return data as Job;
 }
