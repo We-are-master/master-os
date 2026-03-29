@@ -13,7 +13,6 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Modal } from "@/components/ui/modal";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { TimeSelect } from "@/components/ui/time-select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
@@ -50,9 +49,10 @@ import {
   endOfLocalWeekSunday,
   startOfLocalMonth,
   endOfLocalMonth,
-  formatArrivalTimeRange,
 } from "@/lib/schedule-calendar";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
+import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { jobBillableRevenue, jobMarginPercent, jobProfit } from "@/lib/job-financials";
 
 const JOB_STATUSES = ["unassigned", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
@@ -909,7 +909,7 @@ export default function JobsPage() {
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
   const [form, setForm] = useState({
-    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "", job_type: "fixed", scope: "",
+    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "", job_type: "fixed", scope: "",
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -922,57 +922,28 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       .catch(() => setPartners([]));
   }, [open]);
 
-  const clientVisibleArrivalPreview = useMemo(() => {
-    const d = form.scheduled_date.trim();
-    const f = form.arrival_from.trim();
-    const t = form.arrival_to.trim();
-    if (!d || !f || !t) return null;
-    const range = formatArrivalTimeRange(`${d}T${f}:00`, `${d}T${t}:00`);
-    return range ? `Client & partner will see: Arrival time (${range})` : null;
-  }, [form.scheduled_date, form.arrival_from, form.arrival_to]);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Type of work is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
     const hasPartner = !!(form.partner_id || form.partner_ids.length > 0);
-    const scheduled_date = form.scheduled_date || undefined;
-    const hasFrom = !!form.arrival_from?.trim();
-    const hasTo = !!form.arrival_to?.trim();
-    if ((hasFrom && !hasTo) || (!hasFrom && hasTo)) {
-      toast.error("Set both arrival window start and end, or leave both empty.");
+    const sched = resolveJobModalSchedule({
+      scheduled_date: form.scheduled_date,
+      arrival_from: form.arrival_from,
+      arrival_window_mins: form.arrival_window_mins,
+      hasPartner,
+    });
+    if (!sched.ok) {
+      toast.error(sched.error);
       return;
     }
-    if (hasFrom && hasTo && scheduled_date?.trim()) {
-      const startMs = new Date(`${scheduled_date}T${form.arrival_from}:00`).getTime();
-      const endMs = new Date(`${scheduled_date}T${form.arrival_to}:00`).getTime();
-      if (!(endMs > startMs)) {
-        toast.error("Arrival window end must be after start.");
-        return;
-      }
-    }
-    if (hasPartner) {
-      if (!scheduled_date?.trim()) {
-        toast.error("Set a scheduled date before assigning a partner.");
-        return;
-      }
-      if (!hasFrom || !hasTo) {
-        toast.error("Set the arrival window (from and to) when assigning a partner.");
-        return;
-      }
-    }
+    const scheduled_date = sched.scheduled_date;
+    const scheduled_start_at = sched.scheduled_start_at;
+    const scheduled_end_at = sched.scheduled_end_at;
     const expected_finish = form.expected_finish_date?.trim() || undefined;
     if (expected_finish && scheduled_date && expected_finish < scheduled_date) {
       toast.error("Expected finish date must be on or after the arrival date.");
       return;
-    }
-    let scheduled_start_at: string | undefined;
-    let scheduled_end_at: string | undefined;
-    if (scheduled_date && hasFrom && hasTo) {
-      scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
-      scheduled_end_at = `${scheduled_date}T${form.arrival_to}:00`;
-    } else if (scheduled_date && hasFrom) {
-      scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
     }
     const scheduled_finish_date = expected_finish ?? null;
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
@@ -996,7 +967,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
     });
-    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "", job_type: "fixed", scope: "" });
+    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "", job_type: "fixed", scope: "" });
     setClientAddress({ client_name: "", property_address: "" });
   };
 
@@ -1013,22 +984,13 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           ]}
         />
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Start date</label><Input type="date" className="h-9 text-sm" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish (date only)</label><Input type="date" className="h-9 text-sm" value={form.expected_finish_date} onChange={(e) => update("expected_finish_date", e.target.value)} /></div>
-        </div>
-        <div className="space-y-2">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Arrival time (range)</p>
-          <p className="text-[10px] text-text-tertiary -mt-1">Set start and end of the arrival window — this is what clients and partners see (e.g. 11AM – 2PM).</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <TimeSelect label="From" value={form.arrival_from} onChange={(v) => update("arrival_from", v)} />
-            <TimeSelect label="To" value={form.arrival_to} onChange={(v) => update("arrival_to", v)} />
-          </div>
-        </div>
-        {clientVisibleArrivalPreview ? (
-          <p className="text-[11px] font-medium text-text-secondary -mt-1">{clientVisibleArrivalPreview}</p>
-        ) : null}
-        <p className="text-[10px] text-text-tertiary -mt-2">Expected finish is calendar-only (no time). With a partner, start date and both arrival times are required. Late applies after the window ends.</p>
+        <JobModalScheduleFields
+          scheduledDate={form.scheduled_date}
+          arrivalFrom={form.arrival_from}
+          arrivalWindowMins={form.arrival_window_mins}
+          expectedFinishDate={form.expected_finish_date}
+          onChange={(field, v) => update(field, v)}
+        />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work {form.partner_id || form.partner_ids.length > 0 ? "*" : ""}</label>
           <textarea
