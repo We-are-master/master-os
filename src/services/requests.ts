@@ -17,6 +17,12 @@ function postgrestErrorMessage(err: { message?: string; details?: string; hint?:
   return parts.length ? parts.join(" — ") : "Database request failed";
 }
 
+/** True when API/schema has no `request_kind` column yet (migration 071 not applied). */
+function isMissingRequestKindColumnError(err: { message?: string }): boolean {
+  const m = (err.message ?? "").toLowerCase();
+  return m.includes("request_kind") && (m.includes("schema cache") || m.includes("column"));
+}
+
 function buildServiceRequestInsertPayload(
   input: Omit<ServiceRequest, "id" | "reference" | "created_at" | "updated_at">,
   reference: string,
@@ -105,7 +111,13 @@ export async function createRequest(
     throw new Error("Could not generate request reference (next_request_ref).");
   }
   const payload = buildServiceRequestInsertPayload(input, String(ref));
-  const { data, error } = await supabase.from("service_requests").insert(payload).select().single();
+  let { data, error } = await supabase.from("service_requests").insert(payload).select().single();
+  if (error && isMissingRequestKindColumnError(error) && "request_kind" in payload) {
+    const { request_kind: _rk, ...withoutKind } = payload;
+    const retry = await supabase.from("service_requests").insert(withoutKind).select().single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw new Error(postgrestErrorMessage(error));
   const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
   return enriched ?? (data as ServiceRequest);
@@ -124,12 +136,23 @@ export async function updateRequest(
       patch[key] = null;
     }
   }
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("service_requests")
     .update(patch)
     .eq("id", id)
     .select()
     .single();
+  if (error && isMissingRequestKindColumnError(error) && "request_kind" in patch) {
+    const { request_kind: _rk, ...withoutKind } = patch;
+    const retry = await supabase
+      .from("service_requests")
+      .update(withoutKind)
+      .eq("id", id)
+      .select()
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw new Error(postgrestErrorMessage(error));
   const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
   return enriched ?? (data as ServiceRequest);
