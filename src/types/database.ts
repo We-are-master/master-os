@@ -257,6 +257,24 @@ export interface Job {
   partner_timer_accum_paused_ms?: number | null;
   partner_timer_is_paused?: boolean | null;
   partner_timer_pause_began_at?: string | null;
+  /** Office operational flow — start-of-job report (photos, notes, checklist snapshot). */
+  start_report?: Record<string, unknown> | null;
+  start_report_submitted?: boolean;
+  start_report_skipped?: boolean;
+  /** Completion report before final checks. */
+  final_report?: Record<string, unknown> | null;
+  final_report_submitted?: boolean;
+  final_report_skipped?: boolean;
+  /** Accumulated on-site seconds when timer stopped; never decremented by UI. */
+  timer_elapsed_seconds?: number;
+  timer_last_started_at?: string | null;
+  timer_is_running?: boolean;
+  review_sent_at?: string | null;
+  review_send_method?: "email" | "manual" | null;
+  internal_report_approved?: boolean;
+  internal_invoice_approved?: boolean;
+  /** Optional checklist items for Start Job modal (when set). */
+  operational_checklist?: unknown;
   created_at: string;
   updated_at: string;
 }
