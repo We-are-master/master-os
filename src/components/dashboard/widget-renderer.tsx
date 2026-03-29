@@ -7,6 +7,7 @@ import { QuoteFunnel } from "./quote-funnel";
 import { JobsStatusDonut } from "./jobs-status-donut";
 import { MarginChart } from "./margin-chart";
 import { PartnerPerformance } from "./partner-performance";
+import { PartnerMarginTop5, PartnerPayoutTop5 } from "./partner-financial-top5";
 import { FinanceFlow } from "./finance-flow";
 import { PipelineSummary } from "./pipeline-summary";
 import { PriorityTasks } from "./priority-tasks";
@@ -50,6 +51,8 @@ export function WidgetRenderer({ widget, className }: WidgetRendererProps) {
     case "jobs_status_donut":   return <div className={cls}><JobsStatusDonut /></div>;
     case "margin_chart":        return <div className={cls}><MarginChart /></div>;
     case "partner_performance": return <div className={cls}><PartnerPerformance /></div>;
+    case "partner_payout_top5": return <div className={cls}><PartnerPayoutTop5 /></div>;
+    case "partner_margin_top5": return <div className={cls}><PartnerMarginTop5 /></div>;
     case "finance_flow":        return <div className={cls}><FinanceFlow /></div>;
     case "financial_snapshot":  return <div className={cls}><FinancialSnapshot /></div>;
     case "pipeline_summary":    return <div className={cls}><PipelineSummary /></div>;

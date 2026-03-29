@@ -179,6 +179,8 @@ export type WidgetType =
   | "jobs_status_donut"
   | "margin_chart"
   | "partner_performance"
+  | "partner_payout_top5"
+  | "partner_margin_top5"
   | "finance_flow"
   | "financial_snapshot"
   | "pipeline_summary"
@@ -201,14 +203,16 @@ export interface WidgetMeta {
 
 export const WIDGET_CATALOG: WidgetMeta[] = [
   { type: "stats_grid",          label: "Overview executive",    description: "Revenue, margins, tier vs revenue, best sellers, top partner & accounts, cashflow", icon: "BarChart2", defaultSize: "full" },
-  { type: "revenue_chart",       label: "Revenue Chart",         description: "Collected vs invoiced revenue per month",            icon: "TrendingUp",    defaultSize: "two_thirds" },
+  { type: "revenue_chart",       label: "Revenue Chart",         description: "Collected vs invoiced revenue per month",            icon: "TrendingUp",    defaultSize: "full" },
   { type: "quote_funnel",        label: "Quote → Job Funnel",    description: "End-to-end conversion: request → quote → job",      icon: "Filter",        defaultSize: "one_third" },
   { type: "jobs_status_donut",   label: "Jobs by Status",        description: "Donut chart of all jobs by current status",         icon: "PieChart",      defaultSize: "one_third" },
   { type: "margin_chart",        label: "Margin Trend",          description: "Margin percentage trend over time",                  icon: "Percent",       defaultSize: "one_third" },
   { type: "partner_performance", label: "Top Partners",          description: "Partner ranking by revenue and jobs",                icon: "Award",         defaultSize: "half" },
+  { type: "partner_payout_top5", label: "Partner payout · Top 5", description: "Largest partner costs / payouts in the period (1/3 width — place beside Pipeline)", icon: "DollarSign", defaultSize: "one_third" },
+  { type: "partner_margin_top5", label: "Company margin · Top 5", description: "Partners where you keep the most gross margin (1/3 — beside Pipeline)", icon: "PieChart", defaultSize: "one_third" },
   { type: "finance_flow",        label: "Cash Flow",             description: "Collected vs partner payouts vs net",                icon: "DollarSign",    defaultSize: "half" },
   { type: "financial_snapshot",  label: "Financial Snapshot",    description: "Full financial position summary",                    icon: "Receipt",       defaultSize: "full" },
-  { type: "pipeline_summary",    label: "Pipeline",              description: "Active pipeline stages",                             icon: "Layers",        defaultSize: "one_third" },
+  { type: "pipeline_summary",    label: "Pipeline",              description: "Requests → quotes sent → jobs booked → completed (values)", icon: "Layers",        defaultSize: "one_third" },
   { type: "priority_tasks",      label: "Priority Tasks",        description: "Jobs and quotes requiring attention",                icon: "AlertTriangle", defaultSize: "one_third" },
   { type: "activity_feed",       label: "Activity Feed",         description: "Recent events across the system",                   icon: "Activity",      defaultSize: "one_third" },
   { type: "quick_actions",       label: "Quick Actions",         description: "Shortcuts to create a request, quote or job",       icon: "Zap",           defaultSize: "one_third" },
