@@ -22,7 +22,7 @@ import {
   MapPin, Building2, TrendingUp,
   CheckCircle2, AlertTriangle, XCircle,
 } from "lucide-react";
-import { cn, formatCurrency, formatCurrencyPrecise } from "@/lib/utils";
+import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob, fetchAllJobsFinancialKpiRows } from "@/services/jobs";
@@ -432,7 +432,9 @@ function JobsPageContent() {
         }).catch(() => {});
       }
       router.push(`/jobs/${result.id}`);
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Failed to create job"); }
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Failed to create job"));
+    }
   }, [refresh, loadDashboardStats, profile?.id, profile?.full_name, router]);
 
   const handleStatusChange = useCallback(async (job: Job, newStatus: Job["status"]) => {
@@ -579,17 +581,6 @@ function JobsPageContent() {
 
   const columns: Column<Job>[] = [
     { key: "reference", label: "Job", width: "180px", render: (item) => (<div><p className="text-sm font-semibold text-text-primary">{item.reference}</p><p className="text-[11px] text-text-tertiary">{item.title}</p></div>) },
-    {
-      key: "start_date",
-      label: "Start date",
-      width: "118px",
-      render: (item) => {
-        const ymd = jobScheduleYmd(item);
-        if (!ymd) return <span className="text-xs text-text-tertiary">—</span>;
-        const iso = `${ymd.y}-${String(ymd.m).padStart(2, "0")}-${String(ymd.d).padStart(2, "0")}`;
-        return <span className="text-sm text-text-secondary tabular-nums">{formatMediumYmd(iso)}</span>;
-      },
-    },
     { key: "client_name", label: "Client / Property", render: (item) => (<div><p className="text-sm font-medium text-text-primary">{item.client_name}</p><p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{item.property_address}</p></div>) },
     { key: "partner_name", label: "Partner", render: (item) => item.partner_name ? (<div className="flex items-center gap-2"><Avatar name={item.partner_name} size="xs" /><span className="text-sm text-text-secondary">{item.partner_name}</span></div>) : <span className="text-xs text-text-tertiary italic">Unassigned</span> },
     {

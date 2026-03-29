@@ -160,32 +160,47 @@ export async function getStatusCounts(
   return counts;
 }
 
+/**
+ * Sum + row count for KPIs. Avoids `count:id.count()` combined with `.sum()` — that shape returns 400 on several PostgREST / Kong stacks.
+ */
 export async function getAggregates(
   table: string,
   column: string
 ): Promise<{ sum: number; count: number }> {
   const supabase = getSupabase();
-  // Use Postgres aggregate via PostgREST `select` with aggregate functions to avoid
-  // fetching all rows into the client just to sum them.
-  const { data, error } = await supabase
-    .from(table)
-    .select(`${column}.sum(), count:id.count()`)
-    .is("deleted_at", null)
-    .limit(1)
-    .single();
-  if (error) {
-    // Fallback for tables without aggregate support (older PostgREST versions)
-    const { data: rows, error: fallbackErr } = await supabase
-      .from(table)
-      .select(column)
-      .is("deleted_at", null);
-    if (fallbackErr) throw fallbackErr;
-    const vals = ((rows ?? []) as unknown as Record<string, unknown>[]).map((r) => Number(r[column]) || 0);
-    return { sum: vals.reduce((a, b) => a + b, 0), count: vals.length };
+  const pageSize = 2000;
+
+  let useDeletedFilter = true;
+  let countRes = await supabase.from(table).select("*", { count: "exact", head: true }).is("deleted_at", null);
+  if (countRes.error) {
+    useDeletedFilter = false;
+    countRes = await supabase.from(table).select("*", { count: "exact", head: true });
   }
-  const row = data as unknown as Record<string, unknown>;
-  return {
-    sum: Number(row[`${column}_sum`] ?? row[column] ?? 0),
-    count: Number(row["count"] ?? 0),
-  };
+  if (countRes.error) throw countRes.error;
+  const totalCount = countRes.count ?? 0;
+
+  const sumQuery = supabase.from(table).select(`${column}.sum()`);
+  const { data: sumRow, error: sumErr } = useDeletedFilter
+    ? await sumQuery.is("deleted_at", null).maybeSingle()
+    : await sumQuery.maybeSingle();
+
+  if (!sumErr && sumRow != null && typeof sumRow === "object") {
+    const row = sumRow as Record<string, unknown>;
+    const raw = row[`${column}_sum`];
+    if (raw != null && Number.isFinite(Number(raw))) {
+      return { sum: Number(raw), count: totalCount };
+    }
+  }
+
+  let sum = 0;
+  for (let from = 0; ; from += pageSize) {
+    let q = supabase.from(table).select(column).range(from, from + pageSize - 1);
+    if (useDeletedFilter) q = q.is("deleted_at", null);
+    const { data: rows, error } = await q;
+    if (error) throw error;
+    const batch = (rows ?? []) as unknown as Record<string, unknown>[];
+    for (const r of batch) sum += Number(r[column]) || 0;
+    if (batch.length < pageSize) break;
+  }
+  return { sum, count: totalCount };
 }
