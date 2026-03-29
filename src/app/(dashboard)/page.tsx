@@ -59,11 +59,48 @@ function getColSpanClass(size: WidgetConfig["size"]): string {
   }
 }
 
-/** Hidden on the default Overview tab only (other views keep full widget set). */
+const PIPELINE_ROW_WIDGETS = new Set<WidgetConfig["type"]>([
+  "pipeline_summary",
+  "partner_payout_top5",
+  "partner_margin_top5",
+]);
+
+/** Revenue Overview always uses the full 12-column row (not split with Quick Actions, etc.). */
+function getWidgetGridClass(widget: WidgetConfig): string {
+  if (widget.type === "revenue_chart") return "col-span-12";
+  /** Pipeline + partner payout/margin Top 5 share one row (three equal columns on large screens). */
+  if (PIPELINE_ROW_WIDGETS.has(widget.type)) return getColSpanClass("one_third");
+  return getColSpanClass(widget.size);
+}
+
+/** Removed from dashboard grid entirely. */
+const DASHBOARD_HIDDEN_WIDGET_TYPES = new Set<WidgetConfig["type"]>(["activity_feed", "quick_actions"]);
+
+/** Hidden on the Overview tab only (other views keep full widget set). */
 const OVERVIEW_HIDDEN_WIDGET_TYPES = new Set<WidgetConfig["type"]>(["priority_tasks", "custom_chart"]);
 
 function isOverviewView(view: DashboardView | null): boolean {
   return (view?.name?.trim().toLowerCase() ?? "") === "overview";
+}
+
+function isCashFlowOrTopPartners(w: WidgetConfig): boolean {
+  return w.type === "finance_flow" || w.type === "partner_performance";
+}
+
+/**
+ * Renders Cash Flow + Top Partners directly above the first Jobs by Status widget,
+ * preserving their relative order and leaving other widgets in position order.
+ */
+function orderCashFlowPartnersAboveJobsDonut(widgets: WidgetConfig[]): WidgetConfig[] {
+  const byPos = [...widgets].sort((a, b) => a.position - b.position);
+  const fp = byPos.filter(isCashFlowOrTopPartners);
+  if (fp.length === 0 || !byPos.some((w) => w.type === "jobs_status_donut")) {
+    return byPos;
+  }
+  const withoutFp = byPos.filter((w) => !isCashFlowOrTopPartners(w));
+  const firstDonutIdx = withoutFp.findIndex((w) => w.type === "jobs_status_donut");
+  if (firstDonutIdx === -1) return byPos;
+  return [...withoutFp.slice(0, firstDonutIdx), ...fp, ...withoutFp.slice(firstDonutIdx)];
 }
 
 // ─── Dashboard inner (needs context) ─────────────────────────────────────────
@@ -300,17 +337,18 @@ function DashboardInner() {
           </div>
         ) : activeView ? (
           <div className="grid grid-cols-12 gap-5 items-stretch">
-            {[...activeView.widgets]
-              .filter((w) => !isOverviewView(activeView) || !OVERVIEW_HIDDEN_WIDGET_TYPES.has(w.type))
-              .sort((a, b) => a.position - b.position)
-              .map((widget, i) => (
+            {orderCashFlowPartnersAboveJobsDonut(
+              [...activeView.widgets]
+                .filter((w) => !DASHBOARD_HIDDEN_WIDGET_TYPES.has(w.type))
+                .filter((w) => !isOverviewView(activeView) || !OVERVIEW_HIDDEN_WIDGET_TYPES.has(w.type)),
+            ).map((widget, i) => (
                 <motion.div
                   key={widget.id}
                   variants={staggerItem}
                   initial="hidden"
                   animate="visible"
                   custom={i}
-                  className={cn(getColSpanClass(widget.size), "h-full min-h-0")}
+                  className={cn(getWidgetGridClass(widget), "h-full min-h-0")}
                 >
                   <WidgetRenderer widget={widget} />
                 </motion.div>
