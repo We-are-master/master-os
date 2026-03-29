@@ -111,7 +111,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     case "final_check": {
       return [
         {
-          label: "Review & Send",
+          label: "Approve & Send Final Invoice",
           status: "awaiting_payment",
           icon: Send,
           primary: true,
