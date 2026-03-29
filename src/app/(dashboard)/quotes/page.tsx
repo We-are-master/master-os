@@ -263,7 +263,7 @@ function getStageGuidance(status: string): {
     case "awaiting_customer":
       return {
         headline: "Waiting on the customer",
-        detail: "You can still edit the proposal or pricing, then use Email PDF to customer or Resend Quote (under Move this quote) so the client gets an updated attachment — links stay the same.",
+        detail: "You can still edit the proposal or pricing, then use Resend Quote (under Move this quote) so the client gets an updated attachment — links stay the same.",
       };
     case "accepted":
       return {
@@ -1121,9 +1121,6 @@ function QuoteDetailDrawer({
     !Number.isNaN(sendDepositNumber) &&
     bidPayloadTrimmedString(sendEmail as unknown).includes("@");
 
-  const quotePdfEmailedBefore =
-    Boolean(quote.customer_pdf_sent_at) || quoteEmailedInSession || sendState === "sent";
-
   const drawerTabs = [
     { id: "overview", label: "Review & Send" },
     { id: "bids", label: "Bids" },
@@ -1614,7 +1611,7 @@ function QuoteDetailDrawer({
                         You can still change <strong className="font-semibold text-amber-950 dark:text-amber-50">line items, scope, dates, deposit, message</strong>, use the{" "}
                         <strong className="font-semibold text-amber-950 dark:text-amber-50">customer sell scale</strong> below, and review <strong className="font-semibold text-amber-950 dark:text-amber-50">Bid Summary</strong>.{" "}
                         Use <strong className="font-semibold text-amber-950 dark:text-amber-50">Save Quote</strong> to store only, or{" "}
-                        <strong className="font-semibold text-amber-950 dark:text-amber-50">{quotePdfEmailedBefore ? "Resend Quote" : "Email PDF to customer"}</strong> under Move this quote to email the PDF.
+                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Resend Quote</strong> under Move this quote to email the PDF.
                       </p>
                     </div>
                   )}
@@ -1872,12 +1869,12 @@ function QuoteDetailDrawer({
                     <>
                       The customer uses <strong className="text-text-secondary">Accept</strong> or <strong className="text-text-secondary">Reject</strong> in the email. Edit the quote anytime,{" "}
                       <strong className="text-text-secondary">Save Quote</strong> if needed, then use{" "}
-                      <strong className="text-text-secondary">{quotePdfEmailedBefore ? "Resend Quote" : "Email PDF to customer"}</strong> to send or update the PDF.
+                      <strong className="text-text-secondary">Resend Quote</strong> to send or update the PDF.
                     </>
                   ) : (
                     <>
                       After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer, then use{" "}
-                      <strong className="text-text-secondary">Email PDF to customer</strong> below to send the PDF.
+                      <strong className="text-text-secondary">Resend Quote</strong> below to send the PDF.
                     </>
                   )}
                 </p>
@@ -1892,11 +1889,7 @@ function QuoteDetailDrawer({
                       onClick={() => void handleSendToCustomer()}
                       title="Saves the latest proposal and emails the PDF (Accept / Reject links stay the same)"
                     >
-                      {sendState === "sending"
-                        ? "Saving…"
-                        : quotePdfEmailedBefore
-                          ? "Resend Quote"
-                          : "Email PDF to customer"}
+                      {sendState === "sending" ? "Saving…" : "Resend Quote"}
                     </Button>
                   )}
                   {overviewActions.map((action) => (
@@ -2341,6 +2334,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       scheduled_finish_date: expected_finish ?? null,
       createWithoutDeposit: form.createWithoutDeposit,
       job_type: form.job_type as "fixed" | "hourly",
+      scope: scopeTrimmed || (quote.scope ?? "").trim(),
     });
   };
 
