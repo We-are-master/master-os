@@ -20,6 +20,7 @@ import {
   Legend,
 } from "recharts";
 import { TrendingUp, Star, Building2, Layers } from "lucide-react";
+import { BestSellersByOwner } from "@/components/dashboard/best-sellers-by-owner";
 
 type JobRow = {
   id: string;
@@ -390,7 +391,7 @@ export function OverviewExecutiveBundle() {
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-border-light">
           {[
-            { label: "Revenue", value: revenue, sub: "Billable (sold work)", accent: "text-emerald-600" },
+            { label: "Revenue", value: revenue, sub: "Sold job value (customer total)", accent: "text-emerald-600" },
             { label: "Partner & materials", value: partnerDirect, sub: "Direct job cost", accent: "text-amber-600" },
             {
               label: "Gross margin",
@@ -423,9 +424,9 @@ export function OverviewExecutiveBundle() {
               <Layers className="h-4 w-4 text-violet-600" />
             </div>
             <div>
-              <CardTitle className="text-base">Commission tiers vs billing</CardTitle>
+              <CardTitle className="text-base">Tier vs Revenue</CardTitle>
               <p className="text-xs text-text-tertiary mt-0.5">
-                Paid invoices in range — see progress toward the next tier threshold
+                Paid invoices in range — progress toward the next tier threshold
               </p>
             </div>
           </div>
@@ -440,7 +441,7 @@ export function OverviewExecutiveBundle() {
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="text-lg font-bold text-text-primary tabular-nums">{formatCurrency(billingForTier)}</span>
-                  <span className="text-sm text-text-tertiary">billed (paid)</span>
+                  <span className="text-sm text-text-tertiary">paid invoices</span>
                   {current && (
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-200">
                       Tier {current.tier_number} · {current.rate_percent}% on excess
@@ -460,23 +461,25 @@ export function OverviewExecutiveBundle() {
                 />
               </div>
               <p className="text-[11px] text-text-tertiary">
-                Fill shows progress from your current tier floor toward the next breakeven (paid invoices in range).
+                Progress from your current tier floor toward the next breakeven, based on paid invoices in range.
               </p>
             </>
           )}
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <Card padding="none" className="h-full border-border-light">
-          <CardHeader className="px-5 pt-4 flex flex-row items-center justify-between">
+      <BestSellersByOwner />
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
+        <Card padding="none" className="h-full min-h-0 flex flex-col border-border-light">
+          <CardHeader className="px-5 pt-4 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
               <CardTitle className="text-base">Top partner</CardTitle>
-              <p className="text-xs text-text-tertiary mt-0.5">By billable revenue in range</p>
+              <p className="text-xs text-text-tertiary mt-0.5">By revenue in range</p>
             </div>
             <TrendingUp className="h-4 w-4 text-text-tertiary" />
           </CardHeader>
-          <div className="px-5 pb-5">
+          <div className="px-5 pb-5 flex-1 flex flex-col min-h-0">
             {loading ? (
               <div className="h-24 animate-pulse rounded-xl bg-surface-hover" />
             ) : topPartner ? (
@@ -495,15 +498,15 @@ export function OverviewExecutiveBundle() {
           </div>
         </Card>
 
-        <Card padding="none" className="h-full border-border-light">
-          <CardHeader className="px-5 pt-4 flex flex-row items-center justify-between">
+        <Card padding="none" className="h-full min-h-0 flex flex-col border-border-light">
+          <CardHeader className="px-5 pt-4 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
               <CardTitle className="text-base">Top 5 accounts</CardTitle>
-              <p className="text-xs text-text-tertiary mt-0.5">Linked corporate accounts · billable in range</p>
+              <p className="text-xs text-text-tertiary mt-0.5">Linked corporate accounts · revenue in range</p>
             </div>
             <Building2 className="h-4 w-4 text-text-tertiary" />
           </CardHeader>
-          <div className="px-5 pb-5 space-y-2">
+          <div className="px-5 pb-5 space-y-2 flex-1 flex flex-col min-h-0">
             {loading ? (
               Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-10 animate-pulse rounded-lg bg-surface-hover" />)
             ) : topAccounts.length === 0 ? (

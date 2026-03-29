@@ -86,17 +86,17 @@ export function PartnerPerformance() {
   const maxRevenue = Math.max(...data.map((d) => d.revenue), 1);
 
   return (
-    <Card padding="none" className="h-full">
-      <CardHeader className="px-5 pt-5">
+    <Card padding="none" className="h-full min-h-0 flex flex-col">
+      <CardHeader className="px-5 pt-5 shrink-0 mb-0">
         <div>
           <CardTitle>Top Partners</CardTitle>
           <p className="text-xs text-text-tertiary mt-0.5">
-            Billable revenue{dateCtx?.bounds ? " · jobs created in range" : ""}
+            Revenue{dateCtx?.bounds ? " · jobs created in range" : ""}
           </p>
         </div>
         <TrendingUp className="h-4 w-4 text-text-tertiary" />
       </CardHeader>
-      <div className="px-5 pb-5 space-y-2">
+      <div className="px-5 pb-5 space-y-2 flex-1 min-h-0 flex flex-col">
         {loading
           ? Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="flex items-center gap-3 py-2">
