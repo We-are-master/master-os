@@ -942,7 +942,6 @@ function QuoteDetailDrawer({
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
   const [bids, setBids] = useState<QuoteBid[]>([]);
   const [bidsLoading, setBidsLoading] = useState(false);
-  const [panelSaving, setPanelSaving] = useState(false);
   const [proposalSaving, setProposalSaving] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
@@ -1066,6 +1065,15 @@ function QuoteDetailDrawer({
   }, [isAdmin]);
 
   const approvedBid = useMemo(() => bids.find((b) => b.status === "approved") ?? null, [bids]);
+
+  const avgBidPrice = useMemo(() => {
+    if (!bids.length) return null;
+    const sum = bids.reduce((s, b) => s + (Number(b.bid_amount) || 0), 0);
+    return sum / bids.length;
+  }, [bids]);
+
+  const bidsReceivedCount =
+    quote.quote_type !== "partner" ? 0 : bidsLoading ? Number(quote.partner_quotes_count) || 0 : bids.length;
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
   const actions = getQuoteActions(quote);
@@ -1202,11 +1210,28 @@ function QuoteDetailDrawer({
   const saveProposalDraft = async () => {
     setProposalSaving(true);
     try {
+      const pc = proposalPartnerTotal;
+      const sp = lineTotal;
+      const marginPct = marginPctOnSell(sp, pc);
+      const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
+      const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
       const updated = await persistProposalToQuote();
+      await logAudit({
+        entityType: "quote",
+        entityId: quote.id,
+        entityRef: quote.reference,
+        action: "updated",
+        fieldName: "quote_figures",
+        oldValue: oldSummary,
+        newValue: newSummary,
+        userId: profile?.id,
+        userName: profile?.full_name,
+        metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
+      });
       onQuoteUpdate?.(updated);
-      toast.success("Proposal saved on this quote");
+      toast.success("Quote saved");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save proposal");
+      toast.error(e instanceof Error ? e.message : "Failed to save quote");
     } finally {
       setProposalSaving(false);
     }
@@ -1345,12 +1370,20 @@ function QuoteDetailDrawer({
               )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-4 rounded-xl bg-surface-hover">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total value</p>
-                  <p className="text-xl font-bold text-text-primary mt-1">{formatCurrency(Number(quote.total_value) || 0)}</p>
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Avg price</p>
+                  <p className="text-xl font-bold text-text-primary mt-1 tabular-nums">
+                    {quote.quote_type !== "partner"
+                      ? "—"
+                      : bidsLoading
+                        ? "…"
+                        : avgBidPrice != null
+                          ? formatCurrency(avgBidPrice)
+                          : "—"}
+                  </p>
                 </div>
                 <div className="p-4 rounded-xl bg-surface-hover">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Bids received</p>
-                  <p className="text-xl font-bold text-text-primary mt-1">{Number(quote.partner_quotes_count) || 0}</p>
+                  <p className="text-xl font-bold text-text-primary mt-1 tabular-nums">{bidsReceivedCount}</p>
                 </div>
               </div>
               <div className="p-4 rounded-xl bg-surface-hover">
@@ -1544,7 +1577,7 @@ function QuoteDetailDrawer({
                       <p className="text-[11px] text-amber-900/85 dark:text-amber-100/85 leading-snug">
                         You can still change <strong className="font-semibold text-amber-950 dark:text-amber-50">line items, scope, dates, deposit, message</strong>, use the{" "}
                         <strong className="font-semibold text-amber-950 dark:text-amber-50">customer sell scale</strong> below, and review <strong className="font-semibold text-amber-950 dark:text-amber-50">Bid Summary</strong>.{" "}
-                        Use <strong className="font-semibold text-amber-950 dark:text-amber-50">Save proposal</strong> to store only, or{" "}
+                        Use <strong className="font-semibold text-amber-950 dark:text-amber-50">Save Quote</strong> to store only, or{" "}
                         <strong className="font-semibold text-amber-950 dark:text-amber-50">{quotePdfEmailedBefore ? "Resend Quote" : "Email PDF to customer"}</strong> under Move this quote to email the PDF.
                       </p>
                     </div>
@@ -1605,45 +1638,6 @@ function QuoteDetailDrawer({
                         </div>
                       </div>
                     </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="primary"
-                      className="mt-2 w-full"
-                      disabled={panelSaving}
-                      icon={panelSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
-                      onClick={async () => {
-                        const pc = proposalPartnerTotal;
-                        const sp = lineTotal;
-                        const marginPct = marginPctOnSell(sp, pc);
-                        const oldSummary = `Partner £${Number(quote.partner_cost ?? quote.cost ?? 0).toFixed(2)}, Sell £${Number(quote.sell_price ?? quote.total_value ?? 0).toFixed(2)}, Margin ${quote.margin_percent ?? 0}%`;
-                        const newSummary = `Partner £${pc.toFixed(2)}, Sell £${sp.toFixed(2)}, Margin ${marginPct}%`;
-                        setPanelSaving(true);
-                        try {
-                          const updated = await persistProposalToQuote();
-                          await logAudit({
-                            entityType: "quote",
-                            entityId: quote.id,
-                            entityRef: quote.reference,
-                            action: "updated",
-                            fieldName: "quote_figures",
-                            oldValue: oldSummary,
-                            newValue: newSummary,
-                            userId: profile?.id,
-                            userName: profile?.full_name,
-                            metadata: { partner_cost: pc, sell_price: sp, margin_percent: marginPct },
-                          });
-                          onQuoteUpdate?.(updated);
-                          toast.success("Lines and quote figures saved");
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "Failed to update");
-                        } finally {
-                          setPanelSaving(false);
-                        }
-                      }}
-                    >
-                      {panelSaving ? "Saving…" : "Save lines & quote figures"}
-                    </Button>
                   </div>
 
                   <div className="rounded-xl border border-border-light bg-card/80 dark:bg-surface-secondary/30 p-3 space-y-3">
@@ -1797,12 +1791,14 @@ function QuoteDetailDrawer({
                     <Button
                       type="button"
                       size="sm"
-                      variant="outline"
+                      variant="primary"
                       disabled={proposalSaving}
+                      loading={proposalSaving}
                       onClick={() => void saveProposalDraft()}
-                      icon={proposalSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      className="!bg-[#C4461F] hover:!bg-[#a83a19] !shadow-md !shadow-[#C4461F]/25 focus-visible:!ring-[#C4461F]/40 border-0"
+                      icon={proposalSaving ? undefined : <Save className="h-3.5 w-3.5" />}
                     >
-                      {proposalSaving ? "Saving…" : "Save proposal"}
+                      {proposalSaving ? "Saving…" : "Save Quote"}
                     </Button>
                   </div>
 
@@ -1820,7 +1816,7 @@ function QuoteDetailDrawer({
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer PDF preview</p>
                 </div>
                 <p className="text-[11px] text-text-tertiary">
-                  Matches the PDF attached when you email the client. Uses <strong className="text-text-secondary">saved</strong> scope, line items and figures — save the proposal or quote figures to refresh.
+                  Matches the PDF attached when you email the client. Uses <strong className="text-text-secondary">saved</strong> scope, line items and figures — use <strong className="text-text-secondary">Save Quote</strong> to refresh.
                 </p>
                 <div className="rounded-lg border border-border bg-white dark:bg-zinc-900 overflow-hidden">
                   <iframe
@@ -1839,7 +1835,7 @@ function QuoteDetailDrawer({
                   {quote.status === "awaiting_customer" ? (
                     <>
                       The customer uses <strong className="text-text-secondary">Accept</strong> or <strong className="text-text-secondary">Reject</strong> in the email. Edit the quote anytime,{" "}
-                      <strong className="text-text-secondary">Save proposal</strong> if needed, then use{" "}
+                      <strong className="text-text-secondary">Save Quote</strong> if needed, then use{" "}
                       <strong className="text-text-secondary">{quotePdfEmailedBefore ? "Resend Quote" : "Email PDF to customer"}</strong> to send or update the PDF.
                     </>
                   ) : (
