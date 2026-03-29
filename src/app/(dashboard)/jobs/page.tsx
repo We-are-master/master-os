@@ -20,7 +20,7 @@ import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon,
   ArrowRight, Briefcase, Receipt,
   MapPin, Building2, TrendingUp,
-  CheckCircle2, AlertTriangle, XCircle,
+  AlertTriangle, XCircle, PoundSterling,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -50,9 +50,9 @@ import {
   endOfLocalWeekSunday,
   startOfLocalMonth,
   endOfLocalMonth,
+  formatArrivalTimeRange,
 } from "@/lib/schedule-calendar";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
-import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow } from "@/lib/job-arrival-window";
 import { jobBillableRevenue, jobMarginPercent, jobProfit } from "@/lib/job-financials";
 
 const JOB_STATUSES = ["unassigned", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
@@ -193,6 +193,7 @@ function JobsPageContent() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
   const [kpiFinancialLoading, setKpiFinancialLoading] = useState(true);
+  const [totalRevenue, setTotalRevenue] = useState(0);
   const [avgTicket, setAvgTicket] = useState(0);
   const [avgMarginPct, setAvgMarginPct] = useState(0);
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
@@ -265,6 +266,7 @@ function JobsPageContent() {
       setTabCounts(counts);
       const pipelineRows = rows.filter((r) => r.status !== "cancelled");
       const ticketSum = pipelineRows.reduce((s, r) => s + jobBillableRevenue(r), 0);
+      setTotalRevenue(ticketSum);
       setAvgTicket(pipelineRows.length ? ticketSum / pipelineRows.length : 0);
       const activeRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "completed");
       const margins = activeRows.map((r) => jobMarginPercent(r));
@@ -817,7 +819,15 @@ function JobsPageContent() {
           <KpiCard className="min-h-[128px] h-full" title="Active Jobs" value={activeJobsKpiCount} format="number" icon={Briefcase} accent="blue" />
           <KpiCard
             className="min-h-[128px] h-full"
-            title="Avg. ticket"
+            title="Revenue"
+            value={kpiFinancialLoading ? "—" : formatCurrencyPrecise(totalRevenue)}
+            format="none"
+            icon={PoundSterling}
+            accent="emerald"
+          />
+          <KpiCard
+            className="min-h-[128px] h-full"
+            title="Avg ticket"
             value={kpiFinancialLoading ? "—" : formatCurrencyPrecise(avgTicket)}
             format="none"
             icon={Receipt}
@@ -825,18 +835,17 @@ function JobsPageContent() {
           />
           <KpiCard
             className="min-h-[128px] h-full"
-            title="Avg. margin"
+            title="Avg margin"
             value={kpiFinancialLoading ? "—" : avgMarginPct}
             format={kpiFinancialLoading ? "none" : "percent"}
             icon={TrendingUp}
             accent="amber"
           />
-          <KpiCard className="min-h-[128px] h-full" title="Completed" value={tabCounts.completed ?? 0} format="number" icon={CheckCircle2} accent="emerald" />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
-            <div className="min-w-0 overflow-x-auto pb-1 -mb-1">
+            <div className="min-w-0 flex-1 pb-1 -mb-1">
               <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -900,7 +909,7 @@ export default function JobsPage() {
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
   const [form, setForm] = useState({
-    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "", job_type: "fixed", scope: "",
+    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "", job_type: "fixed", scope: "",
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -913,6 +922,15 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       .catch(() => setPartners([]));
   }, [open]);
 
+  const clientVisibleArrivalPreview = useMemo(() => {
+    const d = form.scheduled_date.trim();
+    const f = form.arrival_from.trim();
+    const t = form.arrival_to.trim();
+    if (!d || !f || !t) return null;
+    const range = formatArrivalTimeRange(`${d}T${f}:00`, `${d}T${t}:00`);
+    return range ? `Client & partner will see: Arrival time (${range})` : null;
+  }, [form.scheduled_date, form.arrival_from, form.arrival_to]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Type of work is required"); return; }
@@ -920,20 +938,26 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     const hasPartner = !!(form.partner_id || form.partner_ids.length > 0);
     const scheduled_date = form.scheduled_date || undefined;
     const hasFrom = !!form.arrival_from?.trim();
-    const windowMinsRaw = form.arrival_window_mins?.trim();
-    const windowMins = windowMinsRaw ? Number(windowMinsRaw) : NaN;
-    const hasWindow = Number.isFinite(windowMins) && windowMins > 0;
-    if ((hasFrom && !hasWindow) || (!hasFrom && hasWindow)) {
-      toast.error("Set both arrival from and arrival window length, or leave both empty.");
+    const hasTo = !!form.arrival_to?.trim();
+    if ((hasFrom && !hasTo) || (!hasFrom && hasTo)) {
+      toast.error("Set both arrival window start and end, or leave both empty.");
       return;
+    }
+    if (hasFrom && hasTo && scheduled_date?.trim()) {
+      const startMs = new Date(`${scheduled_date}T${form.arrival_from}:00`).getTime();
+      const endMs = new Date(`${scheduled_date}T${form.arrival_to}:00`).getTime();
+      if (!(endMs > startMs)) {
+        toast.error("Arrival window end must be after start.");
+        return;
+      }
     }
     if (hasPartner) {
       if (!scheduled_date?.trim()) {
         toast.error("Set a scheduled date before assigning a partner.");
         return;
       }
-      if (!hasFrom || !hasWindow) {
-        toast.error("Set arrival from and window length when assigning a partner.");
+      if (!hasFrom || !hasTo) {
+        toast.error("Set the arrival window (from and to) when assigning a partner.");
         return;
       }
     }
@@ -944,9 +968,9 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     }
     let scheduled_start_at: string | undefined;
     let scheduled_end_at: string | undefined;
-    if (scheduled_date && hasFrom && hasWindow) {
+    if (scheduled_date && hasFrom && hasTo) {
       scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
-      scheduled_end_at = scheduledEndFromWindow(scheduled_date, form.arrival_from, windowMins);
+      scheduled_end_at = `${scheduled_date}T${form.arrival_to}:00`;
     } else if (scheduled_date && hasFrom) {
       scheduled_start_at = `${scheduled_date}T${form.arrival_from}:00`;
     }
@@ -972,7 +996,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
     });
-    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "", job_type: "fixed", scope: "" });
+    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_to: "", expected_finish_date: "", job_type: "fixed", scope: "" });
     setClientAddress({ client_name: "", property_address: "" });
   };
 
@@ -990,17 +1014,21 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
         />
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date</label><Input type="date" className="h-9 text-sm" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
-          <div><TimeSelect label="Arrival from" value={form.arrival_from} onChange={(v) => update("arrival_from", v)} /></div>
-          <Select
-            label="Arrival window"
-            value={form.arrival_window_mins}
-            onChange={(e) => update("arrival_window_mins", e.target.value)}
-            options={[...ARRIVAL_WINDOW_OPTIONS]}
-          />
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish date</label><Input type="date" className="h-9 text-sm" value={form.expected_finish_date} onChange={(e) => update("expected_finish_date", e.target.value)} /></div>
+          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Start date</label><Input type="date" className="h-9 text-sm" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} /></div>
+          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish (date only)</label><Input type="date" className="h-9 text-sm" value={form.expected_finish_date} onChange={(e) => update("expected_finish_date", e.target.value)} /></div>
         </div>
-        <p className="text-[10px] text-text-tertiary -mt-2">Arrival window = start time plus the length you pick (end time is calculated). Expected finish is date-only for the calendar. With a partner, arrival date, start time, and window length are required.</p>
+        <div className="space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Arrival time (range)</p>
+          <p className="text-[10px] text-text-tertiary -mt-1">Set start and end of the arrival window — this is what clients and partners see (e.g. 11AM – 2PM).</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <TimeSelect label="From" value={form.arrival_from} onChange={(v) => update("arrival_from", v)} />
+            <TimeSelect label="To" value={form.arrival_to} onChange={(v) => update("arrival_to", v)} />
+          </div>
+        </div>
+        {clientVisibleArrivalPreview ? (
+          <p className="text-[11px] font-medium text-text-secondary -mt-1">{clientVisibleArrivalPreview}</p>
+        ) : null}
+        <p className="text-[10px] text-text-tertiary -mt-2">Expected finish is calendar-only (no time). With a partner, start date and both arrival times are required. Late applies after the window ends.</p>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work {form.partner_id || form.partner_ids.length > 0 ? "*" : ""}</label>
           <textarea
@@ -1138,7 +1166,7 @@ function JobsCalendarView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading
                           : "bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
                     }`}
                   >
-                    {kind === "start" ? "Arrival" : kind === "end" ? "Expected finish" : "Ongoing"} · {job.reference}
+                    {kind === "start" ? "Start / arrival" : kind === "end" ? "Expected finish" : "Ongoing"} · {job.reference}
                   </button>
                 ))}
                 {(jobsByDay[day] ?? []).length > 2 && <span className="text-[10px] text-text-tertiary">+{(jobsByDay[day] ?? []).length - 2}</span>}

@@ -141,6 +141,8 @@ export interface Quote {
   scope?: string;
   /** Optional intro text for the customer email (saved on quote before send). */
   email_custom_message?: string | null;
+  /** First successful customer PDF email timestamp (resends update this). */
+  customer_pdf_sent_at?: string | null;
   property_address?: string;
   partner_id?: string;
   partner_name?: string;

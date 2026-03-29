@@ -50,6 +50,7 @@ import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { getErrorMessage, isUuid, isValidIsoDateTime, parseIsoDateOnly } from "@/lib/utils";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { formatArrivalTimeRange } from "@/lib/schedule-calendar";
 import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback } from "@/lib/type-of-work";
 import {
   parseBidProposalFromNotes,
@@ -1011,6 +1012,7 @@ function QuoteDetailDrawer({
 
   useEffect(() => {
     if (quote.status !== "awaiting_customer" || tab !== "overview") return;
+    if (quote.customer_pdf_sent_at || quoteEmailedInSession || sendState === "sent") return;
     const timer = setTimeout(() => {
       setPreviewLoading(true);
       const recipientName = quote.client_name ?? "";
@@ -1045,7 +1047,7 @@ function QuoteDetailDrawer({
         .finally(() => setPreviewLoading(false));
     }, 300);
     return () => clearTimeout(timer);
-  }, [tab, quote.id, quote.status, quote.client_name, customMessage, lineItems, depositRequired, scopeText]);
+  }, [tab, quote.id, quote.status, quote.client_name, quote.customer_pdf_sent_at, quoteEmailedInSession, sendState, customMessage, lineItems, depositRequired, scopeText]);
 
   const loadLineItems = async (quoteId: string, q: Quote) => {
     const supabase = getSupabase();
@@ -1131,6 +1133,10 @@ function QuoteDetailDrawer({
     sendDepositNumber >= 0 &&
     !Number.isNaN(sendDepositNumber) &&
     bidPayloadTrimmedString(sendEmail as unknown).includes("@");
+
+  const customerPdfAlreadySent =
+    Boolean(quote.customer_pdf_sent_at) || quoteEmailedInSession || sendState === "sent";
+  const showSaveAndEmailCustomerBlock = quote.status === "awaiting_customer" && !customerPdfAlreadySent;
 
   const drawerTabs = [
     { id: "overview", label: "Review & Send" },
@@ -1249,7 +1255,7 @@ function QuoteDetailDrawer({
 
   const handleSendToCustomer = async () => {
     if (!sendEmail) { toast.error("Enter a recipient email"); return; }
-    const isResend = quoteEmailedInSession || sendState === "sent";
+    const isResend = quoteEmailedInSession || sendState === "sent" || Boolean(quote.customer_pdf_sent_at);
     setSendState("sending");
     try {
       await persistProposalToQuote();
@@ -1578,9 +1584,18 @@ function QuoteDetailDrawer({
                       <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">Edit after sending</p>
                       <p className="text-[11px] text-amber-900/85 dark:text-amber-100/85 leading-snug">
                         You can still change <strong className="font-semibold text-amber-950 dark:text-amber-50">line items, scope, dates, deposit, message</strong>, use the{" "}
-                        <strong className="font-semibold text-amber-950 dark:text-amber-50">customer sell scale</strong> below, and review <strong className="font-semibold text-amber-950 dark:text-amber-50">Bid Summary</strong>. Use{" "}
-                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Save proposal</strong> to store only, or{" "}
-                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Save & send PDF</strong> below to save and email an updated PDF in one step.
+                        <strong className="font-semibold text-amber-950 dark:text-amber-50">customer sell scale</strong> below, and review <strong className="font-semibold text-amber-950 dark:text-amber-50">Bid Summary</strong>.{" "}
+                        {showSaveAndEmailCustomerBlock ? (
+                          <>
+                            Use <strong className="font-semibold text-amber-950 dark:text-amber-50">Save proposal</strong> to store only, or{" "}
+                            <strong className="font-semibold text-amber-950 dark:text-amber-50">Save & send PDF</strong> below to save and email an updated PDF in one step.
+                          </>
+                        ) : (
+                          <>
+                            Use <strong className="font-semibold text-amber-950 dark:text-amber-50">Save proposal</strong> to store only, or{" "}
+                            <strong className="font-semibold text-amber-950 dark:text-amber-50">Resend Quote</strong> under Move this quote to email an updated PDF.
+                          </>
+                        )}
                       </p>
                     </div>
                   )}
@@ -1842,7 +1857,7 @@ function QuoteDetailDrawer({
                 </div>
               </div>
 
-              {quote.status === "awaiting_customer" && (
+              {showSaveAndEmailCustomerBlock && (
                 <div className="rounded-xl border border-primary/15 bg-gradient-to-br from-primary/5 to-transparent p-4 space-y-4">
                   <div className="flex items-start gap-2">
                     <Mail className="h-4 w-4 text-primary shrink-0 mt-0.5" />
@@ -1922,18 +1937,8 @@ function QuoteDetailDrawer({
                     icon={sendState === "sending" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                     className="w-full"
                   >
-                    {sendState === "sending"
-                      ? "Saving & sending…"
-                      : quoteEmailedInSession || sendState === "sent"
-                        ? "Save & resend PDF to customer"
-                        : "Save & send PDF to customer"}
+                    {sendState === "sending" ? "Saving & sending…" : "Save & send PDF to customer"}
                   </Button>
-                  {(sendState === "sent" || quoteEmailedInSession) && (
-                    <p className="text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
-                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                      Last PDF emailed to {sendEmail}. Edit anything above, then use this button again or <strong className="font-semibold">Resend Quote</strong> next to Mark Accepted.
-                    </p>
-                  )}
                 </div>
               )}
 
@@ -1941,7 +1946,11 @@ function QuoteDetailDrawer({
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Move this quote</p>
                 <p className="text-[11px] text-text-tertiary -mt-1 mb-1">
                   {quote.status === "awaiting_customer" ? (
-                    <>The customer uses <strong className="text-text-secondary">Accept</strong> or <strong className="text-text-secondary">Reject</strong> in the email. You can edit the quote anytime, then <strong className="text-text-secondary">Save & send PDF</strong> or <strong className="text-text-secondary">Resend Quote</strong> here.</>
+                    customerPdfAlreadySent ? (
+                      <>The customer uses <strong className="text-text-secondary">Accept</strong> or <strong className="text-text-secondary">Reject</strong> in the email. Edit the quote anytime, <strong className="text-text-secondary">Save proposal</strong> if needed, then <strong className="text-text-secondary">Resend Quote</strong> to email an updated PDF.</>
+                    ) : (
+                      <>The customer uses <strong className="text-text-secondary">Accept</strong> or <strong className="text-text-secondary">Reject</strong> in the email. You can edit the quote anytime, then <strong className="text-text-secondary">Save & send PDF</strong> or <strong className="text-text-secondary">Resend Quote</strong> here.</>
+                    )
                   ) : (
                     <>After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer, then email the PDF from the section below.</>
                   )}
@@ -2318,6 +2327,15 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     [form.title]
   );
 
+  const clientArrivalPreview = useMemo(() => {
+    const d = form.scheduled_date?.trim();
+    const f = form.arrival_from?.trim();
+    const t = form.arrival_to?.trim();
+    if (!d || !f || !t) return null;
+    const range = formatArrivalTimeRange(`${d}T${f}:00`, `${d}T${t}:00`);
+    return range ? `Client & partner will see: Arrival time (${range})` : null;
+  }, [form.scheduled_date, form.arrival_from, form.arrival_to]);
+
   if (!quote) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const handleSubmit = (e: React.FormEvent) => {
@@ -2441,21 +2459,28 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
           </p>
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scheduled date</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Start date</label>
           <Input type="date" value={form.scheduled_date} onChange={(e) => update("scheduled_date", e.target.value)} className="h-10 max-w-[200px]" />
           <p className="text-[10px] text-text-tertiary mt-1">
-            Pre-filled from the client&apos;s preferred start date on the quote (option 1, else option 2) when set.
+            Pre-filled from the client&apos;s preferred start on the quote (option 1, else option 2) when set.
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival window from</label><Input type="time" value={form.arrival_from} onChange={(e) => update("arrival_from", e.target.value)} className="h-10" /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival window to</label><Input type="time" value={form.arrival_to} onChange={(e) => update("arrival_to", e.target.value)} className="h-10" /></div>
-        </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish date</label>
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Arrival time (range)</p>
+          <p className="text-[10px] text-text-tertiary mb-2">Set start and end of the arrival window — this is what clients and partners see (e.g. 11AM – 2PM).</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">From</label><Input type="time" value={form.arrival_from} onChange={(e) => update("arrival_from", e.target.value)} className="h-10" /></div>
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">To</label><Input type="time" value={form.arrival_to} onChange={(e) => update("arrival_to", e.target.value)} className="h-10" /></div>
+          </div>
+        </div>
+        {clientArrivalPreview ? (
+          <p className="text-[11px] font-medium text-text-secondary -mt-1">{clientArrivalPreview}</p>
+        ) : null}
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish (date only)</label>
           <Input type="date" value={form.expected_finish_date} onChange={(e) => update("expected_finish_date", e.target.value)} className="h-10 max-w-[200px]" />
         </div>
-        <p className="text-[10px] text-text-tertiary -mt-2">With a partner, date and both window times are required. Late applies after the window ends. Expected finish is date-only for the calendar span.</p>
+        <p className="text-[10px] text-text-tertiary -mt-2">With a partner, start date and both arrival times are required. Late applies after the window ends. Expected finish is date-only (calendar span, no time).</p>
         <Select label="Partner" options={[{ value: "", label: "No partner" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         <div className="grid grid-cols-3 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min={0} step="0.01" /></div>
