@@ -15,7 +15,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { staggerContainer, staggerItem, fadeInUp } from "@/lib/motion";
 import {
   Plus, ChevronLeft, ChevronRight, Calendar as CalIcon,
-  Briefcase, AlertTriangle, MapPin, DollarSign, User,
+  Briefcase, AlertTriangle, MapPin, DollarSign, User, ExternalLink,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
@@ -61,6 +61,30 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 };
 
 type ScheduleBarSegment = "only" | "first" | "middle" | "last";
+type PartnerPresenceRow = {
+  id: string;
+  name: string;
+  trade: string;
+  authUserId: string | null;
+  status: "online" | "offline";
+  lastSeenIso: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  accuracy: number | null;
+};
+
+function formatLastSeenLabel(iso: string | null): string {
+  if (!iso) return "No app location yet";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(diffMs) || diffMs < 0) return "Just now";
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 function scheduleBarSegment(
   job: Job,
@@ -119,6 +143,7 @@ export default function SchedulePage() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedJobAccountName, setSelectedJobAccountName] = useState<string | null>(null);
   const [legendBarChipsOpen, setLegendBarChipsOpen] = useState(false);
+  const [partnerPresence, setPartnerPresence] = useState<PartnerPresenceRow[]>([]);
 
   const loadJobs = useCallback(async () => {
     setLoading(true);
@@ -204,6 +229,70 @@ export default function SchedulePage() {
     } catch { /* cosmetic */ }
   }, []);
 
+  const loadPartnerPresence = useCallback(async () => {
+    const supabase = getSupabase();
+    try {
+      const [partnersRes, locationsRes] = await Promise.all([
+        supabase
+          .from("partners")
+          .select("id, company_name, contact_name, trade, auth_user_id")
+          .is("deleted_at", null),
+        supabase
+          .from("user_locations")
+          .select("user_id, latitude, longitude, accuracy, is_active, created_at")
+          .order("created_at", { ascending: false })
+          .limit(2000),
+      ]);
+      const partners = (partnersRes.data ?? []) as Array<{
+        id: string;
+        company_name?: string | null;
+        contact_name?: string | null;
+        trade?: string | null;
+        auth_user_id?: string | null;
+      }>;
+      const latestByUser = new Map<
+        string,
+        { latitude: number; longitude: number; accuracy: number | null; is_active: boolean | null; created_at: string }
+      >();
+      for (const row of locationsRes.data ?? []) {
+        const uid = String((row as { user_id?: string }).user_id ?? "");
+        if (!uid || latestByUser.has(uid)) continue;
+        latestByUser.set(uid, {
+          latitude: Number((row as { latitude: number }).latitude),
+          longitude: Number((row as { longitude: number }).longitude),
+          accuracy: (row as { accuracy?: number | null }).accuracy ?? null,
+          is_active: (row as { is_active?: boolean | null }).is_active ?? null,
+          created_at: String((row as { created_at: string }).created_at),
+        });
+      }
+      const onlineWindowMs = 2 * 60 * 1000;
+      const mapped: PartnerPresenceRow[] = partners
+        .map((p) => {
+          const loc = p.auth_user_id ? latestByUser.get(p.auth_user_id) : undefined;
+          const isFresh = !!loc && Date.now() - new Date(loc.created_at).getTime() <= onlineWindowMs;
+          const isOnline = !!loc && loc.is_active !== false && isFresh;
+          return {
+            id: p.id,
+            name: (p.company_name?.trim() || p.contact_name?.trim() || "Unnamed partner"),
+            trade: p.trade?.trim() || "General",
+            authUserId: p.auth_user_id ?? null,
+            status: isOnline ? "online" : "offline",
+            lastSeenIso: loc?.created_at ?? null,
+            latitude: Number.isFinite(loc?.latitude) ? (loc?.latitude as number) : null,
+            longitude: Number.isFinite(loc?.longitude) ? (loc?.longitude as number) : null,
+            accuracy: loc?.accuracy ?? null,
+          };
+        })
+        .sort((a, b) => {
+          if (a.status !== b.status) return a.status === "online" ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+      setPartnerPresence(mapped);
+    } catch {
+      setPartnerPresence([]);
+    }
+  }, []);
+
   const [stats, setStats] = useState({ unscheduled: 0, active: 0 });
 
   useEffect(() => {
@@ -213,6 +302,10 @@ export default function SchedulePage() {
   useEffect(() => {
     loadAllJobs();
   }, [loadAllJobs]);
+
+  useEffect(() => {
+    loadPartnerPresence();
+  }, [loadPartnerPresence]);
 
   useEffect(() => {
     const clientId = selectedJob?.client_id?.trim();
@@ -376,6 +469,63 @@ export default function SchedulePage() {
           <KpiCard title="Unscheduled" value={stats.unscheduled} format="number" description="Need date assignment" icon={AlertTriangle} accent="amber" />
           <KpiCard title="Total revenue this month" value={monthRevenue} format="currency" icon={DollarSign} accent="purple" />
         </StaggerContainer>
+
+        <motion.div variants={fadeInUp} initial="hidden" animate="visible">
+          <Card>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-text-primary">Partner live map feed</h3>
+                <p className="text-xs text-text-tertiary mt-1">Online/offline from the app with last location update.</p>
+              </div>
+              <div className="text-xs text-text-tertiary">
+                {partnerPresence.filter((p) => p.status === "online").length} online / {partnerPresence.length} total
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {partnerPresence.map((p) => {
+                const hasCoords = typeof p.latitude === "number" && typeof p.longitude === "number";
+                const mapsHref = hasCoords
+                  ? `https://www.google.com/maps?q=${p.latitude},${p.longitude}`
+                  : null;
+                return (
+                  <div key={p.id} className="rounded-xl border border-border-light bg-surface-hover/60 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-text-primary truncate">{p.name}</p>
+                      <Badge variant={p.status === "online" ? "success" : "default"} dot size="sm">
+                        {p.status === "online" ? "On" : "Off"}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-text-tertiary">{p.trade} • {formatLastSeenLabel(p.lastSeenIso)}</p>
+                    {hasCoords ? (
+                      <div className="text-[11px] text-text-secondary font-mono">
+                        {p.latitude?.toFixed(5)}, {p.longitude?.toFixed(5)}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-text-tertiary italic">No coordinates from app yet</p>
+                    )}
+                    {mapsHref && (
+                      <a
+                        href={mapsHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                      >
+                        <MapPin className="h-3.5 w-3.5" />
+                        Open on map
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
+                );
+              })}
+              {partnerPresence.length === 0 && (
+                <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/30 p-4 text-sm text-text-tertiary">
+                  No partner locations available yet.
+                </div>
+              )}
+            </div>
+          </Card>
+        </motion.div>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <Card padding="none">

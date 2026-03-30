@@ -565,41 +565,46 @@ function QuotesPageContent() {
         let depositInvId: string | null = null;
         let finalInvId: string | null = null;
 
-        if (scheduledDeposit > 0.01) {
-          const dep = await createInvoice({
-            client_name: formData.client_name,
-            job_reference: job.reference,
-            amount: scheduledDeposit,
-            status: "pending",
-            due_date: dueStr,
-            collection_stage: "awaiting_deposit",
-            invoice_kind: "deposit",
-          });
-          depositInvId = dep.id;
-        }
-        if (scheduledFinal > 0.01) {
-          const fin = await createInvoice({
-            client_name: formData.client_name,
-            job_reference: job.reference,
-            amount: scheduledFinal,
-            status: "pending",
-            due_date: dueStr,
-            collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
-            invoice_kind: "final",
-          });
-          finalInvId = fin.id;
-        }
+        const [depositInv, finalInv] = await Promise.all([
+          scheduledDeposit > 0.01
+            ? createInvoice({
+                client_name: formData.client_name,
+                job_reference: job.reference,
+                amount: scheduledDeposit,
+                status: "pending",
+                due_date: dueStr,
+                collection_stage: "awaiting_deposit",
+                invoice_kind: "deposit",
+              })
+            : Promise.resolve(null),
+          scheduledFinal > 0.01
+            ? createInvoice({
+                client_name: formData.client_name,
+                job_reference: job.reference,
+                amount: scheduledFinal,
+                status: "pending",
+                due_date: dueStr,
+                collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
+                invoice_kind: "final",
+              })
+            : Promise.resolve(null),
+        ]);
+        depositInvId = depositInv?.id ?? null;
+        finalInvId = finalInv?.id ?? null;
 
         const primaryInvoiceId = depositInvId ?? finalInvId;
         if (primaryInvoiceId) {
           await updateJob(job.id, { invoice_id: primaryInvoiceId });
         }
 
-        await updateQuote(quoteToConvert.id, { status: "converted_to_job" });
-        await logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: { from_quote: quoteToConvert.reference }, userId: profile?.id, userName: profile?.full_name });
+        await Promise.all([
+          updateQuote(quoteToConvert.id, { status: "converted_to_job" }),
+          logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: { from_quote: quoteToConvert.reference }, userId: profile?.id, userName: profile?.full_name }),
+        ]);
         setQuoteToConvert(null); setSelectedQuote(null);
         toast.success(`Job ${job.reference} created`);
-        refresh(); loadCounts();
+        refresh();
+        void loadCounts();
         router.push(`/jobs?jobId=${job.id}`);
       } catch (err) {
         toast.error(getErrorMessage(err, "Failed to create job"));

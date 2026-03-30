@@ -258,7 +258,7 @@ export default function RequestsPage() {
         description: drawerFields.description,
         catalog_service_id: cid && isUuid(cid) ? cid : null,
         request_kind: kind,
-      });
+      }, { enrich: true });
       setSelectedRequest(updated);
       setPropertyAddressEditing(false);
       refreshSilent();
@@ -325,7 +325,7 @@ export default function RequestsPage() {
   const handleStatusChange = useCallback(
     async (id: string, newStatus: string, oldStatus?: string) => {
       try {
-        const updated = await updateRequestStatus(id, newStatus);
+        const updated = await updateRequestStatus(id, newStatus, { enrich: true });
         await logAudit({
           entityType: "request", entityId: id, action: "status_changed",
           fieldName: "status", oldValue: oldStatus, newValue: newStatus,
@@ -419,7 +419,7 @@ export default function RequestsPage() {
           setSelectedRequest(result);
         }
         refresh();
-        await loadCounts();
+        void loadCounts();
         toast.success("Request created successfully");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to create request");
@@ -1080,17 +1080,19 @@ export default function RequestsPage() {
               sort_order: i,
             }));
             if (items.length > 0) await supabase.from("quote_line_items").insert(items);
-            await updateRequestStatus(req.id, "converted_to_quote");
-            await logAudit({
-              entityType: "request", entityId: req.id, entityRef: req.reference,
-              action: "status_changed", fieldName: "status",
-              oldValue: req.status, newValue: "converted_to_quote",
-              metadata: { converted_to_quote: quote.reference, type: "manual" },
-              userId: profile?.id, userName: profile?.full_name,
-            });
+            await Promise.all([
+              updateRequestStatus(req.id, "converted_to_quote"),
+              logAudit({
+                entityType: "request", entityId: req.id, entityRef: req.reference,
+                action: "status_changed", fieldName: "status",
+                oldValue: req.status, newValue: "converted_to_quote",
+                metadata: { converted_to_quote: quote.reference, type: "manual" },
+                userId: profile?.id, userName: profile?.full_name,
+              }),
+            ]);
             setManualQuoteOpen(null);
             refreshSilent();
-            loadCounts();
+            void loadCounts();
             toast.success(`Quote ${quote.reference} created with ${lineItems.length} line items.`);
             router.push(`/quotes?quoteId=${encodeURIComponent(quote.id)}&drawerTab=overview`);
           } catch (err) {
@@ -1154,15 +1156,17 @@ export default function RequestsPage() {
               owner_name: profile?.full_name,
               job_type: data.job_type ?? "fixed",
             });
-            await updateRequestStatus(convertToJobOpen.id, "converted_to_job");
-            await logAudit({
-              entityType: "job", entityId: job.id, entityRef: job.reference,
-              action: "created", metadata: { from_request: convertToJobOpen.reference },
-              userId: profile?.id, userName: profile?.full_name,
-            });
+            await Promise.all([
+              updateRequestStatus(convertToJobOpen.id, "converted_to_job"),
+              logAudit({
+                entityType: "job", entityId: job.id, entityRef: job.reference,
+                action: "created", metadata: { from_request: convertToJobOpen.reference },
+                userId: profile?.id, userName: profile?.full_name,
+              }),
+            ]);
             setConvertToJobOpen(null);
             refreshSilent();
-            loadCounts();
+            void loadCounts();
             toast.success(`Job ${job.reference} created`);
             router.push(`/jobs?jobId=${job.id}`);
           } catch (err) {
