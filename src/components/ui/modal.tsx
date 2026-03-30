@@ -50,12 +50,12 @@ export function Modal({
             animate="visible"
             exit="exit"
             className={cn(
-              "relative w-full bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden",
+              "relative w-full max-h-[min(90vh,100dvh-1rem)] flex flex-col bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden",
               sizeStyles[size],
               className
             )}
           >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border-light">
+            <div className="flex shrink-0 items-center justify-between px-6 py-4 border-b border-border-light">
               <div>
                 <h2 className="text-base font-semibold text-text-primary">{title}</h2>
                 {subtitle && <p className="text-xs text-text-tertiary mt-0.5">{subtitle}</p>}
@@ -68,7 +68,14 @@ export function Modal({
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className={cn(scrollBody ? "max-h-[70vh] overflow-y-auto" : "overflow-visible")}>
+            {/* No flex-1 here: it stretches the scroll region and leaves empty space below short content. */}
+            <div
+              className={cn(
+                scrollBody
+                  ? "min-h-0 overflow-y-auto overscroll-contain max-h-[min(70vh,calc(90vh-5rem))]"
+                  : "min-h-0 overflow-hidden"
+              )}
+            >
               {children}
             </div>
           </motion.div>
