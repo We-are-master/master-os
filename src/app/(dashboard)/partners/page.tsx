@@ -654,7 +654,28 @@ const REQUIRED_PARTNER_DOCS = [
     docType: "insurance",
     aliases: ["public liability", "insurance", "liability insurance"],
   },
+  {
+    id: "professional_certificates",
+    name: "Professional Certificates",
+    description: "Gas Safe, F-Gas, appliance repair, and trade certificates as required",
+    docType: "certification",
+    aliases: ["professional certificate", "gas safe", "f-gas", "appliance repair", "certificate"],
+  },
 ] as const;
+
+const CERT_REQUIREMENTS_BY_TRADE: Record<string, string[]> = {
+  Plumber: ["Water Regulations", "WRAS"],
+  Electrician: ["NICEIC", "ECS Card", "18th Edition Wiring Regulations"],
+  "Gas Safety Certificate": ["Gas Safe Certificate", "ACS Gas Certificate"],
+  "PAT Testing": ["PAT Testing Certificate"],
+  "PAT EICR": ["PAT Testing Certificate", "EICR Qualification"],
+  EICR: ["EICR Qualification"],
+  "Fire Alarm Certificate": ["Fire Alarm Certification"],
+  "Emergency Lighting Certificate": ["Emergency Lighting Certification"],
+  "Fire Extinguisher Service": ["BAFE / extinguisher servicing certificate"],
+  Builder: ["CSCS Card"],
+  Carpenter: ["CSCS Card"],
+};
 
 const docStatusConfig: Record<string, { label: string; variant: "default" | "success" | "warning" | "danger" }> = {
   pending: { label: "Pending Review", variant: "warning" },
@@ -663,9 +684,17 @@ const docStatusConfig: Record<string, { label: string; variant: "default" | "suc
   expired: { label: "Expired", variant: "default" },
 };
 
+type RequiredDocDef = {
+  id: string;
+  name: string;
+  description: string;
+  docType: string;
+  aliases: readonly string[];
+};
+
 function pickRequiredDocMatch(
   docs: PartnerDoc[],
-  req: (typeof REQUIRED_PARTNER_DOCS)[number],
+  req: RequiredDocDef,
 ): PartnerDoc | null {
   const aliasMatch = docs.filter((d) => {
     const n = String(d.name ?? "").toLowerCase();
@@ -677,6 +706,33 @@ function pickRequiredDocMatch(
   return [...candidates].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   )[0]!;
+}
+
+function buildTradeCertificateRequirements(trades: string[] | null | undefined): {
+  id: string;
+  name: string;
+  description: string;
+  docType: string;
+  aliases: string[];
+}[] {
+  const out: { id: string; name: string; description: string; docType: string; aliases: string[] }[] = [];
+  const seen = new Set<string>();
+  for (const t of trades ?? []) {
+    const certs = CERT_REQUIREMENTS_BY_TRADE[t] ?? [];
+    for (const cert of certs) {
+      const key = cert.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: `trade-cert-${key.replace(/[^a-z0-9]+/g, "-")}`,
+        name: cert,
+        description: `Required for ${t} work`,
+        docType: "certification",
+        aliases: [key, "certificate", t.toLowerCase()],
+      });
+    }
+  }
+  return out;
 }
 
 function PartnerDocPreviewThumb({ path }: { path: string }) {
@@ -965,6 +1021,7 @@ function PartnerDetailDrawer({
   const [addDocOpen, setAddDocOpen] = useState(false);
   const [addDocSubmitting, setAddDocSubmitting] = useState(false);
   const [docPreset, setDocPreset] = useState<{ docType: string; name: string } | null>(null);
+  const [customCertName, setCustomCertName] = useState("");
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const partnerAvatarInputRef = useRef<HTMLInputElement>(null);
   const [selectedDoc, setSelectedDoc] = useState<PartnerDoc | null>(null);
@@ -2156,9 +2213,30 @@ function PartnerDetailDrawer({
               </Button>
             </div>
             <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
-              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Required documents</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Required documents</p>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={customCertName}
+                    onChange={(e) => setCustomCertName(e.target.value)}
+                    placeholder="Add custom certificate requirement"
+                    className="h-8 w-64"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!customCertName.trim()}
+                    onClick={() => {
+                      setDocPreset({ docType: "certification", name: customCertName.trim() });
+                      setAddDocOpen(true);
+                    }}
+                  >
+                    Add cert
+                  </Button>
+                </div>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {REQUIRED_PARTNER_DOCS.map((req) => {
+                {[...REQUIRED_PARTNER_DOCS, ...buildTradeCertificateRequirements(partner.trades?.length ? partner.trades : [partner.trade])].map((req) => {
                   const doc = pickRequiredDocMatch(documents, req);
                   const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
                   const now = new Date();
@@ -2203,6 +2281,7 @@ function PartnerDetailDrawer({
               onClose={() => {
                 setAddDocOpen(false);
                 setDocPreset(null);
+                setCustomCertName("");
               }}
               submitting={addDocSubmitting}
               onSubmit={handleAddDocument}
