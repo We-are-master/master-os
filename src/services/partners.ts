@@ -58,6 +58,27 @@ export async function listPartners(params: PartnerListParams): Promise<ListResul
   };
 }
 
+const LIST_ALL_PAGE_SIZE = 500;
+const LIST_ALL_MAX_PAGES = 100;
+
+/** Fetch every partner row (paginated server-side). PostgREST caps a single range; this loops until a short page. */
+export async function listPartnersAll(params: Omit<PartnerListParams, "page" | "pageSize"> = {}): Promise<Partner[]> {
+  const out: Partner[] = [];
+  const seen = new Set<string>();
+  for (let page = 1; page <= LIST_ALL_MAX_PAGES; page++) {
+    const r = await listPartners({ ...params, page, pageSize: LIST_ALL_PAGE_SIZE });
+    const rows = (r.data ?? []).filter((p): p is Partner => typeof p?.id === "string" && p.id.length > 0);
+    for (const p of rows) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        out.push(p);
+      }
+    }
+    if (rows.length < LIST_ALL_PAGE_SIZE) break;
+  }
+  return out;
+}
+
 export async function createPartner(
   input: Omit<Partner, "id" | "joined_at" | "rating" | "jobs_completed" | "total_earnings" | "compliance_score">
 ): Promise<Partner> {
