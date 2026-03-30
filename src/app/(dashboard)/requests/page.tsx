@@ -269,7 +269,7 @@ export default function RequestsPage() {
         description: drawerFields.description,
         catalog_service_id: cid && isUuid(cid) ? cid : null,
         request_kind: kind,
-      }, { enrich: true });
+      });
       setSelectedRequest(updated);
       setPropertyAddressEditing(false);
       refreshSilent();
@@ -336,7 +336,7 @@ export default function RequestsPage() {
   const handleStatusChange = useCallback(
     async (id: string, newStatus: string, oldStatus?: string) => {
       try {
-        const updated = await updateRequestStatus(id, newStatus, { enrich: true });
+        const updated = await updateRequestStatus(id, newStatus);
         await logAudit({
           entityType: "request", entityId: id, action: "status_changed",
           fieldName: "status", oldValue: oldStatus, newValue: newStatus,
@@ -410,7 +410,7 @@ export default function RequestsPage() {
         const toUpload = Array.from(list).slice(0, remain);
         const urls = await uploadQuoteInviteImages(toUpload, selectedRequest.id);
         const merged = mergeImageUrlLists(requestImageUrls, urls);
-        const updated = await updateRequest(selectedRequest.id, { images: merged }, { enrich: true });
+        const updated = await updateRequest(selectedRequest.id, { images: merged });
         setSelectedRequest(updated);
         setRequestImageUrls(normalizeJsonImageArray(updated.images));
         refreshSilent();
@@ -430,7 +430,7 @@ export default function RequestsPage() {
       setRequestPhotosSaving(true);
       try {
         const merged = requestImageUrls.filter((u) => u !== url);
-        const updated = await updateRequest(selectedRequest.id, { images: merged }, { enrich: true });
+        const updated = await updateRequest(selectedRequest.id, { images: merged });
         setSelectedRequest(updated);
         setRequestImageUrls(normalizeJsonImageArray(updated.images));
         refreshSilent();
@@ -913,7 +913,7 @@ export default function RequestsPage() {
                       />
                     )}
                     <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Description of the issue</label>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description</label>
                       <textarea
                         value={drawerFields.description}
                         onChange={(e) => setDrawerFields((f) => ({ ...f, description: e.target.value }))}
@@ -1104,6 +1104,7 @@ export default function RequestsPage() {
             const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
             const uploaded = invitePhotoFiles?.length ? await uploadQuoteInviteImages(invitePhotoFiles, req.id) : [];
             const mergedQuoteImages = mergeImageUrlLists(fromRequest, uploaded);
+            const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
             const quote = await createQuote({
               title: `${req.service_type} — ${clientAddress.client_name}`,
               client_id: clientAddress.client_id,
@@ -1125,11 +1126,34 @@ export default function RequestsPage() {
               customer_deposit_paid: false,
               partner_cost: 0,
               property_address: clientAddress.property_address,
-              scope: req.scope,
+              scope: scopeFromRequest,
+              email_attach_request_photos: false,
               ...(mergedQuoteImages.length > 0 ? { images: mergedQuoteImages } : {}),
               owner_id: profile?.id,
               owner_name: profile?.full_name,
             });
+            const photoUrlsForPush = mergedQuoteImages;
+            const inviteBody =
+              `${req.service_type} — ${clientAddress.property_address ?? req.property_address ?? ""}`.trim() || quote.reference;
+            if (sendMethod === "app" || sendMethod === "both") {
+              await fetch("/api/push/notify-partner", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  partnerIds,
+                  title: "New quote invitation",
+                  body: inviteBody,
+                  data: { type: "quote_invite", quoteId: quote.id, photoUrls: photoUrlsForPush },
+                }),
+              }).catch(() => {});
+            }
+            if (sendMethod === "email" || sendMethod === "both") {
+              await fetch("/api/quotes/partner-invite-email", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ quoteId: quote.id, partnerIds }),
+              }).catch(() => {});
+            }
             await updateRequestStatus(req.id, "converted_to_quote");
             await logAudit({
               entityType: "request", entityId: req.id, entityRef: req.reference,
@@ -1163,6 +1187,7 @@ export default function RequestsPage() {
             const total = lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
             const freshReq = await getRequest(req.id).catch(() => null);
             const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
+            const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
             const quote = await createQuote({
               title: `${req.service_type} — ${clientAddress.client_name}`,
               client_id: clientAddress.client_id,
@@ -1184,7 +1209,8 @@ export default function RequestsPage() {
               customer_deposit_paid: false,
               partner_cost: 0,
               property_address: clientAddress.property_address,
-              scope: req.scope,
+              scope: scopeFromRequest,
+              email_attach_request_photos: false,
               ...(fromRequest.length > 0 ? { images: fromRequest } : {}),
               owner_id: profile?.id,
               owner_name: profile?.full_name,
@@ -1364,6 +1390,21 @@ function InvitePartnerToQuote({
   return (
     <Modal open={!!request} onClose={onClose} title="Invite partners" subtitle={`${request.reference} — ${request.service_type}`} size="lg">
       <div className="p-6 flex flex-col max-h-[75vh] overflow-y-auto">
+        <div className="mb-4 rounded-xl border border-border-light bg-surface-hover/80 p-4 space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invite summary</p>
+          <p className="text-sm text-text-primary">
+            <span className="text-text-tertiary text-xs font-medium">Type of work · </span>
+            {request.service_type?.trim() || "—"}
+          </p>
+          <p className="text-sm text-text-primary break-words">
+            <span className="text-text-tertiary text-xs font-medium">Address · </span>
+            {request.property_address?.trim() || "—"}
+          </p>
+          <p className="text-sm text-text-secondary whitespace-pre-wrap">
+            <span className="text-text-tertiary text-xs font-medium block mb-0.5">Service description</span>
+            {request.description?.trim() || "—"}
+          </p>
+        </div>
         <div className="mb-4">
           <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client and address *</p>
           <ClientAddressPicker
@@ -1978,7 +2019,7 @@ function CreateRequestModal({
           ]} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Description of the issue</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description</label>
           <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} placeholder="Describe the issue — what the client needs, access, urgency…" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none" />
         </div>
         <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3 space-y-2">

@@ -98,7 +98,7 @@ export interface ServiceRequest {
   scope?: string;
   notes?: string;
   internal_info?: string;
-  /** Public URLs for photos (same bucket as quote invite images); copied to quote on convert. */
+  /** Public URLs for photos (quote-invite-images bucket); copied to quote on convert. */
   images?: string[] | null;
   created_at: string;
   updated_at: string;
@@ -149,6 +149,8 @@ export interface Quote {
   email_custom_message?: string | null;
   /** First successful customer PDF email timestamp (resends update this). */
   customer_pdf_sent_at?: string | null;
+  /** When true, emailing the customer includes site photos from the linked service request (if any). */
+  email_attach_request_photos?: boolean | null;
   property_address?: string;
   partner_id?: string;
   partner_name?: string;

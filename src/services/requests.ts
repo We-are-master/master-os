@@ -102,8 +102,7 @@ export async function getRequest(id: string): Promise<ServiceRequest | null> {
 }
 
 export async function createRequest(
-  input: Omit<ServiceRequest, "id" | "reference" | "created_at" | "updated_at">,
-  options?: { enrich?: boolean }
+  input: Omit<ServiceRequest, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<ServiceRequest> {
   const supabase = getSupabase();
   const { data: ref, error: refErr } = await supabase.rpc("next_request_ref");
@@ -120,17 +119,13 @@ export async function createRequest(
     error = retry.error;
   }
   if (error) throw new Error(postgrestErrorMessage(error));
-  if (options?.enrich) {
-    const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
-    return enriched ?? (data as ServiceRequest);
-  }
-  return data as ServiceRequest;
+  const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
+  return enriched ?? (data as ServiceRequest);
 }
 
 export async function updateRequest(
   id: string,
-  input: Partial<ServiceRequest>,
-  options?: { enrich?: boolean }
+  input: Partial<ServiceRequest>
 ): Promise<ServiceRequest> {
   const supabase = getSupabase();
   const patch: Record<string, unknown> = { ...input };
@@ -159,14 +154,11 @@ export async function updateRequest(
     error = retry.error;
   }
   if (error) throw new Error(postgrestErrorMessage(error));
-  if (options?.enrich) {
-    const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
-    return enriched ?? (data as ServiceRequest);
-  }
-  return data as ServiceRequest;
+  const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
+  return enriched ?? (data as ServiceRequest);
 }
 
-export async function updateRequestStatus(id: string, status: string, options?: { enrich?: boolean }): Promise<ServiceRequest> {
+export async function updateRequestStatus(id: string, status: string): Promise<ServiceRequest> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("service_requests")
@@ -176,9 +168,6 @@ export async function updateRequestStatus(id: string, status: string, options?: 
     .single();
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Request not found or update had no effect");
-  if (options?.enrich) {
-    const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
-    return enriched ?? (data as ServiceRequest);
-  }
-  return data as ServiceRequest;
+  const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
+  return enriched ?? (data as ServiceRequest);
 }
