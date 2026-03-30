@@ -18,7 +18,7 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, MapPin, Phone, Mail, CheckCircle2, XCircle,
   ArrowRight, Briefcase, FileText, Users, Send, PenLine,
-  Inbox, Percent, CalendarRange, ImagePlus, X,
+  Inbox, Percent, CalendarRange, ImagePlus, X, ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
@@ -33,7 +33,7 @@ import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { useRouter } from "next/navigation";
-import { listPartners } from "@/services/partners";
+import { listPartners, listPartnersAll } from "@/services/partners";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { normalizeTotalPhases } from "@/lib/job-phases";
@@ -43,11 +43,11 @@ import type { CatalogService } from "@/types/database";
 import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
-import { isUuid } from "@/lib/utils";
+import { cn, isUuid } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
-import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
 import { mergeImageUrlLists, normalizeJsonImageArray } from "@/lib/request-attachment-images";
 
@@ -1359,52 +1359,84 @@ function InvitePartnerToQuote({
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [invitePhotos, setInvitePhotos] = useState<File[]>([]);
   const [invitePhotoPreviews, setInvitePhotoPreviews] = useState<string[]>([]);
+  const [summaryExpanded, setSummaryExpanded] = useState(true);
+  const [partnersLoading, setPartnersLoading] = useState(false);
 
   useEffect(() => {
-    if (!request) return;
+    if (!request?.id) {
+      setPartners([]);
+      setPartnersLoading(false);
+      return;
+    }
+    const serviceType = request.service_type;
     setSearchTerm("");
+    setSummaryExpanded(true);
+    setPartners([]);
     setClientAddress(serviceRequestToClientAddressValue(request));
-    listPartners({ pageSize: 200, status: "all" }).then((r) => {
-      const list = r.data ?? [];
-      setPartners(list);
-      const matched = list.filter((p) => partnerMatchesTypeOfWork(p, request.service_type));
-      setSelectedIds(new Set(matched.map((p) => p.id)));
-    });
     setInvitePhotos([]);
     setInvitePhotoPreviews((prev) => {
       prev.forEach((u) => URL.revokeObjectURL(u));
       return [];
     });
-  }, [request]);
+    let cancelled = false;
+    setPartnersLoading(true);
+    listPartnersAll({ status: "all" })
+      .then((list) => {
+        if (cancelled) return;
+        setPartners(list);
+        const matched = list.filter((p) => safePartnerMatchesTypeOfWork(p, serviceType));
+        setSelectedIds(new Set(matched.map((p) => p.id)));
+      })
+      .catch((err) => {
+        console.error("[InvitePartnerToQuote] listPartnersAll", err);
+        if (!cancelled) {
+          toast.error("Could not load partners. Try again.");
+          setPartners([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPartnersLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [request?.id, request?.service_type]);
+
+  const summaryImageUrls = useMemo(
+    () => mergeImageUrlLists(normalizeJsonImageArray(request?.images)),
+    [request?.images],
+  );
+
+  const filtered = useMemo(() => {
+    if (!request) return [];
+    const q = searchTerm.trim().toLowerCase();
+    return partners.filter((p) => {
+      if (!q) return true;
+      const name = (p.company_name ?? "").toLowerCase();
+      const trade = (p.trade ?? "").toLowerCase();
+      const tradesFlat = (p.trades ?? []).filter((t): t is string => typeof t === "string").join(" ").toLowerCase();
+      const loc = (p.location ?? "").toLowerCase();
+      return name.includes(q) || trade.includes(q) || tradesFlat.includes(q) || loc.includes(q);
+    });
+  }, [request, partners, searchTerm]);
+
+  const serviceRelated = useMemo(() => {
+    if (!request) return [];
+    return filtered.filter((p) => safePartnerMatchesTypeOfWork(p, request.service_type));
+  }, [request, filtered]);
+
+  const others = useMemo(() => {
+    if (!request) return [];
+    return filtered.filter((p) => !safePartnerMatchesTypeOfWork(p, request.service_type));
+  }, [request, filtered]);
+
+  const matchIdSet = useMemo(() => new Set(serviceRelated.map((p) => p.id)), [serviceRelated]);
 
   if (!request) return null;
-
-  const filtered = partners.filter((p) => {
-    if (searchTerm && !p.company_name.toLowerCase().includes(searchTerm.toLowerCase()) && !p.trade.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-    return true;
-  });
-
-  const serviceRelated = filtered.filter((p) => partnerMatchesTypeOfWork(p, request.service_type));
-  const others = filtered.filter((p) => !partnerMatchesTypeOfWork(p, request.service_type));
 
   return (
     <Modal open={!!request} onClose={onClose} title="Invite partners" subtitle={`${request.reference} — ${request.service_type}`} size="lg">
       <div className="p-6 flex flex-col max-h-[75vh] overflow-y-auto">
-        <div className="mb-4 rounded-xl border border-border-light bg-surface-hover/80 p-4 space-y-2">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invite summary</p>
-          <p className="text-sm text-text-primary">
-            <span className="text-text-tertiary text-xs font-medium">Type of work · </span>
-            {request.service_type?.trim() || "—"}
-          </p>
-          <p className="text-sm text-text-primary break-words">
-            <span className="text-text-tertiary text-xs font-medium">Address · </span>
-            {request.property_address?.trim() || "—"}
-          </p>
-          <p className="text-sm text-text-secondary whitespace-pre-wrap">
-            <span className="text-text-tertiary text-xs font-medium block mb-0.5">Service description</span>
-            {request.description?.trim() || "—"}
-          </p>
-        </div>
         <div className="mb-4">
           <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client and address *</p>
           <ClientAddressPicker
@@ -1415,18 +1447,130 @@ function InvitePartnerToQuote({
             lockClient={!!request.client_id}
           />
         </div>
+
         <div className="mb-3">
-          <Input placeholder="Search partners by name or service..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="text-sm" />
+          <Input
+            placeholder="Search partners by name, trade, or location…"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="text-sm"
+          />
         </div>
 
-        {serviceRelated.length > 0 && (
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Matching service: {request.service_type}</p>
+        <div className="mb-4 rounded-xl border border-border-light bg-surface-hover/80 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setSummaryExpanded((v) => !v)}
+            aria-expanded={summaryExpanded}
+            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-surface-hover/90 transition-colors"
+          >
+            <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invite summary</span>
+            <ChevronDown
+              className={cn("h-4 w-4 shrink-0 text-text-tertiary transition-transform", summaryExpanded && "rotate-180")}
+              aria-hidden
+            />
+          </button>
+          {summaryExpanded && (
+            <div className="px-4 pb-4 space-y-3 border-t border-border-light pt-3">
+              <p className="text-sm text-text-primary">
+                <span className="text-text-tertiary text-xs font-medium">Type of work · </span>
+                {request.service_type?.trim() || "—"}
+              </p>
+              <p className="text-sm text-text-primary break-words">
+                <span className="text-text-tertiary text-xs font-medium">Address · </span>
+                {request.property_address?.trim() || "—"}
+              </p>
+              <p className="text-sm text-text-secondary whitespace-pre-wrap">
+                <span className="text-text-tertiary text-xs font-medium block mb-0.5">Service description</span>
+                {request.description?.trim() || "—"}
+              </p>
+              <div>
+                <span className="text-text-tertiary text-xs font-medium block mb-1.5">Photos (request + extra for invite)</span>
+                {summaryImageUrls.length === 0 ? (
+                  <p className="text-xs text-text-tertiary mb-2">No photos on the request yet — add below for this invite.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {summaryImageUrls.map((url, i) => (
+                      <a
+                        key={`${url}-${i}`}
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block shrink-0 rounded-lg border border-border-light overflow-hidden bg-card hover:ring-2 hover:ring-primary/30 transition-shadow"
+                        title="Open full size"
+                      >
+                        <img src={url} alt="" className="h-16 w-16 object-cover" loading="lazy" />
+                      </a>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[11px] text-text-tertiary mb-2">Up to 8 extra images (5 MB each) — merged with request photos for the partner app.</p>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
+                    <ImagePlus className="h-3.5 w-3.5" />
+                    Add photos
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      multiple
+                      className="sr-only"
+                      disabled={invitePhotos.length >= 8}
+                      onChange={(e) => {
+                        const list = e.target.files;
+                        if (!list?.length) return;
+                        const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
+                        setInvitePhotos(next);
+                        setInvitePhotoPreviews((prev) => {
+                          prev.forEach((u) => URL.revokeObjectURL(u));
+                          return next.map((f) => URL.createObjectURL(f));
+                        });
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+                {invitePhotoPreviews.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {invitePhotoPreviews.map((src, i) => (
+                      <div key={src} className="relative h-16 w-16 rounded-lg overflow-hidden border border-border-light bg-surface-hover shrink-0">
+                        <img src={src} alt="" className="h-full w-full object-cover" />
+                        <button
+                          type="button"
+                          className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                          onClick={() => {
+                            const idx = i;
+                            setInvitePhotoPreviews((prev) => {
+                              const u = prev[idx];
+                              if (u) URL.revokeObjectURL(u);
+                              return prev.filter((_, j) => j !== idx);
+                            });
+                            setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
+                          }}
+                          aria-label="Remove photo"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {!partnersLoading && serviceRelated.length > 0 && (
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">
+            Matching “{request.service_type}” (trade / type of work) — {serviceRelated.length} partner(s)
+          </p>
         )}
 
         <div className="space-y-2 overflow-y-auto flex-1 min-h-0 pr-1">
-          {[...serviceRelated, ...others].map((p) => {
+          {!partnersLoading &&
+            [...serviceRelated, ...others].map((p) => {
+            if (!p.id) return null;
             const isSelected = selectedIds.has(p.id);
-            const isMatch = serviceRelated.includes(p);
+            const isMatch = matchIdSet.has(p.id);
             return (
               <label key={p.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? "border-primary bg-primary/5" : isMatch ? "border-amber-200 bg-amber-50/30 hover:border-primary/30" : "border-border hover:border-primary/30 hover:bg-surface-hover"}`}>
                 <input type="checkbox" checked={isSelected} onChange={(e) => {
@@ -1439,67 +1583,22 @@ function InvitePartnerToQuote({
                 <Avatar name={p.company_name} size="md" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-text-primary truncate">{p.company_name}</p>
-                  <p className="text-xs text-text-tertiary">{p.trade} — {p.location}</p>
+                  <p className="text-xs text-text-tertiary">
+                    {(p.trade ?? "—")} — {p.location ?? "—"}
+                  </p>
                 </div>
                 {isMatch && <Badge variant="warning" size="sm">Match</Badge>}
               </label>
             );
           })}
-          {filtered.length === 0 && <p className="text-sm text-text-tertiary text-center py-8">No partners found</p>}
-        </div>
-
-        <div className="pt-4 mt-4 border-t border-border-light space-y-2">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos for partners (optional)</p>
-          <p className="text-[11px] text-text-tertiary">Up to 8 images (5 MB each) — shown in the partner app with the invite.</p>
-          <div className="flex flex-wrap gap-2 items-center">
-            <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
-              <ImagePlus className="h-3.5 w-3.5" />
-              Add photos
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                multiple
-                className="sr-only"
-                disabled={invitePhotos.length >= 8}
-                onChange={(e) => {
-                  const list = e.target.files;
-                  if (!list?.length) return;
-                  const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
-                  setInvitePhotos(next);
-                  setInvitePhotoPreviews((prev) => {
-                    prev.forEach((u) => URL.revokeObjectURL(u));
-                    return next.map((f) => URL.createObjectURL(f));
-                  });
-                  e.target.value = "";
-                }}
-              />
-            </label>
-          </div>
-          {invitePhotoPreviews.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {invitePhotoPreviews.map((src, i) => (
-                <div key={src} className="relative h-16 w-16 rounded-lg overflow-hidden border border-border-light bg-surface-hover shrink-0">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={src} alt="" className="h-full w-full object-cover" />
-                  <button
-                    type="button"
-                    className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
-                    onClick={() => {
-                      const idx = i;
-                      setInvitePhotoPreviews((prev) => {
-                        const u = prev[idx];
-                        if (u) URL.revokeObjectURL(u);
-                        return prev.filter((_, j) => j !== idx);
-                      });
-                      setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
-                    }}
-                    aria-label="Remove photo"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
+          {partnersLoading && (
+            <p className="text-sm text-text-tertiary text-center py-6">Loading partners…</p>
+          )}
+          {!partnersLoading && partners.length === 0 && (
+            <p className="text-sm text-text-tertiary text-center py-6">No partners returned — check your connection or try again.</p>
+          )}
+          {!partnersLoading && partners.length > 0 && filtered.length === 0 && (
+            <p className="text-sm text-text-tertiary text-center py-6">No partners match this search — clear the search to see all.</p>
           )}
         </div>
 
@@ -1685,15 +1784,23 @@ function ConvertToJobModal({
   const [partners, setPartners] = useState<Partner[]>([]);
 
   useEffect(() => {
-    if (!request) return;
+    if (!request) {
+      setPartners([]);
+      return;
+    }
     setForm({
       partner_id: "", scope: "", notes: "", internal_notes: "",
       client_price: String(request.estimated_value ?? 0), partner_cost: "", job_type: "fixed",
       scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "",
     });
     setClientAddress(serviceRequestToClientAddressValue(request));
-    listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
-  }, [request]);
+    listPartnersAll({ status: "all" })
+      .then(setPartners)
+      .catch(() => {
+        toast.error("Could not load partners");
+        setPartners([]);
+      });
+  }, [request?.id]);
 
   if (!request) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
