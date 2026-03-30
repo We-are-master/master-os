@@ -66,9 +66,20 @@ const PIPELINE_ROW_WIDGETS = new Set<WidgetConfig["type"]>([
 ]);
 
 /** Revenue Overview always uses the full 12-column row (not split with Quick Actions, etc.). */
-function getWidgetGridClass(widget: WidgetConfig): string {
+function getWidgetGridClass(widget: WidgetConfig, orderedWidgets: WidgetConfig[]): string {
   if (widget.type === "revenue_chart") return "col-span-12";
-  /** Pipeline + partner payout/margin Top 5 share one row (three equal columns on large screens). */
+  /** If only one Top 5 companion exists, let Pipeline expand to avoid empty space. */
+  if (widget.type === "pipeline_summary") {
+    const companionCount = orderedWidgets.filter(
+      (w) => w.type === "partner_payout_top5" || w.type === "partner_margin_top5"
+    ).length;
+    if (companionCount <= 1) return getColSpanClass("two_thirds");
+    return getColSpanClass("one_third");
+  }
+  /** Partner Top 5 cards stay one-third and pair nicely with expanded Pipeline. */
+  if (widget.type === "partner_payout_top5" || widget.type === "partner_margin_top5") {
+    return getColSpanClass("one_third");
+  }
   if (PIPELINE_ROW_WIDGETS.has(widget.type)) return getColSpanClass("one_third");
   return getColSpanClass(widget.size);
 }
@@ -337,22 +348,25 @@ function DashboardInner() {
           </div>
         ) : activeView ? (
           <div className="grid grid-cols-12 gap-5 items-stretch">
-            {orderCashFlowPartnersAboveJobsDonut(
-              [...activeView.widgets]
-                .filter((w) => !DASHBOARD_HIDDEN_WIDGET_TYPES.has(w.type))
-                .filter((w) => !isOverviewView(activeView) || !OVERVIEW_HIDDEN_WIDGET_TYPES.has(w.type)),
-            ).map((widget, i) => (
+            {(() => {
+              const orderedWidgets = orderCashFlowPartnersAboveJobsDonut(
+                [...activeView.widgets]
+                  .filter((w) => !DASHBOARD_HIDDEN_WIDGET_TYPES.has(w.type))
+                  .filter((w) => !isOverviewView(activeView) || !OVERVIEW_HIDDEN_WIDGET_TYPES.has(w.type)),
+              );
+              return orderedWidgets.map((widget, i) => (
                 <motion.div
                   key={widget.id}
                   variants={staggerItem}
                   initial="hidden"
                   animate="visible"
                   custom={i}
-                  className={cn(getWidgetGridClass(widget), "h-full min-h-0")}
+                  className={cn(getWidgetGridClass(widget, orderedWidgets), "h-full min-h-0")}
                 >
                   <WidgetRenderer widget={widget} />
                 </motion.div>
-              ))}
+              ));
+            })()}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-24 text-center">
