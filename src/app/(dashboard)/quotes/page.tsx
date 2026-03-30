@@ -25,7 +25,7 @@ import {
   Mail, Building2,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
   ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
-  Wallet, Percent,
+  Wallet, Percent, ImagePlus, X,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -427,6 +427,8 @@ function QuotesPageContent() {
         property_address: formData.property_address,
         scope: formData.scope,
         partner_cost: formData.partner_cost ?? formData.cost ?? 0,
+        ...(formData.service_type?.trim() ? { service_type: formData.service_type.trim() } : {}),
+        ...(formData.images?.length ? { images: formData.images } : {}),
         owner_id: profile?.id,
         owner_name: profile?.full_name,
       });
@@ -2559,6 +2561,10 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
   const [partnerDescription, setPartnerDescription] = useState("");
+  const [invitePhotos, setInvitePhotos] = useState<File[]>([]);
+  const [invitePhotoPreviews, setInvitePhotoPreviews] = useState<string[]>([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const inviteUploadFolderRef = useRef(`create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`);
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const linePartnerTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.partnerUnitCost) || 0), 0);
   const lineSellTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
@@ -2581,7 +2587,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       .catch(() => setPartners([]));
   }, [quoteType]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
@@ -2602,7 +2608,21 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       }
     }
 
-    onSubmit({
+    let imageUrls: string[] | undefined;
+    if (invitePhotos.length > 0) {
+      setUploadingPhotos(true);
+      try {
+        const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+        imageUrls = await uploadQuoteInviteImages(invitePhotos, inviteUploadFolderRef.current);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to upload images");
+        setUploadingPhotos(false);
+        return;
+      }
+      setUploadingPhotos(false);
+    }
+
+    const payload: Partial<Quote> = {
       ...form,
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
@@ -2623,7 +2643,11 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       scope: quoteType === "partner"
         ? partnerDescription.trim()
         : (scopeFromLineItems.trim() ? scopeFromLineItems.trim() : undefined),
-    });
+      ...(form.title.trim() ? { service_type: form.title.trim() } : {}),
+      ...(imageUrls?.length ? { images: imageUrls } : {}),
+    };
+    onSubmit(payload);
+    inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     setForm({ title: "", total_value: "", catalog_service_id: "" });
     setClientAddress({ client_name: "", property_address: "" });
     setLineItems([{ description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0" }]);
@@ -2631,6 +2655,11 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
     setPartners([]);
     setSelectedPartnerIds(new Set());
     setPartnerDescription("");
+    setInvitePhotos([]);
+    setInvitePhotoPreviews((prev) => {
+      prev.forEach((u) => URL.revokeObjectURL(u));
+      return [];
+    });
   };
 
   return (
@@ -2713,6 +2742,62 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
         ]}
       />
       <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+      <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3 space-y-2">
+        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos for partners (optional)</p>
+        <p className="text-[11px] text-text-tertiary">
+          Up to 8 images (5 MB each). Shown in the partner app on the job invitation when this quote is in bidding.
+        </p>
+        <div className="flex flex-wrap gap-2 items-center">
+          <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
+            <ImagePlus className="h-3.5 w-3.5" />
+            Add photos
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              multiple
+              className="sr-only"
+              disabled={invitePhotos.length >= 8 || uploadingPhotos}
+              onChange={(e) => {
+                const list = e.target.files;
+                if (!list?.length) return;
+                const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
+                setInvitePhotos(next);
+                setInvitePhotoPreviews((prev) => {
+                  prev.forEach((u) => URL.revokeObjectURL(u));
+                  return next.map((f) => URL.createObjectURL(f));
+                });
+                e.target.value = "";
+              }}
+            />
+          </label>
+        </div>
+        {invitePhotoPreviews.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {invitePhotoPreviews.map((src, i) => (
+              <div key={src} className="relative h-16 w-16 rounded-lg overflow-hidden border border-border-light bg-surface-hover shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={src} alt="" className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                  onClick={() => {
+                    const idx = i;
+                    setInvitePhotoPreviews((prev) => {
+                      const u = prev[idx];
+                      if (u) URL.revokeObjectURL(u);
+                      return prev.filter((_, j) => j !== idx);
+                    });
+                    setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
+                  }}
+                  aria-label="Remove photo"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       {quoteType === "internal" ? (
         <>
           <ServiceCatalogSelect
@@ -2824,8 +2909,8 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
         </div>
       )}
       <div className="flex justify-end gap-2 pt-2">
-        <Button variant="outline" onClick={onCancel} type="button">Cancel</Button>
-        <Button type="submit">Create Quote</Button>
+        <Button variant="outline" onClick={onCancel} type="button" disabled={uploadingPhotos}>Cancel</Button>
+        <Button type="submit" loading={uploadingPhotos} disabled={uploadingPhotos}>Create Quote</Button>
       </div>
     </form>
   );
