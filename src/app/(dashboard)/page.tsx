@@ -17,6 +17,7 @@ import {
 import { DashboardDateToolbar } from "@/components/dashboard/dashboard-date-toolbar";
 import { WidgetRenderer } from "@/components/dashboard/widget-renderer";
 import { DashboardViewEditor } from "@/components/dashboard/dashboard-view-editor";
+import { OperationsStatus } from "@/components/dashboard/operations-status";
 import type { DashboardView, WidgetConfig } from "@/types/dashboard-config";
 import {
   LayoutDashboard, DollarSign, Briefcase, BarChart2, PieChart,
@@ -92,6 +93,10 @@ const OVERVIEW_HIDDEN_WIDGET_TYPES = new Set<WidgetConfig["type"]>(["priority_ta
 
 function isOverviewView(view: DashboardView | null): boolean {
   return (view?.name?.trim().toLowerCase() ?? "") === "overview";
+}
+
+function isOperationsView(view: DashboardView | null): boolean {
+  return (view?.name?.trim().toLowerCase() ?? "") === "operations";
 }
 
 function isCashFlowOrTopPartners(w: WidgetConfig): boolean {
@@ -262,82 +267,84 @@ function DashboardInner() {
           <p className="text-xs text-text-tertiary -mt-1">{activeView.description}</p>
         )}
 
-        <DashboardDateToolbar
-          trailing={
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setFilterMenuOpen((o) => !o)}
-                className={cn(
-                  "inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium border transition-all",
-                  activeFilters.size > 0
-                    ? "border-primary bg-primary/5 text-primary"
-                    : "border-border bg-card/80 text-text-secondary hover:bg-surface-hover",
-                )}
-                aria-expanded={filterMenuOpen}
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                Job filters
-                {activeFilters.size > 0 && (
-                  <span className="text-xs font-semibold tabular-nums bg-primary/15 px-1.5 py-0.5 rounded-md">{activeFilters.size}</span>
-                )}
-                <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", filterMenuOpen && "rotate-180")} />
-              </button>
-              {filterMenuOpen && (
-                <>
-                  <button type="button" className="fixed inset-0 z-40 cursor-default" aria-label="Close filters" onClick={() => setFilterMenuOpen(false)} />
-                  <div className="absolute right-0 top-full z-50 mt-1 w-[min(100vw-2rem,22rem)] rounded-xl border border-border-light bg-card shadow-lg py-2 max-h-[min(70vh,420px)] overflow-y-auto">
-                    <div className="px-3 pb-2 flex items-center justify-between gap-2 border-b border-border-light mb-1">
-                      <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Highlight jobs</span>
-                      {activeFilters.size > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setActiveFilters(new Set())}
-                          className="text-[11px] font-medium text-primary hover:underline"
-                        >
-                          Clear all
-                        </button>
-                      )}
-                    </div>
-                    <div className="px-1">
-                      {FILTER_CHIPS.map((chip) => {
-                        const isActive = activeFilters.has(chip.id);
-                        const count = filterCounts[chip.id] ?? 0;
-                        return (
+        {!isOperationsView(activeView) && (
+          <DashboardDateToolbar
+            trailing={
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setFilterMenuOpen((o) => !o)}
+                  className={cn(
+                    "inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium border transition-all",
+                    activeFilters.size > 0
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border bg-card/80 text-text-secondary hover:bg-surface-hover",
+                  )}
+                  aria-expanded={filterMenuOpen}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  Job filters
+                  {activeFilters.size > 0 && (
+                    <span className="text-xs font-semibold tabular-nums bg-primary/15 px-1.5 py-0.5 rounded-md">{activeFilters.size}</span>
+                  )}
+                  <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", filterMenuOpen && "rotate-180")} />
+                </button>
+                {filterMenuOpen && (
+                  <>
+                    <button type="button" className="fixed inset-0 z-40 cursor-default" aria-label="Close filters" onClick={() => setFilterMenuOpen(false)} />
+                    <div className="absolute right-0 top-full z-50 mt-1 w-[min(100vw-2rem,22rem)] rounded-xl border border-border-light bg-card shadow-lg py-2 max-h-[min(70vh,420px)] overflow-y-auto">
+                      <div className="px-3 pb-2 flex items-center justify-between gap-2 border-b border-border-light mb-1">
+                        <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Highlight jobs</span>
+                        {activeFilters.size > 0 && (
                           <button
-                            key={chip.id}
                             type="button"
-                            onClick={() => toggleFilter(chip.id)}
-                            className={cn(
-                              "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-sm transition-colors",
-                              isActive ? "bg-primary/10 text-primary" : "hover:bg-surface-hover text-text-primary",
-                            )}
+                            onClick={() => setActiveFilters(new Set())}
+                            className="text-[11px] font-medium text-primary hover:underline"
                           >
-                            <span
+                            Clear all
+                          </button>
+                        )}
+                      </div>
+                      <div className="px-1">
+                        {FILTER_CHIPS.map((chip) => {
+                          const isActive = activeFilters.has(chip.id);
+                          const count = filterCounts[chip.id] ?? 0;
+                          return (
+                            <button
+                              key={chip.id}
+                              type="button"
+                              onClick={() => toggleFilter(chip.id)}
                               className={cn(
-                                "h-4 w-4 rounded border flex-shrink-0 flex items-center justify-center text-[10px]",
-                                isActive ? "border-primary bg-primary text-white" : "border-border",
+                                "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-sm transition-colors",
+                                isActive ? "bg-primary/10 text-primary" : "hover:bg-surface-hover text-text-primary",
                               )}
                             >
-                              {isActive ? "✓" : ""}
-                            </span>
-                            <span className="flex-1 min-w-0">{chip.label}</span>
-                            {count > 0 && (
-                              <span className="text-xs font-bold tabular-nums text-text-tertiary">{count}</span>
-                            )}
-                          </button>
-                        );
-                      })}
+                              <span
+                                className={cn(
+                                  "h-4 w-4 rounded border flex-shrink-0 flex items-center justify-center text-[10px]",
+                                  isActive ? "border-primary bg-primary text-white" : "border-border",
+                                )}
+                              >
+                                {isActive ? "✓" : ""}
+                              </span>
+                              <span className="flex-1 min-w-0">{chip.label}</span>
+                              {count > 0 && (
+                                <span className="text-xs font-bold tabular-nums text-text-tertiary">{count}</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="px-3 pt-2 pb-1 text-[10px] text-text-tertiary leading-snug border-t border-border-light mt-1">
+                        Counts follow the selected date range.
+                      </p>
                     </div>
-                    <p className="px-3 pt-2 pb-1 text-[10px] text-text-tertiary leading-snug border-t border-border-light mt-1">
-                      Counts follow the selected date range.
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-          }
-        />
+                  </>
+                )}
+              </div>
+            }
+          />
+        )}
 
         {/* ── Modular widget grid ───────────────────────────────────────── */}
         {viewsLoading ? (
@@ -347,6 +354,9 @@ function DashboardInner() {
             ))}
           </div>
         ) : activeView ? (
+          isOperationsView(activeView) ? (
+            <OperationsStatus />
+          ) : (
           <div className="grid grid-cols-12 gap-5 items-stretch">
             {(() => {
               const orderedWidgets = orderCashFlowPartnersAboveJobsDonut(
@@ -368,6 +378,7 @@ function DashboardInner() {
               ));
             })()}
           </div>
+          )
         ) : (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <LayoutDashboard className="h-12 w-12 text-text-tertiary mb-3 opacity-40" />
