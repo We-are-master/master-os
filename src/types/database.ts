@@ -305,6 +305,8 @@ export interface JobPayment {
 export interface Partner {
   id: string;
   company_name: string;
+  vat_number?: string | null;
+  crn?: string | null;
   contact_name: string;
   email: string;
   phone?: string;
