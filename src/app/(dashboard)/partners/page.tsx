@@ -48,7 +48,7 @@ import {
   type TeamMember,
 } from "@/services/partner-detail";
 import { LocationMiniMapByCoords } from "@/components/ui/location-picker";
-import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
@@ -63,7 +63,7 @@ const tradeColors: Record<string, string> = {
   Plumbing: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 ring-teal-200/50",
   Painting: "bg-amber-50 dark:bg-amber-950/30 text-amber-700 ring-amber-200/50",
   Carpentry: "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 ring-emerald-200/50",
-  Handyman: "bg-orange-50 dark:bg-orange-950/30 text-orange-700 ring-orange-200/50",
+  "General Maintenance": "bg-orange-50 dark:bg-orange-950/30 text-orange-700 ring-orange-200/50",
   Cleaning: "bg-cyan-50 dark:bg-cyan-950/30 text-cyan-700 ring-cyan-200/50",
   Builder: "bg-stone-50 dark:bg-stone-950/30 text-stone-700 ring-stone-200/50",
   Painter: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 ring-yellow-200/50",
@@ -77,15 +77,19 @@ const LEGACY_TRADE_ALIASES: Record<string, string> = {
   plumbing: "Plumber",
   painting: "Painter",
   carpentry: "Carpenter",
-  handyman: "General Maintenance",
   hvac: "General Maintenance",
+  handyman: "General Maintenance",
 };
 
 function normalizeTradeName(value?: string | null): string | null {
   const raw = (value ?? "").trim();
   if (!raw) return null;
   if (KNOWN_TRADES.has(raw)) return raw;
-  return LEGACY_TRADE_ALIASES[raw.toLowerCase()] ?? null;
+  const legacy = LEGACY_TRADE_ALIASES[raw.toLowerCase()];
+  if (legacy && KNOWN_TRADES.has(legacy)) return legacy;
+  const fromWork = normalizeTypeOfWork(raw);
+  if (fromWork && KNOWN_TRADES.has(fromWork)) return fromWork;
+  return null;
 }
 
 function normalizeTrades(values: Array<string | null | undefined>): string[] {

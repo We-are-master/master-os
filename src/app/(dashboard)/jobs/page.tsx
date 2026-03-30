@@ -50,7 +50,7 @@ import {
   startOfLocalMonth,
   endOfLocalMonth,
 } from "@/lib/schedule-calendar";
-import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { jobBillableRevenue, jobMarginPercent, jobProfit } from "@/lib/job-financials";
@@ -263,13 +263,13 @@ function JobsPageContent() {
             ? "bg-emerald-500"
             : id === "cancelled"
               ? "bg-stone-500"
-              : id === "need_attention"
+                : id === "need_attention"
                 ? "bg-orange-500"
-                : id === "awaiting_payment"
+                  : id === "awaiting_payment"
                   ? "bg-amber-600"
-                  : id === "unassigned"
-                    ? "bg-slate-500"
-                    : "bg-primary",
+                    : id === "unassigned"
+                      ? "bg-slate-500"
+                      : "bg-primary",
         items: filteredData.filter((j) => j.status === id),
       };
     });
@@ -631,7 +631,7 @@ function JobsPageContent() {
       render: (item) => (
         <div className="min-w-0">
           <p className="text-sm font-semibold text-text-primary truncate">{item.reference}</p>
-          <p className="text-[11px] text-text-tertiary line-clamp-2 break-words">{item.title}</p>
+          <p className="text-[11px] text-text-tertiary line-clamp-2 break-words">{normalizeTypeOfWork(item.title) || item.title}</p>
         </div>
       ),
     },
@@ -871,7 +871,7 @@ function JobsPageContent() {
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
             <div className="min-w-0 flex-1 pb-1 -mb-1">
-              <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
+            <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
@@ -904,7 +904,7 @@ function JobsPageContent() {
                         ) : null}
                         <div className="p-3 flex flex-col flex-1 min-w-0">
                           <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
-                          <p className="text-xs text-text-tertiary truncate">{j.title}</p>
+                          <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(j.title) || j.title}</p>
                           <p className="text-[10px] text-text-tertiary mt-1 truncate">{sc.label}</p>
                           {sched ? <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug">{sched}</p> : null}
                           <p className="text-[11px] text-text-secondary mt-0.5 truncate">{j.client_name}</p>
@@ -973,7 +973,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     const scheduled_finish_date = expected_finish ?? null;
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     onCreate({
-      title: form.title,
+      title: normalizeTypeOfWork(form.title.trim()) || form.title.trim(),
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
@@ -1186,7 +1186,7 @@ function JobsMapView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boo
             </div>
             <div className="p-3 sm:p-4 flex flex-col flex-1 min-w-0">
               <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
-              <p className="text-xs text-text-tertiary truncate mt-0.5">{j.title}</p>
+              <p className="text-xs text-text-tertiary truncate mt-0.5">{normalizeTypeOfWork(j.title) || j.title}</p>
               <p className="text-xs text-text-tertiary truncate mt-1">{j.property_address}</p>
               {mapSched ? <p className="text-[10px] text-text-secondary mt-1.5 line-clamp-2 leading-snug">{mapSched}</p> : null}
               <JobCardFinanceRow job={j} />

@@ -53,7 +53,7 @@ import { getErrorMessage, isUuid, isValidIsoDateTime, parseIsoDateOnly } from "@
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
-import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback } from "@/lib/type-of-work";
+import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
 import {
   parseBidProposalFromNotes,
   splitBidPartnerCosts,
@@ -679,7 +679,7 @@ function QuotesPageContent() {
       render: (item) => (
         <div>
           <p className="text-sm font-semibold text-text-primary">{item.reference}</p>
-          <p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{item.title}</p>
+          <p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{normalizeTypeOfWork(item.title) || item.title}</p>
         </div>
       ),
     },
@@ -897,7 +897,7 @@ function QuotesPageContent() {
                   renderCard={(q) => (
                     <div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors">
                       <p className="text-sm font-semibold text-text-primary truncate">{q.reference}</p>
-                      <p className="text-xs text-text-tertiary truncate">{q.title}</p>
+                      <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(q.title) || q.title}</p>
                       <p className="text-[11px] text-text-secondary mt-1">{q.client_name}</p>
                       <p className="text-xs font-medium text-primary mt-1">{formatCurrency(Number(q.total_value) || 0)}</p>
                     </div>
@@ -912,17 +912,17 @@ function QuotesPageContent() {
       </div>
 
       {selectedQuote ? (
-        <QuoteDetailDrawer
-          quote={selectedQuote}
-          pendingInitialTab={drawerPendingTab}
-          onConsumePendingInitialTab={consumeDrawerPendingTab}
-          onClose={() => setSelectedQuote(null)}
-          onStatusChange={handleStatusChange}
-          onQuoteUpdate={(q) => {
-            setSelectedQuote(q);
-            refresh();
-          }}
-        />
+      <QuoteDetailDrawer
+        quote={selectedQuote}
+        pendingInitialTab={drawerPendingTab}
+        onConsumePendingInitialTab={consumeDrawerPendingTab}
+        onClose={() => setSelectedQuote(null)}
+        onStatusChange={handleStatusChange}
+        onQuoteUpdate={(q) => {
+          setSelectedQuote(q);
+          refresh();
+        }}
+      />
       ) : null}
       <CreateJobFromQuoteModal quote={quoteToConvert} onClose={() => setQuoteToConvert(null)} onSubmit={handleConfirmCreateJob} />
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create Quote" subtitle="Add line items and optionally request partner bids" size="lg">
@@ -999,9 +999,9 @@ function QuoteDetailDrawer({
 
   // Only when switching to another quote — not when the same quote is refreshed after send (keeps "Resend email" label).
   useEffect(() => {
-    setQuoteEmailedInSession(false);
-    setSendState("idle");
-    setProposalScalePercent(100);
+      setQuoteEmailedInSession(false);
+      setSendState("idle");
+      setProposalScalePercent(100);
     setOwnerOpen(false);
     setPricingOpen(false);
     setQuoteClientPick({
@@ -1011,7 +1011,7 @@ function QuoteDetailDrawer({
       client_email: quote.client_email ?? "",
       property_address: quote.property_address ?? "",
     });
-    void loadLineItems(quote.id, quote);
+      void loadLineItems(quote.id, quote);
   }, [quote.id]);
 
   useEffect(() => {
@@ -1483,7 +1483,7 @@ function QuoteDetailDrawer({
                         Bid total{" "}
                         <span className="font-bold text-primary tabular-nums">{formatCurrency(approvedBid.bid_amount)}</span>
                       </p>
-                    </div>
+                </div>
                     {(() => {
                       const p = parseBidProposalFromNotes(approvedBid.notes);
                       const { labour, materials } = splitBidPartnerCosts(approvedBid.bid_amount, p);
@@ -1745,7 +1745,7 @@ function QuoteDetailDrawer({
                               <div className="w-20 shrink-0">
                                 <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Qty</span>
                                 <Input type="number" placeholder="1" value={item.quantity} onChange={(e) => updateLineItem(idx, "quantity", e.target.value)} className="text-xs w-full" />
-                              </div>
+                            </div>
                               <div className="flex-1 min-w-[88px]">
                                 <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Partner / unit</span>
                                 <Input
@@ -2287,18 +2287,18 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     });
     if (!sched.ok) {
       toast.error(sched.error);
-      return;
-    }
+        return;
+      }
     const scheduled_date = parseIsoDateOnly(sched.scheduled_date ?? "") || undefined;
     if (form.scheduled_date?.trim() && !scheduled_date) {
       toast.error("Scheduled date must be a complete day (YYYY-MM-DD). Fix the date or clear the field.");
-      return;
-    }
+        return;
+      }
     const expected_finish = parseIsoDateOnly(form.expected_finish_date) || undefined;
     if (form.expected_finish_date?.trim() && !expected_finish) {
       toast.error("Expected finish must be a complete date (YYYY-MM-DD) or left empty.");
-      return;
-    }
+        return;
+      }
     if (expected_finish && scheduled_date && expected_finish < scheduled_date) {
       toast.error("Expected finish date must be on or after the scheduled date.");
       return;
@@ -2570,7 +2570,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const lineSellTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const [marginPct, setMarginPct] = useState(0);
   const typeOfWorkOptions = useMemo(
-    () => [...new Set([...TYPE_OF_WORK_OPTIONS, ...catalogList.map((c) => c.name)])]
+    () => mergeTypeOfWorkOptions([...TYPE_OF_WORK_OPTIONS, ...catalogList.map((c) => c.name)])
       .sort((a, b) => a.localeCompare(b))
       .map((name) => ({ value: name, label: name })),
     [catalogList]
@@ -2624,6 +2624,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
 
     const payload: Partial<Quote> = {
       ...form,
+      title: normalizeTypeOfWork(form.title),
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
@@ -2981,7 +2982,7 @@ function QuotesCardGridView({ quotes, loading, onSelectQuote }: { quotes: Quote[
       {quotes.map((q) => (
         <button key={q.id} type="button" onClick={() => onSelectQuote(q)} className="text-left rounded-xl border border-border bg-card p-4 hover:border-primary/40 transition-colors">
           <p className="text-sm font-semibold text-text-primary">{q.reference}</p>
-          <p className="text-xs text-text-tertiary truncate">{q.title}</p>
+          <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(q.title) || q.title}</p>
           <p className="text-[11px] text-text-secondary mt-1">{q.client_name}</p>
           <p className="text-xs font-medium text-primary mt-1">{formatCurrency(Number(q.total_value) || 0)}</p>
           <Badge variant={statusConfig[q.status]?.variant ?? "default"} size="sm" className="mt-2">{statusLabels[q.status]}</Badge>

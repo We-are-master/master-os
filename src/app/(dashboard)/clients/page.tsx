@@ -28,6 +28,7 @@ import {
 import { formatCurrency, formatDate, formatRelativeTime, isUuid } from "@/lib/utils";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { toast } from "sonner";
 import type { Client, ClientType, ClientSource, ClientStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -955,7 +956,7 @@ function ClientDetailDrawer({
                               </div>
                               <div>
                                 <p className="text-sm font-medium text-text-primary">{r.reference}</p>
-                                <p className="text-[11px] text-text-tertiary">{r.service_type}</p>
+                                <p className="text-[11px] text-text-tertiary">{normalizeTypeOfWork(r.service_type) || r.service_type}</p>
                               </div>
                             </div>
                             <div className="text-right">

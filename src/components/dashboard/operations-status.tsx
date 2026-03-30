@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select } from "@/components/ui/select";
 import { getSupabase } from "@/services/base";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { BarChart, Bar, CartesianGrid, Cell, LineChart, Line, PieChart, Pie, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { Job, Partner } from "@/types/database";
 import { ExternalLink, CheckCircle2 } from "lucide-react";
@@ -51,9 +52,11 @@ function isJobInProgress(j: OpsJob): boolean {
   return IN_PROGRESS_STATUSES.has(j.status);
 }
 function jobServiceLabel(j: OpsJob): string {
-  const raw = String(j.service_type ?? j.title ?? "").trim().toLowerCase();
+  const combined = String(j.service_type ?? j.title ?? "").trim();
+  const norm = normalizeTypeOfWork(combined) || combined;
+  const raw = norm.toLowerCase();
   if (!raw) return "Other";
-  if (raw.includes("handyman") || raw.includes("maintenance")) return "Handyman";
+  if (raw === "general maintenance") return "General Maintenance";
   if (raw.includes("clean")) return "Cleaning";
   if (raw.includes("carpent")) return "Carpentry";
   if (raw.includes("paint")) return "Painting";
@@ -232,7 +235,7 @@ export function OperationsStatus() {
 
   const jobsByService = useMemo(() => {
     const base = jobs.filter((j) => j.status === "completed" && withinWindow(j.created_at, serviceWindow));
-    const labels = ["Handyman", "Cleaning", "Carpentry", "Painting", "Plumbing", "Electrical", "End of Tenancy", "Other"];
+    const labels = ["General Maintenance", "Cleaning", "Carpentry", "Painting", "Plumbing", "Electrical", "End of Tenancy", "Other"];
     const counts: Record<string, number> = Object.fromEntries(labels.map((l) => [l, 0]));
     for (const j of base) {
       const label = jobServiceLabel(j);
