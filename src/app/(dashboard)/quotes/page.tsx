@@ -2623,7 +2623,6 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
     }
 
     const payload: Partial<Quote> = {
-      ...form,
       title: normalizeTypeOfWork(form.title),
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
