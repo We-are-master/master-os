@@ -2046,8 +2046,16 @@ function CreateRequestModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="New Service Request" subtitle="Create a new incoming request" size="lg">
-      <form onSubmit={handleSubmit} className="p-6 space-y-4">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="New Service Request"
+      subtitle="Create a new incoming request"
+      size="lg"
+      scrollBody={false}
+    >
+      <form onSubmit={handleSubmit} className="flex flex-col overflow-hidden">
+        <div className="space-y-4 overflow-y-auto overscroll-contain px-6 pt-6 pb-2 max-h-[min(65vh,calc(100dvh-11rem))]">
         <Select
           label="Request type *"
           value={form.request_kind}
@@ -2188,7 +2196,8 @@ function CreateRequestModal({
             </div>
           )}
         </div>
-        <div className="flex justify-end gap-2 pt-2">
+        </div>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-border-light px-6 py-4">
           <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
           <Button type="submit">Create Request</Button>
         </div>
