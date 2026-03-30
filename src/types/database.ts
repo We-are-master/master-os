@@ -372,17 +372,39 @@ export interface Invoice {
   stripe_paid_at?: string;
 }
 
+export type SelfBillStatus =
+  | "accumulating"
+  | "pending_review"
+  | "needs_attention"
+  | "awaiting_payment"
+  | "ready_to_pay"
+  | "paid"
+  | "audit_required"
+  | "rejected";
+
 export interface SelfBill {
   id: string;
   reference: string;
   partner_name: string;
+  /** Legacy month bucket (YYYY-MM); prefer week_label for weekly workflow. */
   period: string;
+  /** Same id as jobs.partner_id when assigned. */
+  partner_id?: string | null;
+  /** ISO week Monday (date). */
+  week_start?: string | null;
+  /** ISO week Sunday (date). */
+  week_end?: string | null;
+  /** e.g. 2026-W13 */
+  week_label?: string | null;
+  /** weekly | biweekly | monthly — finance hint when marking paid. */
+  payment_cadence?: string | null;
+  pdf_generated_at?: string | null;
   jobs_count: number;
   job_value: number;
   materials: number;
   commission: number;
   net_payout: number;
-  status: "awaiting_payment" | "ready_to_pay" | "paid" | "audit_required";
+  status: SelfBillStatus;
   created_at: string;
 }
 
