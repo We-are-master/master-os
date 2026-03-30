@@ -32,7 +32,7 @@ import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import type { SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
-import { getWeekBoundsForDate, weekPeriodHelpText, parseDateRangeOrWeek } from "@/lib/self-bill-period";
+import { weekPeriodHelpText, parseDateRangeOrWeek, weekPresetsFromYear } from "@/lib/self-bill-period";
 import { listJobsForSelfBill } from "@/services/self-bills";
 import type { Job } from "@/types/database";
 
@@ -47,22 +47,6 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   rejected: { label: "Rejected", variant: "default" },
 };
 
-function recentWeekPresets(): { weekStart: string; label: string }[] {
-  const out: { weekStart: string; label: string }[] = [];
-  const seen = new Set<string>();
-  const d = new Date();
-  for (let i = 0; i < 26; i++) {
-    const x = new Date(d);
-    x.setDate(d.getDate() - i * 7);
-    const { weekStart, weekLabel } = getWeekBoundsForDate(x);
-    if (!seen.has(weekStart)) {
-      seen.add(weekStart);
-      out.push({ weekStart, label: weekLabel });
-    }
-  }
-  return out;
-}
-
 export default function SelfBillPage() {
   const [activeTab, setActiveTab] = useState("all");
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
@@ -75,8 +59,9 @@ export default function SelfBillPage() {
   const [jobsModal, setJobsModal] = useState<{ selfBill: SelfBill; jobs: Awaited<ReturnType<typeof listJobsForSelfBill>> } | null>(null);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [closeWeekSelectKey, setCloseWeekSelectKey] = useState(0);
+  const [backfillLoading, setBackfillLoading] = useState(false);
 
-  const weekOptions = useMemo(() => recentWeekPresets(), []);
+  const weekOptions = useMemo(() => weekPresetsFromYear(2026), []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -152,6 +137,23 @@ export default function SelfBillPage() {
       loadData();
     } catch {
       toast.error("Failed to update self-bills");
+    }
+  };
+
+  const backfillFromJobs = async () => {
+    setBackfillLoading(true);
+    try {
+      const res = await fetch("/api/self-bills/backfill-from-jobs", { method: "POST" });
+      const data = (await res.json()) as { ok?: boolean; error?: string; billsCreated?: number; jobsLinked?: number; partnerWeekGroups?: number };
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      toast.success(
+        `Backfill: ${data.billsCreated ?? 0} bill(s) created, ${data.jobsLinked ?? 0} job(s) linked (${data.partnerWeekGroups ?? 0} partner-week groups).`
+      );
+      loadData();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Backfill failed");
+    } finally {
+      setBackfillLoading(false);
     }
   };
 
@@ -314,6 +316,9 @@ export default function SelfBillPage() {
             <Button variant="outline" size="sm" onClick={() => loadData()} icon={<Filter className="h-3.5 w-3.5" />}>
               Apply
             </Button>
+            <Button variant="secondary" size="sm" disabled={backfillLoading} onClick={() => void backfillFromJobs()}>
+              {backfillLoading ? "Generating…" : "Generate from jobs"}
+            </Button>
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border-light">
             <span className="text-xs text-text-tertiary flex items-center gap-1">
@@ -380,27 +385,6 @@ export default function SelfBillPage() {
               </div>
             }
           />
-
-          <div className="mt-4 p-4 bg-card rounded-xl border border-border-light shadow-soft">
-            <div className="flex flex-wrap items-center gap-6">
-              <div>
-                <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Total labour</p>
-                <p className="text-lg font-bold text-text-primary">{formatCurrency(totals.totalJobValue)}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Materials</p>
-                <p className="text-lg font-bold text-text-primary">{formatCurrency(totals.totalMaterials)}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Commission</p>
-                <p className="text-lg font-bold text-emerald-600">{formatCurrency(totals.totalCommission)}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Net payouts</p>
-                <p className="text-lg font-bold text-text-primary">{formatCurrency(totals.totalPayouts)}</p>
-              </div>
-            </div>
-          </div>
         </motion.div>
       </div>
 
