@@ -153,6 +153,8 @@ export interface Quote {
   partner_cost: number;
   /** Trade / service label for partner app push targeting (optional). */
   service_type?: string | null;
+  /** Public URLs (quote-invite-images bucket) shown to partners in the app. */
+  images?: string[] | null;
   created_at: string;
   updated_at: string;
   expires_at?: string;

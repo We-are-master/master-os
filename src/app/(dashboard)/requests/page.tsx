@@ -18,7 +18,7 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, MapPin, Phone, Mail, CheckCircle2, XCircle,
   ArrowRight, Briefcase, FileText, Users, Send, PenLine,
-  Inbox, Percent, CalendarRange,
+  Inbox, Percent, CalendarRange, ImagePlus, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
@@ -984,11 +984,16 @@ export default function RequestsPage() {
       <InvitePartnerToQuote
         request={invitePartnerOpen}
         onClose={() => setInvitePartnerOpen(null)}
-        onDone={async (req, partnerIds, sendMethod, clientAddress) => {
+        onDone={async (req, partnerIds, sendMethod, clientAddress, invitePhotoFiles) => {
           try {
             if (!clientAddress?.client_id || !clientAddress?.property_address?.trim()) {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
+            }
+            const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+            let imageUrls: string[] = [];
+            if (invitePhotoFiles?.length) {
+              imageUrls = await uploadQuoteInviteImages(invitePhotoFiles, req.id);
             }
             const quote = await createQuote({
               title: `${req.service_type} — ${clientAddress.client_name}`,
@@ -1012,6 +1017,7 @@ export default function RequestsPage() {
               partner_cost: 0,
               property_address: clientAddress.property_address,
               scope: req.scope,
+              ...(imageUrls.length > 0 ? { images: imageUrls } : {}),
               owner_id: profile?.id,
               owner_name: profile?.full_name,
             });
@@ -1200,13 +1206,21 @@ function InvitePartnerToQuote({
 }: {
   request: ServiceRequest | null;
   onClose: () => void;
-  onDone: (req: ServiceRequest, partnerIds: string[], sendMethod: string, clientAddress: ClientAndAddressValue) => void;
+  onDone: (
+    req: ServiceRequest,
+    partnerIds: string[],
+    sendMethod: string,
+    clientAddress: ClientAndAddressValue,
+    invitePhotoFiles: File[]
+  ) => void;
 }) {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sendMethod, setSendMethod] = useState<"email" | "app" | "both">("both");
   const [searchTerm, setSearchTerm] = useState("");
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
+  const [invitePhotos, setInvitePhotos] = useState<File[]>([]);
+  const [invitePhotoPreviews, setInvitePhotoPreviews] = useState<string[]>([]);
 
   useEffect(() => {
     if (!request) return;
@@ -1217,6 +1231,11 @@ function InvitePartnerToQuote({
       setPartners(list);
       const matched = list.filter((p) => partnerMatchesTypeOfWork(p, request.service_type));
       setSelectedIds(new Set(matched.map((p) => p.id)));
+    });
+    setInvitePhotos([]);
+    setInvitePhotoPreviews((prev) => {
+      prev.forEach((u) => URL.revokeObjectURL(u));
+      return [];
     });
   }, [request]);
 
@@ -1276,6 +1295,61 @@ function InvitePartnerToQuote({
           {filtered.length === 0 && <p className="text-sm text-text-tertiary text-center py-8">No partners found</p>}
         </div>
 
+        <div className="pt-4 mt-4 border-t border-border-light space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos for partners (optional)</p>
+          <p className="text-[11px] text-text-tertiary">Up to 8 images (5 MB each) — shown in the partner app with the invite.</p>
+          <div className="flex flex-wrap gap-2 items-center">
+            <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
+              <ImagePlus className="h-3.5 w-3.5" />
+              Add photos
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple
+                className="sr-only"
+                disabled={invitePhotos.length >= 8}
+                onChange={(e) => {
+                  const list = e.target.files;
+                  if (!list?.length) return;
+                  const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
+                  setInvitePhotos(next);
+                  setInvitePhotoPreviews((prev) => {
+                    prev.forEach((u) => URL.revokeObjectURL(u));
+                    return next.map((f) => URL.createObjectURL(f));
+                  });
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+          {invitePhotoPreviews.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {invitePhotoPreviews.map((src, i) => (
+                <div key={src} className="relative h-16 w-16 rounded-lg overflow-hidden border border-border-light bg-surface-hover shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt="" className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                    onClick={() => {
+                      const idx = i;
+                      setInvitePhotoPreviews((prev) => {
+                        const u = prev[idx];
+                        if (u) URL.revokeObjectURL(u);
+                        return prev.filter((_, j) => j !== idx);
+                      });
+                      setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
+                    }}
+                    aria-label="Remove photo"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="pt-4 mt-4 border-t border-border-light space-y-3">
           <div>
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1 block">Send invite via</label>
@@ -1295,7 +1369,7 @@ function InvitePartnerToQuote({
               size="sm"
               icon={<Send className="h-3.5 w-3.5" />}
               disabled={selectedIds.size === 0 || !clientAddress.client_id || !clientAddress.property_address}
-              onClick={() => onDone(request, Array.from(selectedIds), sendMethod, clientAddress)}
+              onClick={() => onDone(request, Array.from(selectedIds), sendMethod, clientAddress, invitePhotos)}
             >
               Invite partners
             </Button>

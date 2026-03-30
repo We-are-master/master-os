@@ -37,6 +37,11 @@ import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
 import { uploadManualJobReport } from "@/services/job-report-storage";
+import {
+  createSignedJobReportPdfUrl,
+  listAppJobReports,
+  type AppJobReportRow,
+} from "@/services/job-reports";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logFieldChanges } from "@/services/audit";
 import { LocationMiniMap } from "@/components/ui/location-picker";
@@ -180,6 +185,8 @@ export default function JobDetailPage() {
   const [analyzingManualReport, setAnalyzingManualReport] = useState(false);
   const [phaseReportFiles, setPhaseReportFiles] = useState<Record<number, File | null>>({});
   const [analyzingPhase, setAnalyzingPhase] = useState<number | null>(null);
+  const [appJobReports, setAppJobReports] = useState<AppJobReportRow[]>([]);
+  const [loadingAppJobReports, setLoadingAppJobReports] = useState(false);
   const [scopeDraft, setScopeDraft] = useState("");
   const [savingScope, setSavingScope] = useState(false);
   const isAdmin = profile?.role === "admin";
@@ -331,6 +338,55 @@ export default function JobDetailPage() {
       cancelled = true;
     };
   }, [id]);
+
+  useEffect(() => {
+    if (!id) {
+      setAppJobReports([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingAppJobReports(true);
+    listAppJobReports(id)
+      .then((rows) => {
+        if (!cancelled) setAppJobReports(rows);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAppJobReports([]);
+          toast.error("Failed to load partner app reports");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingAppJobReports(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const appReportsByPhase = useMemo(() => {
+    const m = new Map<number, AppJobReportRow>();
+    for (const r of appJobReports) {
+      const existing = m.get(r.phase);
+      if (!existing || new Date(r.uploaded_at) > new Date(existing.uploaded_at)) {
+        m.set(r.phase, r);
+      }
+    }
+    return m;
+  }, [appJobReports]);
+
+  const openPartnerAppPdf = useCallback(async (pdfUrl: string) => {
+    try {
+      const signed = await createSignedJobReportPdfUrl(pdfUrl);
+      if (signed) {
+        window.open(signed, "_blank", "noopener,noreferrer");
+      } else {
+        toast.error("Could not open PDF — storage path missing or link invalid.");
+      }
+    } catch {
+      toast.error("Could not open PDF.");
+    }
+  }, []);
 
   useEffect(() => {
     if (!job?.reference?.trim()) {
@@ -1448,6 +1504,9 @@ export default function JobDetailPage() {
                   <FileText className="h-3.5 w-3.5" /> Reports
                 </p>
                 <div className="flex items-center gap-2 shrink-0">
+                  {loadingAppJobReports ? (
+                    <span className="text-[11px] text-text-tertiary whitespace-nowrap">Loading app reports…</span>
+                  ) : null}
                   <Progress
                     value={reportsProgressPercent}
                     size="sm"
@@ -1479,6 +1538,19 @@ export default function JobDetailPage() {
                       </div>
                       {approvedAt && <p className="text-xs text-emerald-600">Approved {new Date(approvedAt).toLocaleDateString()}</p>}
                       {uploadedAt && !approvedAt && <p className="text-xs text-amber-600">Uploaded {new Date(uploadedAt).toLocaleDateString()}</p>}
+                      {appReportsByPhase.get(n)?.pdf_url ? (
+                        <div className="pt-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            icon={<ExternalLink className="h-3.5 w-3.5" />}
+                            onClick={() => void openPartnerAppPdf(appReportsByPhase.get(n)!.pdf_url!)}
+                          >
+                            Open partner app PDF
+                          </Button>
+                        </div>
+                      ) : null}
                       <div className="space-y-2 pt-1">
                         {!uploaded && (
                           <>
