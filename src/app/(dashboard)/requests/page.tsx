@@ -1105,15 +1105,19 @@ export default function RequestsPage() {
             const uploaded = invitePhotoFiles?.length ? await uploadQuoteInviteImages(invitePhotoFiles, req.id) : [];
             const mergedQuoteImages = mergeImageUrlLists(fromRequest, uploaded);
             const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
+            const catalogId =
+              req.catalog_service_id && isUuid(String(req.catalog_service_id).trim())
+                ? String(req.catalog_service_id).trim()
+                : null;
             const quote = await createQuote({
               title: `${req.service_type} — ${clientAddress.client_name}`,
               client_id: clientAddress.client_id,
               client_address_id: clientAddress.client_address_id,
               client_name: clientAddress.client_name,
-              client_email: clientAddress.client_email ?? req.client_email,
+              client_email: clientAddress.client_email ?? req.client_email ?? "",
               request_id: req.id,
               service_type: normalizeTypeOfWork(req.service_type?.trim() || "") || null,
-              catalog_service_id: req.catalog_service_id ?? null,
+              catalog_service_id: catalogId,
               status: "bidding",
               total_value: req.estimated_value ?? 0,
               partner_quotes_count: partnerIds.length,
@@ -1168,7 +1172,16 @@ export default function RequestsPage() {
             toast.success(`Quote ${quote.reference} created. ${partnerIds.length} partner(s) invited via ${sendMethod}.`);
             router.push(`/quotes?quoteId=${encodeURIComponent(quote.id)}&drawerTab=bids`);
           } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to convert to quote");
+            const msg =
+              err &&
+              typeof err === "object" &&
+              "message" in err &&
+              typeof (err as { message: unknown }).message === "string"
+                ? (err as { message: string }).message
+                : err instanceof Error
+                  ? err.message
+                  : "Failed to convert to quote";
+            toast.error(msg);
           }
         }}
       />
@@ -1188,15 +1201,21 @@ export default function RequestsPage() {
             const freshReq = await getRequest(req.id).catch(() => null);
             const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
             const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
+            const manualCatalogId = (() => {
+              const cid = catalogServiceId ?? req.catalog_service_id;
+              if (!cid) return null;
+              const s = String(cid).trim();
+              return isUuid(s) ? s : null;
+            })();
             const quote = await createQuote({
               title: `${req.service_type} — ${clientAddress.client_name}`,
               client_id: clientAddress.client_id,
               client_address_id: clientAddress.client_address_id,
               client_name: clientAddress.client_name,
-              client_email: clientAddress.client_email ?? req.client_email,
+              client_email: clientAddress.client_email ?? req.client_email ?? "",
               request_id: req.id,
               service_type: normalizeTypeOfWork(req.service_type?.trim() || "") || null,
-              catalog_service_id: catalogServiceId ?? req.catalog_service_id ?? null,
+              catalog_service_id: manualCatalogId,
               status: "draft",
               total_value: total,
               partner_quotes_count: 0,

@@ -1,6 +1,28 @@
 import type { Partner } from "@/types/database";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
+/**
+ * Person / trade-form pairs that should match (request type of work vs partner trade label).
+ * E.g. "Carpenter" on the request vs "Carpentry" on the partner card.
+ */
+const TRADE_SYNONYM_GROUPS: readonly string[][] = [
+  ["carpenter", "carpentry", "carpenters"],
+  ["plumber", "plumbing", "plumbers"],
+  ["electrician", "electrical"],
+  ["builder", "building", "builders"],
+  ["painter", "painting", "painters"],
+  ["cleaner", "cleaning"],
+];
+
+function matchesSynonymGroup(serviceLower: string, tradeLower: string): boolean {
+  for (const group of TRADE_SYNONYM_GROUPS) {
+    const hitS = group.some((g) => serviceLower === g || serviceLower.includes(g) || g.includes(serviceLower));
+    const hitT = group.some((g) => tradeLower === g || tradeLower.includes(g) || g.includes(tradeLower));
+    if (hitS && hitT) return true;
+  }
+  return false;
+}
+
 /** True if partner trade(s) align with request service type (type of work). */
 export function partnerMatchesTypeOfWork(partner: Partner, serviceType: string): boolean {
   const raw = String(serviceType ?? "").trim();
@@ -17,11 +39,13 @@ export function partnerMatchesTypeOfWork(partner: Partner, serviceType: string):
   for (const t of tradeStrings) {
     if (st === t) return true;
     if (st.includes(t) || t.includes(st)) return true;
+    if (matchesSynonymGroup(st, t)) return true;
     const stWords = st.split(/[\s/,&-]+/).filter((w) => w.length >= 3);
     const tWords = t.split(/[\s/,&-]+/).filter((w) => w.length >= 3);
     for (const sw of stWords) {
       for (const tw of tWords) {
         if (sw.includes(tw) || tw.includes(sw)) return true;
+        if (matchesSynonymGroup(sw, tw)) return true;
       }
     }
   }
