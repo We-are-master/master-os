@@ -1,12 +1,15 @@
 import type { Partner } from "@/types/database";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
 /** True if partner trade(s) align with request service type (type of work). */
 export function partnerMatchesTypeOfWork(partner: Partner, serviceType: string): boolean {
-  const st = serviceType.trim().toLowerCase();
+  const stNorm = normalizeTypeOfWork(serviceType.trim()) || serviceType.trim();
+  const st = stNorm.toLowerCase();
   if (!st) return false;
 
   const tradeStrings = [partner.trade, ...((partner.trades ?? []) as string[]).filter(Boolean)]
-    .map((s) => String(s).trim().toLowerCase())
+    .map((s) => normalizeTypeOfWork(String(s).trim()) || String(s).trim())
+    .map((s) => s.toLowerCase())
     .filter(Boolean);
 
   for (const t of tradeStrings) {

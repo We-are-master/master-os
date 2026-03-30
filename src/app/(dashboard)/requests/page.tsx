@@ -44,7 +44,7 @@ import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { isUuid } from "@/lib/utils";
-import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { TYPE_OF_WORK_OPTIONS, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
@@ -167,7 +167,7 @@ export default function RequestsPage() {
     return data.filter((r) => {
       if (filterPriority === "high" && r.priority !== "high" && r.priority !== "urgent") return false;
       if (filterPriority === "urgent" && r.priority !== "urgent") return false;
-      if (filterService !== "all" && r.service_type !== filterService) return false;
+      if (filterService !== "all" && normalizeTypeOfWork(r.service_type) !== normalizeTypeOfWork(filterService)) return false;
       return true;
     });
   }, [data, filterPriority, filterService]);
@@ -236,7 +236,7 @@ export default function RequestsPage() {
     ];
     const fromCatalog = catalogServices.map((c) => c.name);
     const fromRows = [...new Set(data.map((r) => r.service_type).filter(Boolean))] as string[];
-    return [...new Set([...legacy, ...fromCatalog, ...fromRows])].sort((a, b) => a.localeCompare(b));
+    return mergeTypeOfWorkOptions([...legacy, ...fromCatalog, ...fromRows]).sort((a, b) => a.localeCompare(b));
   }, [catalogServices, data]);
 
   const handleSaveRequestDetails = useCallback(async () => {
@@ -254,7 +254,7 @@ export default function RequestsPage() {
       const updated = await updateRequest(selectedRequest.id, {
         property_address: addr,
         postcode: pc || undefined,
-        service_type: drawerFields.service_type.trim(),
+        service_type: normalizeTypeOfWork(drawerFields.service_type.trim()),
         description: drawerFields.description,
         catalog_service_id: cid && isUuid(cid) ? cid : null,
         request_kind: kind,
@@ -396,7 +396,7 @@ export default function RequestsPage() {
           property_address: formData.property_address ?? "",
           postcode: formData.postcode,
           source: formData.source ?? "manual",
-          service_type: formData.service_type ?? "",
+              service_type: normalizeTypeOfWork(formData.service_type ?? ""),
           description: formData.description ?? "",
           status: isManualSource ? "approved" : "new",
           priority: formData.priority ?? "medium",
@@ -473,11 +473,15 @@ export default function RequestsPage() {
     },
     {
       key: "service_type", label: "Service",
-      render: (item) => (
-        <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${serviceColors[item.service_type] || "bg-surface-tertiary text-text-primary ring-border/50"}`}>
-          {item.service_type}
-        </span>
-      ),
+      render: (item) => {
+        const label = normalizeTypeOfWork(item.service_type) || item.service_type;
+        const colorKey = normalizeTypeOfWork(item.service_type) || item.service_type;
+        return (
+          <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${serviceColors[colorKey] || serviceColors[item.service_type] || "bg-surface-tertiary text-text-primary ring-border/50"}`}>
+            {label}
+          </span>
+        );
+      },
     },
     {
       key: "status", label: "Status",
@@ -821,7 +825,7 @@ export default function RequestsPage() {
                             catalog_service_id: id,
                             ...(svc
                               ? {
-                                  service_type: svc.name,
+                                  service_type: normalizeTypeOfWork(svc.name),
                                   description: (svc.default_description?.trim() || f.description) ?? "",
                                 }
                               : {}),
@@ -835,7 +839,7 @@ export default function RequestsPage() {
                         onChange={(e) => setDrawerFields((f) => ({ ...f, service_type: e.target.value }))}
                         options={[
                           { value: "", label: "Select type of work..." },
-                          ...[...new Set([...TYPE_OF_WORK_OPTIONS, ...catalogServices.map((c) => c.name)])]
+                          ...mergeTypeOfWorkOptions([...TYPE_OF_WORK_OPTIONS, ...catalogServices.map((c) => c.name)])
                             .sort((a, b) => a.localeCompare(b))
                             .map((name) => ({ value: name, label: name })),
                         ]}
@@ -997,7 +1001,7 @@ export default function RequestsPage() {
               client_name: clientAddress.client_name,
               client_email: clientAddress.client_email ?? req.client_email,
               request_id: req.id,
-              service_type: req.service_type?.trim() || null,
+              service_type: normalizeTypeOfWork(req.service_type?.trim() || "") || null,
               catalog_service_id: req.catalog_service_id ?? null,
               status: "bidding",
               total_value: req.estimated_value ?? 0,
@@ -1053,7 +1057,7 @@ export default function RequestsPage() {
               client_name: clientAddress.client_name,
               client_email: clientAddress.client_email ?? req.client_email,
               request_id: req.id,
-              service_type: req.service_type?.trim() || null,
+              service_type: normalizeTypeOfWork(req.service_type?.trim() || "") || null,
               catalog_service_id: catalogServiceId ?? req.catalog_service_id ?? null,
               status: "draft",
               total_value: total,
@@ -1634,7 +1638,7 @@ function CreateRequestModal({
 
   const typeOfWorkOptions = useMemo(() => {
     const fromCatalog = catalogServices.map((c) => c.name);
-    return [...new Set([...TYPE_OF_WORK_OPTIONS, ...fromCatalog])].sort((a, b) => a.localeCompare(b));
+    return mergeTypeOfWorkOptions([...TYPE_OF_WORK_OPTIONS, ...fromCatalog]).sort((a, b) => a.localeCompare(b));
   }, [catalogServices]);
 
   useEffect(() => {
@@ -1683,7 +1687,7 @@ function CreateRequestModal({
       postcode: pc,
       source: form.source,
       catalog_service_id: cid && isUuid(cid) ? cid : null,
-      service_type: form.service_type.trim(),
+      service_type: normalizeTypeOfWork(form.service_type.trim()),
       description: form.description,
       priority: form.priority as ServiceRequest["priority"],
       request_kind: form.request_kind as "quote" | "work",
@@ -1743,7 +1747,7 @@ function CreateRequestModal({
                   setForm((prev) => ({
                     ...prev,
                     catalog_service_id: id,
-                    service_type: svc?.name ?? "",
+                    service_type: normalizeTypeOfWork(svc?.name ?? ""),
                     description: svc?.default_description?.trim() || prev.description,
                   }));
                 }}
