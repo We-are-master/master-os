@@ -654,13 +654,6 @@ const REQUIRED_PARTNER_DOCS = [
     docType: "insurance",
     aliases: ["public liability", "insurance", "liability insurance"],
   },
-  {
-    id: "professional_certificates",
-    name: "Professional Certificates",
-    description: "Gas Safe, F-Gas, appliance repair, and trade certificates as required",
-    docType: "certification",
-    aliases: ["professional certificate", "gas safe", "f-gas", "appliance repair", "certificate"],
-  },
 ] as const;
 
 const CERT_REQUIREMENTS_BY_TRADE: Record<string, string[]> = {
@@ -696,16 +689,31 @@ function pickRequiredDocMatch(
   docs: PartnerDoc[],
   req: RequiredDocDef,
 ): PartnerDoc | null {
+  return pickRequiredDocMatches(docs, req)[0] ?? null;
+}
+
+function pickRequiredDocMatches(
+  docs: PartnerDoc[],
+  req: RequiredDocDef,
+): PartnerDoc[] {
   const aliasMatch = docs.filter((d) => {
     const n = String(d.name ?? "").toLowerCase();
     return req.aliases.some((a) => n.includes(a));
   });
   const byType = docs.filter((d) => d.doc_type === req.docType);
-  const candidates = [...aliasMatch, ...byType];
-  if (candidates.length === 0) return null;
-  return [...candidates].sort(
+  const byId = new Map<string, PartnerDoc>();
+  for (const doc of [...aliasMatch, ...byType]) byId.set(doc.id, doc);
+  return [...byId.values()].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  )[0]!;
+  );
+}
+
+function extractCertificateNumber(doc: Pick<PartnerDoc, "notes">): string | null {
+  const t = String(doc.notes ?? "").trim();
+  if (!t) return null;
+  const m = t.match(/^certificate_number:\s*(.+)$/i);
+  if (m?.[1]) return m[1].trim();
+  return null;
 }
 
 function buildTradeCertificateRequirements(trades: string[] | null | undefined): {
@@ -733,6 +741,22 @@ function buildTradeCertificateRequirements(trades: string[] | null | undefined):
     }
   }
   return out;
+}
+
+function buildRequiredDocumentChecklist(trades: string[] | null | undefined): RequiredDocDef[] {
+  return [...REQUIRED_PARTNER_DOCS, ...buildTradeCertificateRequirements(trades)];
+}
+
+function computeComplianceScore(docs: PartnerDoc[], requiredDocs: RequiredDocDef[]): number {
+  if (requiredDocs.length === 0) return 100;
+  const now = new Date();
+  let validCount = 0;
+  for (const req of requiredDocs) {
+    const matches = pickRequiredDocMatches(docs, req);
+    const hasValidDoc = matches.some((d) => !d.expires_at || new Date(d.expires_at) >= now);
+    if (hasValidDoc) validCount += 1;
+  }
+  return Math.round((validCount / requiredDocs.length) * 100);
 }
 
 function PartnerDocPreviewThumb({ path }: { path: string }) {
@@ -767,7 +791,14 @@ function AddPartnerDocumentModal({
   open: boolean;
   onClose: () => void;
   submitting: boolean;
-  onSubmit: (docType: string, name: string, file: File, preview: File | null, expiresAt?: string) => Promise<void>;
+  onSubmit: (
+    docType: string,
+    name: string,
+    file: File,
+    preview: File | null,
+    expiresAt?: string,
+    certificateNumber?: string,
+  ) => Promise<void>;
   initialDocType?: string;
   initialName?: string;
 }) {
@@ -776,6 +807,7 @@ function AddPartnerDocumentModal({
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<File | null>(null);
   const [expiresAt, setExpiresAt] = useState("");
+  const [certificateNumber, setCertificateNumber] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -783,6 +815,7 @@ function AddPartnerDocumentModal({
     setFile(null);
     setPreview(null);
     setExpiresAt("");
+    setCertificateNumber("");
     setDocType(initialDocType ?? "insurance");
   }, [open, initialDocType, initialName]);
 
@@ -796,7 +829,22 @@ function AddPartnerDocumentModal({
       toast.error("Choose a document file");
       return;
     }
-    void onSubmit(docType, name.trim(), file, preview, expiresAt.trim() ? expiresAt.trim() : undefined);
+    if (docType === "certification" && !certificateNumber.trim()) {
+      toast.error("Enter certificate number");
+      return;
+    }
+    if (docType === "certification" && !expiresAt.trim()) {
+      toast.error("Enter certificate expiry date");
+      return;
+    }
+    void onSubmit(
+      docType,
+      name.trim(),
+      file,
+      preview,
+      expiresAt.trim() ? expiresAt.trim() : undefined,
+      certificateNumber.trim() || undefined,
+    );
   };
 
   return (
@@ -820,8 +868,20 @@ function AddPartnerDocumentModal({
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Name *</label>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Public liability 2025" />
         </div>
+        {docType === "certification" && (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Certificate number *</label>
+            <Input
+              value={certificateNumber}
+              onChange={(e) => setCertificateNumber(e.target.value)}
+              placeholder="e.g. GS-123456 / FGAS-9981"
+            />
+          </div>
+        )}
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Expiration date (optional)</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">
+            Expiration date {docType === "certification" ? "*" : "(optional)"}
+          </label>
           <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
           <p className="text-[10px] text-text-tertiary mt-1">Used to mark documents as Expired automatically.</p>
         </div>
@@ -1039,7 +1099,6 @@ function PartnerDetailDrawer({
     trades: [TRADES[0]] as string[],
     location: "",
     rating: "",
-    compliance_score: "",
   });
 
   useEffect(() => {
@@ -1117,15 +1176,14 @@ function PartnerDetailDrawer({
       setEditingOverview(false);
       setOverviewForm({
         company_name: partner.company_name ?? "",
-          vat_number: partner.vat_number ?? "",
-          crn: partner.crn ?? "",
+        vat_number: partner.vat_number ?? "",
+        crn: partner.crn ?? "",
         contact_name: partner.contact_name ?? "",
         email: partner.email ?? "",
         phone: partner.phone ?? "",
         trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
         location: partner.location ?? "",
         rating: String(partner.rating ?? 0),
-        compliance_score: String(partner.compliance_score ?? 0),
       });
     }
   }, [partner, loadAll]);
@@ -1227,13 +1285,8 @@ function PartnerDetailDrawer({
       return;
     }
     const rating = Number(overviewForm.rating || "0");
-    const compliance = Number(overviewForm.compliance_score || "0");
     if (Number.isNaN(rating) || rating < 0 || rating > 5) {
       toast.error("Rating must be between 0 and 5.");
-      return;
-    }
-    if (Number.isNaN(compliance) || compliance < 0 || compliance > 100) {
-      toast.error("Compliance must be between 0 and 100.");
       return;
     }
     try {
@@ -1249,7 +1302,6 @@ function PartnerDetailDrawer({
         trades: overviewForm.trades,
         location: overviewForm.location.trim(),
         rating,
-        compliance_score: compliance,
       });
       onPartnerUpdate?.(updated);
       setEditingOverview(false);
@@ -1259,7 +1311,14 @@ function PartnerDetailDrawer({
     }
   }, [partner, overviewForm, onPartnerUpdate]);
 
-  const handleAddDocument = async (docType: string, name: string, file: File, previewFile: File | null, expiresAt?: string) => {
+  const handleAddDocument = async (
+    docType: string,
+    name: string,
+    file: File,
+    previewFile: File | null,
+    expiresAt?: string,
+    certificateNumber?: string,
+  ) => {
     if (!partner) return;
     const supabase = getSupabase();
     setAddDocSubmitting(true);
@@ -1274,6 +1333,7 @@ function PartnerDetailDrawer({
           status: "pending",
           uploaded_by: profile?.full_name,
           expires_at: expiresIso,
+          notes: docType === "certification" && certificateNumber ? `certificate_number: ${certificateNumber}` : null,
         })
         .select()
         .single();
@@ -1360,6 +1420,18 @@ function PartnerDetailDrawer({
       supabase.from("partner_notes").select("*").eq("partner_id", partner.id).order("created_at", { ascending: false }).then(({ data }) => setNotes((data ?? []) as PartnerNote[]));
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
   };
+
+  const partnerTradesForCompliance = partner ? (partner.trades?.length ? partner.trades : [partner.trade]) : [];
+  const requiredDocuments = buildRequiredDocumentChecklist(partnerTradesForCompliance);
+  const computedCompliance = partner ? computeComplianceScore(documents, requiredDocuments) : 0;
+
+  useEffect(() => {
+    if (!partner || teamMember) return;
+    if (Number(partner.compliance_score ?? 0) === computedCompliance) return;
+    void updatePartner(partner.id, { compliance_score: computedCompliance })
+      .then((updated) => onPartnerUpdate?.(updated))
+      .catch(() => {});
+  }, [partner, teamMember, computedCompliance, onPartnerUpdate]);
 
   if (!partner && !teamMember) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
@@ -1550,11 +1622,11 @@ function PartnerDetailDrawer({
       text: `Low rating (${partner.rating}/5). Review service quality and feedback.`,
     });
   }
-  if (Number(partner.compliance_score ?? 0) < 70) {
+  if (computedCompliance < 70) {
     overviewAlerts.push({
       key: "low-compliance",
       level: "warning",
-      text: `Compliance score is ${partner.compliance_score}%. Follow up on missing requirements.`,
+      text: `Compliance score is ${computedCompliance}%. Follow up on missing or expired requirements.`,
     });
   }
   if (overduePendingBills.length > 0) {
@@ -1679,7 +1751,6 @@ function PartnerDetailDrawer({
                             trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
                             location: partner.location ?? "",
                             rating: String(partner.rating ?? 0),
-                            compliance_score: String(partner.compliance_score ?? 0),
                           });
                         } else {
                           setEditingOverview(true);
@@ -1831,23 +1902,12 @@ function PartnerDetailDrawer({
               <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Compliance</p>
                 <div className="mt-1">
-                  {editingOverview ? (
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      step="1"
-                      value={overviewForm.compliance_score}
-                      onChange={(e) => setOverviewForm((p) => ({ ...p, compliance_score: e.target.value }))}
-                      className="h-8 w-24"
-                    />
-                  ) : (
-                    <span className="text-xl font-bold text-text-primary">{partner.compliance_score}%</span>
-                  )}
+                  <span className="text-xl font-bold text-text-primary">{computedCompliance}%</span>
+                  <p className="text-[10px] text-text-tertiary">Auto-calculated from required docs uploaded and valid.</p>
                   <Progress
-                    value={editingOverview ? Number(overviewForm.compliance_score || 0) : partner.compliance_score}
+                    value={computedCompliance}
                     size="sm"
-                    color={(editingOverview ? Number(overviewForm.compliance_score || 0) : partner.compliance_score) >= 90 ? "emerald" : (editingOverview ? Number(overviewForm.compliance_score || 0) : partner.compliance_score) >= 70 ? "primary" : "amber"}
+                    color={computedCompliance >= 90 ? "emerald" : computedCompliance >= 70 ? "primary" : "amber"}
                     className="mt-1"
                   />
                 </div>
@@ -1872,7 +1932,6 @@ function PartnerDetailDrawer({
                       trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
                       location: partner.location ?? "",
                       rating: String(partner.rating ?? 0),
-                      compliance_score: String(partner.compliance_score ?? 0),
                     });
                   }}
                 >
@@ -2236,15 +2295,43 @@ function PartnerDetailDrawer({
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {[...REQUIRED_PARTNER_DOCS, ...buildTradeCertificateRequirements(partner.trades?.length ? partner.trades : [partner.trade])].map((req) => {
-                  const doc = pickRequiredDocMatch(documents, req);
+                {requiredDocuments.map((req) => {
+                  const matchedDocs = pickRequiredDocMatches(documents, req);
+                  const doc = matchedDocs[0] ?? null;
                   const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
                   const now = new Date();
                   const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
                   const isExpired = !!(expiresAt && expiresAt < now);
                   const isExpiringSoon = !!(expiresAt && expiresAt >= now && expiresAt <= in30Days);
-                  const statusLabel = !doc ? "Missing" : isExpired ? "Expired" : isExpiringSoon ? "Expiring soon" : "Valid";
-                  const statusVariant = !doc ? "default" : isExpired ? "danger" : isExpiringSoon ? "warning" : "success";
+                  const certDocs = req.docType === "certification" ? matchedDocs : [];
+                  const certValidCount = certDocs.filter((d) => {
+                    if (!d.expires_at) return true;
+                    return new Date(d.expires_at) >= now;
+                  }).length;
+                  const certExpiringSoonCount = certDocs.filter((d) => {
+                    if (!d.expires_at) return false;
+                    const dt = new Date(d.expires_at);
+                    return dt >= now && dt <= in30Days;
+                  }).length;
+                  const certExpiredCount = certDocs.filter((d) => !!(d.expires_at && new Date(d.expires_at) < now)).length;
+                  const statusLabel = req.docType === "certification"
+                    ? certDocs.length === 0
+                      ? "Missing"
+                      : certValidCount > 0
+                        ? certExpiringSoonCount > 0 ? "Valid (some expiring soon)" : "Valid"
+                        : certExpiredCount > 0 ? "Expired" : "Pending"
+                    : !doc
+                      ? "Missing"
+                      : isExpired ? "Expired" : isExpiringSoon ? "Expiring soon" : "Valid";
+                  const statusVariant = req.docType === "certification"
+                    ? certDocs.length === 0
+                      ? "default"
+                      : certValidCount > 0
+                        ? certExpiringSoonCount > 0 ? "warning" : "success"
+                        : certExpiredCount > 0 ? "danger" : "default"
+                    : !doc
+                      ? "default"
+                      : isExpired ? "danger" : isExpiringSoon ? "warning" : "success";
 
                   return (
                     <div key={req.id} className="rounded-lg border border-border-light bg-card p-3 space-y-2">
@@ -2260,6 +2347,11 @@ function PartnerDetailDrawer({
                           Expires: {new Date(doc.expires_at).toLocaleDateString()}
                         </p>
                       )}
+                      {req.docType === "certification" && matchedDocs.length > 0 && (
+                        <p className="text-[11px] text-text-tertiary">
+                          Uploaded: {matchedDocs.length}
+                        </p>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
@@ -2269,7 +2361,7 @@ function PartnerDetailDrawer({
                           setAddDocOpen(true);
                         }}
                       >
-                        {doc ? "Replace / update" : "Add document"}
+                        {req.docType === "certification" ? "Add another certificate" : doc ? "Replace / update" : "Add document"}
                       </Button>
                     </div>
                   );
@@ -2325,6 +2417,11 @@ function PartnerDetailDrawer({
                       </div>
                       <p className="text-xs text-text-tertiary mt-0.5">{typeConfig.label}</p>
                       {doc.file_name && <p className="text-[10px] text-text-tertiary mt-0.5 truncate">{doc.file_name}</p>}
+                      {doc.doc_type === "certification" && extractCertificateNumber(doc) && (
+                        <p className="text-[10px] text-text-tertiary mt-0.5">
+                          Certificate no: {extractCertificateNumber(doc)}
+                        </p>
+                      )}
                       {doc.expires_at && <p className={`text-xs mt-0.5 ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>Expires: {new Date(doc.expires_at).toLocaleDateString()}</p>}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
