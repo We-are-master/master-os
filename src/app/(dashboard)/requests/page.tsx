@@ -34,6 +34,7 @@ import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { useRouter } from "next/navigation";
 import { listPartners, listPartnersAll } from "@/services/partners";
+import { createClientAddress, listAddressesByClient } from "@/services/client-addresses";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { normalizeTotalPhases } from "@/lib/job-phases";
@@ -1099,6 +1100,7 @@ export default function RequestsPage() {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
             }
+            const resolvedAddr = await ensureClientAddressForQuote(clientAddress);
             const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
             const freshReq = await getRequest(req.id).catch(() => null);
             const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
@@ -1110,11 +1112,11 @@ export default function RequestsPage() {
                 ? String(req.catalog_service_id).trim()
                 : null;
             const quote = await createQuote({
-              title: `${req.service_type} — ${clientAddress.client_name}`,
-              client_id: clientAddress.client_id,
-              client_address_id: clientAddress.client_address_id,
-              client_name: clientAddress.client_name,
-              client_email: clientAddress.client_email ?? req.client_email ?? "",
+              title: `${req.service_type} — ${resolvedAddr.client_name}`,
+              client_id: resolvedAddr.client_id,
+              client_address_id: resolvedAddr.client_address_id,
+              client_name: resolvedAddr.client_name,
+              client_email: resolvedAddr.client_email ?? req.client_email ?? "",
               request_id: req.id,
               service_type: normalizeTypeOfWork(req.service_type?.trim() || "") || null,
               catalog_service_id: catalogId,
@@ -1129,7 +1131,7 @@ export default function RequestsPage() {
               customer_accepted: false,
               customer_deposit_paid: false,
               partner_cost: 0,
-              property_address: clientAddress.property_address,
+              property_address: resolvedAddr.property_address,
               scope: scopeFromRequest,
               email_attach_request_photos: false,
               ...(mergedQuoteImages.length > 0 ? { images: mergedQuoteImages } : {}),
@@ -1138,7 +1140,7 @@ export default function RequestsPage() {
             });
             const photoUrlsForPush = mergedQuoteImages;
             const inviteBody =
-              `${req.service_type} — ${clientAddress.property_address ?? req.property_address ?? ""}`.trim() || quote.reference;
+              `${req.service_type} — ${resolvedAddr.property_address ?? req.property_address ?? ""}`.trim() || quote.reference;
             if (sendMethod === "app" || sendMethod === "both") {
               await fetch("/api/push/notify-partner", {
                 method: "POST",
@@ -1197,6 +1199,7 @@ export default function RequestsPage() {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
             }
+            const resolvedAddr = await ensureClientAddressForQuote(clientAddress);
             const total = lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
             const freshReq = await getRequest(req.id).catch(() => null);
             const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
@@ -1208,11 +1211,11 @@ export default function RequestsPage() {
               return isUuid(s) ? s : null;
             })();
             const quote = await createQuote({
-              title: `${req.service_type} — ${clientAddress.client_name}`,
-              client_id: clientAddress.client_id,
-              client_address_id: clientAddress.client_address_id,
-              client_name: clientAddress.client_name,
-              client_email: clientAddress.client_email ?? req.client_email ?? "",
+              title: `${req.service_type} — ${resolvedAddr.client_name}`,
+              client_id: resolvedAddr.client_id,
+              client_address_id: resolvedAddr.client_address_id,
+              client_name: resolvedAddr.client_name,
+              client_email: resolvedAddr.client_email ?? req.client_email ?? "",
               request_id: req.id,
               service_type: normalizeTypeOfWork(req.service_type?.trim() || "") || null,
               catalog_service_id: manualCatalogId,
@@ -1227,7 +1230,7 @@ export default function RequestsPage() {
               customer_accepted: false,
               customer_deposit_paid: false,
               partner_cost: 0,
-              property_address: clientAddress.property_address,
+              property_address: resolvedAddr.property_address,
               scope: scopeFromRequest,
               email_attach_request_photos: false,
               ...(fromRequest.length > 0 ? { images: fromRequest } : {}),
@@ -1358,6 +1361,22 @@ function serviceRequestToClientAddressValue(req: ServiceRequest): ClientAndAddre
   };
 }
 
+/** Persist a typed-only address (no saved row yet) so quote insert gets a valid client_address_id. */
+async function ensureClientAddressForQuote(ca: ClientAndAddressValue): Promise<ClientAndAddressValue> {
+  const cid = ca.client_id;
+  const line = ca.property_address?.trim();
+  if (!cid || !line) return ca;
+  if (ca.client_address_id && isUuid(String(ca.client_address_id))) return ca;
+  const existing = await listAddressesByClient(cid);
+  const created = await createClientAddress({
+    client_id: cid,
+    address: line,
+    country: "gb",
+    is_default: existing.length === 0,
+  });
+  return { ...ca, client_address_id: created.id, property_address: line };
+}
+
 function InvitePartnerToQuote({
   request, onClose, onDone,
 }: {
@@ -1460,9 +1479,9 @@ function InvitePartnerToQuote({
       title="Invite partners"
       subtitle={`${request.reference} — ${request.service_type}`}
       size="lg"
-      className="max-w-3xl"
+      className="w-[min(100%,calc(100vw-1.5rem))] max-w-3xl"
     >
-      <div className="p-4 sm:p-6 flex flex-col gap-4 min-h-0">
+      <div className="p-3 sm:p-6 flex flex-col gap-3 sm:gap-4 min-h-0">
         <div className="shrink-0 space-y-2">
           <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Client and address *</p>
           <ClientAddressPicker
@@ -1474,12 +1493,12 @@ function InvitePartnerToQuote({
           />
         </div>
 
-        <div className="shrink-0 rounded-xl border border-border-light bg-surface-hover/80 overflow-hidden flex flex-col min-h-0 max-h-[min(320px,42vh)]">
+        <div className="shrink-0 rounded-xl border border-border-light bg-surface-hover/80 overflow-hidden">
           <button
             type="button"
             onClick={() => setSummaryExpanded((v) => !v)}
             aria-expanded={summaryExpanded}
-            className="flex w-full shrink-0 items-center justify-between gap-2 px-4 py-3 text-left hover:bg-surface-hover/90 transition-colors"
+            className="flex w-full shrink-0 items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3 text-left hover:bg-surface-hover/90 transition-colors"
           >
             <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invite summary</span>
             <ChevronDown
@@ -1488,8 +1507,8 @@ function InvitePartnerToQuote({
             />
           </button>
           {summaryExpanded && (
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 space-y-3 border-t border-border-light pt-3">
-              <p className="text-sm text-text-primary">
+            <div className="px-3 pb-3 pt-2 sm:px-5 sm:pb-4 sm:pt-3 space-y-3 border-t border-border-light">
+              <p className="text-sm text-text-primary break-words">
                 <span className="text-text-tertiary text-xs font-medium">Type of work · </span>
                 {request.service_type?.trim() || "—"}
               </p>
@@ -1497,26 +1516,26 @@ function InvitePartnerToQuote({
                 <span className="text-text-tertiary text-xs font-medium">Address · </span>
                 {request.property_address?.trim() || "—"}
               </p>
-              <p className="text-sm text-text-secondary whitespace-pre-wrap">
+              <p className="text-sm text-text-secondary whitespace-pre-wrap break-words max-w-full">
                 <span className="text-text-tertiary text-xs font-medium block mb-0.5">Service description</span>
                 {request.description?.trim() || "—"}
               </p>
-              <div>
+              <div className="min-w-0">
                 <span className="text-text-tertiary text-xs font-medium block mb-1.5">Photos (request + extra for invite)</span>
                 {summaryImageUrls.length === 0 ? (
                   <p className="text-xs text-text-tertiary mb-2">No photos on the request yet — add below for this invite.</p>
                 ) : (
-                  <div className="flex flex-wrap gap-2 mb-3">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 mb-3">
                     {summaryImageUrls.map((url, i) => (
                       <a
                         key={`${url}-${i}`}
                         href={url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="block shrink-0 rounded-lg border border-border-light overflow-hidden bg-card hover:ring-2 hover:ring-primary/30 transition-shadow"
+                        className="block aspect-square rounded-lg border border-border-light overflow-hidden bg-card hover:ring-2 hover:ring-primary/30 transition-shadow min-w-0"
                         title="Open full size"
                       >
-                        <img src={url} alt="" className="h-16 w-16 object-cover" loading="lazy" />
+                        <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" />
                       </a>
                     ))}
                   </div>
@@ -1547,9 +1566,9 @@ function InvitePartnerToQuote({
                   </label>
                 </div>
                 {invitePhotoPreviews.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 mt-2">
                     {invitePhotoPreviews.map((src, i) => (
-                      <div key={src} className="relative h-16 w-16 rounded-lg overflow-hidden border border-border-light bg-surface-hover shrink-0">
+                      <div key={src} className="relative aspect-square rounded-lg overflow-hidden border border-border-light bg-surface-hover min-w-0">
                         <img src={src} alt="" className="h-full w-full object-cover" />
                         <button
                           type="button"
@@ -1591,14 +1610,14 @@ function InvitePartnerToQuote({
           </p>
         )}
 
-        <div className="min-h-[200px] max-h-[min(420px,50vh)] overflow-y-auto overscroll-contain space-y-2 rounded-xl border border-border-light/60 bg-surface-hover/30 p-2 pr-1">
+        <div className="space-y-2 rounded-xl border border-border-light/60 bg-surface-hover/30 p-2 sm:p-3 min-h-0">
           {!partnersLoading &&
             [...serviceRelated, ...others].map((p) => {
             if (!p.id) return null;
             const isSelected = selectedIds.has(p.id);
             const isMatch = matchIdSet.has(p.id);
             return (
-              <label key={p.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? "border-primary bg-primary/5" : isMatch ? "border-amber-200 bg-amber-50/30 hover:border-primary/30" : "border-border hover:border-primary/30 hover:bg-surface-hover"}`}>
+              <label key={p.id} className={`flex items-start sm:items-center gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? "border-primary bg-primary/5" : isMatch ? "border-amber-200 bg-amber-50/30 hover:border-primary/30" : "border-border hover:border-primary/30 hover:bg-surface-hover"}`}>
                 <input type="checkbox" checked={isSelected} onChange={(e) => {
                   setSelectedIds((prev) => {
                     const next = new Set(prev);
@@ -1608,12 +1627,12 @@ function InvitePartnerToQuote({
                 }} className="h-4 w-4 rounded border-border text-primary focus:ring-primary/20" />
                 <Avatar name={p.company_name} size="md" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-text-primary truncate">{p.company_name}</p>
-                  <p className="text-xs text-text-tertiary">
+                  <p className="text-sm font-semibold text-text-primary break-words">{p.company_name}</p>
+                  <p className="text-xs text-text-tertiary break-words">
                     {(p.trade ?? "—")} — {p.location ?? "—"}
                   </p>
                 </div>
-                {isMatch && <Badge variant="warning" size="sm">Match</Badge>}
+                {isMatch && <Badge variant="warning" size="sm" className="shrink-0 self-start sm:self-center">Match</Badge>}
               </label>
             );
           })}
@@ -1628,23 +1647,24 @@ function InvitePartnerToQuote({
           )}
         </div>
 
-        <div className="shrink-0 pt-4 border-t border-border-light space-y-3">
+        <div className="shrink-0 pt-3 sm:pt-4 border-t border-border-light space-y-3">
           <div>
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1 block">Send invite via</label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {(["email", "app", "both"] as const).map((m) => (
-                <button key={m} onClick={() => setSendMethod(m)} className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${sendMethod === m ? "border-primary bg-primary/10 text-primary" : "border-border text-text-tertiary hover:text-text-primary"}`}>
+                <button key={m} onClick={() => setSendMethod(m)} className={`flex-1 min-w-[5.5rem] sm:flex-initial px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${sendMethod === m ? "border-primary bg-primary/10 text-primary" : "border-border text-text-tertiary hover:text-text-primary"}`}>
                   {m === "both" ? "Email + App" : m.charAt(0).toUpperCase() + m.slice(1)}
                 </button>
               ))}
             </div>
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-text-tertiary">
               {selectedIds.size === 0 ? "Please select at least one partner" : `${selectedIds.size} partner(s) selected`}
             </p>
             <Button
               size="sm"
+              className="w-full sm:w-auto shrink-0"
               icon={<Send className="h-3.5 w-3.5" />}
               disabled={selectedIds.size === 0 || !clientAddress.client_id || !clientAddress.property_address}
               onClick={() => onDone(request, Array.from(selectedIds), sendMethod, clientAddress, invitePhotos)}
