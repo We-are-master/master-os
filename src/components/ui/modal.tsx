@@ -72,8 +72,8 @@ export function Modal({
             <div
               className={cn(
                 scrollBody
-                  ? "min-h-0 overflow-y-auto overscroll-contain max-h-[min(70vh,calc(90vh-5rem))]"
-                  : "min-h-0 overflow-hidden"
+                  ? "min-h-0 overflow-y-auto overscroll-contain max-h-[min(85vh,calc(90dvh - 5rem),920px)]"
+                  : "min-h-0 overflow-hidden",
               )}
             >
               {children}
