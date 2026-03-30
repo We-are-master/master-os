@@ -132,8 +132,8 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   final_check: { label: "Final Check", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
   need_attention: { label: "Need attention", variant: "warning", dot: true },
-  completed: { label: "Completed", variant: "success", dot: true },
-  cancelled: { label: "Cancelled", variant: "danger", dot: true },
+  completed: { label: "Paid & Completed", variant: "success", dot: true },
+  cancelled: { label: "Lost & Cancelled", variant: "danger", dot: true },
 };
 
 function JobsPageContent() {
@@ -353,8 +353,8 @@ function JobsPageContent() {
     { id: "in_progress", label: "In Progress", count: inProgressTabCount },
     { id: "final_check", label: "Final Checks", count: finalChecksTabCount },
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
-    { id: "completed", label: "Completed", count: tabCounts.completed ?? 0 },
-    { id: "cancelled", label: "Cancelled", count: tabCounts.cancelled ?? 0 },
+    { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0 },
+    { id: "cancelled", label: "Lost & Cancelled", count: tabCounts.cancelled ?? 0 },
   ];
 
   useEffect(() => {
@@ -882,7 +882,7 @@ function JobsPageContent() {
               <SearchInput placeholder="Search jobs..." className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           </div>
-          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /><BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" /></div>} />}
+          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Paid & Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /><BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" /></div>} />}
           {viewMode === "kanban" && (
             <div className="min-h-[400px]">
               {loading ? (
