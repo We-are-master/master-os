@@ -7,6 +7,7 @@ import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createQuoteResponseToken } from "@/lib/quote-response-token";
 import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
 import { createServiceClient } from "@/lib/supabase/service";
+import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 
 function isHttpsUrl(u: string): boolean {
   try {
@@ -181,12 +182,10 @@ export async function POST(req: NextRequest) {
     if (useRequestPhotos && quote.request_id) {
       const { data: sr } = await supabase
         .from("service_requests")
-        .select("photo_urls")
+        .select("images")
         .eq("id", quote.request_id)
         .maybeSingle();
-      const urls = Array.isArray(sr?.photo_urls)
-        ? (sr!.photo_urls as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-        : [];
+      const urls = normalizeJsonImageArray(sr?.images);
       const extras = await sitePhotoAttachments(urls);
       emailAttachments.push(...extras);
     }

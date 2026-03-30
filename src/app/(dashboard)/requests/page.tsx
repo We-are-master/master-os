@@ -18,13 +18,12 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, MapPin, Phone, Mail, CheckCircle2, XCircle,
   ArrowRight, Briefcase, FileText, Users, Send, PenLine,
-  Inbox, Percent, CalendarRange,
+  Inbox, Percent, CalendarRange, ImagePlus, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listRequests, createRequest, updateRequestStatus, updateRequest } from "@/services/requests";
-import { uploadRequestSitePhoto } from "@/services/request-photo-storage";
+import { listRequests, createRequest, updateRequestStatus, updateRequest, getRequest } from "@/services/requests";
 import { createQuote } from "@/services/quotes";
 import { createJob } from "@/services/jobs";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -50,6 +49,7 @@ import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
+import { mergeImageUrlLists, normalizeJsonImageArray } from "@/lib/request-attachment-images";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   new: { label: "New", variant: "primary" },
@@ -130,6 +130,8 @@ export default function RequestsPage() {
   });
   const [propertyAddressEditing, setPropertyAddressEditing] = useState(false);
   const [drawerSaving, setDrawerSaving] = useState(false);
+  const [requestImageUrls, setRequestImageUrls] = useState<string[]>([]);
+  const [requestPhotosSaving, setRequestPhotosSaving] = useState(false);
   const [drawerTab, setDrawerTab] = useState("details");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
@@ -224,6 +226,14 @@ export default function RequestsPage() {
     selectedRequest?.description,
     selectedRequest?.catalog_service_id,
   ]);
+
+  useEffect(() => {
+    if (!selectedRequest) {
+      setRequestImageUrls([]);
+      return;
+    }
+    setRequestImageUrls(normalizeJsonImageArray(selectedRequest.images));
+  }, [selectedRequest?.id, selectedRequest?.updated_at, selectedRequest?.images]);
 
   const serviceFilterOptions = useMemo(() => {
     const legacy = [
@@ -384,58 +394,99 @@ export default function RequestsPage() {
     setConvertToJobOpen(req);
   }, []);
 
-  const handleCreate = useCallback(
-    async (formData: Partial<ServiceRequest> & { photoFiles?: File[] }) => {
+  const handleRequestPhotosAdd = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const list = e.target.files;
+      e.target.value = "";
+      if (!selectedRequest || !list?.length) return;
+      const remain = 8 - requestImageUrls.length;
+      if (remain <= 0) {
+        toast.error("Maximum 8 photos per request.");
+        return;
+      }
+      setRequestPhotosSaving(true);
       try {
-        const { photoFiles, ...rest } = formData;
-        const isManualSource = (rest.source ?? "manual") === "manual";
+        const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+        const toUpload = Array.from(list).slice(0, remain);
+        const urls = await uploadQuoteInviteImages(toUpload, selectedRequest.id);
+        const merged = mergeImageUrlLists(requestImageUrls, urls);
+        const updated = await updateRequest(selectedRequest.id, { images: merged });
+        setSelectedRequest(updated);
+        setRequestImageUrls(normalizeJsonImageArray(updated.images));
+        refreshSilent();
+        toast.success("Photos saved");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Upload failed");
+      } finally {
+        setRequestPhotosSaving(false);
+      }
+    },
+    [selectedRequest, requestImageUrls, refreshSilent]
+  );
+
+  const handleRequestPhotoRemove = useCallback(
+    async (url: string) => {
+      if (!selectedRequest) return;
+      setRequestPhotosSaving(true);
+      try {
+        const merged = requestImageUrls.filter((u) => u !== url);
+        const updated = await updateRequest(selectedRequest.id, { images: merged });
+        setSelectedRequest(updated);
+        setRequestImageUrls(normalizeJsonImageArray(updated.images));
+        refreshSilent();
+        toast.success("Photo removed");
+      } catch {
+        toast.error("Failed to remove photo");
+      } finally {
+        setRequestPhotosSaving(false);
+      }
+    },
+    [selectedRequest, requestImageUrls, refreshSilent]
+  );
+
+  const handleCreate = useCallback(
+    async (formData: Partial<ServiceRequest>, photoFiles?: File[]) => {
+      try {
+        const isManualSource = (formData.source ?? "manual") === "manual";
         const result = await createRequest({
-          client_id: rest.client_id,
-          client_address_id: rest.client_address_id,
-          client_name: rest.client_name ?? "",
-          client_email: rest.client_email ?? "",
-          client_phone: rest.client_phone,
-          property_address: rest.property_address ?? "",
-          postcode: rest.postcode,
-          source: rest.source ?? "manual",
-          service_type: normalizeTypeOfWork(rest.service_type ?? ""),
-          description: rest.description ?? "",
+          client_id: formData.client_id,
+          client_address_id: formData.client_address_id,
+          client_name: formData.client_name ?? "",
+          client_email: formData.client_email ?? "",
+          client_phone: formData.client_phone,
+          property_address: formData.property_address ?? "",
+          postcode: formData.postcode,
+          source: formData.source ?? "manual",
+              service_type: normalizeTypeOfWork(formData.service_type ?? ""),
+          description: formData.description ?? "",
           status: isManualSource ? "approved" : "new",
-          priority: rest.priority ?? "medium",
+          priority: formData.priority ?? "medium",
           owner_id: profile?.id,
           owner_name: profile?.full_name ?? "",
-          assigned_to: rest.assigned_to,
-          catalog_service_id: rest.catalog_service_id && isUuid(String(rest.catalog_service_id).trim())
-            ? String(rest.catalog_service_id).trim()
+          assigned_to: formData.assigned_to,
+          catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
+            ? String(formData.catalog_service_id).trim()
             : null,
           request_kind:
-            rest.request_kind === "quote" || rest.request_kind === "work" ? rest.request_kind : "quote",
+            formData.request_kind === "quote" || formData.request_kind === "work" ? formData.request_kind : "quote",
         });
-        let withPhotos = result;
-        if (photoFiles?.length) {
-          const urls: string[] = [];
-          for (const f of photoFiles) {
-            try {
-              urls.push((await uploadRequestSitePhoto(result.id, f)).publicUrl);
-            } catch (e) {
-              toast.error(e instanceof Error ? e.message : "Photo upload failed");
-            }
-          }
-          if (urls.length) {
-            withPhotos = await updateRequest(result.id, { photo_urls: urls });
-          }
-        }
         await logAudit({
-          entityType: "request", entityId: withPhotos.id, entityRef: withPhotos.reference,
+          entityType: "request", entityId: result.id, entityRef: result.reference,
           action: "created", userId: profile?.id, userName: profile?.full_name,
         });
+        if (photoFiles?.length) {
+          const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+          const urls = await uploadQuoteInviteImages(photoFiles, result.id);
+          await updateRequest(result.id, { images: urls });
+        }
         setCreateOpen(false);
         if (isManualSource) {
           setStatus("approved");
-          setSelectedRequest(withPhotos);
+          const refreshed = await getRequest(result.id);
+          setSelectedRequest(refreshed ?? result);
         }
         refresh();
-        await loadCounts();
+        void loadCounts();
         toast.success("Request created successfully");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to create request");
@@ -867,9 +918,47 @@ export default function RequestsPage() {
                         value={drawerFields.description}
                         onChange={(e) => setDrawerFields((f) => ({ ...f, description: e.target.value }))}
                         rows={4}
-                        placeholder="Describe the work required — access, urgency, details…"
+                        placeholder="Describe the issue — what the client needs, access, urgency…"
                         className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
                       />
+                    </div>
+                    <div className="rounded-lg border border-border-light bg-surface-hover/50 p-3 space-y-2">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos</p>
+                      <p className="text-[11px] text-text-tertiary">Saved on this request and copied to the quote when you convert to bidding — shown in the partner app.</p>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30 disabled:opacity-50">
+                          <ImagePlus className="h-3.5 w-3.5" />
+                          Add photos
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            multiple
+                            className="sr-only"
+                            disabled={requestPhotosSaving || requestImageUrls.length >= 8}
+                            onChange={handleRequestPhotosAdd}
+                          />
+                        </label>
+                        {requestPhotosSaving && <span className="text-[11px] text-text-tertiary">Saving…</span>}
+                      </div>
+                      {requestImageUrls.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {requestImageUrls.map((src) => (
+                            <div key={src} className="relative h-16 w-16 rounded-lg overflow-hidden border border-border-light bg-surface-hover shrink-0">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={src} alt="" className="h-full w-full object-cover" />
+                              <button
+                                type="button"
+                                className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80 disabled:opacity-50"
+                                disabled={requestPhotosSaving}
+                                onClick={() => void handleRequestPhotoRemove(src)}
+                                aria-label="Remove photo"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <Button variant="primary" size="sm" onClick={handleSaveRequestDetails} disabled={drawerSaving}>
                       {drawerSaving ? "Updating…" : "Save & Update"}
@@ -965,7 +1054,7 @@ export default function RequestsPage() {
             onClick={() => {
               const req = convertChoiceOpen;
               setConvertChoiceOpen(null);
-              setInvitePartnerOpen(req);
+              setInvitePartnerOpen(req ? (data.find((r) => r.id === req.id) ?? req) : null);
             }}
             className="w-full p-5 rounded-xl border-2 border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-left group"
           >
@@ -983,7 +1072,7 @@ export default function RequestsPage() {
             onClick={() => {
               const req = convertChoiceOpen;
               setConvertChoiceOpen(null);
-              setManualQuoteOpen(req);
+              setManualQuoteOpen(req ? (data.find((r) => r.id === req.id) ?? req) : null);
             }}
             className="w-full p-5 rounded-xl border-2 border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-left group"
           >
@@ -1004,12 +1093,17 @@ export default function RequestsPage() {
       <InvitePartnerToQuote
         request={invitePartnerOpen}
         onClose={() => setInvitePartnerOpen(null)}
-        onDone={async (req, partnerIds, sendMethod, clientAddress) => {
+        onDone={async (req, partnerIds, sendMethod, clientAddress, invitePhotoFiles) => {
           try {
             if (!clientAddress?.client_id || !clientAddress?.property_address?.trim()) {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
             }
+            const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+            const freshReq = await getRequest(req.id).catch(() => null);
+            const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
+            const uploaded = invitePhotoFiles?.length ? await uploadQuoteInviteImages(invitePhotoFiles, req.id) : [];
+            const mergedQuoteImages = mergeImageUrlLists(fromRequest, uploaded);
             const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
             const quote = await createQuote({
               title: `${req.service_type} — ${clientAddress.client_name}`,
@@ -1034,11 +1128,13 @@ export default function RequestsPage() {
               property_address: clientAddress.property_address,
               scope: scopeFromRequest,
               email_attach_request_photos: false,
+              ...(mergedQuoteImages.length > 0 ? { images: mergedQuoteImages } : {}),
               owner_id: profile?.id,
               owner_name: profile?.full_name,
             });
-            const photoUrls = Array.isArray(req.photo_urls) ? req.photo_urls.filter((u): u is string => typeof u === "string" && u.trim().length > 0) : [];
-            const inviteBody = `${req.service_type} — ${clientAddress.property_address ?? req.property_address ?? ""}`.trim() || quote.reference;
+            const photoUrlsForPush = mergedQuoteImages;
+            const inviteBody =
+              `${req.service_type} — ${clientAddress.property_address ?? req.property_address ?? ""}`.trim() || quote.reference;
             if (sendMethod === "app" || sendMethod === "both") {
               await fetch("/api/push/notify-partner", {
                 method: "POST",
@@ -1047,7 +1143,7 @@ export default function RequestsPage() {
                   partnerIds,
                   title: "New quote invitation",
                   body: inviteBody,
-                  data: { type: "quote_invite", quoteId: quote.id, photoUrls },
+                  data: { type: "quote_invite", quoteId: quote.id, photoUrls: photoUrlsForPush },
                 }),
               }).catch(() => {});
             }
@@ -1089,6 +1185,8 @@ export default function RequestsPage() {
               return;
             }
             const total = lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
+            const freshReq = await getRequest(req.id).catch(() => null);
+            const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
             const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
             const quote = await createQuote({
               title: `${req.service_type} — ${clientAddress.client_name}`,
@@ -1113,6 +1211,7 @@ export default function RequestsPage() {
               property_address: clientAddress.property_address,
               scope: scopeFromRequest,
               email_attach_request_photos: false,
+              ...(fromRequest.length > 0 ? { images: fromRequest } : {}),
               owner_id: profile?.id,
               owner_name: profile?.full_name,
             });
@@ -1125,17 +1224,19 @@ export default function RequestsPage() {
               sort_order: i,
             }));
             if (items.length > 0) await supabase.from("quote_line_items").insert(items);
-            await updateRequestStatus(req.id, "converted_to_quote");
-            await logAudit({
-              entityType: "request", entityId: req.id, entityRef: req.reference,
-              action: "status_changed", fieldName: "status",
-              oldValue: req.status, newValue: "converted_to_quote",
-              metadata: { converted_to_quote: quote.reference, type: "manual" },
-              userId: profile?.id, userName: profile?.full_name,
-            });
+            await Promise.all([
+              updateRequestStatus(req.id, "converted_to_quote"),
+              logAudit({
+                entityType: "request", entityId: req.id, entityRef: req.reference,
+                action: "status_changed", fieldName: "status",
+                oldValue: req.status, newValue: "converted_to_quote",
+                metadata: { converted_to_quote: quote.reference, type: "manual" },
+                userId: profile?.id, userName: profile?.full_name,
+              }),
+            ]);
             setManualQuoteOpen(null);
             refreshSilent();
-            loadCounts();
+            void loadCounts();
             toast.success(`Quote ${quote.reference} created with ${lineItems.length} line items.`);
             router.push(`/quotes?quoteId=${encodeURIComponent(quote.id)}&drawerTab=overview`);
           } catch (err) {
@@ -1199,15 +1300,17 @@ export default function RequestsPage() {
               owner_name: profile?.full_name,
               job_type: data.job_type ?? "fixed",
             });
-            await updateRequestStatus(convertToJobOpen.id, "converted_to_job");
-            await logAudit({
-              entityType: "job", entityId: job.id, entityRef: job.reference,
-              action: "created", metadata: { from_request: convertToJobOpen.reference },
-              userId: profile?.id, userName: profile?.full_name,
-            });
+            await Promise.all([
+              updateRequestStatus(convertToJobOpen.id, "converted_to_job"),
+              logAudit({
+                entityType: "job", entityId: job.id, entityRef: job.reference,
+                action: "created", metadata: { from_request: convertToJobOpen.reference },
+                userId: profile?.id, userName: profile?.full_name,
+              }),
+            ]);
             setConvertToJobOpen(null);
             refreshSilent();
-            loadCounts();
+            void loadCounts();
             toast.success(`Job ${job.reference} created`);
             router.push(`/jobs?jobId=${job.id}`);
           } catch (err) {
@@ -1241,13 +1344,21 @@ function InvitePartnerToQuote({
 }: {
   request: ServiceRequest | null;
   onClose: () => void;
-  onDone: (req: ServiceRequest, partnerIds: string[], sendMethod: string, clientAddress: ClientAndAddressValue) => void;
+  onDone: (
+    req: ServiceRequest,
+    partnerIds: string[],
+    sendMethod: string,
+    clientAddress: ClientAndAddressValue,
+    invitePhotoFiles: File[]
+  ) => void;
 }) {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sendMethod, setSendMethod] = useState<"email" | "app" | "both">("both");
   const [searchTerm, setSearchTerm] = useState("");
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
+  const [invitePhotos, setInvitePhotos] = useState<File[]>([]);
+  const [invitePhotoPreviews, setInvitePhotoPreviews] = useState<string[]>([]);
 
   useEffect(() => {
     if (!request) return;
@@ -1258,6 +1369,11 @@ function InvitePartnerToQuote({
       setPartners(list);
       const matched = list.filter((p) => partnerMatchesTypeOfWork(p, request.service_type));
       setSelectedIds(new Set(matched.map((p) => p.id)));
+    });
+    setInvitePhotos([]);
+    setInvitePhotoPreviews((prev) => {
+      prev.forEach((u) => URL.revokeObjectURL(u));
+      return [];
     });
   }, [request]);
 
@@ -1332,6 +1448,61 @@ function InvitePartnerToQuote({
           {filtered.length === 0 && <p className="text-sm text-text-tertiary text-center py-8">No partners found</p>}
         </div>
 
+        <div className="pt-4 mt-4 border-t border-border-light space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos for partners (optional)</p>
+          <p className="text-[11px] text-text-tertiary">Up to 8 images (5 MB each) — shown in the partner app with the invite.</p>
+          <div className="flex flex-wrap gap-2 items-center">
+            <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
+              <ImagePlus className="h-3.5 w-3.5" />
+              Add photos
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple
+                className="sr-only"
+                disabled={invitePhotos.length >= 8}
+                onChange={(e) => {
+                  const list = e.target.files;
+                  if (!list?.length) return;
+                  const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
+                  setInvitePhotos(next);
+                  setInvitePhotoPreviews((prev) => {
+                    prev.forEach((u) => URL.revokeObjectURL(u));
+                    return next.map((f) => URL.createObjectURL(f));
+                  });
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+          {invitePhotoPreviews.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {invitePhotoPreviews.map((src, i) => (
+                <div key={src} className="relative h-16 w-16 rounded-lg overflow-hidden border border-border-light bg-surface-hover shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt="" className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                    onClick={() => {
+                      const idx = i;
+                      setInvitePhotoPreviews((prev) => {
+                        const u = prev[idx];
+                        if (u) URL.revokeObjectURL(u);
+                        return prev.filter((_, j) => j !== idx);
+                      });
+                      setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
+                    }}
+                    aria-label="Remove photo"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="pt-4 mt-4 border-t border-border-light space-y-3">
           <div>
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1 block">Send invite via</label>
@@ -1351,7 +1522,7 @@ function InvitePartnerToQuote({
               size="sm"
               icon={<Send className="h-3.5 w-3.5" />}
               disabled={selectedIds.size === 0 || !clientAddress.client_id || !clientAddress.property_address}
-              onClick={() => onDone(request, Array.from(selectedIds), sendMethod, clientAddress)}
+              onClick={() => onDone(request, Array.from(selectedIds), sendMethod, clientAddress, invitePhotos)}
             >
               Invite partners
             </Button>
@@ -1661,11 +1832,13 @@ function CreateRequestModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate: (data: Partial<ServiceRequest> & { photoFiles?: File[] }) => void;
+  onCreate: (data: Partial<ServiceRequest>, photoFiles?: File[]) => void | Promise<void>;
   catalogServices: CatalogService[];
 }) {
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [postcode, setPostcode] = useState("");
+  const [createPhotos, setCreatePhotos] = useState<File[]>([]);
+  const [createPhotoPreviews, setCreatePhotoPreviews] = useState<string[]>([]);
   const [form, setForm] = useState({
     client_phone: "",
     request_kind: "",
@@ -1675,13 +1848,17 @@ function CreateRequestModal({
     description: "",
     priority: "medium",
   });
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
 
   useEffect(() => {
     if (!open) return;
     setClientAddress({ client_name: "", property_address: "" });
     setPostcode("");
+    setCreatePhotos([]);
+    setCreatePhotoPreviews((prev) => {
+      prev.forEach((u) => URL.revokeObjectURL(u));
+      return [];
+    });
     setForm({
       client_phone: "",
       request_kind: "",
@@ -1691,7 +1868,6 @@ function CreateRequestModal({
       description: "",
       priority: "medium",
     });
-    setPhotoFiles([]);
   }, [open]);
 
   const typeOfWorkOptions = useMemo(() => {
@@ -1735,22 +1911,24 @@ function CreateRequestModal({
       return;
     }
     const cid = form.catalog_service_id.trim();
-    onCreate({
-      client_id: clientAddress.client_id,
-      client_address_id: clientAddress.client_address_id,
-      client_name: clientAddress.client_name,
-      client_email: clientAddress.client_email ?? "",
-      client_phone: form.client_phone || undefined,
-      property_address: clientAddress.property_address,
-      postcode: pc,
-      source: form.source,
-      catalog_service_id: cid && isUuid(cid) ? cid : null,
-      service_type: normalizeTypeOfWork(form.service_type.trim()),
-      description: form.description,
-      priority: form.priority as ServiceRequest["priority"],
-      request_kind: form.request_kind as "quote" | "work",
-      photoFiles: photoFiles.length ? photoFiles : undefined,
-    });
+    void onCreate(
+      {
+        client_id: clientAddress.client_id,
+        client_address_id: clientAddress.client_address_id,
+        client_name: clientAddress.client_name,
+        client_email: clientAddress.client_email ?? "",
+        client_phone: form.client_phone || undefined,
+        property_address: clientAddress.property_address,
+        postcode: pc,
+        source: form.source,
+        catalog_service_id: cid && isUuid(cid) ? cid : null,
+        service_type: form.service_type.trim(),
+        description: form.description,
+        priority: form.priority as ServiceRequest["priority"],
+        request_kind: form.request_kind as "quote" | "work",
+      },
+      createPhotos.length > 0 ? createPhotos : undefined
+    );
   };
 
   return (
@@ -1842,18 +2020,59 @@ function CreateRequestModal({
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description</label>
-          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} placeholder="Describe the work required — access, urgency, details…" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none" />
+          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} placeholder="Describe the issue — what the client needs, access, urgency…" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none" />
         </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Site photos (optional)</label>
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif"
-            multiple
-            className="block w-full text-xs text-text-secondary file:mr-2 file:rounded-lg file:border-0 file:bg-surface-tertiary file:px-3 file:py-1.5 file:text-xs file:font-medium"
-            onChange={(e) => setPhotoFiles(Array.from(e.target.files ?? []))}
-          />
-          <p className="text-[10px] text-text-tertiary mt-1">JPG, PNG, WebP or GIF, up to 5 MB each. Shown to invited partners and available when emailing the customer quote.</p>
+        <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3 space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos (optional)</p>
+          <p className="text-[11px] text-text-tertiary">Up to 8 images — stored on the request and carried to quotes / partner app when you convert.</p>
+          <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
+            <ImagePlus className="h-3.5 w-3.5" />
+            Add photos
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              multiple
+              className="sr-only"
+              disabled={createPhotos.length >= 8}
+              onChange={(e) => {
+                const list = e.target.files;
+                if (!list?.length) return;
+                const next = [...createPhotos, ...Array.from(list)].slice(0, 8);
+                setCreatePhotos(next);
+                setCreatePhotoPreviews((prev) => {
+                  prev.forEach((u) => URL.revokeObjectURL(u));
+                  return next.map((f) => URL.createObjectURL(f));
+                });
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {createPhotoPreviews.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {createPhotoPreviews.map((src, i) => (
+                <div key={src} className="relative h-14 w-14 rounded-lg overflow-hidden border border-border-light shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt="" className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white"
+                    onClick={() => {
+                      const idx = i;
+                      setCreatePhotoPreviews((prev) => {
+                        const u = prev[idx];
+                        if (u) URL.revokeObjectURL(u);
+                        return prev.filter((_, j) => j !== idx);
+                      });
+                      setCreatePhotos((prev) => prev.filter((_, j) => j !== idx));
+                    }}
+                    aria-label="Remove"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose} type="button">Cancel</Button>

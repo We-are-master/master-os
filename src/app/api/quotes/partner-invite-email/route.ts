@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
+import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 
 function escapeHtml(s: string): string {
   return s
@@ -52,11 +53,10 @@ export async function POST(req: NextRequest) {
     if (quote.request_id) {
       const { data: sr } = await supabase
         .from("service_requests")
-        .select("photo_urls, description")
+        .select("images, description")
         .eq("id", quote.request_id)
         .maybeSingle();
-      const raw = sr?.photo_urls;
-      photoUrls = Array.isArray(raw) ? raw.filter((u): u is string => typeof u === "string" && isHttpsUrl(u.trim())) : [];
+      photoUrls = normalizeJsonImageArray(sr?.images).filter((u) => isHttpsUrl(u.trim()));
       description = typeof sr?.description === "string" ? sr.description : "";
     }
 

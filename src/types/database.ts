@@ -98,8 +98,8 @@ export interface ServiceRequest {
   scope?: string;
   notes?: string;
   internal_info?: string;
-  /** Public image URLs (company-assets) from the new-request flow; carried to partner invites and optional customer email. */
-  photo_urls?: string[] | null;
+  /** Public URLs for photos (quote-invite-images bucket); copied to quote on convert. */
+  images?: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -157,6 +157,8 @@ export interface Quote {
   partner_cost: number;
   /** Trade / service label for partner app push targeting (optional). */
   service_type?: string | null;
+  /** Public URLs (quote-invite-images bucket) shown to partners in the app. */
+  images?: string[] | null;
   created_at: string;
   updated_at: string;
   expires_at?: string;
