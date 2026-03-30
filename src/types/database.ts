@@ -98,6 +98,8 @@ export interface ServiceRequest {
   scope?: string;
   notes?: string;
   internal_info?: string;
+  /** Public URLs for photos (same bucket as quote invite images); copied to quote on convert. */
+  images?: string[] | null;
   created_at: string;
   updated_at: string;
 }
