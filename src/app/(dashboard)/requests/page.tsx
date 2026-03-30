@@ -1435,10 +1435,17 @@ function InvitePartnerToQuote({
   if (!request) return null;
 
   return (
-    <Modal open={!!request} onClose={onClose} title="Invite partners" subtitle={`${request.reference} — ${request.service_type}`} size="lg">
-      <div className="p-6 flex flex-col max-h-[75vh] overflow-y-auto">
-        <div className="mb-4">
-          <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client and address *</p>
+    <Modal
+      open={!!request}
+      onClose={onClose}
+      title="Invite partners"
+      subtitle={`${request.reference} — ${request.service_type}`}
+      size="lg"
+      className="max-w-3xl"
+    >
+      <div className="p-4 sm:p-6 flex flex-col gap-4 min-h-0">
+        <div className="shrink-0 space-y-2">
+          <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Client and address *</p>
           <ClientAddressPicker
             value={clientAddress}
             onChange={setClientAddress}
@@ -1448,21 +1455,12 @@ function InvitePartnerToQuote({
           />
         </div>
 
-        <div className="mb-3">
-          <Input
-            placeholder="Search partners by name, trade, or location…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="text-sm"
-          />
-        </div>
-
-        <div className="mb-4 rounded-xl border border-border-light bg-surface-hover/80 overflow-hidden">
+        <div className="shrink-0 rounded-xl border border-border-light bg-surface-hover/80 overflow-hidden flex flex-col min-h-0 max-h-[min(320px,42vh)]">
           <button
             type="button"
             onClick={() => setSummaryExpanded((v) => !v)}
             aria-expanded={summaryExpanded}
-            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-surface-hover/90 transition-colors"
+            className="flex w-full shrink-0 items-center justify-between gap-2 px-4 py-3 text-left hover:bg-surface-hover/90 transition-colors"
           >
             <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invite summary</span>
             <ChevronDown
@@ -1471,7 +1469,7 @@ function InvitePartnerToQuote({
             />
           </button>
           {summaryExpanded && (
-            <div className="px-4 pb-4 space-y-3 border-t border-border-light pt-3">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 space-y-3 border-t border-border-light pt-3">
               <p className="text-sm text-text-primary">
                 <span className="text-text-tertiary text-xs font-medium">Type of work · </span>
                 {request.service_type?.trim() || "—"}
@@ -1559,13 +1557,22 @@ function InvitePartnerToQuote({
           )}
         </div>
 
+        <div className="shrink-0">
+          <Input
+            placeholder="Search partners by name, trade, or location…"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="text-sm"
+          />
+        </div>
+
         {!partnersLoading && serviceRelated.length > 0 && (
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">
+          <p className="shrink-0 text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
             Matching “{request.service_type}” (trade / type of work) — {serviceRelated.length} partner(s)
           </p>
         )}
 
-        <div className="space-y-2 overflow-y-auto flex-1 min-h-0 pr-1">
+        <div className="min-h-[200px] max-h-[min(420px,50vh)] overflow-y-auto overscroll-contain space-y-2 rounded-xl border border-border-light/60 bg-surface-hover/30 p-2 pr-1">
           {!partnersLoading &&
             [...serviceRelated, ...others].map((p) => {
             if (!p.id) return null;
@@ -1602,7 +1609,7 @@ function InvitePartnerToQuote({
           )}
         </div>
 
-        <div className="pt-4 mt-4 border-t border-border-light space-y-3">
+        <div className="shrink-0 pt-4 border-t border-border-light space-y-3">
           <div>
             <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1 block">Send invite via</label>
             <div className="flex gap-2">

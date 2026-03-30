@@ -68,7 +68,13 @@ export function Modal({
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className={cn(scrollBody ? "max-h-[70vh] overflow-y-auto" : "overflow-visible")}>
+            <div
+              className={cn(
+                scrollBody
+                  ? "max-h-[min(85vh,920px)] overflow-y-auto overscroll-contain"
+                  : "overflow-visible",
+              )}
+            >
               {children}
             </div>
           </motion.div>
