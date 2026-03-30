@@ -1,5 +1,7 @@
 import { getSupabase, queryList, applyJobsScheduleRangeToQuery, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
+import { createInvoice } from "./invoices";
+import { syncSelfBillAfterJobChange } from "./self-bills";
 import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
 import {
   applyJobDbCompat,
@@ -149,7 +151,29 @@ export async function createJob(
     error = retry.error;
   }
   if (error) throw error;
-  return data as Job;
+  let job = (await getJob((data as Job).id)) ?? (data as Job);
+
+  if (job.client_price > 0.01 && !job.invoice_id) {
+    try {
+      const due = new Date();
+      due.setDate(due.getDate() + 14);
+      const inv = await createInvoice({
+        client_name: job.client_name,
+        job_reference: job.reference,
+        amount: job.client_price,
+        status: "pending",
+        due_date: due.toISOString().slice(0, 10),
+        invoice_kind: "final",
+      });
+      await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
+      job = (await getJob(job.id)) ?? job;
+    } catch {
+      /* invoice can be added manually in Finance */
+    }
+  }
+
+  await syncSelfBillAfterJobChange(job);
+  return (await getJob(job.id)) ?? job;
 }
 
 /** Use `null` (not `undefined`) on nullable columns you want to clear — `undefined` keys are omitted from the PATCH. */
@@ -183,5 +207,6 @@ export async function updateJob(
 
   const row = await getJob(id);
   if (!row) throw new Error("Job not found after update");
+  await syncSelfBillAfterJobChange(row);
   return row;
 }

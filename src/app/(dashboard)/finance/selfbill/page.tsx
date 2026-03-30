@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from "react";
+import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -9,21 +10,58 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
-import { SearchInput } from "@/components/ui/input";
+import { SearchInput, Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
+import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
-import { Download, Filter, Wallet, DollarSign, Users, Clock, Play } from "lucide-react";
+import {
+  Download,
+  Filter,
+  Wallet,
+  DollarSign,
+  Users,
+  Clock,
+  FileText,
+  CheckCircle2,
+  AlertTriangle,
+  ExternalLink,
+  CalendarRange,
+} from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import type { SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
+import { getWeekBoundsForDate, weekPeriodHelpText, parseDateRangeOrWeek } from "@/lib/self-bill-period";
+import { listJobsForSelfBill } from "@/services/self-bills";
+import type { Job } from "@/types/database";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
-  awaiting_payment: { label: "Awaiting Payment", variant: "warning" },
-  ready_to_pay: { label: "Ready to Pay", variant: "info" },
+  accumulating: { label: "Open week", variant: "default" },
+  pending_review: { label: "Review & approve", variant: "primary" },
+  needs_attention: { label: "Needs attention", variant: "danger" },
+  awaiting_payment: { label: "Awaiting payment", variant: "warning" },
+  ready_to_pay: { label: "Ready to pay", variant: "info" },
   paid: { label: "Paid", variant: "success" },
-  audit_required: { label: "Audit Required", variant: "danger" },
+  audit_required: { label: "Audit required", variant: "danger" },
+  rejected: { label: "Rejected", variant: "default" },
 };
+
+function recentWeekPresets(): { weekStart: string; label: string }[] {
+  const out: { weekStart: string; label: string }[] = [];
+  const seen = new Set<string>();
+  const d = new Date();
+  for (let i = 0; i < 26; i++) {
+    const x = new Date(d);
+    x.setDate(d.getDate() - i * 7);
+    const { weekStart, weekLabel } = getWeekBoundsForDate(x);
+    if (!seen.has(weekStart)) {
+      seen.add(weekStart);
+      out.push({ weekStart, label: weekLabel });
+    }
+  }
+  return out;
+}
 
 export default function SelfBillPage() {
   const [activeTab, setActiveTab] = useState("all");
@@ -31,26 +69,57 @@ export default function SelfBillPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [weekPreset, setWeekPreset] = useState("");
+  const [jobsModal, setJobsModal] = useState<{ selfBill: SelfBill; jobs: Awaited<ReturnType<typeof listJobsForSelfBill>> } | null>(null);
+  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [closeWeekSelectKey, setCloseWeekSelectKey] = useState(0);
+
+  const weekOptions = useMemo(() => recentWeekPresets(), []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     const supabase = getSupabase();
     try {
-      const { data, error } = await supabase.from("self_bills").select("*").order("created_at", { ascending: false });
+      let q = supabase.from("self_bills").select("*").order("week_start", { ascending: false }).order("created_at", { ascending: false });
+      if (weekPreset.trim()) {
+        q = q.eq("week_label", weekPreset.trim());
+      } else {
+        const range = parseDateRangeOrWeek({
+          from: dateFrom.trim() || undefined,
+          to: dateTo.trim() || undefined,
+        });
+        if (range.weekStartMin) q = q.gte("week_start", range.weekStartMin);
+        if (range.weekStartMax) q = q.lte("week_start", range.weekStartMax);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       setSelfBills((data ?? []) as SelfBill[]);
-    } catch { toast.error("Failed to load self-bills"); }
-    finally { setLoading(false); }
-  }, []);
+    } catch {
+      toast.error("Failed to load self-bills");
+    } finally {
+      setLoading(false);
+    }
+  }, [dateFrom, dateTo, weekPreset]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const filtered = useMemo(() => {
     let result = selfBills;
-    if (activeTab !== "all") result = result.filter((sb) => sb.status === activeTab);
+    if (activeTab === "review") result = result.filter((sb) => sb.status === "pending_review");
+    else if (activeTab === "needs_attention") result = result.filter((sb) => sb.status === "needs_attention");
+    else if (activeTab !== "all") result = result.filter((sb) => sb.status === activeTab);
     if (search) {
       const q = search.toLowerCase();
-      result = result.filter((sb) => sb.partner_name.toLowerCase().includes(q) || sb.reference.toLowerCase().includes(q));
+      result = result.filter(
+        (sb) =>
+          sb.partner_name.toLowerCase().includes(q) ||
+          sb.reference.toLowerCase().includes(q) ||
+          (sb.week_label ?? "").toLowerCase().includes(q)
+      );
     }
     return result;
   }, [selfBills, activeTab, search]);
@@ -64,8 +133,11 @@ export default function SelfBillPage() {
       totalMaterials: all.reduce((s, sb) => s + Number(sb.materials), 0),
       paidCount: all.filter((sb) => sb.status === "paid").length,
       readyCount: all.filter((sb) => sb.status === "ready_to_pay").length,
+      reviewCount: all.filter((sb) => sb.status === "pending_review").length,
+      attentionCount: all.filter((sb) => sb.status === "needs_attention").length,
       awaitingCount: all.filter((sb) => sb.status === "awaiting_payment").length,
       auditCount: all.filter((sb) => sb.status === "audit_required").length,
+      openWeekCount: all.filter((sb) => sb.status === "accumulating").length,
     };
   }, [selfBills]);
 
@@ -75,83 +147,206 @@ export default function SelfBillPage() {
     try {
       const { error } = await supabase.from("self_bills").update({ status: newStatus }).in("id", Array.from(selectedIds));
       if (error) throw error;
-      toast.success(`${selectedIds.size} self-bills updated to ${newStatus.replace("_", " ")}`);
+      toast.success(`${selectedIds.size} self-bill(s) updated`);
       setSelectedIds(new Set());
       loadData();
-    } catch { toast.error("Failed to update self-bills"); }
+    } catch {
+      toast.error("Failed to update self-bills");
+    }
+  };
+
+  const closeWeek = async (weekStart: string) => {
+    try {
+      const res = await fetch("/api/self-bills/close-week", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekStart }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      toast.success(`Closed week: ${data.moved} self-bill(s) moved to Review & approve`);
+      setCloseWeekSelectKey((k) => k + 1);
+      loadData();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to close week");
+    }
+  };
+
+  const openJobsModal = async (sb: SelfBill) => {
+    setLoadingJobs(true);
+    setJobsModal({ selfBill: sb, jobs: [] });
+    try {
+      const jobs = await listJobsForSelfBill(sb.id);
+      setJobsModal({ selfBill: sb, jobs });
+    } catch {
+      toast.error("Failed to load jobs");
+      setJobsModal(null);
+    } finally {
+      setLoadingJobs(false);
+    }
   };
 
   const tabs = [
     { id: "all", label: "All", count: selfBills.length },
-    { id: "awaiting_payment", label: "Awaiting Payment", count: selfBills.filter((sb) => sb.status === "awaiting_payment").length },
-    { id: "ready_to_pay", label: "Ready to Pay", count: selfBills.filter((sb) => sb.status === "ready_to_pay").length },
-    { id: "paid", label: "Paid", count: selfBills.filter((sb) => sb.status === "paid").length },
-    { id: "audit_required", label: "Audit Required", count: selfBills.filter((sb) => sb.status === "audit_required").length },
+    { id: "review", label: "Review & approve", count: totals.reviewCount },
+    { id: "needs_attention", label: "Needs attention", count: totals.attentionCount },
+    { id: "accumulating", label: "Open week", count: totals.openWeekCount },
+    { id: "awaiting_payment", label: "Awaiting payment", count: totals.awaitingCount },
+    { id: "ready_to_pay", label: "Ready to pay", count: totals.readyCount },
+    { id: "paid", label: "Paid", count: totals.paidCount },
+    { id: "audit_required", label: "Audit required", count: totals.auditCount },
   ];
 
   const columns: Column<SelfBill>[] = [
     {
-      key: "partner_name", label: "Partner",
+      key: "partner_name",
+      label: "Partner",
       render: (item) => (
         <div className="flex items-center gap-2.5">
           <Avatar name={item.partner_name} size="sm" />
           <div>
             <p className="text-sm font-medium text-text-primary">{item.partner_name}</p>
-            <p className="text-[11px] text-text-tertiary">{item.reference} — {item.period}</p>
+            <p className="text-[11px] text-text-tertiary">
+              {item.reference}
+              {item.week_label ? ` · ${item.week_label}` : ` · ${item.period}`}
+            </p>
           </div>
         </div>
       ),
     },
     {
-      key: "jobs_count", label: "Jobs", align: "center",
-      render: (item) => <span className="text-sm font-semibold text-text-primary">{item.jobs_count}</span>,
+      key: "jobs_count",
+      label: "Jobs",
+      align: "center",
+      render: (item) => (
+        <button
+          type="button"
+          className="text-sm font-semibold text-primary hover:underline"
+          onClick={() => void openJobsModal(item)}
+        >
+          {item.jobs_count}
+        </button>
+      ),
     },
     {
-      key: "job_value", label: "Job Value", align: "right",
+      key: "job_value",
+      label: "Labour",
+      align: "right",
       render: (item) => <span className="text-sm text-text-primary">{formatCurrency(item.job_value)}</span>,
     },
     {
-      key: "materials", label: "Materials", align: "right",
+      key: "materials",
+      label: "Materials",
+      align: "right",
       render: (item) => <span className="text-sm text-text-secondary">{formatCurrency(item.materials)}</span>,
     },
     {
-      key: "commission", label: "Commission", align: "right",
-      render: (item) => <span className="text-sm text-red-500 font-medium">-{formatCurrency(item.commission)}</span>,
-    },
-    {
-      key: "net_payout", label: "Net Payout", align: "right",
+      key: "net_payout",
+      label: "Net payout",
+      align: "right",
       render: (item) => <span className="text-sm font-bold text-text-primary">{formatCurrency(item.net_payout)}</span>,
     },
     {
-      key: "status", label: "Status",
+      key: "status",
+      label: "Status",
       render: (item) => {
-        const config = statusConfig[item.status];
-        return <Badge variant={config?.variant ?? "default"} dot>{config?.label ?? item.status}</Badge>;
+        const config = statusConfig[item.status] ?? { label: item.status, variant: "default" as const };
+        return (
+          <Badge variant={config.variant} dot>
+            {config.label}
+          </Badge>
+        );
       },
+    },
+    {
+      key: "actions",
+      label: "",
+      render: (item) => (
+        <div className="flex items-center gap-2 justify-end">
+          <a
+            href={`/api/self-bills/${encodeURIComponent(item.id)}/pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            PDF
+          </a>
+        </div>
+      ),
     },
   ];
 
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Partner Self-billing" subtitle="Weekly partner payouts and commission management.">
-          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>Export CSV</Button>
-          <Button size="sm" icon={<Play className="h-3.5 w-3.5" />}>Generate Weekly Batch</Button>
+        <PageHeader
+          title="Partner self-billing"
+          subtitle={`Weekly partner payouts. ${weekPeriodHelpText()} Close a week to move open batches into Review & approve.`}
+        >
+          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>
+            Export CSV
+          </Button>
         </PageHeader>
 
+        <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <Select
+              label="Week (ISO)"
+              value={weekPreset}
+              onChange={(e) => {
+                setWeekPreset(e.target.value);
+                setDateFrom("");
+                setDateTo("");
+              }}
+              options={[{ value: "", label: "All weeks" }, ...weekOptions.map((w) => ({ value: w.label, label: w.label }))]}
+            />
+            <div className="grid grid-cols-2 gap-2 min-w-[220px]">
+              <div>
+                <label className="text-[10px] font-semibold text-text-tertiary uppercase">From</label>
+                <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setWeekPreset(""); }} className="text-sm" />
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold text-text-tertiary uppercase">To</label>
+                <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setWeekPreset(""); }} className="text-sm" />
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => loadData()} icon={<Filter className="h-3.5 w-3.5" />}>
+              Apply
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border-light">
+            <span className="text-xs text-text-tertiary flex items-center gap-1">
+              <CalendarRange className="h-3.5 w-3.5" />
+              Close week (move Open → Review)
+            </span>
+            <Select
+              key={closeWeekSelectKey}
+              value=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) void closeWeek(v);
+              }}
+              options={[
+                { value: "", label: "Select Monday (week start)…" },
+                ...weekOptions.map((w) => ({ value: w.weekStart, label: `Close ${w.label} (from ${w.weekStart})` })),
+              ]}
+            />
+          </div>
+        </div>
+
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Total Payouts" value={totals.totalPayouts} format="currency" icon={Wallet} accent="primary" />
-          <KpiCard title="Commissions Earned" value={totals.totalCommission} format="currency" icon={DollarSign} accent="emerald" />
-          <KpiCard title="Paid" value={totals.paidCount} format="number" description={`of ${selfBills.length} total`} icon={Users} accent="blue" />
-          <KpiCard title="Awaiting / Ready" value={totals.awaitingCount + totals.readyCount} format="number" description={`${totals.auditCount} audit required`} icon={Clock} accent="amber" />
+          <KpiCard title="Total payouts (loaded)" value={totals.totalPayouts} format="currency" icon={Wallet} accent="primary" />
+          <KpiCard title="Review queue" value={totals.reviewCount} format="number" description="pending_review" icon={Users} accent="amber" />
+          <KpiCard title="Ready / paid" value={totals.readyCount + totals.paidCount} format="number" icon={DollarSign} accent="emerald" />
+          <KpiCard title="Needs attention" value={totals.attentionCount} format="number" icon={Clock} accent="blue" />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col gap-3 mb-4">
             <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
-            <div className="flex items-center gap-2">
-              <SearchInput placeholder="Search self-bills..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
-              <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <SearchInput placeholder="Search partner, ref, week…" className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           </div>
 
@@ -167,45 +362,110 @@ export default function SelfBillPage() {
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
             bulkActions={
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
-                <BulkBtn label="Ready to Pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="info" />
-                <BulkBtn label="Mark Paid" onClick={() => handleBulkStatusChange("paid")} variant="success" />
-                <BulkBtn label="Audit Required" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
-                <BulkBtn label="Awaiting Payment" onClick={() => handleBulkStatusChange("awaiting_payment")} variant="default" />
+                {activeTab === "review" && (
+                  <>
+                    <BulkBtn label="Approve → Ready to pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="success" icon={<CheckCircle2 className="h-3 w-3" />} />
+                    <BulkBtn label="Flag → Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" icon={<AlertTriangle className="h-3 w-3" />} />
+                  </>
+                )}
+                {activeTab === "needs_attention" && (
+                  <BulkBtn label="Approve → Ready to pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="success" icon={<CheckCircle2 className="h-3 w-3" />} />
+                )}
+                <BulkBtn label="Ready to pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="info" />
+                <BulkBtn label="Mark paid" onClick={() => handleBulkStatusChange("paid")} variant="success" />
+                <BulkBtn label="Audit required" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
+                <BulkBtn label="Reject" onClick={() => handleBulkStatusChange("rejected")} variant="danger" />
               </div>
             }
           />
 
           <div className="mt-4 p-4 bg-card rounded-xl border border-border-light shadow-soft">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-6">
-                <div>
-                  <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Total Job Value</p>
-                  <p className="text-lg font-bold text-text-primary">{formatCurrency(totals.totalJobValue)}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Total Materials</p>
-                  <p className="text-lg font-bold text-text-primary">{formatCurrency(totals.totalMaterials)}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Total Commission</p>
-                  <p className="text-lg font-bold text-emerald-600">{formatCurrency(totals.totalCommission)}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Total Net Payouts</p>
-                  <p className="text-lg font-bold text-text-primary">{formatCurrency(totals.totalPayouts)}</p>
-                </div>
+            <div className="flex flex-wrap items-center gap-6">
+              <div>
+                <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Total labour</p>
+                <p className="text-lg font-bold text-text-primary">{formatCurrency(totals.totalJobValue)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Materials</p>
+                <p className="text-lg font-bold text-text-primary">{formatCurrency(totals.totalMaterials)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Commission</p>
+                <p className="text-lg font-bold text-emerald-600">{formatCurrency(totals.totalCommission)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-text-tertiary uppercase tracking-wide">Net payouts</p>
+                <p className="text-lg font-bold text-text-primary">{formatCurrency(totals.totalPayouts)}</p>
               </div>
             </div>
           </div>
         </motion.div>
       </div>
+
+      <Modal
+        open={!!jobsModal}
+        onClose={() => setJobsModal(null)}
+        title={jobsModal ? `Jobs — ${jobsModal.selfBill.reference}` : ""}
+        subtitle={jobsModal ? `${jobsModal.selfBill.partner_name} · ${jobsModal.selfBill.week_label ?? jobsModal.selfBill.period}` : undefined}
+        size="lg"
+      >
+        {jobsModal && (
+          <div className="p-6 max-h-[70vh] overflow-y-auto space-y-2">
+            {loadingJobs ? (
+              <p className="text-sm text-text-tertiary">Loading…</p>
+            ) : jobsModal.jobs.length === 0 ? (
+              <p className="text-sm text-text-tertiary">No jobs linked.</p>
+            ) : (
+              jobsModal.jobs.map((j) => (
+                <JobRow key={j.id} j={j} />
+              ))
+            )}
+          </div>
+        )}
+      </Modal>
     </PageTransition>
   );
 }
 
-function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => void; variant: "success" | "danger" | "warning" | "info" | "default" }) {
+function JobRow({ j }: { j: Pick<Job, "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address"> }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl border border-border-light bg-surface-hover/80">
+      <div className="min-w-0">
+        <Link href={`/jobs/${j.id}`} className="text-sm font-semibold text-primary hover:underline inline-flex items-center gap-1">
+          {j.reference}
+          <ExternalLink className="h-3 w-3 shrink-0" />
+        </Link>
+        <p className="text-xs text-text-secondary truncate">{j.title}</p>
+        <p className="text-[11px] text-text-tertiary truncate">{j.property_address}</p>
+      </div>
+      <div className="text-right text-xs space-y-0.5">
+        <p>
+          Labour <span className="font-semibold tabular-nums">{formatCurrency(Number(j.partner_cost) || 0)}</span>
+        </p>
+        <p>
+          Mat. <span className="font-semibold tabular-nums">{formatCurrency(Number(j.materials_cost) || 0)}</span>
+        </p>
+        <Badge variant="default" size="sm">
+          {j.status}
+        </Badge>
+      </div>
+    </div>
+  );
+}
+
+function BulkBtn({
+  label,
+  onClick,
+  variant,
+  icon,
+}: {
+  label: string;
+  onClick: () => void;
+  variant: "success" | "danger" | "warning" | "info" | "default";
+  icon?: ReactNode;
+}) {
   const colors = {
     success: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 border-emerald-200",
     danger: "text-red-700 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 border-red-200",
@@ -214,7 +474,8 @@ function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => vo
     default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (
-    <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>
+    <button type="button" onClick={onClick} className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>
+      {icon}
       {label}
     </button>
   );
