@@ -427,6 +427,7 @@ function QuotesPageContent() {
         property_address: formData.property_address,
         scope: formData.scope,
         partner_cost: formData.partner_cost ?? formData.cost ?? 0,
+        email_attach_request_photos: formData.email_attach_request_photos ?? false,
         owner_id: profile?.id,
         owner_name: profile?.full_name,
       });
@@ -973,6 +974,7 @@ function QuoteDetailDrawer({
   const [startDate1, setStartDate1] = useState("");
   const [startDate2, setStartDate2] = useState("");
   const [customMessage, setCustomMessage] = useState("");
+  const [emailAttachRequestPhotos, setEmailAttachRequestPhotos] = useState(false);
   const isAdmin = profile?.role === "admin";
   /** Earliest selectable day for proposed start dates (local calendar day). */
   const minProposalStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -1014,6 +1016,7 @@ function QuoteDetailDrawer({
     setStartDate1(bidPayloadTrimmedString(quote.start_date_option_1 as unknown));
     setStartDate2(bidPayloadTrimmedString(quote.start_date_option_2 as unknown));
     setCustomMessage(bidPayloadTrimmedString(quote.email_custom_message as unknown));
+    setEmailAttachRequestPhotos(Boolean(quote.email_attach_request_photos));
   }, [quote]);
 
   useEffect(() => {
@@ -1220,6 +1223,7 @@ function QuoteDetailDrawer({
       start_date_option_2: d2 || undefined,
       client_email: bidPayloadTrimmedString(sendEmail as unknown),
       email_custom_message: bidPayloadTrimmedString(customMessage as unknown) || null,
+      email_attach_request_photos: emailAttachRequestPhotos,
     });
   };
 
@@ -1274,6 +1278,7 @@ function QuoteDetailDrawer({
           customMessage: bidPayloadTrimmedString(customMessage as unknown) || undefined,
           items: items.length ? items : undefined,
           scope: bidPayloadTrimmedString(scopeText as unknown) || undefined,
+          attachRequestPhotos: emailAttachRequestPhotos,
         }),
       });
       const data = await res.json();
@@ -1843,6 +1848,19 @@ function QuoteDetailDrawer({
                 </div>
               )}
 
+              {quote.request_id && (
+                <label className="flex items-start gap-2.5 cursor-pointer rounded-xl border border-border-light bg-card/60 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={emailAttachRequestPhotos}
+                    onChange={(e) => setEmailAttachRequestPhotos(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/20"
+                  />
+                  <span className="text-[13px] text-text-primary leading-snug">
+                    <span className="font-medium">Attach request site photos</span> to the customer email (PDF plus images). Off by default — use when the client should see the same photos partners received.
+                  </span>
+                </label>
+              )}
               <div className="rounded-xl border border-border-light bg-surface-hover/80 p-4 space-y-3">
                 <div className="flex items-center gap-2">
                   <FileText className="h-4 w-4 text-text-tertiary" />
@@ -2893,6 +2911,9 @@ function QuotesCardGridView({ quotes, loading, onSelectQuote }: { quotes: Quote[
         <button key={q.id} type="button" onClick={() => onSelectQuote(q)} className="text-left rounded-xl border border-border bg-card p-4 hover:border-primary/40 transition-colors">
           <p className="text-sm font-semibold text-text-primary">{q.reference}</p>
           <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(q.title) || q.title}</p>
+          {q.request_id && (
+            <p className="text-[10px] text-text-tertiary mt-1">From request · optional site photos in drawer</p>
+          )}
           <p className="text-[11px] text-text-secondary mt-1">{q.client_name}</p>
           <p className="text-xs font-medium text-primary mt-1">{formatCurrency(Number(q.total_value) || 0)}</p>
           <Badge variant={statusConfig[q.status]?.variant ?? "default"} size="sm" className="mt-2">{statusLabels[q.status]}</Badge>

@@ -98,6 +98,8 @@ export interface ServiceRequest {
   scope?: string;
   notes?: string;
   internal_info?: string;
+  /** Public image URLs (company-assets) from the new-request flow; carried to partner invites and optional customer email. */
+  photo_urls?: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -147,6 +149,8 @@ export interface Quote {
   email_custom_message?: string | null;
   /** First successful customer PDF email timestamp (resends update this). */
   customer_pdf_sent_at?: string | null;
+  /** When true, emailing the customer includes site photos from the linked service request (if any). */
+  email_attach_request_photos?: boolean | null;
   property_address?: string;
   partner_id?: string;
   partner_name?: string;

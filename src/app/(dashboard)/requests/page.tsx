@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listRequests, createRequest, updateRequestStatus, updateRequest } from "@/services/requests";
+import { uploadRequestSitePhoto } from "@/services/request-photo-storage";
 import { createQuote } from "@/services/quotes";
 import { createJob } from "@/services/jobs";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -384,39 +385,54 @@ export default function RequestsPage() {
   }, []);
 
   const handleCreate = useCallback(
-    async (formData: Partial<ServiceRequest>) => {
+    async (formData: Partial<ServiceRequest> & { photoFiles?: File[] }) => {
       try {
-        const isManualSource = (formData.source ?? "manual") === "manual";
+        const { photoFiles, ...rest } = formData;
+        const isManualSource = (rest.source ?? "manual") === "manual";
         const result = await createRequest({
-          client_id: formData.client_id,
-          client_address_id: formData.client_address_id,
-          client_name: formData.client_name ?? "",
-          client_email: formData.client_email ?? "",
-          client_phone: formData.client_phone,
-          property_address: formData.property_address ?? "",
-          postcode: formData.postcode,
-          source: formData.source ?? "manual",
-              service_type: normalizeTypeOfWork(formData.service_type ?? ""),
-          description: formData.description ?? "",
+          client_id: rest.client_id,
+          client_address_id: rest.client_address_id,
+          client_name: rest.client_name ?? "",
+          client_email: rest.client_email ?? "",
+          client_phone: rest.client_phone,
+          property_address: rest.property_address ?? "",
+          postcode: rest.postcode,
+          source: rest.source ?? "manual",
+          service_type: normalizeTypeOfWork(rest.service_type ?? ""),
+          description: rest.description ?? "",
           status: isManualSource ? "approved" : "new",
-          priority: formData.priority ?? "medium",
+          priority: rest.priority ?? "medium",
           owner_id: profile?.id,
           owner_name: profile?.full_name ?? "",
-          assigned_to: formData.assigned_to,
-          catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
-            ? String(formData.catalog_service_id).trim()
+          assigned_to: rest.assigned_to,
+          catalog_service_id: rest.catalog_service_id && isUuid(String(rest.catalog_service_id).trim())
+            ? String(rest.catalog_service_id).trim()
             : null,
           request_kind:
-            formData.request_kind === "quote" || formData.request_kind === "work" ? formData.request_kind : "quote",
+            rest.request_kind === "quote" || rest.request_kind === "work" ? rest.request_kind : "quote",
         });
+        let withPhotos = result;
+        if (photoFiles?.length) {
+          const urls: string[] = [];
+          for (const f of photoFiles) {
+            try {
+              urls.push((await uploadRequestSitePhoto(result.id, f)).publicUrl);
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : "Photo upload failed");
+            }
+          }
+          if (urls.length) {
+            withPhotos = await updateRequest(result.id, { photo_urls: urls });
+          }
+        }
         await logAudit({
-          entityType: "request", entityId: result.id, entityRef: result.reference,
+          entityType: "request", entityId: withPhotos.id, entityRef: withPhotos.reference,
           action: "created", userId: profile?.id, userName: profile?.full_name,
         });
         setCreateOpen(false);
         if (isManualSource) {
           setStatus("approved");
-          setSelectedRequest(result);
+          setSelectedRequest(withPhotos);
         }
         refresh();
         await loadCounts();
@@ -846,12 +862,12 @@ export default function RequestsPage() {
                       />
                     )}
                     <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Description of the issue</label>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description</label>
                       <textarea
                         value={drawerFields.description}
                         onChange={(e) => setDrawerFields((f) => ({ ...f, description: e.target.value }))}
                         rows={4}
-                        placeholder="Describe the issue — what the client needs, access, urgency…"
+                        placeholder="Describe the work required — access, urgency, details…"
                         className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
                       />
                     </div>
@@ -994,6 +1010,7 @@ export default function RequestsPage() {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
             }
+            const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
             const quote = await createQuote({
               title: `${req.service_type} — ${clientAddress.client_name}`,
               client_id: clientAddress.client_id,
@@ -1015,10 +1032,32 @@ export default function RequestsPage() {
               customer_deposit_paid: false,
               partner_cost: 0,
               property_address: clientAddress.property_address,
-              scope: req.scope,
+              scope: scopeFromRequest,
+              email_attach_request_photos: false,
               owner_id: profile?.id,
               owner_name: profile?.full_name,
             });
+            const photoUrls = Array.isArray(req.photo_urls) ? req.photo_urls.filter((u): u is string => typeof u === "string" && u.trim().length > 0) : [];
+            const inviteBody = `${req.service_type} — ${clientAddress.property_address ?? req.property_address ?? ""}`.trim() || quote.reference;
+            if (sendMethod === "app" || sendMethod === "both") {
+              await fetch("/api/push/notify-partner", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  partnerIds,
+                  title: "New quote invitation",
+                  body: inviteBody,
+                  data: { type: "quote_invite", quoteId: quote.id, photoUrls },
+                }),
+              }).catch(() => {});
+            }
+            if (sendMethod === "email" || sendMethod === "both") {
+              await fetch("/api/quotes/partner-invite-email", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ quoteId: quote.id, partnerIds }),
+              }).catch(() => {});
+            }
             await updateRequestStatus(req.id, "converted_to_quote");
             await logAudit({
               entityType: "request", entityId: req.id, entityRef: req.reference,
@@ -1050,6 +1089,7 @@ export default function RequestsPage() {
               return;
             }
             const total = lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
+            const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
             const quote = await createQuote({
               title: `${req.service_type} — ${clientAddress.client_name}`,
               client_id: clientAddress.client_id,
@@ -1071,7 +1111,8 @@ export default function RequestsPage() {
               customer_deposit_paid: false,
               partner_cost: 0,
               property_address: clientAddress.property_address,
-              scope: req.scope,
+              scope: scopeFromRequest,
+              email_attach_request_photos: false,
               owner_id: profile?.id,
               owner_name: profile?.full_name,
             });
@@ -1233,6 +1274,21 @@ function InvitePartnerToQuote({
   return (
     <Modal open={!!request} onClose={onClose} title="Invite partners" subtitle={`${request.reference} — ${request.service_type}`} size="lg">
       <div className="p-6 flex flex-col max-h-[75vh] overflow-y-auto">
+        <div className="mb-4 rounded-xl border border-border-light bg-surface-hover/80 p-4 space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invite summary</p>
+          <p className="text-sm text-text-primary">
+            <span className="text-text-tertiary text-xs font-medium">Type of work · </span>
+            {request.service_type?.trim() || "—"}
+          </p>
+          <p className="text-sm text-text-primary break-words">
+            <span className="text-text-tertiary text-xs font-medium">Address · </span>
+            {request.property_address?.trim() || "—"}
+          </p>
+          <p className="text-sm text-text-secondary whitespace-pre-wrap">
+            <span className="text-text-tertiary text-xs font-medium block mb-0.5">Service description</span>
+            {request.description?.trim() || "—"}
+          </p>
+        </div>
         <div className="mb-4">
           <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client and address *</p>
           <ClientAddressPicker
@@ -1605,7 +1661,7 @@ function CreateRequestModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate: (data: Partial<ServiceRequest>) => void;
+  onCreate: (data: Partial<ServiceRequest> & { photoFiles?: File[] }) => void;
   catalogServices: CatalogService[];
 }) {
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -1619,6 +1675,7 @@ function CreateRequestModal({
     description: "",
     priority: "medium",
   });
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
 
   useEffect(() => {
@@ -1634,6 +1691,7 @@ function CreateRequestModal({
       description: "",
       priority: "medium",
     });
+    setPhotoFiles([]);
   }, [open]);
 
   const typeOfWorkOptions = useMemo(() => {
@@ -1691,6 +1749,7 @@ function CreateRequestModal({
       description: form.description,
       priority: form.priority as ServiceRequest["priority"],
       request_kind: form.request_kind as "quote" | "work",
+      photoFiles: photoFiles.length ? photoFiles : undefined,
     });
   };
 
@@ -1782,8 +1841,19 @@ function CreateRequestModal({
           ]} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Description of the issue</label>
-          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} placeholder="Describe the issue — what the client needs, access, urgency…" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none" />
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description</label>
+          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} placeholder="Describe the work required — access, urgency, details…" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Site photos (optional)</label>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            multiple
+            className="block w-full text-xs text-text-secondary file:mr-2 file:rounded-lg file:border-0 file:bg-surface-tertiary file:px-3 file:py-1.5 file:text-xs file:font-medium"
+            onChange={(e) => setPhotoFiles(Array.from(e.target.files ?? []))}
+          />
+          <p className="text-[10px] text-text-tertiary mt-1">JPG, PNG, WebP or GIF, up to 5 MB each. Shown to invited partners and available when emailing the customer quote.</p>
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose} type="button">Cancel</Button>

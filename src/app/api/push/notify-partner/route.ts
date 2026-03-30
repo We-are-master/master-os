@@ -6,6 +6,8 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 interface NotifyPartnerBody {
   /** Notify a single partner by their partners.id */
   partnerId?: string;
+  /** Notify these partners only (by partners.id). */
+  partnerIds?: string[];
   /** Notify all partners whose trades array overlaps with any of these trade values */
   trades?: string[];
   title: string;
@@ -44,7 +46,7 @@ async function sendExpoPush(
 export async function POST(req: NextRequest) {
   try {
     const payload: NotifyPartnerBody = await req.json();
-    const { partnerId, trades, title, body, data = {} } = payload;
+    const { partnerId, partnerIds, trades, title, body, data = {} } = payload;
 
     if (!title || !body) {
       return NextResponse.json({ error: "title and body are required" }, { status: 400 });
@@ -71,6 +73,16 @@ export async function POST(req: NextRequest) {
         .eq("status", "active")
         .single();
       if (partner?.expo_push_token) tokens = [partner.expo_push_token];
+    } else if (partnerIds && partnerIds.length > 0) {
+      const { data: partners } = await supabase
+        .from("partners")
+        .select("expo_push_token")
+        .in("id", partnerIds)
+        .eq("status", "active")
+        .not("expo_push_token", "is", null);
+      tokens = (partners ?? [])
+        .map((p: { expo_push_token: string | null }) => p.expo_push_token!)
+        .filter(Boolean);
     } else if (trades && trades.length > 0) {
       // Find all active partners whose trades array overlaps the provided trades
       const orConditions = trades
@@ -86,7 +98,7 @@ export async function POST(req: NextRequest) {
         .map((p: { expo_push_token: string | null }) => p.expo_push_token!)
         .filter(Boolean);
     } else {
-      return NextResponse.json({ error: "partnerId or trades is required" }, { status: 400 });
+      return NextResponse.json({ error: "partnerId, partnerIds, or trades is required" }, { status: 400 });
     }
 
     const result = await sendExpoPush(tokens, title, body, data);

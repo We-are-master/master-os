@@ -8,13 +8,46 @@ import { createQuoteResponseToken } from "@/lib/quote-response-token";
 import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
 import { createServiceClient } from "@/lib/supabase/service";
 
+function isHttpsUrl(u: string): boolean {
+  try {
+    return new URL(u).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Fetch public site-photo URLs and build Resend attachment payloads (max 8 MB each). */
+async function sitePhotoAttachments(photoUrls: string[]): Promise<{ filename: string; content: Buffer; contentType: string }[]> {
+  const out: { filename: string; content: Buffer; contentType: string }[] = [];
+  for (let i = 0; i < photoUrls.length; i++) {
+    const raw = typeof photoUrls[i] === "string" ? photoUrls[i].trim() : "";
+    if (!raw || !isHttpsUrl(raw)) continue;
+    try {
+      const r = await fetch(raw);
+      if (!r.ok) continue;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > 8 * 1024 * 1024) continue;
+      const ct = (r.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+      const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : ct.includes("gif") ? "gif" : "jpg";
+      out.push({
+        filename: `site-photo-${i + 1}.${ext}`,
+        content: buf,
+        contentType: ct || "image/jpeg",
+      });
+    } catch {
+      /* skip broken or blocked URL */
+    }
+  }
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
   try {
     const body = await req.json();
-    const { quoteId, recipientEmail, recipientName, notes, items, customMessage, scope } = body as {
+    const { quoteId, recipientEmail, recipientName, notes, items, customMessage, scope, attachRequestPhotos } = body as {
       quoteId: string;
       recipientEmail?: string;
       recipientName?: string;
@@ -22,6 +55,8 @@ export async function POST(req: NextRequest) {
       customMessage?: string;
       scope?: string;
       items?: { description: string; quantity: number; unitPrice: number; total: number }[];
+      /** When set, overrides saved quote preference for this send only. */
+      attachRequestPhotos?: boolean;
     };
 
     if (!quoteId || typeof quoteId !== "string") {
@@ -134,18 +169,34 @@ export async function POST(req: NextRequest) {
     }
     const resend = new Resend(resendKey);
 
+    const useRequestPhotos =
+      typeof attachRequestPhotos === "boolean" ? attachRequestPhotos : Boolean(quote.email_attach_request_photos);
+    const emailAttachments: { filename: string; content: Buffer; contentType?: string }[] = [
+      {
+        filename: `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
+        content: pdfBuffer,
+        contentType: "application/pdf",
+      },
+    ];
+    if (useRequestPhotos && quote.request_id) {
+      const { data: sr } = await supabase
+        .from("service_requests")
+        .select("photo_urls")
+        .eq("id", quote.request_id)
+        .maybeSingle();
+      const urls = Array.isArray(sr?.photo_urls)
+        ? (sr!.photo_urls as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        : [];
+      const extras = await sitePhotoAttachments(urls);
+      emailAttachments.push(...extras);
+    }
+
     const { data: emailResult, error: emailError } = await resend.emails.send({
       from: fromEmail,
       to: [emailTo],
       subject: `Quote ${quote.reference} — ${quote.title}`,
       html: buildQuoteEmailHTML(pdfData, branding, { acceptUrl, rejectUrl, customMessage }),
-      attachments: [
-        {
-          filename: `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
-          content: pdfBuffer,
-          contentType: "application/pdf",
-        },
-      ],
+      attachments: emailAttachments,
     });
 
     if (emailError) {
