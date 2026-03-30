@@ -1,6 +1,58 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Quote } from "@/types/database";
 
+/** Real `quotes` columns only — stray keys (e.g. from UI state spread) must not reach PostgREST. */
+const QUOTE_WRITABLE_KEYS = new Set<string>([
+  "title",
+  "request_id",
+  "catalog_service_id",
+  "client_id",
+  "client_address_id",
+  "client_name",
+  "client_email",
+  "status",
+  "total_value",
+  "ai_confidence",
+  "partner_quotes_count",
+  "automation_status",
+  "owner_id",
+  "owner_name",
+  "cost",
+  "sell_price",
+  "margin_percent",
+  "quote_type",
+  "deposit_required",
+  "start_date_option_1",
+  "start_date_option_2",
+  "customer_accepted",
+  "customer_deposit_paid",
+  "scope",
+  "email_custom_message",
+  "customer_pdf_sent_at",
+  "property_address",
+  "partner_id",
+  "partner_name",
+  "partner_cost",
+  "service_type",
+  "images",
+  "expires_at",
+  "rejection_reason",
+  "priority",
+  "postcode",
+  "client_phone",
+  "description",
+  "deleted_at",
+  "deleted_by",
+]);
+
+function pickQuotePayload(input: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (v !== undefined && QUOTE_WRITABLE_KEYS.has(k)) out[k] = v;
+  }
+  return out;
+}
+
 export async function listQuotes(params: ListParams): Promise<ListResult<Quote>> {
   return queryList<Quote>("quotes", params, {
     searchColumns: ["reference", "title", "client_name", "client_email"],
@@ -24,9 +76,10 @@ export async function createQuote(
 ): Promise<Quote> {
   const supabase = getSupabase();
   const { data: ref } = await supabase.rpc("next_quote_ref");
+  const row = pickQuotePayload({ ...input } as Record<string, unknown>);
   const { data, error } = await supabase
     .from("quotes")
-    .insert({ ...input, reference: ref })
+    .insert({ ...row, reference: ref })
     .select()
     .single();
   if (error) throw error;
@@ -38,7 +91,8 @@ export async function updateQuote(
   input: Partial<Quote>
 ): Promise<Quote> {
   const supabase = getSupabase();
-  const payload = { ...input, updated_at: new Date().toISOString() };
+  const row = pickQuotePayload({ ...input } as Record<string, unknown>);
+  const payload = { ...row, updated_at: new Date().toISOString() };
   const { data, error } = await supabase
     .from("quotes")
     .update(payload)
