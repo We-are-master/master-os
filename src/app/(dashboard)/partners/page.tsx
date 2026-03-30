@@ -34,7 +34,7 @@ import {
   getPartnerDocumentSignedUrl,
 } from "@/services/partner-documents-storage";
 import { uploadPartnerAvatar } from "@/services/partner-avatar-storage";
-import { getStatusCounts } from "@/services/base";
+import { getStatusCounts, getAggregates } from "@/services/base";
 import { getSupabase } from "@/services/base";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { useProfile } from "@/hooks/use-profile";
@@ -146,6 +146,8 @@ const jobStatusConfig: Record<string, { label: string; variant: "default" | "pri
 
 const emptyForm = {
   company_name: "", contact_name: "", email: "", phone: "",
+  vat_number: "",
+  crn: "",
   trades: ["HVAC"] as string[], location: "", status: "active" as PartnerStatus,
 };
 
@@ -158,6 +160,7 @@ export default function PartnersPage() {
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
+  const [complianceAvg, setComplianceAvg] = useState<number | null>(null);
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   const [selectedTeamMember, setSelectedTeamMember] = useState<TeamMember | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -188,8 +191,13 @@ export default function PartnersPage() {
 
   const loadCounts = useCallback(async () => {
     try {
-      const counts = await getStatusCounts("partners", ["active", "inactive", "on_break", "onboarding"]);
+      const [counts, complianceAgg] = await Promise.all([
+        getStatusCounts("partners", ["active", "inactive", "on_break", "paused", "offboarded", "onboarding"]),
+        getAggregates("partners", "compliance_score"),
+      ]);
       setStatusCounts(counts);
+      const avg = complianceAgg.count > 0 ? complianceAgg.sum / complianceAgg.count : null;
+      setComplianceAvg(avg == null ? null : Math.round(avg * 10) / 10);
     } catch { /* cosmetic */ }
   }, []);
 
@@ -198,6 +206,9 @@ export default function PartnersPage() {
 
   const totalPartners = statusCounts["all"] ?? 0;
   const activeCount = statusCounts["active"] ?? 0;
+  const pausedCount = (statusCounts["on_break"] ?? 0) + (statusCounts["paused"] ?? 0);
+  const offboardedCount = statusCounts["offboarded"] ?? 0;
+  const inactiveCount = Math.max(0, totalPartners - activeCount - pausedCount - offboardedCount);
 
   async function handleCreate() {
     if (!form.company_name.trim() || !form.contact_name.trim() || !form.email.trim()) {
@@ -212,6 +223,8 @@ export default function PartnersPage() {
         contact_name: form.contact_name.trim(),
         email: form.email.trim(),
         phone: form.phone.trim() || undefined,
+        vat_number: form.vat_number.trim() || undefined,
+        crn: form.crn.trim() || undefined,
         trade: primaryTrade,
         trades: form.trades,
         status: form.status,
@@ -376,9 +389,14 @@ export default function PartnersPage() {
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Total Partners" value={totalPartners} format="number" icon={Users} accent="blue" />
-          <KpiCard title="Active Partners" value={activeCount} format="number" icon={Briefcase} accent="emerald" />
-          <KpiCard title="Team (App)" value={viewMode === "team" ? teamMembers.length : "-"} format="number" icon={Users} accent="primary" />
-          <KpiCard title="Compliance Score" value="-" icon={ShieldCheck} accent="primary" />
+          <KpiCard title="Active Partner" value={activeCount} format="number" icon={Briefcase} accent="emerald" />
+          <KpiCard title="Inactive Partner" value={inactiveCount} format="number" icon={Users} accent="amber" />
+          <KpiCard
+            title="Compliance Score Avg"
+            value={complianceAvg == null ? "-" : `${complianceAvg.toFixed(1)}%`}
+            icon={ShieldCheck}
+            accent="primary"
+          />
         </StaggerContainer>
 
         {viewMode === "team" && (
@@ -488,15 +506,23 @@ export default function PartnersPage() {
         }
       >
         <div className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-secondary">Company Name *</label>
               <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-secondary">Contact Name *</label>
-              <Input value={form.contact_name} onChange={(e) => setForm({ ...form, contact_name: e.target.value })} placeholder="John Doe" />
+              <label className="text-xs font-medium text-text-secondary">VAT Number</label>
+              <Input value={form.vat_number} onChange={(e) => setForm({ ...form, vat_number: e.target.value })} placeholder="GB123456789" />
             </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-text-secondary">CRN (if company)</label>
+              <Input value={form.crn} onChange={(e) => setForm({ ...form, crn: e.target.value })} placeholder="Company registration number" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-text-secondary">Contact Name *</label>
+            <Input value={form.contact_name} onChange={(e) => setForm({ ...form, contact_name: e.target.value })} placeholder="John Doe" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -599,12 +625,59 @@ const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = 
   other: { label: "Other", icon: FileText },
 };
 
+const REQUIRED_PARTNER_DOCS = [
+  {
+    id: "photo_id",
+    name: "Photo ID",
+    description: "Passport or driving license",
+    docType: "id_proof",
+    aliases: ["photo id", "passport", "driver license", "driving license", "id proof"],
+  },
+  {
+    id: "proof_of_address",
+    name: "Proof of Address",
+    description: "Utility bill or bank statement",
+    docType: "other",
+    aliases: ["proof of address", "utility bill", "bank statement", "address proof"],
+  },
+  {
+    id: "right_to_work",
+    name: "Right to Work",
+    description: "Share code, birth certificate, or passport",
+    docType: "other",
+    aliases: ["right to work", "share code", "birth certificate", "british passport", "passport"],
+  },
+  {
+    id: "public_liability",
+    name: "Public Liability Insurance",
+    description: "Active public liability policy",
+    docType: "insurance",
+    aliases: ["public liability", "insurance", "liability insurance"],
+  },
+] as const;
+
 const docStatusConfig: Record<string, { label: string; variant: "default" | "success" | "warning" | "danger" }> = {
   pending: { label: "Pending Review", variant: "warning" },
   approved: { label: "Approved", variant: "success" },
   rejected: { label: "Rejected", variant: "danger" },
   expired: { label: "Expired", variant: "default" },
 };
+
+function pickRequiredDocMatch(
+  docs: PartnerDoc[],
+  req: (typeof REQUIRED_PARTNER_DOCS)[number],
+): PartnerDoc | null {
+  const aliasMatch = docs.filter((d) => {
+    const n = String(d.name ?? "").toLowerCase();
+    return req.aliases.some((a) => n.includes(a));
+  });
+  const byType = docs.filter((d) => d.doc_type === req.docType);
+  const candidates = [...aliasMatch, ...byType];
+  if (candidates.length === 0) return null;
+  return [...candidates].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  )[0]!;
+}
 
 function PartnerDocPreviewThumb({ path }: { path: string }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -632,11 +705,15 @@ function AddPartnerDocumentModal({
   onClose,
   submitting,
   onSubmit,
+  initialDocType,
+  initialName,
 }: {
   open: boolean;
   onClose: () => void;
   submitting: boolean;
   onSubmit: (docType: string, name: string, file: File, preview: File | null, expiresAt?: string) => Promise<void>;
+  initialDocType?: string;
+  initialName?: string;
 }) {
   const [docType, setDocType] = useState("insurance");
   const [name, setName] = useState("");
@@ -645,14 +722,13 @@ function AddPartnerDocumentModal({
   const [expiresAt, setExpiresAt] = useState("");
 
   useEffect(() => {
-    if (!open) {
-      setName("");
-      setFile(null);
-      setPreview(null);
-      setExpiresAt("");
-      setDocType("insurance");
-    }
-  }, [open]);
+    if (!open) return;
+    setName(initialName ?? "");
+    setFile(null);
+    setPreview(null);
+    setExpiresAt("");
+    setDocType(initialDocType ?? "insurance");
+  }, [open, initialDocType, initialName]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -888,6 +964,7 @@ function PartnerDetailDrawer({
   const [partnerLocation, setPartnerLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
   const [addDocOpen, setAddDocOpen] = useState(false);
   const [addDocSubmitting, setAddDocSubmitting] = useState(false);
+  const [docPreset, setDocPreset] = useState<{ docType: string; name: string } | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const partnerAvatarInputRef = useRef<HTMLInputElement>(null);
   const [selectedDoc, setSelectedDoc] = useState<PartnerDoc | null>(null);
@@ -897,6 +974,8 @@ function PartnerDetailDrawer({
   const [editingOverview, setEditingOverview] = useState(false);
   const [overviewForm, setOverviewForm] = useState({
     company_name: "",
+    vat_number: "",
+    crn: "",
     contact_name: "",
     email: "",
     phone: "",
@@ -981,6 +1060,8 @@ function PartnerDetailDrawer({
       setEditingOverview(false);
       setOverviewForm({
         company_name: partner.company_name ?? "",
+          vat_number: partner.vat_number ?? "",
+          crn: partner.crn ?? "",
         contact_name: partner.contact_name ?? "",
         email: partner.email ?? "",
         phone: partner.phone ?? "",
@@ -1102,6 +1183,8 @@ function PartnerDetailDrawer({
       const primaryTrade = overviewForm.trades[0] ?? TRADES[0];
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
+        vat_number: overviewForm.vat_number.trim() || null,
+        crn: overviewForm.crn.trim() || null,
         contact_name: overviewForm.contact_name.trim(),
         email: overviewForm.email.trim(),
         phone: overviewForm.phone.trim() || undefined,
@@ -1440,11 +1523,10 @@ function PartnerDetailDrawer({
 
   const drawerTabs = [
     { id: "overview", label: "Overview" },
-    { id: "internal", label: "Internal" },
     { id: "jobs", label: "Jobs", count: realJobsCount },
     ...(partner.auth_user_id ? [{ id: "location" as const, label: "Location" }] : []),
     { id: "financial", label: "Financial", count: selfBills.length },
-    ...(partner.auth_user_id ? [{ id: "actions" as const, label: "Actions" }] : []),
+    { id: "actions" as const, label: "Privacy & Permissions" },
     { id: "documents", label: "Documents", count: documents.length },
     { id: "notes", label: "Notes", count: notes.length },
   ];
@@ -1532,6 +1614,8 @@ function PartnerDetailDrawer({
                           setEditingOverview(false);
                           setOverviewForm({
                             company_name: partner.company_name ?? "",
+                            vat_number: partner.vat_number ?? "",
+                            crn: partner.crn ?? "",
                             contact_name: partner.contact_name ?? "",
                             email: partner.email ?? "",
                             phone: partner.phone ?? "",
@@ -1600,6 +1684,28 @@ function PartnerDetailDrawer({
                     className="h-8"
                   />
                 ) : partner.email}
+              </div>
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <FileText className="h-4 w-4 text-text-tertiary" />
+                {editingOverview ? (
+                  <Input
+                    value={overviewForm.vat_number}
+                    onChange={(e) => setOverviewForm((p) => ({ ...p, vat_number: e.target.value }))}
+                    placeholder="VAT number"
+                    className="h-8"
+                  />
+                ) : (partner.vat_number || "—")}
+              </div>
+              <div className="flex items-center gap-2 text-sm text-text-secondary">
+                <FileText className="h-4 w-4 text-text-tertiary" />
+                {editingOverview ? (
+                  <Input
+                    value={overviewForm.crn}
+                    onChange={(e) => setOverviewForm((p) => ({ ...p, crn: e.target.value }))}
+                    placeholder="CRN"
+                    className="h-8"
+                  />
+                ) : (partner.crn || "—")}
               </div>
               <div className="flex items-center gap-2 text-sm text-text-secondary">
                 <Phone className="h-4 w-4 text-text-tertiary" />
@@ -1701,6 +1807,8 @@ function PartnerDetailDrawer({
                     setEditingOverview(false);
                     setOverviewForm({
                       company_name: partner.company_name ?? "",
+                      vat_number: partner.vat_number ?? "",
+                      crn: partner.crn ?? "",
                       contact_name: partner.contact_name ?? "",
                       email: partner.email ?? "",
                       phone: partner.phone ?? "",
@@ -1804,19 +1912,6 @@ function PartnerDetailDrawer({
               ))}
             </div>
           </div>
-        )}
-
-        {/* ========== INTERNAL PROFILE ========== */}
-        {tab === "internal" && (
-          <InternalProfileTab partner={partner} onUpdate={async (updates) => {
-            try {
-              const updated = await updatePartner(partner.id, updates);
-              onPartnerUpdate?.(updated);
-              toast.success("Internal profile updated");
-            } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Failed to update");
-            }
-          }} />
         )}
 
         {/* ========== JOBS ========== */}
@@ -1973,54 +2068,73 @@ function PartnerDetailDrawer({
           </div>
         )}
 
-        {/* ========== ACTIONS (directory partner with app user link) ========== */}
-        {tab === "actions" && partner.auth_user_id && isAdmin && (
+        {/* ========== PRIVACY & PERMISSIONS ========== */}
+        {tab === "actions" && (
           <div className="p-6 space-y-5">
-            <p className="text-sm font-semibold text-text-primary">Admin actions</p>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1">Change email</label>
-                <div className="flex gap-2">
-                  <Input value={actionEmail} onChange={(e) => setActionEmail(e.target.value)} placeholder="New email" type="email" className="flex-1" />
-                  <Button size="sm" disabled={actionSubmitting || !actionEmail.trim()} onClick={async () => {
+            <InternalProfileTab
+              partner={partner}
+              onUpdate={async (updates) => {
+                try {
+                  const updated = await updatePartner(partner.id, updates);
+                  onPartnerUpdate?.(updated);
+                  toast.success("Internal profile updated");
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Failed to update");
+                }
+              }}
+            />
+
+            {partner.auth_user_id && isAdmin && (
+              <div className="space-y-3">
+                <p className="text-sm font-semibold text-text-primary">Admin actions</p>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Change email</label>
+                  <div className="flex gap-2">
+                    <Input value={actionEmail} onChange={(e) => setActionEmail(e.target.value)} placeholder="New email" type="email" className="flex-1" />
+                    <Button size="sm" disabled={actionSubmitting || !actionEmail.trim()} onClick={async () => {
+                      setActionSubmitting(true);
+                      try {
+                        const res = await fetch("/api/admin/partner/update-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id, newEmail: actionEmail.trim() }) });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || "Failed");
+                        toast.success("Email updated");
+                        setActionEmail("");
+                      } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                    }}>Update</Button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Reset password</label>
+                  <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
                     setActionSubmitting(true);
                     try {
-                      const res = await fetch("/api/admin/partner/update-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id, newEmail: actionEmail.trim() }) });
+                      const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
                       const data = await res.json();
                       if (!res.ok) throw new Error(data.error || "Failed");
-                      toast.success("Email updated");
-                      setActionEmail("");
+                      toast.success(data.reset_link ? "Link generated" : data.message);
+                      if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
                     } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
-                  }}>Update</Button>
+                  }}>Generate reset link</Button>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Send email</label>
+                  <Button size="sm" variant="outline" icon={<MailPlus className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
+                    setActionSubmitting(true);
+                    try {
+                      const res = await fetch("/api/admin/partner/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || "Failed");
+                      if (data.mailto) window.location.href = data.mailto;
+                      else toast.success("Email: " + data.email);
+                    } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
+                  }}>Open mail client</Button>
                 </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1">Reset password</label>
-                <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
-                  setActionSubmitting(true);
-                  try {
-                    const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || "Failed");
-                    toast.success(data.reset_link ? "Link generated" : data.message);
-                    if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
-                  } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
-                }}>Generate reset link</Button>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1">Send email</label>
-                <Button size="sm" variant="outline" icon={<MailPlus className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
-                  setActionSubmitting(true);
-                  try {
-                    const res = await fetch("/api/admin/partner/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || "Failed");
-                    if (data.mailto) window.location.href = data.mailto;
-                    else toast.success("Email: " + data.email);
-                  } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
-                }}>Open mail client</Button>
-              </div>
-            </div>
+            )}
+
+            {!partner.auth_user_id && (
+              <p className="text-xs text-text-tertiary">No linked app user yet — admin account actions are unavailable.</p>
+            )}
           </div>
         )}
 
@@ -2029,15 +2143,71 @@ function PartnerDetailDrawer({
           <div className="p-6 space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-sm font-semibold text-text-primary">{documents.length} Documents</p>
-              <Button size="sm" variant="outline" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => setAddDocOpen(true)}>
+              <Button
+                size="sm"
+                variant="outline"
+                icon={<Upload className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  setDocPreset(null);
+                  setAddDocOpen(true);
+                }}
+              >
                 Add document
               </Button>
             </div>
+            <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Required documents</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {REQUIRED_PARTNER_DOCS.map((req) => {
+                  const doc = pickRequiredDocMatch(documents, req);
+                  const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
+                  const now = new Date();
+                  const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+                  const isExpired = !!(expiresAt && expiresAt < now);
+                  const isExpiringSoon = !!(expiresAt && expiresAt >= now && expiresAt <= in30Days);
+                  const statusLabel = !doc ? "Missing" : isExpired ? "Expired" : isExpiringSoon ? "Expiring soon" : "Valid";
+                  const statusVariant = !doc ? "default" : isExpired ? "danger" : isExpiringSoon ? "warning" : "success";
+
+                  return (
+                    <div key={req.id} className="rounded-lg border border-border-light bg-card p-3 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-text-primary">{req.name}</p>
+                          <p className="text-[11px] text-text-tertiary">{req.description}</p>
+                        </div>
+                        <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                      </div>
+                      {doc?.expires_at && (
+                        <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
+                          Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                        </p>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => {
+                          setDocPreset({ docType: req.docType, name: req.name });
+                          setAddDocOpen(true);
+                        }}
+                      >
+                        {doc ? "Replace / update" : "Add document"}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
             <AddPartnerDocumentModal
               open={addDocOpen}
-              onClose={() => setAddDocOpen(false)}
+              onClose={() => {
+                setAddDocOpen(false);
+                setDocPreset(null);
+              }}
               submitting={addDocSubmitting}
               onSubmit={handleAddDocument}
+              initialDocType={docPreset?.docType}
+              initialName={docPreset?.name}
             />
             <PartnerDocumentDetailModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
             {loadingDocs && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}</div>}
