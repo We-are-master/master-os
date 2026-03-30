@@ -276,7 +276,7 @@ export default function SchedulePage() {
             name: (p.company_name?.trim() || p.contact_name?.trim() || "Unnamed partner"),
             trade: p.trade?.trim() || "General",
             authUserId: p.auth_user_id ?? null,
-            status: isOnline ? "online" : "offline",
+            status: isOnline ? ("online" as const) : ("offline" as const),
             lastSeenIso: loc?.created_at ?? null,
             latitude: Number.isFinite(loc?.latitude) ? (loc?.latitude as number) : null,
             longitude: Number.isFinite(loc?.longitude) ? (loc?.longitude as number) : null,
