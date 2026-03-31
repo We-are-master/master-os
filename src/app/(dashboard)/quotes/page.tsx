@@ -63,6 +63,17 @@ import {
   customerUnitSellFromPartnerUnit,
 } from "@/lib/quote-bid-payload";
 
+const UI_PERF_EVENT = "master-ui-perf";
+
+function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  const payload = { metric, ms: Math.round(ms), ts: Date.now(), ...(meta ?? {}) };
+  window.dispatchEvent(new CustomEvent(UI_PERF_EVENT, { detail: payload }));
+  if (process.env.NODE_ENV !== "production") {
+    console.info(`[ui-perf] ${metric}: ${payload.ms}ms`, meta ?? {});
+  }
+}
+
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
 
 /**
@@ -318,6 +329,7 @@ function QuotesPageContent() {
   const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
   const [drawerPendingTab, setDrawerPendingTab] = useState<"overview" | "bids" | null>(null);
   const consumeDrawerPendingTab = useCallback(() => setDrawerPendingTab(null), []);
+  const kpiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const qid = searchParams.get("quoteId");
@@ -381,6 +393,18 @@ function QuotesPageContent() {
   }, []);
 
   useEffect(() => { loadCounts(); loadAggregates(); }, [loadCounts, loadAggregates]);
+  useEffect(() => () => {
+    if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
+  }, []);
+
+  const refreshWithKpis = useCallback((delayMs = 180) => {
+    refresh();
+    if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
+    kpiRefreshTimerRef.current = setTimeout(() => {
+      void loadCounts();
+      void loadAggregates();
+    }, delayMs);
+  }, [refresh, loadCounts, loadAggregates]);
 
   const pipelineCount =
     (statusCounts.draft ?? 0) +
@@ -402,6 +426,7 @@ function QuotesPageContent() {
   }, [statusCounts]);
 
   const handleCreate = useCallback(async (formData: Partial<Quote>) => {
+    const perfStart = performance.now();
     try {
       const result = await createQuote({
         title: formData.title ?? "",
@@ -436,9 +461,10 @@ function QuotesPageContent() {
       await logAudit({ entityType: "quote", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
       toast.success("Quote created successfully");
-      refresh(); loadCounts(); loadAggregates();
+      refreshWithKpis();
+      trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, { quoteType: formData.quote_type ?? "internal" });
     } catch { toast.error("Failed to create quote"); }
-  }, [refresh, loadCounts, loadAggregates, profile?.id, profile?.full_name]);
+  }, [refreshWithKpis, profile?.id, profile?.full_name]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
@@ -459,13 +485,11 @@ function QuotesPageContent() {
       await Promise.all(Array.from(selectedIds).map((id) => softDeleteById("quotes", id, profile?.id)));
       toast.success(`${selectedIds.size} quotes archived`);
       setSelectedIds(new Set());
-      refresh();
-      loadCounts();
-      loadAggregates();
+      refreshWithKpis();
     } catch {
       toast.error("Failed to archive quotes");
     }
-  }, [selectedIds, profile?.id, refresh, loadCounts, loadAggregates]);
+  }, [selectedIds, profile?.id, refreshWithKpis]);
 
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -476,16 +500,15 @@ function QuotesPageContent() {
       if (error) throw error;
       toast.success(`${selectedIds.size} quotes deleted`);
       setSelectedIds(new Set());
-      refresh();
-      loadCounts();
-      loadAggregates();
+      refreshWithKpis();
     } catch {
       toast.error("Failed to delete quotes");
     }
-  }, [selectedIds, refresh, loadCounts, loadAggregates]);
+  }, [selectedIds, refreshWithKpis]);
 
   const handleConfirmCreateJob = useCallback(
     async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => {
+      const perfStart = performance.now();
       if (!quoteToConvert) return;
       const effectivePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
       const jobScope = (formData.scope ?? "").trim() || (quoteToConvert.scope ?? "").trim();
@@ -606,14 +629,14 @@ function QuotesPageContent() {
         ]);
         setQuoteToConvert(null); setSelectedQuote(null);
         toast.success(`Job ${job.reference} created`);
-        refresh();
-        void loadCounts();
+        refreshWithKpis();
         router.push(`/jobs?jobId=${job.id}`);
+        trackUiPerf("quotes.convert_to_job_ms", performance.now() - perfStart, { hasPartner: hasPartner });
       } catch (err) {
         toast.error(getErrorMessage(err, "Failed to create job"));
       }
     },
-    [quoteToConvert, refresh, loadCounts, profile?.id, profile?.full_name, router]
+    [quoteToConvert, refreshWithKpis, profile?.id, profile?.full_name, router]
   );
 
   const handleStatusChange = useCallback(
@@ -633,11 +656,12 @@ function QuotesPageContent() {
         }
       }
       try {
+        const perfStart = performance.now();
         const updated = await updateQuote(quote.id, { status: newStatus as Quote["status"] });
         await logAudit({ entityType: "quote", entityId: quote.id, entityRef: quote.reference, action: "status_changed", fieldName: "status", oldValue: quote.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
         setSelectedQuote(updated);
         toast.success(`Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
-        refresh(); loadCounts();
+        refreshWithKpis();
         if (newStatus === "bidding" && quote.service_type) {
           fetch("/api/push/notify-partner", {
             method: "POST",
@@ -650,6 +674,7 @@ function QuotesPageContent() {
             }),
           }).catch(() => {});
         }
+        trackUiPerf("quotes.status_change_ms", performance.now() - perfStart, { from: quote.status, to: newStatus });
         return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to update quote";
@@ -658,7 +683,7 @@ function QuotesPageContent() {
         return false;
       }
     },
-    [refresh, loadCounts, profile?.id, profile?.full_name]
+    [refreshWithKpis, profile?.id, profile?.full_name]
   );
 
   const handleExport = useCallback(() => {
@@ -970,6 +995,7 @@ function QuoteDetailDrawer({
   const [invitePartnerOpen, setInvitePartnerOpen] = useState(false);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
+  const [sendingInvitePush, setSendingInvitePush] = useState(false);
   const [bids, setBids] = useState<QuoteBid[]>([]);
   const [bidsLoading, setBidsLoading] = useState(false);
   const [proposalSaving, setProposalSaving] = useState(false);
@@ -2156,10 +2182,56 @@ function QuoteDetailDrawer({
           </div>
           <div className="flex items-center justify-between gap-4 pt-4 mt-4 border-t border-border-light">
             <p className="text-sm text-text-tertiary">{selectedPartnerIds.size === 0 ? "Select at least one" : `${selectedPartnerIds.size} selected`}</p>
-            <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} disabled={selectedPartnerIds.size === 0} onClick={() => {
-              toast.success(`Quote request sent to ${selectedPartnerIds.size} partner(s)`);
-              setInvitePartnerOpen(false); setSelectedPartnerIds(new Set());
-            }}>
+            <Button
+              size="sm"
+              icon={<Send className="h-3.5 w-3.5" />}
+              loading={sendingInvitePush}
+              disabled={selectedPartnerIds.size === 0 || sendingInvitePush}
+              onClick={async () => {
+                if (selectedPartnerIds.size === 0) return;
+                setSendingInvitePush(true);
+                try {
+                  const partnerIds = Array.from(selectedPartnerIds);
+                  const inviteBody =
+                    `${quote.title} — ${quote.property_address ?? quote.client_name ?? ""}`.trim() || quote.reference;
+                  const res = await fetch("/api/push/notify-partner", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      partnerIds,
+                      title: "New quote invitation",
+                      body: inviteBody,
+                      data: { type: "quote_invite", quoteId: quote.id, photoUrls: quote.images ?? [] },
+                    }),
+                  });
+                  if (!res.ok) {
+                    const body = await res.json().catch(() => ({}));
+                    throw new Error((body && typeof body.error === "string" && body.error) || "Failed to send push invite");
+                  }
+                  const body = (await res.json().catch(() => ({}))) as {
+                    sent?: number;
+                    errors?: number;
+                    tokensFound?: number;
+                  };
+                  const sent = Number(body?.sent ?? 0);
+                  const tokensFound = Number(body?.tokensFound ?? 0);
+                  if (sent <= 0) {
+                    throw new Error(
+                      tokensFound <= 0
+                        ? "No valid push token found for selected partner(s). Ask them to open the app and allow notifications."
+                        : "Push request was accepted but not delivered (0 sent)."
+                    );
+                  }
+                  toast.success(`Quote request sent to ${sent} partner(s)`);
+                  setInvitePartnerOpen(false);
+                  setSelectedPartnerIds(new Set());
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Failed to send quote invitation");
+                } finally {
+                  setSendingInvitePush(false);
+                }
+              }}
+            >
               Send to selected ({selectedPartnerIds.size})
             </Button>
           </div>
@@ -2782,9 +2854,12 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
         const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
         imageUrls = await uploadQuoteInviteImages(invitePhotos, inviteUploadFolderRef.current);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to upload images");
-        setUploadingPhotos(false);
-        return;
+        toast.error(
+          err instanceof Error
+            ? `${err.message} Continuing without invite photos.`
+            : "Failed to upload images. Continuing without photos."
+        );
+        imageUrls = undefined;
       }
       setUploadingPhotos(false);
     }

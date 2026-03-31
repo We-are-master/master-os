@@ -11,14 +11,18 @@ import { Card } from "@/components/ui/card";
 import { Drawer } from "@/components/ui/drawer";
 import { Avatar } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
+import { Tabs } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { ScheduleLiveMap, type ScheduleLiveMapPoint } from "@/components/dashboard/schedule-live-map";
 import { motion, AnimatePresence } from "framer-motion";
 import { staggerContainer, staggerItem, fadeInUp } from "@/lib/motion";
 import {
   Plus, ChevronLeft, ChevronRight, Calendar as CalIcon,
-  Briefcase, AlertTriangle, MapPin, DollarSign, User,
+  Briefcase, AlertTriangle, MapPin, DollarSign, User, RefreshCw, Search,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
+import { getLatestLocation, getTeamMembers } from "@/services/partner-detail";
 import type { Job } from "@/types/database";
 import {
   formatJobScheduleLine,
@@ -45,6 +49,8 @@ const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
+const LIVE_MAP_INACTIVE_MINUTES = 15;
+type LiveMapStatusFilter = "all" | "active" | "inactive";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" }> = {
   unassigned: { label: "Unassigned", variant: "warning" },
@@ -119,6 +125,12 @@ export default function SchedulePage() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedJobAccountName, setSelectedJobAccountName] = useState<string | null>(null);
   const [legendBarChipsOpen, setLegendBarChipsOpen] = useState(false);
+  const [view, setView] = useState<"calendar" | "live_map">("calendar");
+  const [liveMapPoints, setLiveMapPoints] = useState<ScheduleLiveMapPoint[]>([]);
+  const [loadingLiveMap, setLoadingLiveMap] = useState(false);
+  const [liveMapUpdatedAt, setLiveMapUpdatedAt] = useState<string | null>(null);
+  const [liveMapSearch, setLiveMapSearch] = useState("");
+  const [liveMapStatusFilter, setLiveMapStatusFilter] = useState<LiveMapStatusFilter>("all");
 
   const loadJobs = useCallback(async () => {
     setLoading(true);
@@ -206,6 +218,57 @@ export default function SchedulePage() {
 
   const [stats, setStats] = useState({ unscheduled: 0, active: 0 });
 
+  const loadLiveMap = useCallback(async () => {
+    setLoadingLiveMap(true);
+    const supabase = getSupabase();
+    try {
+      // Primary source: app users from Team (App) logic (jobs.partner_id + linked auth_user_id).
+      const members = await getTeamMembers();
+      const byId = new Map<string, string>();
+      for (const m of members) {
+        if (m?.id) byId.set(m.id, m.full_name?.trim() || "Partner");
+      }
+
+      // Fallback source: explicitly linked partners table.
+      const { data: linkedPartners } = await supabase
+        .from("partners")
+        .select("company_name, auth_user_id")
+        .not("auth_user_id", "is", null);
+      for (const p of (linkedPartners ?? []) as Array<{ company_name: string | null; auth_user_id: string | null }>) {
+        if (p.auth_user_id && !byId.has(p.auth_user_id)) {
+          byId.set(p.auth_user_id, p.company_name?.trim() || "Partner");
+        }
+      }
+
+      const list = Array.from(byId.entries()).map(([userId, name]) => ({ userId, name }));
+      const nowMs = Date.now();
+
+      const rows = await Promise.all(
+        list.map(async (p) => {
+            const loc = await getLatestLocation(p.userId);
+            if (!loc) return null;
+            const minutesSincePing = Math.floor((nowMs - new Date(loc.created_at).getTime()) / 60000);
+            const inactive = !loc.is_active || minutesSincePing > LIVE_MAP_INACTIVE_MINUTES;
+            return {
+              id: p.userId,
+              name: p.name,
+              latitude: Number(loc.latitude),
+              longitude: Number(loc.longitude),
+              lastUpdateIso: loc.created_at,
+              inactive,
+            } satisfies ScheduleLiveMapPoint;
+          })
+      );
+
+      setLiveMapPoints(rows.filter((r): r is ScheduleLiveMapPoint => !!r));
+      setLiveMapUpdatedAt(new Date().toISOString());
+    } catch {
+      // non-critical map panel
+    } finally {
+      setLoadingLiveMap(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadJobs();
   }, [loadJobs]);
@@ -213,6 +276,14 @@ export default function SchedulePage() {
   useEffect(() => {
     loadAllJobs();
   }, [loadAllJobs]);
+
+  useEffect(() => {
+    loadLiveMap();
+    const timer = setInterval(() => {
+      void loadLiveMap();
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [loadLiveMap]);
 
   useEffect(() => {
     const clientId = selectedJob?.client_id?.trim();
@@ -324,6 +395,21 @@ export default function SchedulePage() {
       jobs.filter((j) => j.status !== "cancelled").reduce((sum, j) => sum + jobBillableRevenue(j), 0),
     [jobs],
   );
+  const liveActiveCount = useMemo(() => liveMapPoints.filter((p) => !p.inactive).length, [liveMapPoints]);
+  const liveInactiveCount = useMemo(() => liveMapPoints.filter((p) => p.inactive).length, [liveMapPoints]);
+
+  const filteredLiveMapPoints = useMemo(() => {
+    const q = liveMapSearch.trim().toLowerCase();
+    return liveMapPoints.filter((p) => {
+      if (liveMapStatusFilter === "active" && p.inactive) return false;
+      if (liveMapStatusFilter === "inactive" && !p.inactive) return false;
+      if (q && !p.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [liveMapPoints, liveMapSearch, liveMapStatusFilter]);
+
+  const liveMapFiltersActive =
+    liveMapSearch.trim().length > 0 || liveMapStatusFilter !== "all";
 
   return (
     <PageTransition>
@@ -374,11 +460,42 @@ export default function SchedulePage() {
           <KpiCard title="Active" value={stats.active} format="number" icon={Briefcase} accent="blue" />
           <KpiCard title="Schedule this month" value={jobs.length} format="number" icon={CalIcon} accent="emerald" />
           <KpiCard title="Unscheduled" value={stats.unscheduled} format="number" description="Need date assignment" icon={AlertTriangle} accent="amber" />
-          <KpiCard title="Total revenue this month" value={monthRevenue} format="currency" icon={DollarSign} accent="purple" />
+          <KpiCard
+            title={view === "calendar" ? "Total revenue this month" : "Visible on map"}
+            value={view === "calendar" ? monthRevenue : filteredLiveMapPoints.length}
+            format={view === "calendar" ? "currency" : "number"}
+            icon={view === "calendar" ? DollarSign : MapPin}
+            accent="purple"
+            description={
+              view === "live_map" && liveMapPoints.length > 0
+                ? liveMapFiltersActive
+                  ? `Showing ${filteredLiveMapPoints.length} of ${liveMapPoints.length}`
+                  : `${liveMapPoints.length} with location`
+                : undefined
+            }
+          />
         </StaggerContainer>
 
-        <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <Card padding="none">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Tabs
+            tabs={[
+              { id: "calendar", label: "Calendar" },
+              { id: "live_map", label: "Live map", count: liveMapPoints.length },
+            ]}
+            activeTab={view}
+            onChange={(id) => setView(id as "calendar" | "live_map")}
+            variant="pills"
+          />
+          {view === "live_map" && (
+            <Button variant="ghost" size="sm" onClick={() => void loadLiveMap()} icon={<RefreshCw className={cn("h-3.5 w-3.5", loadingLiveMap && "animate-spin")} />}>
+              Refresh
+            </Button>
+          )}
+        </div>
+
+        {view === "calendar" ? (
+          <motion.div variants={fadeInUp} initial="hidden" animate="visible">
+            <Card padding="none">
             {/* Calendar Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-light">
               <div className="flex items-center gap-3">
@@ -472,8 +589,64 @@ export default function SchedulePage() {
                 );
               })}
             </div>
-          </Card>
-        </motion.div>
+            </Card>
+          </motion.div>
+        ) : (
+          <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-3">
+            <Card className="p-4">
+              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="success" size="sm" dot>Active now: {liveActiveCount}</Badge>
+                  <Badge variant="warning" size="sm" dot>Inactive (last location): {liveInactiveCount}</Badge>
+                  {liveMapUpdatedAt && (
+                    <span className="text-text-tertiary">
+                      Updated: {new Date(liveMapUpdatedAt).toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
+                <div className="flex w-full min-w-0 flex-col gap-2 sm:max-w-sm lg:w-80 lg:shrink-0">
+                  <Input
+                    type="search"
+                    placeholder="Search partner…"
+                    value={liveMapSearch}
+                    onChange={(e) => setLiveMapSearch(e.target.value)}
+                    icon={<Search className="h-4 w-4" />}
+                    aria-label="Filter partners by name"
+                  />
+                  <div className="flex gap-1 rounded-xl bg-surface-tertiary p-1">
+                    {(
+                      [
+                        { id: "all" as const, label: "All" },
+                        { id: "active" as const, label: "Active" },
+                        { id: "inactive" as const, label: "Inactive" },
+                      ] as const
+                    ).map(({ id, label }) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setLiveMapStatusFilter(id)}
+                        className={cn(
+                          "min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+                          liveMapStatusFilter === id
+                            ? "bg-card text-text-primary shadow-sm"
+                            : "text-text-secondary hover:text-text-primary",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {filteredLiveMapPoints.length === 0 && liveMapPoints.length > 0 && (
+                <p className="mb-3 text-sm text-text-secondary">
+                  No partners match these filters. Clear search or set status to &quot;All&quot;.
+                </p>
+              )}
+              <ScheduleLiveMap points={filteredLiveMapPoints} />
+            </Card>
+          </motion.div>
+        )}
       </div>
 
       {/* Job Detail Drawer */}
