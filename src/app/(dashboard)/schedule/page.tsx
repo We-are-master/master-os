@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
-import { getLatestLocation } from "@/services/partner-detail";
+import { getLatestLocation, getTeamMembers } from "@/services/partner-detail";
 import type { Job } from "@/types/database";
 import {
   formatJobScheduleLine,
@@ -222,37 +222,42 @@ export default function SchedulePage() {
     setLoadingLiveMap(true);
     const supabase = getSupabase();
     try {
+      // Primary source: app users from Team (App) logic (jobs.partner_id + linked auth_user_id).
+      const members = await getTeamMembers();
+      const byId = new Map<string, string>();
+      for (const m of members) {
+        if (m?.id) byId.set(m.id, m.full_name?.trim() || "Partner");
+      }
+
+      // Fallback source: explicitly linked partners table.
       const { data: linkedPartners } = await supabase
         .from("partners")
-        .select("id, company_name, auth_user_id")
-        .not("auth_user_id", "is", null)
-        .is("deleted_at", null);
+        .select("company_name, auth_user_id")
+        .not("auth_user_id", "is", null);
+      for (const p of (linkedPartners ?? []) as Array<{ company_name: string | null; auth_user_id: string | null }>) {
+        if (p.auth_user_id && !byId.has(p.auth_user_id)) {
+          byId.set(p.auth_user_id, p.company_name?.trim() || "Partner");
+        }
+      }
 
-      const list = (linkedPartners ?? []) as Array<{
-        id: string;
-        company_name: string | null;
-        auth_user_id: string | null;
-      }>;
+      const list = Array.from(byId.entries()).map(([userId, name]) => ({ userId, name }));
       const nowMs = Date.now();
 
       const rows = await Promise.all(
-        list
-          .filter((p) => !!p.auth_user_id)
-          .map(async (p) => {
-            const userId = String(p.auth_user_id);
-            const loc = await getLatestLocation(userId);
+        list.map(async (p) => {
+            const loc = await getLatestLocation(p.userId);
             if (!loc) return null;
             const minutesSincePing = Math.floor((nowMs - new Date(loc.created_at).getTime()) / 60000);
             const inactive = !loc.is_active || minutesSincePing > LIVE_MAP_INACTIVE_MINUTES;
             return {
-              id: p.id,
-              name: p.company_name?.trim() || "Partner",
+              id: p.userId,
+              name: p.name,
               latitude: Number(loc.latitude),
               longitude: Number(loc.longitude),
               lastUpdateIso: loc.created_at,
               inactive,
             } satisfies ScheduleLiveMapPoint;
-          }),
+          })
       );
 
       setLiveMapPoints(rows.filter((r): r is ScheduleLiveMapPoint => !!r));

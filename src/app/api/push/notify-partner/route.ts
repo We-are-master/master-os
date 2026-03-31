@@ -15,6 +15,12 @@ interface NotifyPartnerBody {
   data?: Record<string, unknown>;
 }
 
+type PartnerTokenRow = {
+  id: string;
+  auth_user_id: string | null;
+  expo_push_token: string | null;
+};
+
 async function sendExpoPush(
   tokens: string[],
   title: string,
@@ -65,24 +71,62 @@ export async function POST(req: NextRequest) {
 
     let tokens: string[] = [];
 
+    const resolveTokens = async (rows: PartnerTokenRow[]): Promise<string[]> => {
+      const byPartner = (rows ?? [])
+        .map((r) => r.expo_push_token)
+        .filter((t): t is string => !!t);
+      const missingAuthUserIds = (rows ?? [])
+        .filter((r) => !r.expo_push_token && !!r.auth_user_id)
+        .map((r) => r.auth_user_id!) as string[];
+      if (missingAuthUserIds.length === 0) return [...new Set(byPartner)];
+
+      const { data: users } = await supabase
+        .from("users")
+        .select("id, fcmToken")
+        .in("id", missingAuthUserIds)
+        .not("fcmToken", "is", null);
+      const fromUsers = (users ?? [])
+        .map((u: { fcmToken: string | null }) => u.fcmToken)
+        .filter((t): t is string => !!t);
+      return [...new Set([...byPartner, ...fromUsers])];
+    };
+
     if (partnerId) {
-      const { data: partner } = await supabase
+      const { data: partnerById } = await supabase
         .from("partners")
-        .select("expo_push_token")
+        .select("id, auth_user_id, expo_push_token")
         .eq("id", partnerId)
         .eq("status", "active")
         .single();
-      if (partner?.expo_push_token) tokens = [partner.expo_push_token];
+      if (partnerById) {
+        tokens = await resolveTokens([partnerById as PartnerTokenRow]);
+      } else {
+        // Fallback: some callers may pass auth_user_id instead of partners.id.
+        const { data: partnerByAuth } = await supabase
+          .from("partners")
+          .select("id, auth_user_id, expo_push_token")
+          .eq("auth_user_id", partnerId)
+          .eq("status", "active")
+          .single();
+        if (partnerByAuth) tokens = await resolveTokens([partnerByAuth as PartnerTokenRow]);
+      }
     } else if (partnerIds && partnerIds.length > 0) {
       const { data: partners } = await supabase
         .from("partners")
-        .select("expo_push_token")
+        .select("id, auth_user_id, expo_push_token")
         .in("id", partnerIds)
         .eq("status", "active")
-        .not("expo_push_token", "is", null);
-      tokens = (partners ?? [])
-        .map((p: { expo_push_token: string | null }) => p.expo_push_token!)
-        .filter(Boolean);
+      let rows = (partners ?? []) as PartnerTokenRow[];
+      if (rows.length < partnerIds.length) {
+        // Fallback for ids that are actually auth_user_id values.
+        const { data: byAuth } = await supabase
+          .from("partners")
+          .select("id, auth_user_id, expo_push_token")
+          .in("auth_user_id", partnerIds)
+          .eq("status", "active");
+        rows = [...rows, ...((byAuth ?? []) as PartnerTokenRow[])];
+      }
+      tokens = await resolveTokens(rows);
     } else if (trades && trades.length > 0) {
       // Find all active partners whose trades array overlaps the provided trades
       const orConditions = trades
@@ -90,19 +134,19 @@ export async function POST(req: NextRequest) {
         .join(",");
       const { data: partners } = await supabase
         .from("partners")
-        .select("expo_push_token")
+        .select("id, auth_user_id, expo_push_token")
         .or(orConditions)
         .eq("status", "active")
-        .not("expo_push_token", "is", null);
-      tokens = (partners ?? [])
-        .map((p: { expo_push_token: string | null }) => p.expo_push_token!)
-        .filter(Boolean);
+      tokens = await resolveTokens((partners ?? []) as PartnerTokenRow[]);
     } else {
       return NextResponse.json({ error: "partnerId, partnerIds, or trades is required" }, { status: 400 });
     }
 
     const result = await sendExpoPush(tokens, title, body, data);
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      tokensFound: tokens.length,
+    });
   } catch (err) {
     console.error("[push/notify-partner]", err);
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
