@@ -547,7 +547,7 @@ function QuotesPageContent() {
           owner_id: profile?.id, owner_name: profile?.full_name,
           job_type: formData.job_type ?? "fixed",
           cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
-          partner_agreed_value: quoteToConvert.partner_cost ?? 0,
+          partner_agreed_value: (formData.partner_cost ?? 0) + (formData.materials_cost ?? 0),
           finance_status: "unpaid",
           service_value: formData.client_price,
           report_submitted: false,
@@ -2285,6 +2285,38 @@ function preferredScheduleDateFromQuote(q: Quote): string {
   return parseIsoDateOnly(raw);
 }
 
+/** Matches customer proposal line items — preferred over stale `quote.scope` when converting to job. */
+function buildJobScopeFromQuoteLineItems(
+  rows: Array<{ description?: string | null; quantity?: number | null; unit_price?: number | null; notes?: string | null }>,
+): string {
+  const lines: string[] = [];
+  for (const li of rows) {
+    const d = bidPayloadTrimmedString(li.description as unknown);
+    if (!d) continue;
+    const qty = Number(li.quantity) || 1;
+    const sell = qty * (Number(li.unit_price) || 0);
+    const n = bidPayloadTrimmedString(li.notes as unknown);
+    let line = qty === 1 ? d : `${d} × ${qty}`;
+    if (sell > 0) line += ` — ${formatCurrency(sell)}`;
+    if (n) line += ` (${n})`;
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+/** Labour (line 1) vs materials (line 2) partner subtotals from stored proposal rows. */
+function splitPartnerCostFromFirstTwoLines(
+  rows: Array<{ quantity?: number | null; partner_unit_cost?: number | null }>,
+): { labour: number; materials: number; hasSplit: boolean } {
+  if (rows.length < 2) return { labour: 0, materials: 0, hasSplit: false };
+  const q0 = Number(rows[0]?.quantity) || 1;
+  const q1 = Number(rows[1]?.quantity) || 1;
+  const p0 = (Number(rows[0]?.partner_unit_cost ?? 0) || 0) * q0;
+  const p1 = (Number(rows[1]?.partner_unit_cost ?? 0) || 0) * q1;
+  if (p0 <= 0 && p1 <= 0) return { labour: 0, materials: 0, hasSplit: false };
+  return { labour: p0, materials: p1, hasSplit: true };
+}
+
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
   onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => void;
@@ -2292,15 +2324,28 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "", scope: "", createWithoutDeposit: false, job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
+  /** DB / approved-bid partner when not in `partners` list (label for Select + submit). */
+  const [partnerFromQuote, setPartnerFromQuote] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (!quote) return;
+    setPartnerFromQuote(null);
+    const typeOfWorkInitial =
+      normalizeTypeOfWork(bidPayloadTrimmedString(quote.service_type as unknown)) || proposalFirstLineLabel(quote);
+    const qScope = bidPayloadTrimmedString(quote.scope as unknown);
     setForm({
-      title: quote.title ?? "", partner_id: quote.partner_id ?? "",
-      client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
-      materials_cost: "0", scheduled_date: preferredScheduleDateFromQuote(quote), arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
-      scope: quote.scope ?? "",
-      createWithoutDeposit: false, job_type: "fixed",
+      title: typeOfWorkInitial,
+      partner_id: quote.partner_id ?? "",
+      client_price: String(quote.total_value ?? 0),
+      partner_cost: String(quote.partner_cost ?? 0),
+      materials_cost: "0",
+      scheduled_date: preferredScheduleDateFromQuote(quote),
+      arrival_from: "09:00",
+      arrival_window_mins: "180",
+      expected_finish_date: "",
+      scope: qScope,
+      createWithoutDeposit: false,
+      job_type: "fixed",
     });
     setClientAddress({
       client_id: quote.client_id,
@@ -2310,12 +2355,77 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       property_address: quote.property_address ?? "",
     });
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
-    if (quote.request_id) {
+    let cancelled = false;
+    (async () => {
+      const [fresh, bids, lineRes] = await Promise.all([
+        getQuote(quote.id),
+        getBidsByQuoteId(quote.id).catch(() => [] as QuoteBid[]),
+        getSupabase().from("quote_line_items").select("*").eq("quote_id", quote.id).order("sort_order"),
+      ]);
+      if (cancelled) return;
+      const q = fresh ?? quote;
+      const approvedBid = bids.find((b) => b.status === "approved") ?? null;
+      const pid =
+        bidPayloadTrimmedString(q.partner_id as unknown) ||
+        (approvedBid?.partner_id ? String(approvedBid.partner_id) : "");
+      const pname =
+        bidPayloadTrimmedString(q.partner_name as unknown) ||
+        bidPayloadTrimmedString(approvedBid?.partner_name as unknown) ||
+        "";
+      if (pid) {
+        setPartnerFromQuote({ id: pid, name: pname || pid });
+      }
+      const { data } = lineRes;
+      const items = (data ?? []) as Array<{
+        description?: string | null;
+        quantity?: number | null;
+        unit_price?: number | null;
+        partner_unit_cost?: number | null;
+        notes?: string | null;
+      }>;
+      const scopeFromLines = buildJobScopeFromQuoteLineItems(items);
+      const mergedScope = scopeFromLines.trim() || bidPayloadTrimmedString(q.scope as unknown);
+      const split = splitPartnerCostFromFirstTwoLines(items);
+      const bidJobType = approvedBid?.job_type === "hourly" || approvedBid?.job_type === "fixed" ? approvedBid.job_type : undefined;
+      setForm((prev) => ({
+        ...prev,
+        partner_id: pid || prev.partner_id,
+        scope: mergedScope,
+        partner_cost: split.hasSplit ? String(split.labour) : String(q.partner_cost ?? prev.partner_cost),
+        materials_cost: split.hasSplit ? String(split.materials) : prev.materials_cost,
+        job_type: bidJobType ?? prev.job_type,
+      }));
+      setClientAddress({
+        client_id: q.client_id,
+        client_address_id: q.client_address_id,
+        client_name: q.client_name ?? "",
+        client_email: q.client_email ?? undefined,
+        property_address: q.property_address ?? "",
+      });
+    })();
+    if (quote.request_id && !quote.client_address_id?.trim()) {
       getRequest(quote.request_id).then((req) => {
-        if (req?.property_address) setClientAddress((p) => ({ ...p, property_address: req.property_address }));
+        if (cancelled || !req?.property_address) return;
+        setClientAddress((p) => {
+          if (p.property_address?.trim()) return p;
+          return { ...p, property_address: req.property_address };
+        });
       });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [quote]);
+
+  const partnerSelectOptions = useMemo(() => {
+    const base = partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name || p.id }));
+    const pid = form.partner_id?.trim();
+    if (pid && !base.some((o) => o.value === pid)) {
+      const label = partnerFromQuote?.id === pid ? partnerFromQuote.name : pid;
+      return [{ value: "", label: "No partner" }, { value: pid, label }, ...base];
+    }
+    return [{ value: "", label: "No partner" }, ...base];
+  }, [partners, form.partner_id, partnerFromQuote]);
 
   const typeOfWorkOptions = useMemo(
     () => withTypeOfWorkFallback(form.title).map((name) => ({ value: name, label: name })),
@@ -2329,7 +2439,13 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     if (!form.title?.trim()) { toast.error("Job title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
-    const effectivePartnerId = form.partner_id || quote.partner_id;
+    const partnerNameResolved =
+      selectedPartner?.company_name ||
+      selectedPartner?.contact_name ||
+      (partnerFromQuote?.id === form.partner_id ? partnerFromQuote.name : undefined) ||
+      bidPayloadTrimmedString(quote.partner_name as unknown) ||
+      undefined;
+    const effectivePartnerId = form.partner_id || partnerFromQuote?.id || quote.partner_id;
     const sched = resolveJobModalSchedule({
       scheduled_date: form.scheduled_date,
       arrival_from: form.arrival_from,
@@ -2382,7 +2498,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       client_name: clientAddress.client_name,
       property_address: clientAddress.property_address,
       partner_id: form.partner_id || undefined,
-      partner_name: selectedPartner ? selectedPartner.company_name : quote.partner_name ?? undefined,
+      partner_name: partnerNameResolved,
       client_price: Number(form.client_price) || 0,
       partner_cost: Number(form.partner_cost) || 0,
       materials_cost: Number(form.materials_cost) || 0,
@@ -2443,7 +2559,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
             </p>
           }
         />
-        <Select label="Partner" options={[{ value: "", label: "No partner" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
+        <Select label="Partner" options={partnerSelectOptions} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         <div className="grid grid-cols-3 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min={0} step="0.01" /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min={0} step="0.01" /></div>
