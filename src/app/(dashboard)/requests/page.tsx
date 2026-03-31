@@ -2048,10 +2048,10 @@ function ConvertToJobModal({
                 )}
               >
                 <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-                <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "+£15 applied"}</p>
+                <p className="text-xs opacity-80">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
               </button>
             </div>
-            <p className="text-xs text-text-tertiary">Access surcharge: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>
+            <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>
           </div>
         )}
         <div className="grid grid-cols-2 gap-4">
@@ -2347,10 +2347,10 @@ function CreateRequestModal({
                   )}
                 >
                   <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-                  <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "+£15 applied"}</p>
+                  <p className="text-xs opacity-80">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
                 </button>
               </div>
-              <p className="text-xs text-text-tertiary">Access surcharge for job: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>
+              <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>
             </div>
           )}
         </div>

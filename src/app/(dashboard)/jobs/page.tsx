@@ -1194,10 +1194,10 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
               )}
             >
               <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-              <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "+£15 applied"}</p>
+              <p className="text-xs opacity-80">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
             </button>
           </div>
-          <p className="text-xs text-text-tertiary">Access surcharge total: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span></p>
+          <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span></p>
         </div>
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner allocation</p>
