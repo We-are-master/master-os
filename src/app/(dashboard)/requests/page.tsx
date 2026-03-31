@@ -2241,10 +2241,10 @@ function CreateRequestModal({
       title="New Service Request"
       subtitle="Create a new incoming request"
       size="lg"
-      scrollBody={false}
+      scrollBody
     >
-      <form onSubmit={handleSubmit} className="flex h-[min(85vh,calc(100dvh-6rem))] min-h-0 flex-col overflow-hidden">
-        <div className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 sm:px-6 pt-4 sm:pt-6 pb-4">
+      <form onSubmit={handleSubmit} className="flex flex-col">
+        <div className="space-y-4 px-4 sm:px-6 pt-4 sm:pt-6 pb-4">
         <Select
           label="Request type *"
           value={form.request_kind}
@@ -2291,7 +2291,7 @@ function CreateRequestModal({
             <Input
               value={form.client_phone}
               onChange={(e) => update("client_phone", e.target.value)}
-              placeholder="Optional — contact de quem vai estar on site"
+              placeholder="Optional — contact for who will be on site"
             />
           </div>
         </div>
@@ -2432,7 +2432,7 @@ function CreateRequestModal({
           )}
         </div>
         </div>
-        <div className="flex shrink-0 justify-end gap-2 border-t border-border-light px-6 py-4">
+        <div className="flex justify-end gap-2 border-t border-border-light px-6 py-4">
           <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
           <Button type="submit">Create Request</Button>
         </div>
