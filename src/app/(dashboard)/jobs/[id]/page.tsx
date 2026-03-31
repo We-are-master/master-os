@@ -158,6 +158,8 @@ export default function JobDetailPage() {
   const [savingOwner, setSavingOwner] = useState(false);
   const [partnerModalOpen, setPartnerModalOpen] = useState(false);
   const [cancelJobOpen, setCancelJobOpen] = useState(false);
+  const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
+  const [validatingComplete, setValidatingComplete] = useState(false);
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
   const [cancellingJob, setCancellingJob] = useState(false);
@@ -1120,6 +1122,56 @@ export default function JobDetailPage() {
     }
   }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments]);
 
+  const handleValidateAndComplete = useCallback(async () => {
+    const j = jobRef.current;
+    if (!j) return;
+    setValidatingComplete(true);
+    try {
+      let current = j;
+      if (!current.self_bill_id) {
+        const selfBill = await createSelfBillFromJob({
+          id: current.id,
+          reference: current.reference,
+          partner_name: current.partner_name ?? "Unassigned",
+          partner_cost: current.partner_cost,
+          materials_cost: current.materials_cost,
+        });
+        const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: selfBill.id }, { notifyPartner: false });
+        if (withSelfBill) current = withSelfBill;
+      }
+
+      const approvedPatch = await handleJobUpdate(
+        current.id,
+        {
+          report_submitted: true,
+          report_submitted_at: current.report_submitted_at ?? new Date().toISOString(),
+          internal_report_approved: true,
+          internal_invoice_approved: true,
+        },
+        { notifyPartner: false },
+      );
+      if (approvedPatch) current = approvedPatch;
+
+      const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
+      const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
+      const customerDue = Math.max(0, jobBillableRevenue(current) - (depositPaid + finalPaid));
+      const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
+      const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
+      if (customerDue > 0.02 || partnerDue > 0.02) {
+        await handleStatusChange(current, "awaiting_payment");
+        toast.success("Validation approved. Moved to Awaiting payment (outstanding balances found).");
+      } else {
+        await handleStatusChange(current, "completed");
+        toast.success("Validation approved. Job marked Completed & paid.");
+      }
+      setValidateCompleteOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to validate and complete job");
+    } finally {
+      setValidatingComplete(false);
+    }
+  }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments]);
+
   if (loading || !id) {
     return (
       <PageTransition>
@@ -1180,6 +1232,7 @@ export default function JobDetailPage() {
   const displayPhase = phaseCount === 2 ? (job.report_2_uploaded ? 2 : 1) : 1;
   const sendReportFinalCheck = canSendReportAndRequestFinalPayment(job);
   const flowStep = jobFlowActiveStepIndex(job.status);
+  const reportsApproved = allConfiguredReportsApproved(job);
 
   return (
     <PageTransition>
@@ -1240,6 +1293,10 @@ export default function JobDetailPage() {
                   }
                   if (action.special === "send_report_invoice") {
                     void handleSendReportAndInvoice();
+                    return;
+                  }
+                  if (job.status === "need_attention" && action.status === "completed") {
+                    setValidateCompleteOpen(true);
                     return;
                   }
                   void handleStatusChange(job, action.status as Job["status"]);
@@ -2091,6 +2148,40 @@ export default function JobDetailPage() {
           </div>
         </div>
       </div>
+
+      <Modal
+        open={validateCompleteOpen}
+        onClose={() => !validatingComplete && setValidateCompleteOpen(false)}
+        title="Validate and complete"
+        subtitle={`${job.reference} — review before approval`}
+        size="lg"
+        className="max-w-3xl"
+      >
+        <div className="p-6 space-y-4">
+          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-4 space-y-2">
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job summary</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+              <p className="text-text-secondary">Reports approved: <span className="font-semibold text-text-primary">{reportsApproved ? "Yes" : "No"}</span></p>
+              <p className="text-text-secondary">Final invoice to client: <span className="font-semibold text-text-primary">{job.invoice_id ? "Ready (linked)" : "No linked invoice"}</span></p>
+              <p className="text-text-secondary">Customer overdue: <span className={cn("font-semibold", amountDue > 0.02 ? "text-amber-600" : "text-emerald-600")}>{formatCurrency(amountDue)}</span></p>
+              <p className="text-text-secondary">Partner overdue: <span className={cn("font-semibold", partnerPayRemaining > 0.02 ? "text-amber-600" : "text-emerald-600")}>{formatCurrency(partnerPayRemaining)}</span></p>
+              <p className="text-text-secondary">Self-bill: <span className="font-semibold text-text-primary">{job.self_bill_id ? "Already created" : "Will be created now"}</span></p>
+              <p className="text-text-secondary">Next status: <span className="font-semibold text-text-primary">{amountDue > 0.02 || partnerPayRemaining > 0.02 ? "Awaiting payment" : "Completed & paid"}</span></p>
+            </div>
+          </div>
+          <p className="text-xs text-text-tertiary">
+            Approving runs operational checks, creates the self-bill when missing, approves report/invoice internally, and routes to the correct status based on outstanding balances.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" type="button" disabled={validatingComplete} onClick={() => setValidateCompleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" loading={validatingComplete} onClick={() => void handleValidateAndComplete()}>
+              Approve and continue
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={cancelJobOpen}
