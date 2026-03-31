@@ -43,10 +43,9 @@ export async function fetchAllJobsFinancialKpiRows(
   return all;
 }
 
-// Throttle: mark-late runs at most once every 5 minutes per server instance
-// to avoid write contention on every paginated list request.
+// Throttle: mark-late should not run on every jobs list request.
 let lastMarkLateAt = 0;
-const MARK_LATE_INTERVAL_MS = 5 * 60 * 1000;
+const MARK_LATE_INTERVAL_MS = 30 * 60 * 1000;
 
 export async function markLateJobs(): Promise<void> {
   const supabase = getSupabase();
@@ -80,7 +79,14 @@ export async function markLateJobs(): Promise<void> {
 }
 
 export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
-  if (Date.now() - lastMarkLateAt > MARK_LATE_INTERVAL_MS) {
+  const shouldRunMarkLate =
+    (params.page ?? 1) <= 1 &&
+    !params.search &&
+    !params.dateFrom &&
+    !params.dateTo &&
+    !params.scheduleRange &&
+    (params.status === "scheduled" || params.status === "all" || !params.status);
+  if (shouldRunMarkLate && Date.now() - lastMarkLateAt > MARK_LATE_INTERVAL_MS) {
     void markLateJobs(); // fire-and-forget: don't block the list query
   }
 

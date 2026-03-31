@@ -15,6 +15,16 @@ function getServiceSupabase() {
 
 const baseUrl = () => process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
+function withServerTiming(body: unknown, status: number, marks: Array<[string, number]>) {
+  const metric = marks
+    .filter(([, v]) => Number.isFinite(v) && v >= 0)
+    .map(([k, v]) => `${k};dur=${Math.round(v)}`)
+    .join(", ");
+  const res = NextResponse.json(body, { status });
+  if (metric) res.headers.set("Server-Timing", metric);
+  return res;
+}
+
 /**
  * POST /api/quotes/respond
  * Public: customer accepts or rejects a quote via email link.
@@ -22,6 +32,8 @@ const baseUrl = () => process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
  * Body: { token: string, action: "accept" | "reject", rejectionReason?: string }
  */
 export async function POST(req: NextRequest) {
+  const startedAt = performance.now();
+  const marks: Array<[string, number]> = [];
   try {
     const body = await req.json();
     const { token, action, rejectionReason } = body as {
@@ -45,14 +57,17 @@ export async function POST(req: NextRequest) {
     const supabase = getServiceSupabase();
 
     if (action === "reject") {
+      const tLookup = performance.now();
       const { data: quote, error: fetchError } = await supabase
         .from("quotes")
         .select("id, reference, status")
         .eq("id", quoteId)
         .single();
+      marks.push(["quote_lookup", performance.now() - tLookup]);
 
       if (fetchError || !quote) {
-        return NextResponse.json({ error: "Quote not found" }, { status: 404 });
+        marks.push(["total", performance.now() - startedAt]);
+        return withServerTiming({ error: "Quote not found" }, 404, marks);
       }
 
       const updates: { status: string; rejection_reason?: string } = {
@@ -60,14 +75,17 @@ export async function POST(req: NextRequest) {
         ...(typeof rejectionReason === "string" && rejectionReason.trim() ? { rejection_reason: rejectionReason.trim() } : {}),
       };
 
+      const tUpdate = performance.now();
       const { error: updateError } = await supabase
         .from("quotes")
         .update({ ...updates, updated_at: new Date().toISOString() })
         .eq("id", quoteId);
+      marks.push(["quote_update", performance.now() - tUpdate]);
 
       if (updateError) {
         console.error("Quote respond update error:", updateError);
-        return NextResponse.json({ error: "Failed to update quote" }, { status: 500 });
+        marks.push(["total", performance.now() - startedAt]);
+        return withServerTiming({ error: "Failed to update quote" }, 500, marks);
       }
 
       await supabase.from("audit_logs").insert({
@@ -81,23 +99,27 @@ export async function POST(req: NextRequest) {
         metadata: updates.rejection_reason ? { rejection_reason: updates.rejection_reason } : {},
       });
 
-      return NextResponse.json({
+      marks.push(["total", performance.now() - startedAt]);
+      return withServerTiming({
         success: true,
         action: "reject",
         reference: quote.reference,
         message: "Quote declined. Thank you for letting us know.",
-      });
+      }, 200, marks);
     }
 
     // Accept: need full quote for possible job + invoice + Stripe
+    const tLookup = performance.now();
     const { data: quote, error: fetchError } = await supabase
       .from("quotes")
       .select("id, reference, status, title, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value")
       .eq("id", quoteId)
       .single();
+    marks.push(["quote_lookup", performance.now() - tLookup]);
 
     if (fetchError || !quote) {
-      return NextResponse.json({ error: "Quote not found" }, { status: 404 });
+      marks.push(["total", performance.now() - startedAt]);
+      return withServerTiming({ error: "Quote not found" }, 404, marks);
     }
 
     const depositRequired = Number(quote.deposit_required ?? 0);
@@ -114,10 +136,13 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const { data: jobRefRow } = await supabase.rpc("next_job_ref");
+      const tRefs = performance.now();
+      const [{ data: jobRefRow }, { data: invRefRow }] = await Promise.all([
+        supabase.rpc("next_job_ref"),
+        supabase.rpc("next_invoice_ref"),
+      ]);
+      marks.push(["next_refs", performance.now() - tRefs]);
       const jobReference = (jobRefRow as string) ?? `JOB-${Date.now()}`;
-
-      const { data: invRefRow } = await supabase.rpc("next_invoice_ref");
       const invoiceReference = (invRefRow as string) ?? `INV-${Date.now()}`;
 
       const totalValue = Number(quote.total_value ?? 0);
@@ -174,6 +199,7 @@ export async function POST(req: NextRequest) {
         vat: 0,
         scope: quote.scope ?? null,
       };
+      const tJob = performance.now();
       const jobInsert = prepareJobRowForInsert(baseJobRow);
       let { data: job, error: jobError } = await supabase
         .from("jobs")
@@ -189,12 +215,15 @@ export async function POST(req: NextRequest) {
         job = retry.data;
         jobError = retry.error;
       }
+      marks.push(["job_insert", performance.now() - tJob]);
 
       if (jobError || !job) {
         console.error("Quote accept: job creation failed", jobError);
-        return NextResponse.json({ error: "Failed to create job" }, { status: 500 });
+        marks.push(["total", performance.now() - startedAt]);
+        return withServerTiming({ error: "Failed to create job" }, 500, marks);
       }
 
+      const tInv = performance.now();
       const { data: invoice, error: invError } = await supabase
         .from("invoices")
         .insert({
@@ -210,6 +239,7 @@ export async function POST(req: NextRequest) {
         })
         .select("id")
         .single();
+      marks.push(["invoice_insert", performance.now() - tInv]);
 
       if (invError || !invoice) {
         console.error("Quote accept: invoice creation failed", invError);
@@ -217,9 +247,11 @@ export async function POST(req: NextRequest) {
           .from("jobs")
           .update({ deleted_at: new Date().toISOString(), deleted_by: "system" })
           .eq("id", job.id);
-        return NextResponse.json({ error: "Failed to create deposit invoice" }, { status: 500 });
+        marks.push(["total", performance.now() - startedAt]);
+        return withServerTiming({ error: "Failed to create deposit invoice" }, 500, marks);
       }
 
+      const tStripe = performance.now();
       const product = await stripe.products.create({
         name: `Deposit — ${quote.reference}`,
         description: `Deposit for ${quote.client_name ?? "Client"} — ${quote.reference}`,
@@ -245,7 +277,9 @@ export async function POST(req: NextRequest) {
           redirect: { url: `${baseUrl()}/payment-success?ref=${encodeURIComponent(quote.reference)}&from=quote` },
         },
       });
+      marks.push(["stripe_calls", performance.now() - tStripe]);
 
+      const tWrites = performance.now();
       await supabase
         .from("invoices")
         .update({
@@ -302,14 +336,16 @@ export async function POST(req: NextRequest) {
         new_value: "accepted",
         metadata: { job_id: job.id, invoice_id: invoice.id, deposit_invoice: true },
       });
+      marks.push(["db_updates", performance.now() - tWrites]);
+      marks.push(["total", performance.now() - startedAt]);
 
-      return NextResponse.json({
+      return withServerTiming({
         success: true,
         action: "accept",
         reference: quote.reference,
         message: "Quote accepted. Complete your deposit payment to confirm.",
         paymentLinkUrl: paymentLink.url,
-      });
+      }, 200, marks);
     }
 
     // Accept with no deposit: just update quote
@@ -325,7 +361,8 @@ export async function POST(req: NextRequest) {
 
     if (updateError) {
       console.error("Quote respond update error:", updateError);
-      return NextResponse.json({ error: "Failed to update quote" }, { status: 500 });
+      marks.push(["total", performance.now() - startedAt]);
+      return withServerTiming({ error: "Failed to update quote" }, 500, marks);
     }
 
     await supabase.from("audit_logs").insert({
@@ -338,14 +375,16 @@ export async function POST(req: NextRequest) {
       new_value: "accepted",
     });
 
-    return NextResponse.json({
+    marks.push(["total", performance.now() - startedAt]);
+    return withServerTiming({
       success: true,
       action: "accept",
       reference: quote.reference,
       message: "Quote accepted. We will be in touch shortly.",
-    });
+    }, 200, marks);
   } catch (err) {
     console.error("Quote respond error:", err);
-    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+    marks.push(["total", performance.now() - startedAt]);
+    return withServerTiming({ error: "Internal error" }, 500, marks);
   }
 }
