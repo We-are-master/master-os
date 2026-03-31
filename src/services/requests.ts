@@ -23,6 +23,19 @@ function isMissingRequestKindColumnError(err: { message?: string }): boolean {
   return m.includes("request_kind") && (m.includes("schema cache") || m.includes("column"));
 }
 
+/** True when DB has not received ccz/parking migration yet. */
+function isMissingAccessFlagsColumnError(err: { message?: string }): boolean {
+  const m = (err.message ?? "").toLowerCase();
+  const mentionsCol = m.includes("in_ccz") || m.includes("has_free_parking");
+  return mentionsCol && (m.includes("schema cache") || m.includes("column"));
+}
+
+function stripAccessFlags<T extends Record<string, unknown>>(row: T): Omit<T, "in_ccz" | "has_free_parking"> {
+  // keep retry payload backward-compatible when migration 077 is missing
+  const { in_ccz: _a, has_free_parking: _b, ...rest } = row;
+  return rest;
+}
+
 function buildServiceRequestInsertPayload(
   input: Omit<ServiceRequest, "id" | "reference" | "created_at" | "updated_at">,
   reference: string,
@@ -118,6 +131,11 @@ export async function createRequest(
     data = retry.data;
     error = retry.error;
   }
+  if (error && isMissingAccessFlagsColumnError(error)) {
+    const retry = await supabase.from("service_requests").insert(stripAccessFlags(payload)).select().single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw new Error(postgrestErrorMessage(error));
   const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
   return enriched ?? (data as ServiceRequest);
@@ -147,6 +165,16 @@ export async function updateRequest(
     const retry = await supabase
       .from("service_requests")
       .update(withoutKind)
+      .eq("id", id)
+      .select()
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
+  if (error && isMissingAccessFlagsColumnError(error)) {
+    const retry = await supabase
+      .from("service_requests")
+      .update(stripAccessFlags(patch))
       .eq("id", id)
       .select()
       .single();
