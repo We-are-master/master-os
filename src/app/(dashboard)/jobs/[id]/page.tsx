@@ -88,6 +88,7 @@ import {
   resolveJobHourlyRates,
 } from "@/lib/job-hourly-billing";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
+import { isJobForcePaid, markJobAsForcePaidNote } from "@/lib/job-force-paid";
 import {
   OFFICE_JOB_CANCELLATION_REASONS,
   buildOfficeCancellationReasonText,
@@ -785,6 +786,7 @@ export default function JobDetailPage() {
             partner_payment_1_paid: Number(j.partner_payment_1 ?? 0) > 0 ? true : j.partner_payment_1_paid,
             partner_payment_2_paid: Number(j.partner_payment_2 ?? 0) > 0 ? true : j.partner_payment_2_paid,
             partner_payment_3_paid: Number(j.partner_payment_3 ?? 0) > 0 ? true : j.partner_payment_3_paid,
+            internal_notes: markJobAsForcePaidNote(j.internal_notes),
           }
         : {};
 
@@ -1337,6 +1339,7 @@ export default function JobDetailPage() {
       ? formatPartnerLiveTimer(partnerLiveActiveMs)
       : formatOfficeTimer(Number(job.timer_elapsed_seconds ?? 0) || 0);
   const ownerAttestationText = `I, ${job.owner_name?.trim() || "job owner"}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
+  const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
   const mandatoryChecksOk = reportsUploaded && reportsApproved && ownerApprovalChecked;
   const canSubmitApproval = mandatoryChecksOk || forceApprovalChecked;
   const customerPaidPct = billableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / billableRevenue) * 100)) : 100;
@@ -1398,6 +1401,11 @@ export default function JobDetailPage() {
                     { dateStyle: "medium", timeStyle: "short" },
                   )}
                 </p>
+                {forcedPaidBySystemOwner ? (
+                  <p className="mt-1 text-[11px] font-semibold text-red-600">
+                    Forced and guaranteed by system owner.
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>

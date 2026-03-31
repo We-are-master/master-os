@@ -124,7 +124,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     }
     case "awaiting_payment":
       return [
-        { label: "Mark Completed", status: "completed", icon: CheckCircle2, primary: true },
+        { label: "Mark as Paid", status: "completed", icon: CheckCircle2, primary: true },
         cancelAction,
       ];
     case "need_attention":

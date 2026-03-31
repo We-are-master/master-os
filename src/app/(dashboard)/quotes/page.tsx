@@ -1100,6 +1100,11 @@ function QuoteDetailDrawer({
   }, [isAdmin]);
 
   const approvedBid = useMemo(() => bids.find((b) => b.status === "approved") ?? null, [bids]);
+  const approvedBidPartnerUnits = useMemo(() => {
+    if (!approvedBid) return null;
+    const payload = parseBidProposalFromNotes(approvedBid.notes);
+    return splitBidPartnerCosts(approvedBid.bid_amount, payload);
+  }, [approvedBid]);
 
   const avgBidPrice = useMemo(() => {
     if (!bids.length) return null;
@@ -1109,6 +1114,25 @@ function QuoteDetailDrawer({
 
   const bidsReceivedCount =
     quote.quote_type !== "partner" ? 0 : bidsLoading ? Number(quote.partner_quotes_count) || 0 : bids.length;
+
+  useEffect(() => {
+    if (!approvedBidPartnerUnits) return;
+    setLineItems((prev) => {
+      if (!prev.length) return prev;
+      const next = [...prev];
+      let changed = false;
+      const target = [approvedBidPartnerUnits.labour, approvedBidPartnerUnits.materials];
+      for (let i = 0; i < Math.min(2, next.length); i += 1) {
+        const current = Number(next[i]?.partnerUnitCost ?? 0);
+        const desired = Math.max(0, Number(target[i] ?? 0));
+        if (Math.abs(current - desired) > 0.005) {
+          next[i] = { ...next[i], partnerUnitCost: String(desired) };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [approvedBidPartnerUnits]);
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
   const actions = getQuoteActions(quote);
