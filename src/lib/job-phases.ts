@@ -140,8 +140,11 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
       ];
     case "completed":
       return [{ label: "Reopen", status: "scheduled", icon: RotateCcw, primary: false }];
-    case "cancelled":
-      return [];
+    case "cancelled": {
+      const reopenTarget: Job["status"] =
+        job.partner_id || job.partner_name?.trim() ? "scheduled" : "unassigned";
+      return [{ label: "Reopen Job", status: reopenTarget, icon: RotateCcw, primary: false }];
+    }
     default:
       return [];
   }
