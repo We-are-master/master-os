@@ -734,15 +734,19 @@ export default function JobDetailPage() {
     }
     try {
       let selfBillId: string | undefined = j.self_bill_id ?? undefined;
-      if (newStatus === "awaiting_payment" && !j.self_bill_id) {
-        const selfBill = await createSelfBillFromJob({
-          id: j.id,
-          reference: j.reference,
-          partner_name: j.partner_name ?? "Unassigned",
-          partner_cost: j.partner_cost,
-          materials_cost: j.materials_cost,
-        });
-        selfBillId = selfBill.id;
+      if (newStatus === "awaiting_payment" && !j.self_bill_id && j.partner_id?.trim()) {
+        try {
+          const selfBill = await createSelfBillFromJob({
+            id: j.id,
+            reference: j.reference,
+            partner_name: j.partner_name ?? "Unassigned",
+            partner_cost: j.partner_cost,
+            materials_cost: j.materials_cost,
+          });
+          selfBillId = selfBill.id;
+        } catch {
+          // Non-blocking: keep status progression even if self-bill issuance fails.
+        }
       }
       const hourlyPatch: Partial<Job> = {};
       if (j.job_type === "hourly") {
@@ -1155,16 +1159,20 @@ export default function JobDetailPage() {
     setValidatingComplete(true);
     try {
       let current = j;
-      if (!current.self_bill_id && (current.partner_id?.trim() || current.partner_name?.trim())) {
-        const selfBill = await createSelfBillFromJob({
-          id: current.id,
-          reference: current.reference,
-          partner_name: current.partner_name ?? "Unassigned",
-          partner_cost: current.partner_cost,
-          materials_cost: current.materials_cost,
-        });
-        const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: selfBill.id }, { notifyPartner: false });
-        if (withSelfBill) current = withSelfBill;
+      if (!current.self_bill_id && current.partner_id?.trim()) {
+        try {
+          const selfBill = await createSelfBillFromJob({
+            id: current.id,
+            reference: current.reference,
+            partner_name: current.partner_name ?? "Unassigned",
+            partner_cost: current.partner_cost,
+            materials_cost: current.materials_cost,
+          });
+          const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: selfBill.id }, { notifyPartner: false });
+          if (withSelfBill) current = withSelfBill;
+        } catch {
+          // Do not block approval flow on self-bill issuance errors.
+        }
       }
 
       const approvedPatch = await handleJobUpdate(
