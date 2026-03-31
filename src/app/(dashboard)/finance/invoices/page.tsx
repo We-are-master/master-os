@@ -28,6 +28,7 @@ import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/dat
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listInvoices, createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { syncInvoiceCollectionStagesForJob, COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
+import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import { isJobForcePaid } from "@/lib/job-force-paid";
 import { getStatusCounts, getSupabase } from "@/services/base";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -156,6 +157,9 @@ export default function InvoicesPage() {
         const jid = (jobRow as { id?: string } | null)?.id;
         if (jid) await syncInvoiceCollectionStagesForJob(supabase, jid);
       }
+      if (newStatus === "paid") {
+        await syncJobAfterInvoicePaidToLedger(supabase, invoice.id, "Manual");
+      }
       refresh();
       loadCounts();
       loadKpis();
@@ -168,10 +172,16 @@ export default function InvoicesPage() {
     const updates: Record<string, unknown> = { status: newStatus };
     if (newStatus === "paid") updates.paid_date = new Date().toISOString().split("T")[0];
     try {
-      const { error } = await supabase.from("invoices").update(updates).in("id", Array.from(selectedIds));
+      const ids = Array.from(selectedIds);
+      const { error } = await supabase.from("invoices").update(updates).in("id", ids);
       if (error) throw error;
-      await logBulkAction("invoice", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name);
-      toast.success(`${selectedIds.size} invoices updated to ${newStatus}`);
+      await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+      if (newStatus === "paid") {
+        for (const id of ids) {
+          await syncJobAfterInvoicePaidToLedger(supabase, id, "Manual");
+        }
+      }
+      toast.success(`${ids.length} invoices updated to ${newStatus}`);
       setSelectedIds(new Set());
       refresh();
       loadCounts();

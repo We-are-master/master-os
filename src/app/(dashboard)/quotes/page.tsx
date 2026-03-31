@@ -588,39 +588,18 @@ function QuotesPageContent() {
         });
 
         const dueStr = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
-        let depositInvId: string | null = null;
-        let finalInvId: string | null = null;
-
-        const [depositInv, finalInv] = await Promise.all([
-          scheduledDeposit > 0.01
-            ? createInvoice({
-                client_name: formData.client_name,
-                job_reference: job.reference,
-                amount: scheduledDeposit,
-                status: "pending",
-                due_date: dueStr,
-                collection_stage: "awaiting_deposit",
-                invoice_kind: "deposit",
-              })
-            : Promise.resolve(null),
-          scheduledFinal > 0.01
-            ? createInvoice({
-                client_name: formData.client_name,
-                job_reference: job.reference,
-                amount: scheduledFinal,
-                status: "pending",
-                due_date: dueStr,
-                collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
-                invoice_kind: "final",
-              })
-            : Promise.resolve(null),
-        ]);
-        depositInvId = depositInv?.id ?? null;
-        finalInvId = finalInv?.id ?? null;
-
-        const primaryInvoiceId = depositInvId ?? finalInvId;
-        if (primaryInvoiceId) {
-          await updateJob(job.id, { invoice_id: primaryInvoiceId });
+        const totalClient = Number(formData.client_price ?? 0);
+        if (totalClient > 0.01) {
+          const combined = await createInvoice({
+            client_name: formData.client_name,
+            job_reference: job.reference,
+            amount: totalClient,
+            status: "pending",
+            due_date: dueStr,
+            collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
+            invoice_kind: "combined",
+          });
+          await updateJob(job.id, { invoice_id: combined.id });
         }
 
         await Promise.all([
@@ -660,6 +639,9 @@ function QuotesPageContent() {
         const updated = await updateQuote(quote.id, { status: newStatus as Quote["status"] });
         await logAudit({ entityType: "quote", entityId: quote.id, entityRef: quote.reference, action: "status_changed", fieldName: "status", oldValue: quote.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
         setSelectedQuote(updated);
+        if (newStatus === "accepted") {
+          setQuoteToConvert(updated);
+        }
         toast.success(`Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
         refreshWithKpis();
         if (newStatus === "bidding" && quote.service_type) {
@@ -958,7 +940,14 @@ function QuotesPageContent() {
         }}
       />
       ) : null}
-      <CreateJobFromQuoteModal quote={quoteToConvert} onClose={() => setQuoteToConvert(null)} onSubmit={handleConfirmCreateJob} />
+      {quoteToConvert ? (
+        <CreateJobFromQuoteModal
+          key={quoteToConvert.id}
+          quote={quoteToConvert}
+          onClose={() => setQuoteToConvert(null)}
+          onSubmit={handleConfirmCreateJob}
+        />
+      ) : null}
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create Quote" subtitle="Add line items and optionally request partner bids" size="lg">
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
@@ -1140,6 +1129,11 @@ function QuoteDetailDrawer({
 
   const bidsReceivedCount =
     quote.quote_type !== "partner" ? 0 : bidsLoading ? Number(quote.partner_quotes_count) || 0 : bids.length;
+  const invitedPartnersCount = quote.quote_type !== "partner" ? 0 : Math.max(0, Number(quote.partner_quotes_count) || 0);
+  const quotedPartnersCount = useMemo(
+    () => bids.filter((b) => b.status === "submitted" || b.status === "approved" || b.status === "rejected").length,
+    [bids]
+  );
 
   useEffect(() => {
     if (!approvedBidPartnerUnits) return;
@@ -1502,10 +1496,10 @@ function QuoteDetailDrawer({
                   )}
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-4 rounded-xl bg-surface-hover">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Avg price</p>
-                  <p className="text-xl font-bold text-text-primary mt-1 tabular-nums">
+              <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-3">
+                <div className="min-w-0 p-4 rounded-xl bg-surface-hover border border-border-light/60">
+                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">Avg price</p>
+                  <p className="text-2xl font-bold text-text-primary mt-2 tabular-nums tracking-tight break-all sm:break-normal">
                     {quote.quote_type !== "partner"
                       ? "—"
                       : bidsLoading
@@ -1515,9 +1509,10 @@ function QuoteDetailDrawer({
                           : "—"}
                   </p>
                 </div>
-                <div className="p-4 rounded-xl bg-surface-hover">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Bids received</p>
-                  <p className="text-xl font-bold text-text-primary mt-1 tabular-nums">{bidsReceivedCount}</p>
+                <div className="min-w-0 p-4 rounded-xl bg-surface-hover border border-border-light/60">
+                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">Bids received</p>
+                  <p className="text-2xl font-bold text-text-primary mt-2 tabular-nums tracking-tight">{bidsReceivedCount}</p>
+                  <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">Partner submissions in this quote</p>
                 </div>
               </div>
 
@@ -2017,6 +2012,16 @@ function QuoteDetailDrawer({
           {/* BIDS TAB — Partner bids from app; approve to set quote partner */}
           {tab === "bids" && (
             <div className="p-6 space-y-5">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-border-light bg-surface-hover px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Invited partners</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums text-text-primary">{invitedPartnersCount}</p>
+                </div>
+                <div className="rounded-xl border border-border-light bg-surface-hover px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Quoted already</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums text-primary">{quotedPartnersCount}</p>
+                </div>
+              </div>
               <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="w-full">
                 Invite more partners
               </Button>
@@ -2080,28 +2085,84 @@ function QuoteDetailDrawer({
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {bids.map((bid) => (
-                    <div key={bid.id} className="flex items-center justify-between p-4 rounded-xl bg-surface-hover border border-border-light">
-                      <div>
-                        <p className="text-sm font-semibold text-text-primary">{bid.partner_name ?? bid.partner_id}</p>
-                        <p className="text-lg font-bold text-primary mt-0.5">{formatCurrency(bid.bid_amount)}</p>
-                        {(() => {
-                          const bidNoteSummary = summarizeBidProposalNotes(bid.notes);
-                          if (bidNoteSummary) {
-                            return <p className="text-xs text-text-tertiary mt-1">{bidNoteSummary}</p>;
-                          }
-                          const notesPlain = bidPayloadTrimmedString(bid.notes as unknown);
-                          if (notesPlain) {
-                            return <p className="text-xs text-text-tertiary mt-1 whitespace-pre-wrap">{notesPlain}</p>;
-                          }
-                          return null;
-                        })()}
-                        <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="mt-2">{bid.status}</Badge>
+                  {bids.map((bid) => {
+                    const bidPayload = parseBidProposalFromNotes(bid.notes);
+                    const { labour, materials } = splitBidPartnerCosts(bid.bid_amount, bidPayload);
+                    const d1 = bidPayload ? bidPayloadTrimmedString(bidPayload.start_date_option_1 as unknown).slice(0, 10) : "";
+                    const d2 = bidPayload ? bidPayloadTrimmedString(bidPayload.start_date_option_2 as unknown).slice(0, 10) : "";
+                    const labourDesc = bidPayload ? bidPayloadTrimmedString(bidPayload.labour_description as unknown) : "";
+                    const matDesc = bidPayload ? bidPayloadTrimmedString(bidPayload.materials_description as unknown) : "";
+                    const scopeFromBid = bidPayload ? bidPayloadTrimmedString(bidPayload.scope as unknown) : "";
+                    const bidNoteSummary = summarizeBidProposalNotes(bid.notes);
+                    const notesPlain = bidPayloadTrimmedString(bid.notes as unknown);
+                    const hasStructuredBreakdown =
+                      bidPayload != null &&
+                      (bidPayload.labour_cost != null || bidPayload.materials_cost != null);
+                    return (
+                    <div
+                      key={bid.id}
+                      className="rounded-xl bg-surface-hover border border-border-light p-4 sm:p-5 flex flex-col gap-4 sm:flex-row sm:items-stretch sm:justify-between sm:gap-5"
+                    >
+                      <div className="min-w-0 flex-1 space-y-3">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <p className="text-base font-semibold text-text-primary truncate max-w-full">{bid.partner_name ?? bid.partner_id}</p>
+                          <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="shrink-0">
+                            {bid.status}
+                          </Badge>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Bid total</p>
+                          <p className="text-2xl sm:text-[1.75rem] font-bold text-primary tabular-nums tracking-tight mt-0.5">{formatCurrency(bid.bid_amount)}</p>
+                        </div>
+                        {hasStructuredBreakdown ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-border-light bg-card/50 dark:bg-surface-secondary/20 px-3 py-3">
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Labour</p>
+                              <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(labour)}</p>
+                              {labourDesc ? (
+                                <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{labourDesc}</p>
+                              ) : null}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Materials</p>
+                              <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(materials)}</p>
+                              {matDesc ? (
+                                <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{matDesc}</p>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : bidNoteSummary ? (
+                          <p className="text-[13px] text-text-secondary leading-relaxed break-words">{bidNoteSummary}</p>
+                        ) : notesPlain ? (
+                          <p className="text-[13px] text-text-secondary leading-relaxed whitespace-pre-wrap break-words line-clamp-6">{notesPlain}</p>
+                        ) : null}
+                        {(d1 || d2) && (
+                          <div className="flex flex-wrap gap-2">
+                            {d1 ? (
+                              <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
+                                Start A: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d1}</strong>
+                              </span>
+                            ) : null}
+                            {d2 ? (
+                              <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
+                                Start B: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d2}</strong>
+                              </span>
+                            ) : null}
+                          </div>
+                        )}
+                        {scopeFromBid ? (
+                          <div className="rounded-lg border border-dashed border-border-light bg-surface-hover/80 px-3 py-2.5">
+                            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope (from bid)</p>
+                            <p className="text-[12px] text-text-secondary mt-1 leading-snug whitespace-pre-wrap break-words max-h-[7.5rem] overflow-y-auto pr-1">{scopeFromBid}</p>
+                          </div>
+                        ) : null}
                       </div>
                       {bid.status === "submitted" && (
+                        <div className="flex shrink-0 sm:items-start sm:pt-1 w-full sm:w-auto">
                         <Button
                           size="sm"
                           variant="primary"
+                          className="w-full sm:min-w-[7.5rem]"
                           onClick={async () => {
                             try {
                               const pre = computeCustomerProposalFromBid(bid, quote);
@@ -2142,9 +2203,11 @@ function QuoteDetailDrawer({
                         >
                           Approve
                         </Button>
+                        </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2357,25 +2420,6 @@ function preferredScheduleDateFromQuote(q: Quote): string {
   return parseIsoDateOnly(raw);
 }
 
-/** Matches customer proposal line items — preferred over stale `quote.scope` when converting to job. */
-function buildJobScopeFromQuoteLineItems(
-  rows: Array<{ description?: string | null; quantity?: number | null; unit_price?: number | null; notes?: string | null }>,
-): string {
-  const lines: string[] = [];
-  for (const li of rows) {
-    const d = bidPayloadTrimmedString(li.description as unknown);
-    if (!d) continue;
-    const qty = Number(li.quantity) || 1;
-    const sell = qty * (Number(li.unit_price) || 0);
-    const n = bidPayloadTrimmedString(li.notes as unknown);
-    let line = qty === 1 ? d : `${d} × ${qty}`;
-    if (sell > 0) line += ` — ${formatCurrency(sell)}`;
-    if (n) line += ` (${n})`;
-    lines.push(line);
-  }
-  return lines.join("\n");
-}
-
 /** Labour (line 1) vs materials (line 2) partner subtotals from stored proposal rows. */
 function splitPartnerCostFromFirstTwoLines(
   rows: Array<{ quantity?: number | null; partner_unit_cost?: number | null }>,
@@ -2389,41 +2433,14 @@ function splitPartnerCostFromFirstTwoLines(
   return { labour: p0, materials: p1, hasSplit: true };
 }
 
-/**
- * Partner app sends narrative in bid JSON (`scope`, `labour_description`, `materials_description`) and/or `quotes.scope`.
- * Line-item summary (sell £) is appended so ops still see pricing lines — narrative must not be replaced by lines only.
- */
-function mergeCreateJobScopeFromQuote(
-  q: Quote,
-  approvedBid: QuoteBid | null,
-  items: Array<{
-    description?: string | null;
-    quantity?: number | null;
-    unit_price?: number | null;
-    partner_unit_cost?: number | null;
-    notes?: string | null;
-  }>,
-): string {
+/** Narrative scope only for the job (bid `scope`, else saved `quotes.scope`, else plain bid notes) — no line-item £ or labour/materials breakdown. */
+function mergeCreateJobScopeFromQuote(q: Quote, approvedBid: QuoteBid | null): string {
   const payload = approvedBid ? parseBidProposalFromNotes(approvedBid.notes) : null;
   const bidScope = payload ? bidPayloadTrimmedString(payload.scope as unknown) : "";
   const quoteScope = bidPayloadTrimmedString(q.scope as unknown);
   const plainBidNotes =
     approvedBid && !payload ? bidPayloadTrimmedString(approvedBid.notes as unknown) : "";
-  const narrativeLead = bidScope || quoteScope || plainBidNotes;
-
-  const labDesc = payload ? bidPayloadTrimmedString(payload.labour_description as unknown) : "";
-  const matDesc = payload ? bidPayloadTrimmedString(payload.materials_description as unknown) : "";
-
-  const linesBlock = buildJobScopeFromQuoteLineItems(items).trim();
-
-  const topParts: string[] = [];
-  if (narrativeLead) topParts.push(narrativeLead);
-  if (labDesc && !narrativeLead.includes(labDesc)) topParts.push(`Labour: ${labDesc}`);
-  if (matDesc && !narrativeLead.includes(matDesc)) topParts.push(`Materials: ${matDesc}`);
-  const top = topParts.join("\n\n").trim();
-
-  if (top && linesBlock) return `${top}\n\n${linesBlock}`;
-  return top || linesBlock;
+  return (bidScope || quoteScope || plainBidNotes).trim();
 }
 
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
@@ -2436,9 +2453,9 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   /** DB / approved-bid partner when not in `partners` list (label for Select + submit). */
   const [partnerFromQuote, setPartnerFromQuote] = useState<{ id: string; name: string } | null>(null);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- one-shot form bootstrap when modal opens (parent uses key=quote.id) */
   useEffect(() => {
     if (!quote) return;
-    setPartnerFromQuote(null);
     const typeOfWorkInitial =
       normalizeTypeOfWork(bidPayloadTrimmedString(quote.service_type as unknown)) || proposalFirstLineLabel(quote);
     const qScope = bidPayloadTrimmedString(quote.scope as unknown);
@@ -2483,6 +2500,8 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
         "";
       if (pid) {
         setPartnerFromQuote({ id: pid, name: pname || pid });
+      } else {
+        setPartnerFromQuote(null);
       }
       const { data } = lineRes;
       const items = (data ?? []) as Array<{
@@ -2492,7 +2511,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
         partner_unit_cost?: number | null;
         notes?: string | null;
       }>;
-      const mergedScope = mergeCreateJobScopeFromQuote(q, approvedBid, items);
+      const mergedScope = mergeCreateJobScopeFromQuote(q, approvedBid);
       const split = splitPartnerCostFromFirstTwoLines(items);
       const bidJobType = approvedBid?.job_type === "hourly" || approvedBid?.job_type === "fixed" ? approvedBid.job_type : undefined;
       setForm((prev) => ({
@@ -2524,6 +2543,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       cancelled = true;
     };
   }, [quote]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const partnerSelectOptions = useMemo(() => {
     const base = partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name || p.id }));

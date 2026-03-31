@@ -90,7 +90,8 @@ function linkedAccountDisplay(name: string | null | undefined): string {
 /** Quote vs work UI: prefer stored `request_kind`, else infer from catalog link (legacy). */
 function resolveRequestKind(r: ServiceRequest): "quote" | "work" {
   if (r.request_kind === "quote" || r.request_kind === "work") return r.request_kind;
-  return r.catalog_service_id ? "work" : "quote";
+  const cid = typeof r.catalog_service_id === "string" ? r.catalog_service_id.trim() : "";
+  return cid && isUuid(cid) ? "work" : "quote";
 }
 
 const serviceColors: Record<string, string> = {
@@ -298,8 +299,8 @@ export default function RequestsPage() {
       setPropertyAddressEditing(false);
       refreshSilent();
       toast.success("Request updated");
-    } catch {
-      toast.error("Failed to update request");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update request");
     } finally {
       setDrawerSaving(false);
     }
@@ -510,7 +511,9 @@ export default function RequestsPage() {
         if (isManualSource) {
           setStatus("approved");
           const refreshed = await getRequest(result.id);
-          setSelectedRequest(refreshed ?? result);
+          const r = refreshed ?? result;
+          setSelectedRequest(r);
+          setConvertChoiceOpen(r);
         }
         refresh();
         void loadCounts();
