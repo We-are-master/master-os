@@ -100,6 +100,9 @@ export interface ServiceRequest {
   internal_info?: string;
   /** Public URLs for photos (quote-invite-images bucket); copied to quote on convert. */
   images?: string[] | null;
+  /** Access / logistics flags used for call-out pricing. */
+  in_ccz?: boolean | null;
+  has_free_parking?: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -189,6 +192,11 @@ export interface Job {
   partner_ids?: string[] | null;
   partner_name?: string | null;
   quote_id?: string;
+  /** Optional link to Services catalog (call-out template) used at creation. */
+  catalog_service_id?: string | null;
+  /** Access / logistics flags used for automatic surcharge. */
+  in_ccz?: boolean | null;
+  has_free_parking?: boolean | null;
   owner_id?: string;
   owner_name?: string;
   status: JobStatus;
@@ -207,6 +215,11 @@ export interface Job {
   /** Expected job completion day for calendar (date only; independent of arrival window). */
   scheduled_finish_date?: string | null;
   job_type?: "fixed" | "hourly";
+  /** Snapshot rates for hourly jobs (GBP/hour). */
+  hourly_client_rate?: number | null;
+  hourly_partner_rate?: number | null;
+  /** Last computed billed hours for hourly jobs (min 1h, then 30-min blocks). */
+  billed_hours?: number | null;
   completed_date?: string;
   cash_in: number;
   cash_out: number;
