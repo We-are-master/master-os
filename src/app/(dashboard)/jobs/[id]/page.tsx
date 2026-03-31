@@ -124,6 +124,13 @@ function jobFlowActiveStepIndex(status: Job["status"]): number {
   return i >= 0 ? i : 0;
 }
 
+function extractReportMediaUrls(notes: string | null | undefined): string[] {
+  const text = notes ?? "";
+  if (!text.trim()) return [];
+  const hits = text.match(/https?:\/\/[^\s)]+/g) ?? [];
+  return hits.filter((u) => /\.(png|jpe?g|webp|gif)$/i.test(u));
+}
+
 export default function JobDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -161,6 +168,7 @@ export default function JobDetailPage() {
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
   const [validatingComplete, setValidatingComplete] = useState(false);
   const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
+  const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
   const [cancellingJob, setCancellingJob] = useState(false);
@@ -1021,7 +1029,12 @@ export default function JobDetailPage() {
       const analysis = body.analysis ?? "";
       setManualReportResult(analysis);
       await handleJobUpdate(job.id, {
-        report_notes: [job.report_notes, `Manual report analysis (${new Date().toLocaleString()}):`, analysis].filter(Boolean).join("\n\n"),
+        report_notes: [
+          job.report_notes,
+          `Manual report file: ${uploaded.publicUrl}`,
+          `Manual report analysis (${new Date().toLocaleString()}):`,
+          analysis,
+        ].filter(Boolean).join("\n\n"),
       });
       toast.success("Report analysed and saved to report notes.");
     } catch (err) {
@@ -1059,7 +1072,12 @@ export default function JobDetailPage() {
         const updated = await handleJobUpdate(j.id, {
           [`report_${phase}_uploaded`]: true,
           [`report_${phase}_uploaded_at`]: new Date().toISOString(),
-          report_notes: [j.report_notes, `Phase ${phase} report analysis (${new Date().toLocaleString()}):`, analysis]
+          report_notes: [
+            j.report_notes,
+            `Phase ${phase} file: ${uploaded.publicUrl}`,
+            `Phase ${phase} report analysis (${new Date().toLocaleString()}):`,
+            analysis,
+          ]
             .filter(Boolean)
             .join("\n\n"),
         } as Partial<Job>);
@@ -1126,6 +1144,13 @@ export default function JobDetailPage() {
   const handleValidateAndComplete = useCallback(async () => {
     const j = jobRef.current;
     if (!j) return;
+    const localPhaseIndexes = reportPhaseIndices(normalizeTotalPhases(j.total_phases));
+    const localReportsUploaded = localPhaseIndexes.every((n) => Boolean(j[`report_${n}_uploaded` as keyof Job]));
+    const localReportsApproved = localPhaseIndexes.every((n) => Boolean(j[`report_${n}_approved` as keyof Job]));
+    if (!localReportsUploaded || !localReportsApproved || !ownerApprovalChecked) {
+      toast.error("Complete all mandatory checks: reports uploaded/approved and owner authorization.");
+      return;
+    }
     setValidatingComplete(true);
     try {
       let current = j;
@@ -1178,7 +1203,7 @@ export default function JobDetailPage() {
     } finally {
       setValidatingComplete(false);
     }
-  }, [approvalMode, handleJobUpdate, handleStatusChange, customerPayments, partnerPayments, handleSendReportAndInvoice]);
+  }, [approvalMode, handleJobUpdate, handleStatusChange, customerPayments, partnerPayments, handleSendReportAndInvoice, ownerApprovalChecked]);
 
   if (loading || !id) {
     return (
@@ -1241,6 +1266,16 @@ export default function JobDetailPage() {
   const sendReportFinalCheck = canSendReportAndRequestFinalPayment(job);
   const flowStep = jobFlowActiveStepIndex(job.status);
   const reportsApproved = allConfiguredReportsApproved(job);
+  const phaseIndexes = reportPhaseIndices(phaseCount);
+  const reportsUploaded = phaseIndexes.every((n) => Boolean(job[`report_${n}_uploaded` as keyof Job]));
+  const reportMediaUrls = extractReportMediaUrls(job.report_notes);
+  const timeSpentLabel = officeTimerDisplaySeconds != null
+    ? formatOfficeTimer(officeTimerDisplaySeconds)
+    : partnerLiveActiveMs != null
+      ? formatPartnerLiveTimer(partnerLiveActiveMs)
+      : formatOfficeTimer(Number(job.timer_elapsed_seconds ?? 0) || 0);
+  const ownerAttestationText = `I, ${job.owner_name?.trim() || "job owner"}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
+  const canSubmitApproval = reportsUploaded && reportsApproved && ownerApprovalChecked;
 
   return (
     <PageTransition>
@@ -1301,11 +1336,13 @@ export default function JobDetailPage() {
                   }
                   if (action.special === "send_report_invoice") {
                     setApprovalMode("review_approve");
+                    setOwnerApprovalChecked(false);
                     setValidateCompleteOpen(true);
                     return;
                   }
                   if (job.status === "need_attention" && action.status === "completed") {
                     setApprovalMode("validate_complete");
+                    setOwnerApprovalChecked(false);
                     setValidateCompleteOpen(true);
                     return;
                   }
@@ -2161,32 +2198,92 @@ export default function JobDetailPage() {
 
       <Modal
         open={validateCompleteOpen}
-        onClose={() => !validatingComplete && setValidateCompleteOpen(false)}
+        onClose={() => {
+          if (validatingComplete) return;
+          setValidateCompleteOpen(false);
+          setOwnerApprovalChecked(false);
+        }}
         title={approvalMode === "review_approve" ? "Review and approve" : "Validate and complete"}
         subtitle={`${job.reference} — review before approval`}
         size="lg"
         className="max-w-3xl"
       >
         <div className="p-6 space-y-4">
-          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-4 space-y-2">
+          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-4 space-y-3">
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job summary</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-              <p className="text-text-secondary">Reports approved: <span className="font-semibold text-text-primary">{reportsApproved ? "Yes" : "No"}</span></p>
-              <p className="text-text-secondary">Final invoice to client: <span className="font-semibold text-text-primary">{job.invoice_id ? "Ready (linked)" : "No linked invoice"}</span></p>
-              <p className="text-text-secondary">Customer overdue: <span className={cn("font-semibold", amountDue > 0.02 ? "text-amber-600" : "text-emerald-600")}>{formatCurrency(amountDue)}</span></p>
-              <p className="text-text-secondary">Partner overdue: <span className={cn("font-semibold", partnerPayRemaining > 0.02 ? "text-amber-600" : "text-emerald-600")}>{formatCurrency(partnerPayRemaining)}</span></p>
-              <p className="text-text-secondary">Self-bill: <span className="font-semibold text-text-primary">{job.self_bill_id ? "Already created" : "Will be created now"}</span></p>
+              <p className="text-text-secondary">Timer spent: <span className="font-semibold text-text-primary">{timeSpentLabel}</span></p>
+              <p className="text-text-secondary">Final invoice to client: <span className={cn("font-semibold", job.invoice_id ? "text-emerald-600" : "text-red-600")}>{job.invoice_id ? "Ready (linked)" : "Missing invoice link"}</span></p>
+              <p className="text-text-secondary">Client value: <span className="font-semibold text-text-primary">{formatCurrency(billableRevenue)}</span></p>
+              <p className="text-text-secondary">Partner value: <span className="font-semibold text-text-primary">{formatCurrency(partnerCap)}</span></p>
+              <p className="text-text-secondary">Profit: <span className="font-semibold text-text-primary">{formatCurrency(profit)}</span></p>
+              <p className="text-text-secondary">Self-bill: <span className={cn("font-semibold", job.self_bill_id ? "text-emerald-600" : "text-red-600")}>{job.self_bill_id ? "Already created" : "Will be created now"}</span></p>
+              <p className="text-text-secondary">Customer due: <span className={cn("font-semibold", amountDue <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(amountDue)}</span></p>
+              <p className="text-text-secondary">Partner due: <span className={cn("font-semibold", partnerPayRemaining <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(partnerPayRemaining)}</span></p>
+              <p className="text-text-secondary">Reports uploaded: <span className={cn("font-semibold", reportsUploaded ? "text-emerald-600" : "text-red-600")}>{reportsUploaded ? "Complete" : "Missing files"}</span></p>
+              <p className="text-text-secondary">Reports approved: <span className={cn("font-semibold", reportsApproved ? "text-emerald-600" : "text-red-600")}>{reportsApproved ? "Complete" : "Pending approval"}</span></p>
               <p className="text-text-secondary">Next status: <span className="font-semibold text-text-primary">{amountDue > 0.02 || partnerPayRemaining > 0.02 ? "Awaiting payment" : "Completed & paid"}</span></p>
             </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {phaseIndexes.map((n) => {
+                const uploaded = Boolean(job[`report_${n}_uploaded` as keyof Job]);
+                const approved = Boolean(job[`report_${n}_approved` as keyof Job]);
+                return (
+                  <div key={n} className="rounded-lg border border-border-light bg-card px-3 py-2 text-xs text-text-secondary">
+                    <p className="font-medium text-text-primary">Report {n}</p>
+                    <p className={cn(uploaded ? "text-emerald-600" : "text-red-600")}>{uploaded ? "Uploaded" : "Missing upload"}</p>
+                    <p className={cn(approved ? "text-emerald-600" : "text-red-600")}>{approved ? "Approved" : "Pending approval"}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="rounded-xl border border-border-light bg-card p-3 space-y-2">
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Report photos</p>
+            {reportMediaUrls.length > 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {reportMediaUrls.slice(0, 8).map((url, idx) => (
+                  <a key={`${url}-${idx}`} href={url} target="_blank" rel="noreferrer" className="block">
+                    <img src={url} alt={`Report file ${idx + 1}`} className="h-20 w-full rounded-lg border border-border-light object-cover" />
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-text-tertiary">No report image files found yet. Upload phase reports (with images) before approval.</p>
+            )}
+          </div>
+          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4"
+                checked={ownerApprovalChecked}
+                onChange={(e) => setOwnerApprovalChecked(e.target.checked)}
+              />
+              <span className="text-xs text-text-secondary">{ownerAttestationText}</span>
+            </label>
           </div>
           <p className="text-xs text-text-tertiary">
-            Approving runs operational checks, creates the self-bill when missing, approves report/invoice internally, and routes to the correct status based on outstanding balances.
+            By approving, partner payment is authorized, the final client invoice with report is sent, and the job is routed automatically to Awaiting payment or Completed & paid.
           </p>
+          {!canSubmitApproval ? (
+            <p className="text-xs text-red-600">
+              Mandatory before approval: all phase reports uploaded + approved, and owner authorization checked.
+            </p>
+          ) : null}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" type="button" disabled={validatingComplete} onClick={() => setValidateCompleteOpen(false)}>
+            <Button
+              variant="outline"
+              type="button"
+              disabled={validatingComplete}
+              onClick={() => {
+                setValidateCompleteOpen(false);
+                setOwnerApprovalChecked(false);
+              }}
+            >
               Cancel
             </Button>
-            <Button type="button" loading={validatingComplete} onClick={() => void handleValidateAndComplete()}>
+            <Button type="button" loading={validatingComplete} disabled={!canSubmitApproval} onClick={() => void handleValidateAndComplete()}>
               {approvalMode === "review_approve" ? "Review & approve" : "Approve and continue"}
             </Button>
           </div>
