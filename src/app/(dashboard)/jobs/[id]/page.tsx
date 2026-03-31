@@ -47,7 +47,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import type { Invoice, Job, JobPayment, JobPaymentType, Partner, QuoteLineItem } from "@/types/database";
-import { listInvoicesLinkedToJob } from "@/services/invoices";
+import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import {
   allConfiguredReportsApproved,
   canAdvanceJob,
@@ -1155,7 +1155,7 @@ export default function JobDetailPage() {
     setValidatingComplete(true);
     try {
       let current = j;
-      if (!current.self_bill_id) {
+      if (!current.self_bill_id && (current.partner_id?.trim() || current.partner_name?.trim())) {
         const selfBill = await createSelfBillFromJob({
           id: current.id,
           reference: current.reference,
@@ -1167,36 +1167,62 @@ export default function JobDetailPage() {
         if (withSelfBill) current = withSelfBill;
       }
 
-      if (approvalMode === "review_approve") {
-        await handleSendReportAndInvoice({
-          jobOverride: current,
-          reviewSendMethod: "manual",
-        });
-      } else {
-        const approvedPatch = await handleJobUpdate(
-          current.id,
-          {
-            report_submitted: true,
-            report_submitted_at: current.report_submitted_at ?? new Date().toISOString(),
-            internal_report_approved: true,
-            internal_invoice_approved: true,
-          },
-          { notifyPartner: false },
-        );
-        if (approvedPatch) current = approvedPatch;
+      const approvedPatch = await handleJobUpdate(
+        current.id,
+        {
+          report_submitted: true,
+          report_submitted_at: current.report_submitted_at ?? new Date().toISOString(),
+          internal_report_approved: true,
+          internal_invoice_approved: true,
+        },
+        { notifyPartner: false },
+      );
+      if (approvedPatch) current = approvedPatch;
 
-        const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
-        const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
-        const customerDue = Math.max(0, jobBillableRevenue(current) - (depositPaid + finalPaid));
-        const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
-        const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
-        if (customerDue > 0.02 || partnerDue > 0.02) {
-          await handleStatusChange(current, "awaiting_payment");
-          toast.success("Validation approved. Moved to Awaiting payment (outstanding balances found).");
-        } else {
-          await handleStatusChange(current, "completed");
-          toast.success("Validation approved. Job marked Completed & paid.");
-        }
+      const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
+      const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
+      const customerDue = Math.max(0, jobBillableRevenue(current) - (depositPaid + finalPaid));
+      const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
+      const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
+
+      // Keep this action internal only: no external send/notify workflow.
+      let primaryInvoiceId = current.invoice_id ?? null;
+      const linked = await listInvoicesLinkedToJob(current.reference, current.invoice_id);
+      if (!primaryInvoiceId && linked[0]?.id) {
+        primaryInvoiceId = linked[0].id;
+      }
+      if (!primaryInvoiceId) {
+        const dueDate = new Date();
+        dueDate.setDate(dueDate.getDate() + 7);
+        const inv = await createInvoice({
+          client_name: current.client_name ?? "Client",
+          job_reference: current.reference,
+          amount: Math.max(0, Number(current.customer_final_payment ?? current.client_price ?? 0)),
+          status: customerDue <= 0.02 ? "paid" : "pending",
+          due_date: dueDate.toISOString().slice(0, 10),
+          paid_date: customerDue <= 0.02 ? new Date().toISOString().slice(0, 10) : undefined,
+          invoice_kind: "final",
+          collection_stage: customerDue <= 0.02 ? "completed" : "awaiting_final",
+        });
+        primaryInvoiceId = inv.id;
+      } else if (customerDue <= 0.02) {
+        await updateInvoice(primaryInvoiceId, {
+          status: "paid",
+          paid_date: new Date().toISOString().slice(0, 10),
+          collection_stage: "completed",
+        });
+      }
+      if (primaryInvoiceId && primaryInvoiceId !== current.invoice_id) {
+        const withInvoice = await handleJobUpdate(current.id, { invoice_id: primaryInvoiceId }, { notifyPartner: false });
+        if (withInvoice) current = withInvoice;
+      }
+
+      if (customerDue > 0.02 || partnerDue > 0.02) {
+        await handleStatusChange(current, "awaiting_payment");
+        toast.success("Approved. Job moved to Awaiting payment.");
+      } else {
+        await handleStatusChange(current, "completed");
+        toast.success("Approved. Job marked Completed & paid.");
       }
       setValidateCompleteOpen(false);
     } catch (err) {
@@ -1204,7 +1230,7 @@ export default function JobDetailPage() {
     } finally {
       setValidatingComplete(false);
     }
-  }, [approvalMode, handleJobUpdate, handleStatusChange, customerPayments, partnerPayments, handleSendReportAndInvoice, ownerApprovalChecked, forceApprovalChecked]);
+  }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments, ownerApprovalChecked, forceApprovalChecked]);
 
   if (loading || !id) {
     return (
@@ -2349,7 +2375,7 @@ export default function JobDetailPage() {
             </label>
           </div>
           <p className="text-xs text-text-tertiary">
-            Clicking review and approve authorizes partner payment and sends the final client invoice with reports. After this point, finance team follows the payment operations.
+            Clicking review and approve applies internal finance updates only: self-bill linkage, invoice record/status update, and routing to Awaiting payment or Completed & paid.
           </p>
           {!mandatoryChecksOk && !forceApprovalChecked ? (
             <p className="text-xs text-red-600">
