@@ -719,6 +719,14 @@ function QuotesPageContent() {
       ),
     },
     {
+      key: "service_type",
+      label: "Type of work",
+      render: (item) => {
+        const type = normalizeTypeOfWork(item.service_type) || normalizeTypeOfWork(item.title) || item.title || "—";
+        return <span className="text-sm text-text-secondary truncate block max-w-[180px]">{type}</span>;
+      },
+    },
+    {
       key: "quote_type", label: "Type",
       render: (item) => (
         <Badge variant={item.quote_type === "partner" ? "warning" : "info"} size="sm">
