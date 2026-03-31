@@ -2389,6 +2389,43 @@ function splitPartnerCostFromFirstTwoLines(
   return { labour: p0, materials: p1, hasSplit: true };
 }
 
+/**
+ * Partner app sends narrative in bid JSON (`scope`, `labour_description`, `materials_description`) and/or `quotes.scope`.
+ * Line-item summary (sell £) is appended so ops still see pricing lines — narrative must not be replaced by lines only.
+ */
+function mergeCreateJobScopeFromQuote(
+  q: Quote,
+  approvedBid: QuoteBid | null,
+  items: Array<{
+    description?: string | null;
+    quantity?: number | null;
+    unit_price?: number | null;
+    partner_unit_cost?: number | null;
+    notes?: string | null;
+  }>,
+): string {
+  const payload = approvedBid ? parseBidProposalFromNotes(approvedBid.notes) : null;
+  const bidScope = payload ? bidPayloadTrimmedString(payload.scope as unknown) : "";
+  const quoteScope = bidPayloadTrimmedString(q.scope as unknown);
+  const plainBidNotes =
+    approvedBid && !payload ? bidPayloadTrimmedString(approvedBid.notes as unknown) : "";
+  const narrativeLead = bidScope || quoteScope || plainBidNotes;
+
+  const labDesc = payload ? bidPayloadTrimmedString(payload.labour_description as unknown) : "";
+  const matDesc = payload ? bidPayloadTrimmedString(payload.materials_description as unknown) : "";
+
+  const linesBlock = buildJobScopeFromQuoteLineItems(items).trim();
+
+  const topParts: string[] = [];
+  if (narrativeLead) topParts.push(narrativeLead);
+  if (labDesc && !narrativeLead.includes(labDesc)) topParts.push(`Labour: ${labDesc}`);
+  if (matDesc && !narrativeLead.includes(matDesc)) topParts.push(`Materials: ${matDesc}`);
+  const top = topParts.join("\n\n").trim();
+
+  if (top && linesBlock) return `${top}\n\n${linesBlock}`;
+  return top || linesBlock;
+}
+
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
   onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => void;
@@ -2455,8 +2492,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
         partner_unit_cost?: number | null;
         notes?: string | null;
       }>;
-      const scopeFromLines = buildJobScopeFromQuoteLineItems(items);
-      const mergedScope = scopeFromLines.trim() || bidPayloadTrimmedString(q.scope as unknown);
+      const mergedScope = mergeCreateJobScopeFromQuote(q, approvedBid, items);
       const split = splitPartnerCostFromFirstTwoLines(items);
       const bidJobType = approvedBid?.job_type === "hourly" || approvedBid?.job_type === "fixed" ? approvedBid.job_type : undefined;
       setForm((prev) => ({

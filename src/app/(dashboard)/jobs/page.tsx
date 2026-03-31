@@ -63,6 +63,7 @@ import {
 } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { accountLinkedLabel } from "@/lib/account-display";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -378,15 +379,20 @@ function JobsPageContent() {
       const { data: clients } = await supabase.from("clients").select("id, source_account_id").in("id", ids);
       const accountIds = [...new Set((clients ?? []).map((c: { source_account_id?: string | null }) => c.source_account_id).filter(Boolean))] as string[];
       const { data: accounts } = accountIds.length > 0
-        ? await supabase.from("accounts").select("id, company_name").in("id", accountIds)
-        : { data: [] as Array<{ id: string; company_name: string }> };
+        ? await supabase.from("accounts").select("id, company_name, contact_name, email").in("id", accountIds)
+        : { data: [] as Array<{ id: string; company_name: string; contact_name: string; email: string }> };
       if (cancelled) return;
-      const accountById = new Map((accounts ?? []).map((a: { id: string; company_name: string }) => [a.id, a.company_name]));
+      const accountById = new Map(
+        (accounts ?? []).map((a: { id: string; company_name?: string; contact_name?: string; email?: string }) => [
+          a.id,
+          accountLinkedLabel(a) || "Account",
+        ]),
+      );
       const next: Record<string, string> = {};
       (clients ?? []).forEach((c: { id: string; source_account_id?: string | null }) => {
         if (c.source_account_id) {
           const name = accountById.get(c.source_account_id);
-          if (name) next[c.id] = name;
+          next[c.id] = name ?? "Linked account";
         }
       });
       setClientAccountMap(next);
