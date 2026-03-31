@@ -86,7 +86,7 @@ export function OperationsStatus() {
   const [trendWindow, setTrendWindow] = useState<TrendWindow>("daily_30");
 
   const load = useCallback(async () => {
-    const supabase = getSupabase();
+      const supabase = getSupabase();
     setLoading(true);
     try {
       const [jobsRes, partnersRes] = await Promise.all([
@@ -97,12 +97,12 @@ export function OperationsStatus() {
       ]);
       setJobs((jobsRes.data ?? []) as OpsJob[]);
       setPartners((partnersRes.data ?? []) as Partner[]);
-    } catch {
+      } catch {
       setJobs([]);
       setPartners([]);
-    } finally {
-      setLoading(false);
-    }
+      } finally {
+        setLoading(false);
+      }
   }, []);
 
   useEffect(() => {
@@ -400,7 +400,7 @@ export function OperationsStatus() {
       <Card>
         <CardHeader>
           <CardTitle>Job Pipeline</CardTitle>
-        </CardHeader>
+      </CardHeader>
         <div className="px-5 pb-5">
           <div className="flex flex-wrap items-center gap-2">
             {pipeline.map((p, idx) => (
@@ -582,7 +582,7 @@ export function OperationsStatus() {
             </div>
           )}
         </div>
-      </Card>
+    </Card>
     </div>
   );
 }

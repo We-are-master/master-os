@@ -28,6 +28,7 @@ import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/dat
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listInvoices, createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { syncInvoiceCollectionStagesForJob, COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
+import { isJobForcePaid } from "@/lib/job-force-paid";
 import { getStatusCounts, getSupabase } from "@/services/base";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
@@ -59,6 +60,7 @@ interface LinkedJob {
   partner_id?: string;
   partner_name?: string;
   owner_name?: string;
+  internal_notes?: string | null;
   status: string;
   progress: number;
   current_phase: number;
@@ -511,6 +513,7 @@ function InvoiceDetailDrawer({
 
   const linkedJobTotalCost = linkedJob ? linkedJob.partner_cost + linkedJob.materials_cost : 0;
   const linkedJobMarginAmount = linkedJob ? linkedJob.client_price - linkedJobTotalCost : 0;
+  const linkedJobForcedPaidBySystemOwner = linkedJob ? isJobForcePaid(linkedJob.internal_notes) : false;
 
   return (
     <Drawer open={!!invoice} onClose={onClose} title={invoice.reference} subtitle={invoice.client_name} width="w-[580px]">
@@ -945,6 +948,11 @@ function InvoiceDetailDrawer({
                     {linkedJob.scheduled_date && <InfoRow icon={Calendar} label="Scheduled" value={formatDate(linkedJob.scheduled_date)} />}
                     {linkedJob.completed_date && <InfoRow icon={CheckCircle2} label="Completed" value={formatDate(linkedJob.completed_date)} />}
                   </div>
+                  {linkedJobForcedPaidBySystemOwner ? (
+                    <p className="mt-2 text-xs font-semibold text-red-600">
+                      Forced and guaranteed by system owner.
+                    </p>
+                  ) : null}
                   <LocationMiniMap address={linkedJob.property_address} className="mt-3" />
                 </div>
 
