@@ -951,6 +951,7 @@ export default function JobsPage() {
 
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
+  const requiredFieldClass = "border-red-300 focus:border-red-400 focus:ring-red-100 hover:border-red-300";
   const [form, setForm] = useState({
     title: "",
     catalog_service_id: "",
@@ -1112,6 +1113,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           ]}
           value={form.job_type}
           onChange={(e) => update("job_type", e.target.value)}
+          className={requiredFieldClass}
         />
         {form.job_type === "hourly" && (
           <ServiceCatalogSelect
@@ -1119,6 +1121,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             emptyOptionLabel="Select from Services..."
             catalog={catalogServices}
             value={form.catalog_service_id}
+            className={requiredFieldClass}
             onChange={(id, service) => {
               const hrs = Math.max(1, Number(service?.default_hours) || 1);
               const clientRate = Number(service?.hourly_rate) || 0;
@@ -1147,6 +1150,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             label="Type of work *"
             value={form.title}
             onChange={(e) => update("title", e.target.value)}
+            className={requiredFieldClass}
             options={[
               { value: "", label: "Select type of work..." },
               ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
@@ -1160,6 +1164,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           arrivalWindowMins={form.arrival_window_mins}
           expectedFinishDate={form.expected_finish_date}
           onChange={(field, v) => update(field, v)}
+          requiredFieldClassName={requiredFieldClass}
         />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work {form.partner_id || form.partner_ids.length > 0 ? "*" : ""}</label>

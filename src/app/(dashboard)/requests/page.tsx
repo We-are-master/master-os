@@ -2238,8 +2238,8 @@ function CreateRequestModal({
       size="lg"
       scrollBody={false}
     >
-      <form onSubmit={handleSubmit} className="flex max-h-[min(85vh,calc(100dvh-6rem))] min-h-0 flex-col overflow-hidden">
-        <div className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 sm:px-6 pt-4 sm:pt-6 pb-2">
+      <form onSubmit={handleSubmit} className="flex h-[min(85vh,calc(100dvh-6rem))] min-h-0 flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 sm:px-6 pt-4 sm:pt-6 pb-4">
         <Select
           label="Request type *"
           value={form.request_kind}

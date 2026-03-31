@@ -13,6 +13,7 @@ type Props = {
   value: string;
   onChange: (catalogId: string, service: CatalogService | null) => void;
   disabled?: boolean;
+  className?: string;
 };
 
 export function ServiceCatalogSelect({
@@ -22,12 +23,14 @@ export function ServiceCatalogSelect({
   value,
   onChange,
   disabled,
+  className,
 }: Props) {
   return (
     <Select
       label={label}
       value={value}
       disabled={disabled}
+      className={className}
       onChange={(e) => {
         const id = e.target.value;
         const svc = id ? catalog.find((c) => c.id === id) ?? null : null;

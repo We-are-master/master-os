@@ -22,6 +22,7 @@ type Props = {
   /** e.g. quote pre-fill hint under start date */
   startDateFooter?: ReactNode;
   startDateRequired?: boolean;
+  requiredFieldClassName?: string;
 };
 
 export function JobModalScheduleFields({
@@ -32,6 +33,7 @@ export function JobModalScheduleFields({
   onChange,
   startDateFooter,
   startDateRequired,
+  requiredFieldClassName,
 }: Props) {
   const preview = jobModalClientArrivalPreview(scheduledDate, arrivalFrom, arrivalWindowMins);
   return (
@@ -45,11 +47,16 @@ export function JobModalScheduleFields({
             type="date"
             value={scheduledDate}
             onChange={(e) => onChange("scheduled_date", e.target.value)}
-            className="h-10 max-w-[200px]"
+            className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
           />
           {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
         </div>
-        <TimeSelect label="Arrival time (from)" value={arrivalFrom} onChange={(v) => onChange("arrival_from", v)} />
+        <TimeSelect
+          label="Arrival time (from)"
+          value={arrivalFrom}
+          onChange={(v) => onChange("arrival_from", v)}
+          className={requiredFieldClassName}
+        />
         <Select
           label="Arrival window length"
           value={arrivalWindowMins}
