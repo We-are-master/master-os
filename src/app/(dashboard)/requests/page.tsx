@@ -54,6 +54,17 @@ import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
 import { mergeImageUrlLists, normalizeJsonImageArray } from "@/lib/request-attachment-images";
 
+const UI_PERF_EVENT = "master-ui-perf";
+
+function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  const payload = { metric, ms: Math.round(ms), ts: Date.now(), ...(meta ?? {}) };
+  window.dispatchEvent(new CustomEvent(UI_PERF_EVENT, { detail: payload }));
+  if (process.env.NODE_ENV !== "production") {
+    console.info(`[ui-perf] ${metric}: ${payload.ms}ms`, meta ?? {});
+  }
+}
+
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   new: { label: "New", variant: "primary" },
   approved: { label: "Approved", variant: "success" },
@@ -144,6 +155,16 @@ export default function RequestsPage() {
   const [filterService, setFilterService] = useState<string>("all");
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
+  const allPartnersCacheRef = useRef<Partner[] | null>(null);
+
+  const getPartnersAllCached = useCallback(async (): Promise<Partner[]> => {
+    if (allPartnersCacheRef.current) return allPartnersCacheRef.current;
+    const t0 = performance.now();
+    const list = await listPartnersAll({ status: "all" });
+    allPartnersCacheRef.current = list;
+    trackUiPerf("requests.partners_cache_fill_ms", performance.now() - t0, { count: list.length });
+    return list;
+  }, []);
 
   // Convert to Quote flow
   const [convertChoiceOpen, setConvertChoiceOpen] = useState<ServiceRequest | null>(null);
@@ -449,6 +470,7 @@ export default function RequestsPage() {
 
   const handleCreate = useCallback(
     async (formData: Partial<ServiceRequest>, photoFiles?: File[]) => {
+      const perfStart = performance.now();
       try {
         const isManualSource = (formData.source ?? "manual") === "manual";
         const result = await createRequest({
@@ -493,6 +515,7 @@ export default function RequestsPage() {
         refresh();
         void loadCounts();
         toast.success("Request created successfully");
+        trackUiPerf("requests.create_request_ms", performance.now() - perfStart, { photos: photoFiles?.length ?? 0 });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to create request");
       }
@@ -1097,8 +1120,10 @@ export default function RequestsPage() {
       {/* Invite Partner Modal */}
       <InvitePartnerToQuote
         request={invitePartnerOpen}
+        loadPartners={getPartnersAllCached}
         onClose={() => setInvitePartnerOpen(null)}
         onDone={async (req, partnerIds, sendMethod, clientAddress, invitePhotoFiles) => {
+          const perfStart = performance.now();
           try {
             if (!clientAddress?.client_id || !clientAddress?.property_address?.trim()) {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
@@ -1177,6 +1202,10 @@ export default function RequestsPage() {
             loadCounts();
             toast.success(`Quote ${quote.reference} created. ${partnerIds.length} partner(s) invited via ${sendMethod}.`);
             router.push(`/quotes?quoteId=${encodeURIComponent(quote.id)}&drawerTab=bids`);
+            trackUiPerf("requests.invite_partner_convert_ms", performance.now() - perfStart, {
+              partners: partnerIds.length,
+              photos: invitePhotoFiles?.length ?? 0,
+            });
           } catch (err) {
             const msg =
               err &&
@@ -1198,6 +1227,7 @@ export default function RequestsPage() {
         catalogServices={catalogServices}
         onClose={() => setManualQuoteOpen(null)}
         onDone={async (req, lineItems, clientAddress, catalogServiceId) => {
+          const perfStart = performance.now();
           try {
             if (!clientAddress?.client_id || !clientAddress?.property_address?.trim()) {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
@@ -1265,6 +1295,7 @@ export default function RequestsPage() {
             void loadCounts();
             toast.success(`Quote ${quote.reference} created with ${lineItems.length} line items.`);
             router.push(`/quotes?quoteId=${encodeURIComponent(quote.id)}&drawerTab=overview`);
+            trackUiPerf("requests.manual_quote_convert_ms", performance.now() - perfStart, { items: lineItems.length });
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to create quote");
           }
@@ -1275,8 +1306,10 @@ export default function RequestsPage() {
       <ConvertToJobModal
         request={convertToJobOpen}
         catalogServices={catalogServices}
+        loadPartners={getPartnersAllCached}
         onClose={() => setConvertToJobOpen(null)}
         onConvert={async (data) => {
+          const perfStart = performance.now();
           if (!convertToJobOpen) return;
           try {
             if (!data.client_id || !data.property_address?.trim()) {
@@ -1351,6 +1384,7 @@ export default function RequestsPage() {
             void loadCounts();
             toast.success(`Job ${job.reference} created`);
             router.push(`/jobs?jobId=${job.id}`);
+            trackUiPerf("requests.convert_to_job_ms", performance.now() - perfStart, { hasPartner: Boolean(data.partner_id) });
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to convert to job");
           }
@@ -1394,10 +1428,11 @@ async function ensureClientAddressForQuote(ca: ClientAndAddressValue): Promise<C
 }
 
 function InvitePartnerToQuote({
-  request, onClose, onDone,
+  request, onClose, onDone, loadPartners,
 }: {
   request: ServiceRequest | null;
   onClose: () => void;
+  loadPartners: () => Promise<Partner[]>;
   onDone: (
     req: ServiceRequest,
     partnerIds: string[],
@@ -1434,7 +1469,7 @@ function InvitePartnerToQuote({
     });
     let cancelled = false;
     setPartnersLoading(true);
-    listPartnersAll({ status: "all" })
+    loadPartners()
       .then((list) => {
         if (cancelled) return;
         setPartners(list);
@@ -1454,7 +1489,7 @@ function InvitePartnerToQuote({
     return () => {
       cancelled = true;
     };
-  }, [request?.id, request?.service_type]);
+  }, [request?.id, request?.service_type, loadPartners]);
 
   const summaryImageUrls = useMemo(
     () => mergeImageUrlLists(normalizeJsonImageArray(request?.images)),
@@ -1832,11 +1867,12 @@ function ManualQuoteModal({
 }
 
 function ConvertToJobModal({
-  request, catalogServices, onClose, onConvert,
+  request, catalogServices, onClose, onConvert, loadPartners,
 }: {
   request: ServiceRequest | null;
   catalogServices: CatalogService[];
   onClose: () => void;
+  loadPartners: () => Promise<Partner[]>;
   onConvert: (data: {
     client_id?: string; client_address_id?: string; client_name: string; property_address: string;
     partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string;
@@ -1878,13 +1914,13 @@ function ConvertToJobModal({
       scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
     });
     setClientAddress(serviceRequestToClientAddressValue(request));
-    listPartnersAll({ status: "all" })
+    loadPartners()
       .then(setPartners)
       .catch(() => {
         toast.error("Could not load partners");
         setPartners([]);
       });
-  }, [request?.id]);
+  }, [request?.id, loadPartners]);
 
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedPartner = partners.find((p) => p.id === form.partner_id);

@@ -9,6 +9,20 @@ import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 
+function nowMs() {
+  return performance.now();
+}
+
+function withServerTiming(body: unknown, status: number, marks: Array<[string, number]>) {
+  const metric = marks
+    .filter(([, v]) => Number.isFinite(v) && v >= 0)
+    .map(([k, v]) => `${k};dur=${Math.round(v)}`)
+    .join(", ");
+  const res = NextResponse.json(body, { status });
+  if (metric) res.headers.set("Server-Timing", metric);
+  return res;
+}
+
 function isHttpsUrl(u: string): boolean {
   try {
     return new URL(u).protocol === "https:";
@@ -43,6 +57,8 @@ async function sitePhotoAttachments(photoUrls: string[]): Promise<{ filename: st
 }
 
 export async function POST(req: NextRequest) {
+  const startedAt = nowMs();
+  const marks: Array<[string, number]> = [];
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
@@ -69,23 +85,27 @@ export async function POST(req: NextRequest) {
 
     const supabase = createServiceClient();
 
+    const tQuote = nowMs();
     const { data: quote, error: quoteError } = await supabase
       .from("quotes")
       .select("*")
       .eq("id", quoteId)
       .single();
+    marks.push(["quote_lookup", nowMs() - tQuote]);
 
     if (quoteError || !quote) {
-      return NextResponse.json({ error: "Quote not found" }, { status: 404 });
+      return withServerTiming({ error: "Quote not found" }, 404, marks);
     }
 
     // Fetch line items (if not pre-provided) and company settings in parallel.
+    const tDeps = nowMs();
     const [lineItemResult, settingsResult] = await Promise.all([
       items?.length
         ? Promise.resolve(null)
         : supabase.from("quote_line_items").select("description, quantity, unit_price").eq("quote_id", quoteId).order("sort_order"),
       supabase.from("company_settings").select("*").limit(1).single(),
     ]);
+    marks.push(["deps_fetch", nowMs() - tDeps]);
 
     let lineItemsForPdf = items;
     if (!lineItemsForPdf?.length && lineItemResult) {
@@ -142,15 +162,19 @@ export async function POST(req: NextRequest) {
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tPdf = nowMs();
     const pdfBuffer = await (renderToBuffer as any)(
       React.createElement(QuotePDF, { data: pdfData, branding }),
     );
+    marks.push(["pdf_render", nowMs() - tPdf]);
 
     const emailTo = recipientEmail ?? quote.client_email;
     if (!emailTo) {
-      return NextResponse.json(
+      marks.push(["total", nowMs() - startedAt]);
+      return withServerTiming(
         { pdfGenerated: true, emailSent: false, reason: "No recipient email" },
-        { status: 200 },
+        200,
+        marks,
       );
     }
 
@@ -163,9 +187,11 @@ export async function POST(req: NextRequest) {
 
     const resendKey = process.env.RESEND_API_KEY?.trim();
     if (!resendKey) {
-      return NextResponse.json(
+      marks.push(["total", nowMs() - startedAt]);
+      return withServerTiming(
         { pdfGenerated: true, emailSent: false, reason: "RESEND_API_KEY not configured" },
-        { status: 200 },
+        200,
+        marks,
       );
     }
     const resend = new Resend(resendKey);
@@ -180,6 +206,7 @@ export async function POST(req: NextRequest) {
       },
     ];
     if (useRequestPhotos && quote.request_id) {
+      const tPhotos = nowMs();
       const { data: sr } = await supabase
         .from("service_requests")
         .select("images")
@@ -188,8 +215,10 @@ export async function POST(req: NextRequest) {
       const urls = normalizeJsonImageArray(sr?.images);
       const extras = await sitePhotoAttachments(urls);
       emailAttachments.push(...extras);
+      marks.push(["photos_attach", nowMs() - tPhotos]);
     }
 
+    const tEmail = nowMs();
     const { data: emailResult, error: emailError } = await resend.emails.send({
       from: fromEmail,
       to: [emailTo],
@@ -197,16 +226,20 @@ export async function POST(req: NextRequest) {
       html: buildQuoteEmailHTML(pdfData, branding, { acceptUrl, rejectUrl, customMessage }),
       attachments: emailAttachments,
     });
+    marks.push(["email_send", nowMs() - tEmail]);
 
     if (emailError) {
       console.error("Resend error:", emailError);
-      return NextResponse.json(
+      marks.push(["total", nowMs() - startedAt]);
+      return withServerTiming(
         { pdfGenerated: true, emailSent: false, error: emailError.message },
-        { status: 500 },
+        500,
+        marks,
       );
     }
 
     const sentAt = new Date().toISOString();
+    const tWrite = nowMs();
     await supabase
       .from("quotes")
       .update({ status: "awaiting_customer", customer_pdf_sent_at: sentAt })
@@ -222,18 +255,22 @@ export async function POST(req: NextRequest) {
       new_value: "awaiting_customer",
       metadata: { email_to: emailTo, resend_id: emailResult?.id },
     });
+    marks.push(["db_updates", nowMs() - tWrite]);
+    marks.push(["total", nowMs() - startedAt]);
 
-    return NextResponse.json({
+    return withServerTiming({
       pdfGenerated: true,
       emailSent: true,
       emailId: emailResult?.id,
       sentTo: emailTo,
-    });
+    }, 200, marks);
   } catch (err) {
     console.error("Quote PDF/send error:", err);
-    return NextResponse.json(
+    const marks: Array<[string, number]> = [["total", nowMs() - startedAt]];
+    return withServerTiming(
       { error: err instanceof Error ? err.message : "Internal error" },
-      { status: 500 },
+      500,
+      marks,
     );
   }
 }

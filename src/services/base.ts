@@ -125,6 +125,33 @@ export async function getStatusCounts(
 ): Promise<Record<string, number>> {
   const supabase = getSupabase();
   const counts: Record<string, number> = {};
+  const canUseRpc = !options?.scheduleRange;
+
+  if (canUseRpc) {
+    const { data: rpcRows, error: rpcErr } = await supabase.rpc("get_status_counts", {
+      p_table_name: table,
+      p_statuses: statuses,
+      p_status_column: statusColumn,
+      p_date_column: options?.dateColumn ?? null,
+      p_date_from: options?.dateFrom ?? null,
+      p_date_to: options?.dateTo ?? null,
+    });
+    if (!rpcErr && Array.isArray(rpcRows)) {
+      let totalFromRpc = 0;
+      for (const row of rpcRows as Array<{ status?: string; count?: number | string; total?: number | string }>) {
+        const st = typeof row.status === "string" ? row.status : "";
+        const ct = Number(row.count ?? 0) || 0;
+        if (st) counts[st] = ct;
+        const rowTotal = Number(row.total ?? 0) || 0;
+        if (rowTotal > totalFromRpc) totalFromRpc = rowTotal;
+      }
+      counts["all"] = totalFromRpc;
+      for (const st of statuses) {
+        if (counts[st] == null) counts[st] = 0;
+      }
+      return counts;
+    }
+  }
 
   let totalQuery = supabase
     .from(table)

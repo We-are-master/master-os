@@ -15,24 +15,23 @@ function uniqueRef(weekLabel: string, jobRef: string): string {
 /** Recompute aggregates from all jobs linked to this self-bill. */
 export async function recomputeSelfBillTotals(selfBillId: string): Promise<void> {
   const supabase = getSupabase();
-  const { data: jobs, error } = await supabase
+  const agg = await supabase
     .from("jobs")
-    .select("partner_cost, materials_cost")
-    .eq("self_bill_id", selfBillId);
-  if (error) throw error;
-  const list = jobs ?? [];
-  let jobValue = 0;
-  let materials = 0;
-  for (const j of list) {
-    jobValue += Number(j.partner_cost) || 0;
-    materials += Number(j.materials_cost) || 0;
-  }
+    .select("id.count(), partner_cost.sum(), materials_cost.sum()")
+    .eq("self_bill_id", selfBillId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (agg.error) throw agg.error;
+  const row = (agg.data ?? {}) as Record<string, unknown>;
+  const jobsCount = Number(row.id_count ?? 0) || 0;
+  const jobValue = Number(row.partner_cost_sum ?? 0) || 0;
+  const materials = Number(row.materials_cost_sum ?? 0) || 0;
   const commission = 0;
   const netPayout = jobValue + materials - commission;
   const { error: uErr } = await supabase
     .from("self_bills")
     .update({
-      jobs_count: list.length,
+      jobs_count: jobsCount,
       job_value: jobValue,
       materials,
       commission,

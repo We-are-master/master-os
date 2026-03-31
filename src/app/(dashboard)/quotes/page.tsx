@@ -63,6 +63,17 @@ import {
   customerUnitSellFromPartnerUnit,
 } from "@/lib/quote-bid-payload";
 
+const UI_PERF_EVENT = "master-ui-perf";
+
+function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  const payload = { metric, ms: Math.round(ms), ts: Date.now(), ...(meta ?? {}) };
+  window.dispatchEvent(new CustomEvent(UI_PERF_EVENT, { detail: payload }));
+  if (process.env.NODE_ENV !== "production") {
+    console.info(`[ui-perf] ${metric}: ${payload.ms}ms`, meta ?? {});
+  }
+}
+
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
 
 /**
@@ -318,6 +329,7 @@ function QuotesPageContent() {
   const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
   const [drawerPendingTab, setDrawerPendingTab] = useState<"overview" | "bids" | null>(null);
   const consumeDrawerPendingTab = useCallback(() => setDrawerPendingTab(null), []);
+  const kpiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const qid = searchParams.get("quoteId");
@@ -381,6 +393,18 @@ function QuotesPageContent() {
   }, []);
 
   useEffect(() => { loadCounts(); loadAggregates(); }, [loadCounts, loadAggregates]);
+  useEffect(() => () => {
+    if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
+  }, []);
+
+  const refreshWithKpis = useCallback((delayMs = 180) => {
+    refresh();
+    if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
+    kpiRefreshTimerRef.current = setTimeout(() => {
+      void loadCounts();
+      void loadAggregates();
+    }, delayMs);
+  }, [refresh, loadCounts, loadAggregates]);
 
   const pipelineCount =
     (statusCounts.draft ?? 0) +
@@ -402,6 +426,7 @@ function QuotesPageContent() {
   }, [statusCounts]);
 
   const handleCreate = useCallback(async (formData: Partial<Quote>) => {
+    const perfStart = performance.now();
     try {
       const result = await createQuote({
         title: formData.title ?? "",
@@ -436,9 +461,10 @@ function QuotesPageContent() {
       await logAudit({ entityType: "quote", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
       setCreateOpen(false);
       toast.success("Quote created successfully");
-      refresh(); loadCounts(); loadAggregates();
+      refreshWithKpis();
+      trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, { quoteType: formData.quote_type ?? "internal" });
     } catch { toast.error("Failed to create quote"); }
-  }, [refresh, loadCounts, loadAggregates, profile?.id, profile?.full_name]);
+  }, [refreshWithKpis, profile?.id, profile?.full_name]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
@@ -459,13 +485,11 @@ function QuotesPageContent() {
       await Promise.all(Array.from(selectedIds).map((id) => softDeleteById("quotes", id, profile?.id)));
       toast.success(`${selectedIds.size} quotes archived`);
       setSelectedIds(new Set());
-      refresh();
-      loadCounts();
-      loadAggregates();
+      refreshWithKpis();
     } catch {
       toast.error("Failed to archive quotes");
     }
-  }, [selectedIds, profile?.id, refresh, loadCounts, loadAggregates]);
+  }, [selectedIds, profile?.id, refreshWithKpis]);
 
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -476,16 +500,15 @@ function QuotesPageContent() {
       if (error) throw error;
       toast.success(`${selectedIds.size} quotes deleted`);
       setSelectedIds(new Set());
-      refresh();
-      loadCounts();
-      loadAggregates();
+      refreshWithKpis();
     } catch {
       toast.error("Failed to delete quotes");
     }
-  }, [selectedIds, refresh, loadCounts, loadAggregates]);
+  }, [selectedIds, refreshWithKpis]);
 
   const handleConfirmCreateJob = useCallback(
     async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => {
+      const perfStart = performance.now();
       if (!quoteToConvert) return;
       const effectivePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
       const jobScope = (formData.scope ?? "").trim() || (quoteToConvert.scope ?? "").trim();
@@ -606,14 +629,14 @@ function QuotesPageContent() {
         ]);
         setQuoteToConvert(null); setSelectedQuote(null);
         toast.success(`Job ${job.reference} created`);
-        refresh();
-        void loadCounts();
+        refreshWithKpis();
         router.push(`/jobs?jobId=${job.id}`);
+        trackUiPerf("quotes.convert_to_job_ms", performance.now() - perfStart, { hasPartner: hasPartner });
       } catch (err) {
         toast.error(getErrorMessage(err, "Failed to create job"));
       }
     },
-    [quoteToConvert, refresh, loadCounts, profile?.id, profile?.full_name, router]
+    [quoteToConvert, refreshWithKpis, profile?.id, profile?.full_name, router]
   );
 
   const handleStatusChange = useCallback(
@@ -633,11 +656,12 @@ function QuotesPageContent() {
         }
       }
       try {
+        const perfStart = performance.now();
         const updated = await updateQuote(quote.id, { status: newStatus as Quote["status"] });
         await logAudit({ entityType: "quote", entityId: quote.id, entityRef: quote.reference, action: "status_changed", fieldName: "status", oldValue: quote.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
         setSelectedQuote(updated);
         toast.success(`Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
-        refresh(); loadCounts();
+        refreshWithKpis();
         if (newStatus === "bidding" && quote.service_type) {
           fetch("/api/push/notify-partner", {
             method: "POST",
@@ -650,6 +674,7 @@ function QuotesPageContent() {
             }),
           }).catch(() => {});
         }
+        trackUiPerf("quotes.status_change_ms", performance.now() - perfStart, { from: quote.status, to: newStatus });
         return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to update quote";
@@ -658,7 +683,7 @@ function QuotesPageContent() {
         return false;
       }
     },
-    [refresh, loadCounts, profile?.id, profile?.full_name]
+    [refreshWithKpis, profile?.id, profile?.full_name]
   );
 
   const handleExport = useCallback(() => {
