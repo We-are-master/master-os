@@ -42,6 +42,7 @@ import {
 } from "@/lib/schedule-job-type-style";
 import { isJobInProgressStatus } from "@/lib/job-phases";
 import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financials";
+import { accountLinkedLabel } from "@/lib/account-display";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -305,13 +306,16 @@ export default function SchedulePage() {
         if (!cancelled) setSelectedJobAccountName(null);
         return;
       }
+      /** Match Jobs list: do not filter `accounts.deleted_at` here — soft-deleted rows still resolve a label for “linked” display. */
       const { data: acc } = await supabase
         .from("accounts")
-        .select("company_name")
+        .select("company_name, contact_name, email")
         .eq("id", aid)
-        .is("deleted_at", null)
         .maybeSingle();
-      if (!cancelled) setSelectedJobAccountName((acc?.company_name as string | undefined)?.trim() || null);
+      if (!cancelled) {
+        const label = acc ? accountLinkedLabel(acc as { company_name?: string; contact_name?: string; email?: string }) : "";
+        setSelectedJobAccountName(label.trim() || "Linked account");
+      }
     })();
     return () => {
       cancelled = true;
