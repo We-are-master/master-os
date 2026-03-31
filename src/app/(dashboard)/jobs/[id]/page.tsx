@@ -32,6 +32,7 @@ import {
 import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
+import { listQuoteLineItems } from "@/services/quotes";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
@@ -45,7 +46,7 @@ import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
-import type { Invoice, Job, JobPayment, JobPaymentType, Partner } from "@/types/database";
+import type { Invoice, Job, JobPayment, JobPaymentType, Partner, QuoteLineItem } from "@/types/database";
 import { listInvoicesLinkedToJob } from "@/services/invoices";
 import {
   allConfiguredReportsApproved,
@@ -177,6 +178,7 @@ export default function JobDetailPage() {
   });
   const [savingFin, setSavingFin] = useState(false);
   const [jobInvoices, setJobInvoices] = useState<Invoice[]>([]);
+  const [quoteLineItems, setQuoteLineItems] = useState<QuoteLineItem[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
   const [manualReportFile, setManualReportFile] = useState<File | null>(null);
@@ -286,18 +288,51 @@ export default function JobDetailPage() {
     }
   }, []);
 
+  const loadQuoteLineItems = useCallback(async (j: Job) => {
+    if (!j.quote_id) {
+      setQuoteLineItems([]);
+      return;
+    }
+    try {
+      const rows = await listQuoteLineItems(j.quote_id);
+      setQuoteLineItems(rows);
+    } catch {
+      setQuoteLineItems([]);
+    }
+  }, []);
+
   const refreshJobFinance = useCallback(async () => {
     if (!id) return;
     try {
       const j = await getJob(id);
       setJob(j);
       if (j) {
-        await Promise.all([loadPayments(j.id), loadJobInvoices(j)]);
+        await Promise.all([loadPayments(j.id), loadJobInvoices(j), loadQuoteLineItems(j)]);
       }
     } catch {
       toast.error("Failed to refresh");
     }
-  }, [id, loadPayments, loadJobInvoices]);
+  }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems]);
+
+  const quoteLineBreakdown = useMemo(() => {
+    if (!quoteLineItems.length) return null;
+    const classify = (desc: string): "labour" | "materials" | "other" => {
+      const d = desc.toLowerCase();
+      if (/(labou?r|call.?out|install|fitting|hour|engineer|technician)/.test(d)) return "labour";
+      if (/(material|part|supply|consumable|component)/.test(d)) return "materials";
+      return "other";
+    };
+    const totals = { labour: 0, materials: 0, other: 0 };
+    const lines = quoteLineItems.map((li) => {
+      const qty = Number(li.quantity ?? 0);
+      const unit = Number(li.unit_price ?? 0);
+      const total = Math.round((Number(li.total ?? (qty * unit)) || 0) * 100) / 100;
+      const kind = classify(li.description ?? "");
+      totals[kind] += total;
+      return { id: li.id, description: li.description, total, kind };
+    });
+    return { lines, totals };
+  }, [quoteLineItems]);
 
   const handleStripeInvoiceSync = useCallback(
     async (inv: Invoice) => {
@@ -1825,6 +1860,38 @@ export default function JobDetailPage() {
                   </div>
                 </div>
                 <div className="space-y-2">
+                  {quoteLineBreakdown && (
+                    <div className="rounded-lg border border-border-light bg-surface-hover/30 p-2.5 space-y-2">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
+                        From quote lines
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                        <div className="rounded-md border border-border bg-card px-2 py-1.5">
+                          <p className="text-[10px] text-text-tertiary uppercase">Labour</p>
+                          <p className="text-xs font-semibold tabular-nums">{formatCurrency(quoteLineBreakdown.totals.labour)}</p>
+                        </div>
+                        <div className="rounded-md border border-border bg-card px-2 py-1.5">
+                          <p className="text-[10px] text-text-tertiary uppercase">Materials</p>
+                          <p className="text-xs font-semibold tabular-nums">{formatCurrency(quoteLineBreakdown.totals.materials)}</p>
+                        </div>
+                        <div className="rounded-md border border-border bg-card px-2 py-1.5">
+                          <p className="text-[10px] text-text-tertiary uppercase">Other</p>
+                          <p className="text-xs font-semibold tabular-nums">{formatCurrency(quoteLineBreakdown.totals.other)}</p>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        {quoteLineBreakdown.lines.slice(0, 4).map((line) => (
+                          <div key={line.id} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="text-text-secondary truncate">{line.description}</span>
+                            <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(line.total)}</span>
+                          </div>
+                        ))}
+                        {quoteLineBreakdown.lines.length > 4 && (
+                          <p className="text-[10px] text-text-tertiary">+{quoteLineBreakdown.lines.length - 4} more line(s)</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {(job.customer_deposit ?? 0) > 0 && (
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">

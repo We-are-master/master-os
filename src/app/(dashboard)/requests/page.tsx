@@ -1851,7 +1851,7 @@ function ConvertToJobModal({
     partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", job_type: "fixed",
     catalog_service_id: "", hourly_client_rate: "", hourly_partner_rate: "", billed_hours: "1",
     in_ccz: false, has_free_parking: true,
-    scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "",
+    scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
   });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -1870,7 +1870,7 @@ function ConvertToJobModal({
       billed_hours: "1",
       in_ccz: !!request.in_ccz,
       has_free_parking: request.has_free_parking ?? true,
-      scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "",
+      scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
     });
     setClientAddress(serviceRequestToClientAddressValue(request));
     listPartnersAll({ status: "all" })
@@ -2033,7 +2033,7 @@ function ConvertToJobModal({
                 onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
                 className={cn(
                   "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                  form.in_ccz ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+                  form.in_ccz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
                 )}
               >
                 <p className="font-medium">{form.in_ccz ? "CCZ fee applied" : "Apply CCZ"}</p>
@@ -2044,7 +2044,7 @@ function ConvertToJobModal({
                 onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
                 className={cn(
                   "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                  form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                  !form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
                 )}
               >
                 <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
@@ -2127,6 +2127,7 @@ function CreateRequestModal({
   const [createPhotos, setCreatePhotos] = useState<File[]>([]);
   const [createPhotoPreviews, setCreatePhotoPreviews] = useState<string[]>([]);
   const [form, setForm] = useState({
+    onsite_contact_name: "",
     client_phone: "",
     request_kind: "",
     source: "manual" as ServiceRequest["source"],
@@ -2149,6 +2150,7 @@ function CreateRequestModal({
       return [];
     });
     setForm({
+      onsite_contact_name: "",
       client_phone: "",
       request_kind: "",
       source: "manual",
@@ -2214,6 +2216,9 @@ function CreateRequestModal({
         client_name: clientAddress.client_name,
         client_email: clientAddress.client_email ?? "",
         client_phone: form.client_phone || undefined,
+        internal_info: form.onsite_contact_name.trim()
+          ? `On-site contact: ${form.onsite_contact_name.trim()}${form.client_phone.trim() ? ` (${form.client_phone.trim()})` : ""}`
+          : undefined,
         property_address: clientAddress.property_address,
         postcode: pc,
         source: form.source,
@@ -2257,6 +2262,11 @@ function CreateRequestModal({
             ...REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
           ]}
         />
+        <p className="text-xs text-text-tertiary">
+          <span className="font-medium text-text-secondary">Quote Request:</span> used for pricing/quotation flow first.
+          {" "}
+          <span className="font-medium text-text-secondary">Work Request:</span> used for call-out execution flow (Services template).
+        </p>
         <div>
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; property *</p>
           <p className="text-xs text-text-tertiary mb-3">Search for an existing client or create a new one. This link is kept when you convert to quote or job.</p>
@@ -2267,16 +2277,27 @@ function CreateRequestModal({
             </p>
           )}
         </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Phone (request)</label>
-          <Input value={form.client_phone} onChange={(e) => update("client_phone", e.target.value)} placeholder="Optional — contact for this lead" />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Postcode *</label>
-            <Input value={postcode} onChange={(e) => setPostcode(e.target.value.toUpperCase())} placeholder="e.g. SW1A 1AA — auto-filled from address" />
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Name (on-site)</label>
+            <Input
+              value={form.onsite_contact_name}
+              onChange={(e) => update("onsite_contact_name", e.target.value)}
+              placeholder="Optional — who will be on site"
+            />
           </div>
-          <Select label="Source" value={form.source ?? "manual"} onChange={(e) => update("source", e.target.value)} options={REQUEST_SOURCES.map((s) => ({ value: s.value!, label: s.label }))} />
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Mobile (on-site)</label>
+            <Input
+              value={form.client_phone}
+              onChange={(e) => update("client_phone", e.target.value)}
+              placeholder="Optional — contact de quem vai estar on site"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Postcode *</label>
+          <Input value={postcode} onChange={(e) => setPostcode(e.target.value.toUpperCase())} placeholder="e.g. SW1A 1AA — auto-filled from address" />
         </div>
         <div className="space-y-3">
           {form.request_kind === "work" ? (
@@ -2332,7 +2353,7 @@ function CreateRequestModal({
                   onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
                   className={cn(
                     "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                    form.in_ccz ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+                    form.in_ccz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
                   )}
                 >
                   <p className="font-medium">{form.in_ccz ? "CCZ fee applied" : "Apply CCZ"}</p>
@@ -2343,7 +2364,7 @@ function CreateRequestModal({
                   onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
                   className={cn(
                     "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                    form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                    !form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
                   )}
                 >
                   <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>

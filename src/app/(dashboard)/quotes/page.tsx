@@ -2257,7 +2257,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
   onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => void;
 }) {
-  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "", scope: "", createWithoutDeposit: false, job_type: "fixed" });
+  const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "", scope: "", createWithoutDeposit: false, job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
 
@@ -2266,7 +2266,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     setForm({
       title: quote.title ?? "", partner_id: quote.partner_id ?? "",
       client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
-      materials_cost: "0", scheduled_date: preferredScheduleDateFromQuote(quote), arrival_from: "", arrival_window_mins: "", expected_finish_date: "",
+      materials_cost: "0", scheduled_date: preferredScheduleDateFromQuote(quote), arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
       scope: quote.scope ?? "",
       createWithoutDeposit: false, job_type: "fixed",
     });

@@ -1,5 +1,5 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
-import type { Quote } from "@/types/database";
+import type { Quote, QuoteLineItem } from "@/types/database";
 
 /** Real `quotes` columns only — stray keys (e.g. from UI state spread) must not reach PostgREST. */
 const QUOTE_WRITABLE_KEYS = new Set<string>([
@@ -101,4 +101,15 @@ export async function updateQuote(
     .single();
   if (error) throw new Error(error.message);
   return data as Quote;
+}
+
+export async function listQuoteLineItems(quoteId: string): Promise<QuoteLineItem[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("quote_line_items")
+    .select("*")
+    .eq("quote_id", quoteId)
+    .order("sort_order", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as QuoteLineItem[];
 }
