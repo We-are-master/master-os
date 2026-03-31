@@ -1285,12 +1285,13 @@ export default function RequestsPage() {
             }
             const clientPrice = data.client_price ?? 0;
             const partnerCost = data.partner_cost ?? 0;
+            const isAutoAssign = data.assignment_mode === "auto";
             const accessSurcharge = computeAccessSurcharge({
               inCcz: data.in_ccz,
               hasFreeParking: data.has_free_parking,
             });
             const margin = clientPrice > 0 ? Math.round(((clientPrice - partnerCost) / clientPrice) * 1000) / 10 : 0;
-            const hasPartner = !!(data.partner_id?.trim() || data.partner_name?.trim());
+            const hasPartner = !isAutoAssign && !!(data.partner_id?.trim() || data.partner_name?.trim());
             const job = await createJob({
               title: `${convertToJobOpen.service_type} — ${data.client_name}`,
               catalog_service_id: data.catalog_service_id ?? null,
@@ -1300,13 +1301,13 @@ export default function RequestsPage() {
               client_address_id: data.client_address_id,
               client_name: data.client_name,
               property_address: data.property_address,
-              partner_name: data.partner_name,
-              partner_id: data.partner_id,
+              partner_name: isAutoAssign ? null : data.partner_name,
+              partner_id: isAutoAssign ? null : data.partner_id,
               scheduled_date: data.scheduled_date,
               scheduled_start_at: data.scheduled_start_at,
               scheduled_end_at: data.scheduled_end_at,
               scheduled_finish_date: data.scheduled_finish_date ?? null,
-              status: hasPartner ? "scheduled" : "unassigned",
+              status: isAutoAssign ? "auto_assigning" : hasPartner ? "scheduled" : "unassigned",
               progress: 0,
               current_phase: 0,
               total_phases: normalizeTotalPhases(data.total_phases),
@@ -1839,6 +1840,7 @@ function ConvertToJobModal({
   onConvert: (data: {
     client_id?: string; client_address_id?: string; client_name: string; property_address: string;
     partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string;
+    assignment_mode?: "manual" | "auto";
     catalog_service_id?: string | null;
     in_ccz?: boolean | null;
     has_free_parking?: boolean | null;
@@ -1850,11 +1852,13 @@ function ConvertToJobModal({
   const [form, setForm] = useState({
     partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", job_type: "fixed",
     catalog_service_id: "", hourly_client_rate: "", hourly_partner_rate: "", billed_hours: "1",
+    assignment_mode: "manual",
     in_ccz: false, has_free_parking: true,
     scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
   });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [partnerSearch, setPartnerSearch] = useState("");
 
   useEffect(() => {
     if (!request) {
@@ -1868,6 +1872,7 @@ function ConvertToJobModal({
       hourly_client_rate: "",
       hourly_partner_rate: "",
       billed_hours: "1",
+      assignment_mode: "manual",
       in_ccz: !!request.in_ccz,
       has_free_parking: request.has_free_parking ?? true,
       scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
@@ -1884,6 +1889,18 @@ function ConvertToJobModal({
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedPartner = partners.find((p) => p.id === form.partner_id);
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
+  const targetWorkType = (selectedCatalogService?.name ?? request?.service_type ?? "").trim();
+  const filteredPartners = useMemo(() => {
+    const q = partnerSearch.trim().toLowerCase();
+    if (!q) return partners;
+    return partners.filter((p) => {
+      const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
+      const trade = (p.trade ?? "").toLowerCase();
+      const location = (p.location ?? "").toLowerCase();
+      const tradesFlat = (p.trades ?? []).join(" ").toLowerCase();
+      return name.includes(q) || trade.includes(q) || location.includes(q) || tradesFlat.includes(q);
+    });
+  }, [partnerSearch, partners]);
 
   useEffect(() => {
     const inCcz = isLikelyCczAddress(clientAddress.property_address);
@@ -1917,11 +1934,12 @@ function ConvertToJobModal({
       toast.error("Select a client from the list (click the name) and choose or add a property address.");
       return;
     }
+    const isAutoAssign = form.assignment_mode === "auto";
     const sched = resolveJobModalSchedule({
       scheduled_date: form.scheduled_date,
       arrival_from: form.arrival_from,
       arrival_window_mins: form.arrival_window_mins,
-      hasPartner: !!form.partner_id,
+      hasPartner: !isAutoAssign && !!form.partner_id,
     });
     if (!sched.ok) {
       toast.error(sched.error);
@@ -1958,8 +1976,9 @@ function ConvertToJobModal({
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
       property_address: clientAddress.property_address,
-      partner_id: form.partner_id || undefined,
-      partner_name: selectedPartner?.company_name,
+      assignment_mode: form.assignment_mode as "manual" | "auto",
+      partner_id: isAutoAssign ? undefined : (form.partner_id || undefined),
+      partner_name: isAutoAssign ? undefined : selectedPartner?.company_name,
       scope: form.scope || undefined,
       notes: form.notes || undefined,
       internal_notes: form.internal_notes || undefined,
@@ -1981,18 +2000,25 @@ function ConvertToJobModal({
   };
 
   if (!request) return null;
+  const requiredFieldClass = "border-red-300 focus:border-red-400 focus:ring-red-100 hover:border-red-300";
+  const accessSurchargePreview = computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+  const hourlyPreview = computeHourlyTotals({
+    elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
+    clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
+    partnerHourlyRate: Math.max(0, Number(form.hourly_partner_rate) || 0),
+  });
+  const hourlyMarginPct = hourlyPreview.clientTotal > 0
+    ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
+    : 0;
 
   return (
     <Modal open={!!request} onClose={onClose} title="Create Job" subtitle={`${request.reference} — Direct creation`} size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div>
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; address *</p>
-          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} lockClient={!!request.client_id} />
-        </div>
         <Select
           label="Job type"
           value={form.job_type}
           onChange={(e) => update("job_type", e.target.value)}
+          className={requiredFieldClass}
           options={[
             { value: "fixed", label: "Fixed" },
             { value: "hourly", label: "Hourly" },
@@ -2004,6 +2030,7 @@ function ConvertToJobModal({
             emptyOptionLabel="Select from Services..."
             catalog={catalogServices}
             value={form.catalog_service_id}
+            className={requiredFieldClass}
             onChange={(id, service) => {
               const hrs = Math.max(1, Number(service?.default_hours) || 1);
               const clientRate = Number(service?.hourly_rate) || 0;
@@ -2026,6 +2053,23 @@ function ConvertToJobModal({
             }}
           />
         )}
+        <div>
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; address *</p>
+          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} lockClient={!!request.client_id} />
+        </div>
+        <JobModalScheduleFields
+          scheduledDate={form.scheduled_date}
+          arrivalFrom={form.arrival_from}
+          arrivalWindowMins={form.arrival_window_mins}
+          expectedFinishDate={form.expected_finish_date}
+          onChange={(field, v) => update(field, v)}
+          startDateRequired={form.assignment_mode === "manual" && !!form.partner_id}
+          requiredFieldClassName={requiredFieldClass}
+        />
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work {form.assignment_mode === "manual" && form.partner_id ? "*" : ""}</label>
+          <textarea value={form.scope} onChange={(e) => update("scope", e.target.value)} rows={3} placeholder="Required if you assign a partner (with schedule and address above)." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]" />
+        </div>
         {request.request_kind === "work" && (
           <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
@@ -2053,39 +2097,114 @@ function ConvertToJobModal({
                 <p className="text-xs opacity-80">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
               </button>
             </div>
-            <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>
+            <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span></p>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{form.job_type === "hourly" ? "Client total (auto)" : "Client price"}</label>
-            <Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} placeholder="0.00" min={0} step="0.01" />
+        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner allocation</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "manual" }))}
+              className={cn(
+                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                form.assignment_mode === "manual" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+              )}
+            >
+              <p className="font-medium">Allocate partner</p>
+              <p className="text-xs opacity-80">Pick a specific partner now</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }))}
+              className={cn(
+                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                form.assignment_mode === "auto" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+              )}
+            >
+              <p className="font-medium">Auto assign</p>
+              <p className="text-xs opacity-80">System will assign after creation</p>
+            </button>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">{form.job_type === "hourly" ? "Partner total (auto)" : "Partner cost"}</label>
-            <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} placeholder="0.00" min={0} step="0.01" />
-          </div>
+          {form.assignment_mode === "manual" && (
+            <div className="space-y-2">
+              <Input placeholder="Search partner by name, trade, or location..." value={partnerSearch} onChange={(e) => setPartnerSearch(e.target.value)} />
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-border-light bg-card p-1.5 space-y-1.5">
+                <label
+                  className={cn(
+                    "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
+                    !form.partner_id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-text-primary">No partner</p>
+                    <p className="text-xs text-text-tertiary">Create job without assignment</p>
+                  </div>
+                  <input type="radio" name="convert-partner-select" className="h-4 w-4" checked={!form.partner_id} onChange={() => update("partner_id", "")} />
+                </label>
+                {filteredPartners.map((p) => {
+                  const pid = p.id;
+                  if (!pid) return null;
+                  const selected = form.partner_id === pid;
+                  const match = targetWorkType ? safePartnerMatchesTypeOfWork(p, targetWorkType) : false;
+                  return (
+                    <label
+                      key={pid}
+                      className={cn(
+                        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
+                        selected ? "border-primary bg-primary/5" : match ? "border-amber-300 bg-amber-50/40 hover:border-primary/30" : "border-border hover:border-primary/30",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-text-primary truncate">{p.company_name?.trim() || p.contact_name || "Partner"}</p>
+                        <p className="text-xs text-text-tertiary truncate">{p.trade ?? "—"} · {p.location ?? "—"}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {match ? <Badge variant="warning" size="sm">Match</Badge> : null}
+                        <input type="radio" name="convert-partner-select" className="h-4 w-4" checked={selected} onChange={() => update("partner_id", pid)} />
+                      </div>
+                    </label>
+                  );
+                })}
+                {filteredPartners.length === 0 ? <p className="text-xs text-text-tertiary px-2 py-2">No partners match this search.</p> : null}
+              </div>
+            </div>
+          )}
         </div>
+        {form.job_type === "hourly" ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Price</p>
+                <p className="text-sm font-semibold text-text-primary">{formatCurrency(hourlyPreview.clientTotal + accessSurchargePreview)}</p>
+              </div>
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Cost</p>
+                <p className="text-sm font-semibold text-text-primary">{formatCurrency(hourlyPreview.partnerTotal)}</p>
+              </div>
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Margin</p>
+                <p className="text-sm font-semibold text-text-primary">{hourlyMarginPct}%</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
+              <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
+            </div>
+            <p className="text-[11px] text-text-tertiary">Client hourly rate is loaded from Call Out type: {formatCurrency(Number(form.hourly_client_rate) || 0)}/h.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" /></div>
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value="0" disabled /></div>
+          </div>
+        )}
         {form.job_type === "hourly" && (
-          <div className="grid grid-cols-3 gap-4">
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate</label><Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min={0} step="0.01" /></div>
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min={0} step="0.01" /></div>
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min={1} step="0.5" /></div>
-          </div>
+          <p className="text-[11px] text-text-tertiary -mt-2">
+            Billing rule: up to 1h = 1h minimum, then rounds up in 30-minute increments from timer logs.
+          </p>
         )}
-        <JobModalScheduleFields
-          scheduledDate={form.scheduled_date}
-          arrivalFrom={form.arrival_from}
-          arrivalWindowMins={form.arrival_window_mins}
-          expectedFinishDate={form.expected_finish_date}
-          onChange={(field, v) => update(field, v)}
-          startDateRequired={!!form.partner_id}
-        />
-        <Select label="Partner" options={[{ value: "", label: "None" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope</label>
-          <textarea value={form.scope} onChange={(e) => update("scope", e.target.value)} rows={2} placeholder="Describe the work scope..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
-        </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Internal notes</label>
           <textarea value={form.internal_notes} onChange={(e) => update("internal_notes", e.target.value)} rows={2} placeholder="Internal use only..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
