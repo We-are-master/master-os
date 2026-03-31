@@ -1133,7 +1133,19 @@ export default function RequestsPage() {
             const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
             const freshReq = await getRequest(req.id).catch(() => null);
             const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
-            const uploaded = invitePhotoFiles?.length ? await uploadQuoteInviteImages(invitePhotoFiles, req.id) : [];
+            let uploaded: string[] = [];
+            if (invitePhotoFiles?.length) {
+              try {
+                uploaded = await uploadQuoteInviteImages(invitePhotoFiles, req.id);
+              } catch (imgErr) {
+                toast.error(
+                  imgErr instanceof Error
+                    ? `${imgErr.message} Continuing without invite photos.`
+                    : "Could not upload invite photos. Continuing without photos."
+                );
+                uploaded = [];
+              }
+            }
             const mergedQuoteImages = mergeImageUrlLists(fromRequest, uploaded);
             const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
             const catalogId =
@@ -1171,7 +1183,7 @@ export default function RequestsPage() {
             const inviteBody =
               `${req.service_type} — ${resolvedAddr.property_address ?? req.property_address ?? ""}`.trim() || quote.reference;
             if (sendMethod === "app" || sendMethod === "both") {
-              await fetch("/api/push/notify-partner", {
+              const pushRes = await fetch("/api/push/notify-partner", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -1180,7 +1192,20 @@ export default function RequestsPage() {
                   body: inviteBody,
                   data: { type: "quote_invite", quoteId: quote.id, photoUrls: photoUrlsForPush },
                 }),
-              }).catch(() => {});
+              }).catch(() => null);
+              if (pushRes?.ok) {
+                const pushBody = (await pushRes.json().catch(() => ({}))) as {
+                  sent?: number;
+                  tokensFound?: number;
+                };
+                if (Number(pushBody.sent ?? 0) <= 0) {
+                  toast.error(
+                    Number(pushBody.tokensFound ?? 0) <= 0
+                      ? "No valid push token found for selected partner(s)."
+                      : "Push accepted but not delivered."
+                  );
+                }
+              }
             }
             if (sendMethod === "email" || sendMethod === "both") {
               await fetch("/api/quotes/partner-invite-email", {
