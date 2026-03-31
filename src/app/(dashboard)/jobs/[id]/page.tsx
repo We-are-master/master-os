@@ -724,13 +724,16 @@ export default function JobDetailPage() {
   }, [job, cancelPresetId, cancelDetail, profile?.id, profile?.full_name]);
 
   const handleStatusChange = useCallback(async (j: Job, newStatus: Job["status"]): Promise<Job | null> => {
-    const check = canAdvanceJob(j, newStatus, {
-      customerPayments: customerPayments.map((p) => ({ type: p.type, amount: p.amount })),
-      partnerPayments: partnerPayments.map((p) => ({ type: p.type, amount: p.amount })),
-    });
-    if (!check.ok) {
-      toast.error(check.message ?? "Complete the current step before advancing.");
-      return null;
+    const forceCloseFromAwaitingPayment = j.status === "awaiting_payment" && newStatus === "completed";
+    if (!forceCloseFromAwaitingPayment) {
+      const check = canAdvanceJob(j, newStatus, {
+        customerPayments: customerPayments.map((p) => ({ type: p.type, amount: p.amount })),
+        partnerPayments: partnerPayments.map((p) => ({ type: p.type, amount: p.amount })),
+      });
+      if (!check.ok) {
+        toast.error(check.message ?? "Complete the current step before advancing.");
+        return null;
+      }
     }
     try {
       let selfBillId: string | undefined = j.self_bill_id ?? undefined;
@@ -774,17 +777,41 @@ export default function JobDetailPage() {
           ...derived,
         });
       }
+      const forcePaidPatch: Partial<Job> = forceCloseFromAwaitingPayment
+        ? {
+            finance_status: "paid",
+            customer_deposit_paid: Number(j.customer_deposit ?? 0) > 0 ? true : j.customer_deposit_paid,
+            customer_final_paid: true,
+            partner_payment_1_paid: Number(j.partner_payment_1 ?? 0) > 0 ? true : j.partner_payment_1_paid,
+            partner_payment_2_paid: Number(j.partner_payment_2 ?? 0) > 0 ? true : j.partner_payment_2_paid,
+            partner_payment_3_paid: Number(j.partner_payment_3 ?? 0) > 0 ? true : j.partner_payment_3_paid,
+          }
+        : {};
+
       const statusPatch: Partial<Job> = {
         status: newStatus,
         ...(selfBillId ? { self_bill_id: selfBillId } : {}),
+        ...forcePaidPatch,
         ...hourlyPatch,
         ...statusChangePartnerTimerPatch(j, newStatus),
         ...statusChangeOfficeTimerPatch(j, newStatus),
       };
       const updated = await updateJob(j.id, statusPatch);
+      if (forceCloseFromAwaitingPayment) {
+        const linked = await listInvoicesLinkedToJob(updated.reference, updated.invoice_id);
+        await Promise.all(
+          linked.map((inv) =>
+            updateInvoice(inv.id, {
+              status: "paid",
+              paid_date: new Date().toISOString().slice(0, 10),
+              collection_stage: "completed",
+            }),
+          ),
+        );
+      }
       await logAudit({ entityType: "job", entityId: j.id, entityRef: j.reference, action: "status_changed", fieldName: "status", oldValue: j.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
       setJob(updated);
-      toast.success(selfBillId ? "Self-bill created. Job updated." : "Job updated");
+      toast.success(forceCloseFromAwaitingPayment ? "Job marked Completed & paid." : (selfBillId ? "Self-bill created. Job updated." : "Job updated"));
       if (updated.partner_id && j.status !== newStatus) {
         notifyAssignedPartnerAboutJob({
           partnerId: updated.partner_id,
