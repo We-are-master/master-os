@@ -1084,17 +1084,27 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     setClientAddress({ client_name: "", property_address: "" });
   };
 
+  const accessSurchargePreview = computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+  const hourlyPreview = computeHourlyTotals({
+    elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
+    clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
+    partnerHourlyRate: Math.max(0, Number(form.hourly_partner_rate) || 0),
+  });
+  const hourlyMarginPct = hourlyPreview.clientTotal > 0
+    ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
+    : 0;
+
   return (
     <Modal open={open} onClose={onClose} title="New Job" subtitle="Create a new job" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
         <Select
-          label="Type of work *"
-          value={form.title}
-          onChange={(e) => update("title", e.target.value)}
+          label="Job type"
           options={[
-            { value: "", label: "Select type of work..." },
-            ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
+            { value: "fixed", label: "Fixed" },
+            { value: "hourly", label: "Hourly" },
           ]}
+          value={form.job_type}
+          onChange={(e) => update("job_type", e.target.value)}
         />
         {form.job_type === "hourly" && (
           <ServiceCatalogSelect
@@ -1125,31 +1135,16 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             }}
           />
         )}
+        <Select
+          label="Type of work *"
+          value={form.title}
+          onChange={(e) => update("title", e.target.value)}
+          options={[
+            { value: "", label: "Select type of work..." },
+            ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
+          ]}
+        />
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
-          <label className="flex items-center justify-between gap-3 text-sm">
-            <span>Address in CCZ (+£15)</span>
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              checked={!!form.in_ccz}
-              onChange={(e) => setForm((prev) => ({ ...prev, in_ccz: e.target.checked }))}
-            />
-          </label>
-          <label className="flex items-center justify-between gap-3 text-sm">
-            <span>Client has free parking</span>
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              checked={!!form.has_free_parking}
-              onChange={(e) => setForm((prev) => ({ ...prev, has_free_parking: e.target.checked }))}
-            />
-          </label>
-          <p className="text-[11px] text-text-tertiary">
-            Access surcharge: {formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}
-          </p>
-        </div>
         <JobModalScheduleFields
           scheduledDate={form.scheduled_date}
           arrivalFrom={form.arrival_from}
@@ -1167,15 +1162,34 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]"
           />
         </div>
-        <Select
-          label="Job type"
-          options={[
-            { value: "fixed", label: "Fixed" },
-            { value: "hourly", label: "Hourly" },
-          ]}
-          value={form.job_type}
-          onChange={(e) => update("job_type", e.target.value)}
-        />
+        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+              className={cn(
+                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                form.in_ccz ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+              )}
+            >
+              <p className="font-medium">Address in CCZ</p>
+              <p className="text-xs opacity-80">Adds +£15</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
+              className={cn(
+                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+              )}
+            >
+              <p className="font-medium">Free parking</p>
+              <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "No parking: +£15"}</p>
+            </button>
+          </div>
+          <p className="text-xs text-text-tertiary">Access surcharge total: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span></p>
+        </div>
         <Select
           label="Partner"
           options={[
@@ -1202,13 +1216,29 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           </select>
         </div>
         {form.job_type === "hourly" ? (
-          <div className="grid grid-cols-3 gap-4">
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate</label><Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" /></div>
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Price</p>
+                <p className="text-sm font-semibold text-text-primary">{formatCurrency(hourlyPreview.clientTotal + accessSurchargePreview)}</p>
+              </div>
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Cost</p>
+                <p className="text-sm font-semibold text-text-primary">{formatCurrency(hourlyPreview.partnerTotal)}</p>
+              </div>
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Margin</p>
+                <p className="text-sm font-semibold text-text-primary">{hourlyMarginPct}%</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
+              <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
+            </div>
+            <p className="text-[11px] text-text-tertiary">Client hourly rate is loaded from Call Out type: {formatCurrency(Number(form.hourly_client_rate) || 0)}/h.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
             <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" /></div>
             <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
