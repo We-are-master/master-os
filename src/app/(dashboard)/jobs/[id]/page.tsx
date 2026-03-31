@@ -54,6 +54,8 @@ import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import type { Invoice, Job, JobPayment, JobPaymentType, Partner, QuoteLineItem } from "@/types/database";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
+import { getSupabase } from "@/services/base";
+import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import {
   allConfiguredReportsApproved,
   canAdvanceJob,
@@ -1309,20 +1311,24 @@ export default function JobDetailPage() {
         const inv = await createInvoice({
           client_name: current.client_name ?? "Client",
           job_reference: current.reference,
-          amount: Math.max(0, Number(current.customer_final_payment ?? current.client_price ?? 0)),
+          amount: Math.max(0, customerDue),
           status: customerDue <= 0.02 ? "paid" : "pending",
           due_date: dueDate.toISOString().slice(0, 10),
           paid_date: customerDue <= 0.02 ? new Date().toISOString().slice(0, 10) : undefined,
-          invoice_kind: "final",
+          invoice_kind: "combined",
           collection_stage: customerDue <= 0.02 ? "completed" : "awaiting_final",
         });
         primaryInvoiceId = inv.id;
+        if (inv.status === "paid") {
+          await syncJobAfterInvoicePaidToLedger(getSupabase(), inv.id, "Manual");
+        }
       } else if (customerDue <= 0.02) {
         await updateInvoice(primaryInvoiceId, {
           status: "paid",
           paid_date: new Date().toISOString().slice(0, 10),
           collection_stage: "completed",
         });
+        await syncJobAfterInvoicePaidToLedger(getSupabase(), primaryInvoiceId, "Manual");
       }
       if (primaryInvoiceId && primaryInvoiceId !== current.invoice_id) {
         const withInvoice = await handleJobUpdate(current.id, { invoice_id: primaryInvoiceId }, { notifyPartner: false });

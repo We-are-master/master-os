@@ -159,7 +159,9 @@ export async function createJob(
   if (error) throw error;
   let job = (await getJob((data as Job).id)) ?? (data as Job);
 
-  if (job.client_price > 0.01 && !job.invoice_id) {
+  /** Quote → job flow creates its own invoice(s); skip duplicate full-price row. */
+  const fromQuote = Boolean((job as { quote_id?: string | null }).quote_id?.toString().trim());
+  if (job.client_price > 0.01 && !job.invoice_id && !fromQuote) {
     try {
       const due = new Date();
       due.setDate(due.getDate() + 14);
