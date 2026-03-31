@@ -160,6 +160,7 @@ export default function JobDetailPage() {
   const [cancelJobOpen, setCancelJobOpen] = useState(false);
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
   const [validatingComplete, setValidatingComplete] = useState(false);
+  const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
   const [cancellingJob, setCancellingJob] = useState(false);
@@ -1140,29 +1141,36 @@ export default function JobDetailPage() {
         if (withSelfBill) current = withSelfBill;
       }
 
-      const approvedPatch = await handleJobUpdate(
-        current.id,
-        {
-          report_submitted: true,
-          report_submitted_at: current.report_submitted_at ?? new Date().toISOString(),
-          internal_report_approved: true,
-          internal_invoice_approved: true,
-        },
-        { notifyPartner: false },
-      );
-      if (approvedPatch) current = approvedPatch;
-
-      const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
-      const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
-      const customerDue = Math.max(0, jobBillableRevenue(current) - (depositPaid + finalPaid));
-      const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
-      const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
-      if (customerDue > 0.02 || partnerDue > 0.02) {
-        await handleStatusChange(current, "awaiting_payment");
-        toast.success("Validation approved. Moved to Awaiting payment (outstanding balances found).");
+      if (approvalMode === "review_approve") {
+        await handleSendReportAndInvoice({
+          jobOverride: current,
+          reviewSendMethod: "manual",
+        });
       } else {
-        await handleStatusChange(current, "completed");
-        toast.success("Validation approved. Job marked Completed & paid.");
+        const approvedPatch = await handleJobUpdate(
+          current.id,
+          {
+            report_submitted: true,
+            report_submitted_at: current.report_submitted_at ?? new Date().toISOString(),
+            internal_report_approved: true,
+            internal_invoice_approved: true,
+          },
+          { notifyPartner: false },
+        );
+        if (approvedPatch) current = approvedPatch;
+
+        const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
+        const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
+        const customerDue = Math.max(0, jobBillableRevenue(current) - (depositPaid + finalPaid));
+        const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
+        const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
+        if (customerDue > 0.02 || partnerDue > 0.02) {
+          await handleStatusChange(current, "awaiting_payment");
+          toast.success("Validation approved. Moved to Awaiting payment (outstanding balances found).");
+        } else {
+          await handleStatusChange(current, "completed");
+          toast.success("Validation approved. Job marked Completed & paid.");
+        }
       }
       setValidateCompleteOpen(false);
     } catch (err) {
@@ -1170,7 +1178,7 @@ export default function JobDetailPage() {
     } finally {
       setValidatingComplete(false);
     }
-  }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments]);
+  }, [approvalMode, handleJobUpdate, handleStatusChange, customerPayments, partnerPayments, handleSendReportAndInvoice]);
 
   if (loading || !id) {
     return (
@@ -1292,10 +1300,12 @@ export default function JobDetailPage() {
                     return;
                   }
                   if (action.special === "send_report_invoice") {
-                    void handleSendReportAndInvoice();
+                    setApprovalMode("review_approve");
+                    setValidateCompleteOpen(true);
                     return;
                   }
                   if (job.status === "need_attention" && action.status === "completed") {
+                    setApprovalMode("validate_complete");
                     setValidateCompleteOpen(true);
                     return;
                   }
@@ -2152,7 +2162,7 @@ export default function JobDetailPage() {
       <Modal
         open={validateCompleteOpen}
         onClose={() => !validatingComplete && setValidateCompleteOpen(false)}
-        title="Validate and complete"
+        title={approvalMode === "review_approve" ? "Review and approve" : "Validate and complete"}
         subtitle={`${job.reference} — review before approval`}
         size="lg"
         className="max-w-3xl"
@@ -2177,7 +2187,7 @@ export default function JobDetailPage() {
               Cancel
             </Button>
             <Button type="button" loading={validatingComplete} onClick={() => void handleValidateAndComplete()}>
-              Approve and continue
+              {approvalMode === "review_approve" ? "Review & approve" : "Approve and continue"}
             </Button>
           </div>
         </div>
