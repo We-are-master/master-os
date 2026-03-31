@@ -96,6 +96,7 @@ import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-cal
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
+  auto_assigning: { label: "Auto assigning", variant: "info", dot: true },
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
@@ -103,16 +104,16 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
   final_check: { label: "Final Check", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
-  need_attention: { label: "Need attention", variant: "warning", dot: true },
+  need_attention: { label: "Final Check", variant: "warning", dot: true },
   completed: { label: "Completed", variant: "success", dot: true },
   cancelled: { label: "Cancelled", variant: "danger", dot: true },
 };
 
 const JOB_FLOW_STEPS: { label: string; statuses: Job["status"][] }[] = [
-  { label: "Booked", statuses: ["unassigned", "scheduled", "late"] },
+  { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"] },
   { label: "On site", statuses: ["in_progress_phase1", "in_progress_phase2", "in_progress_phase3"] },
-  { label: "Final check", statuses: ["final_check"] },
-  { label: "Awaiting payment", statuses: ["awaiting_payment", "need_attention"] },
+  { label: "Final check", statuses: ["final_check", "need_attention"] },
+  { label: "Awaiting payment", statuses: ["awaiting_payment"] },
   { label: "Completed", statuses: ["completed"] },
 ];
 

@@ -82,6 +82,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
 
   switch (job.status) {
     case "unassigned":
+    case "auto_assigning":
       return [cancelAction];
     case "scheduled":
     case "late":
@@ -226,6 +227,7 @@ export function reportPhaseLabel(phaseIndex: number, totalPhases: number): strin
 export function jobStatusRank(status: Job["status"]): number {
   switch (status) {
     case "unassigned":
+    case "auto_assigning":
     case "scheduled":
     case "late":
       return 0;

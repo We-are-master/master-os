@@ -25,6 +25,8 @@ export function scheduleJobStatusColorClasses(status: JobStatus): string {
   const map: Record<JobStatus, string> = {
     unassigned:
       "bg-amber-100 text-amber-950 border-amber-300 dark:bg-amber-950/50 dark:text-amber-100 dark:border-amber-800",
+    auto_assigning:
+      "bg-blue-100 text-blue-950 border-blue-300 dark:bg-blue-950/50 dark:text-blue-100 dark:border-blue-800",
     scheduled:
       "bg-sky-100 text-sky-950 border-sky-300 dark:bg-sky-950/50 dark:text-sky-100 dark:border-sky-800",
     late: "bg-orange-100 text-orange-950 border-orange-300 dark:bg-orange-950/50 dark:text-orange-100 dark:border-orange-800",
