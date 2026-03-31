@@ -62,6 +62,7 @@ import {
   partnerHourlyRateFromCatalogBundle,
 } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, isLikelyCczAddress } from "@/lib/ccz";
+import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -951,6 +952,7 @@ export default function JobsPage() {
 
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
+  const requiredFieldClass = "border-red-300 focus:border-red-400 focus:ring-red-100 hover:border-red-300";
   const [form, setForm] = useState({
     title: "",
     catalog_service_id: "",
@@ -960,8 +962,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     partner_cost: "",
     materials_cost: "",
     scheduled_date: "",
-    arrival_from: "08:00",
-    arrival_window_mins: "",
+    arrival_from: "09:00",
+    arrival_window_mins: "180",
     expected_finish_date: "",
     job_type: "fixed",
     scope: "",
@@ -974,9 +976,23 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
+  const [partnerSearch, setPartnerSearch] = useState("");
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
+  const targetWorkType =
+    (form.job_type === "hourly" ? (selectedCatalogService?.name ?? form.title) : form.title).trim();
+  const filteredPartners = useMemo(() => {
+    const q = partnerSearch.trim().toLowerCase();
+    if (!q) return partners;
+    return partners.filter((p) => {
+      const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
+      const trade = (p.trade ?? "").toLowerCase();
+      const location = (p.location ?? "").toLowerCase();
+      const tradesFlat = (p.trades ?? []).join(" ").toLowerCase();
+      return name.includes(q) || trade.includes(q) || location.includes(q) || tradesFlat.includes(q);
+    });
+  }, [partnerSearch, partners]);
 
   useEffect(() => {
     if (!open) return;
@@ -1076,8 +1092,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       partner_cost: "",
       materials_cost: "",
       scheduled_date: "",
-      arrival_from: "08:00",
-      arrival_window_mins: "",
+      arrival_from: "09:00",
+      arrival_window_mins: "180",
       expected_finish_date: "",
       job_type: "fixed",
       scope: "",
@@ -1112,6 +1128,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           ]}
           value={form.job_type}
           onChange={(e) => update("job_type", e.target.value)}
+          className={requiredFieldClass}
         />
         {form.job_type === "hourly" && (
           <ServiceCatalogSelect
@@ -1119,6 +1136,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             emptyOptionLabel="Select from Services..."
             catalog={catalogServices}
             value={form.catalog_service_id}
+            className={requiredFieldClass}
             onChange={(id, service) => {
               const hrs = Math.max(1, Number(service?.default_hours) || 1);
               const clientRate = Number(service?.hourly_rate) || 0;
@@ -1147,6 +1165,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             label="Type of work *"
             value={form.title}
             onChange={(e) => update("title", e.target.value)}
+            className={requiredFieldClass}
             options={[
               { value: "", label: "Select type of work..." },
               ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
@@ -1160,6 +1179,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           arrivalWindowMins={form.arrival_window_mins}
           expectedFinishDate={form.expected_finish_date}
           onChange={(field, v) => update(field, v)}
+          requiredFieldClassName={requiredFieldClass}
         />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work {form.partner_id || form.partner_ids.length > 0 ? "*" : ""}</label>
@@ -1179,7 +1199,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
               onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
               className={cn(
                 "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                form.in_ccz ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+                form.in_ccz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
               )}
             >
               <p className="font-medium">{form.in_ccz ? "CCZ fee applied" : "Apply CCZ"}</p>
@@ -1190,7 +1210,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
               onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
               className={cn(
                 "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                !form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
               )}
             >
               <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
@@ -1226,18 +1246,65 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             </button>
           </div>
           {form.assignment_mode === "manual" && (
-            <Select
-              label="Partner"
-              options={[
-                { value: "", label: "No partner" },
-                ...partners.map((p) => ({
-                  value: p.id,
-                  label: p.company_name?.trim() || p.contact_name || "Partner",
-                })),
-              ]}
-              value={form.partner_id}
-              onChange={(e) => update("partner_id", e.target.value)}
-            />
+            <div className="space-y-2">
+              <Input
+                placeholder="Search partner by name, trade, or location..."
+                value={partnerSearch}
+                onChange={(e) => setPartnerSearch(e.target.value)}
+              />
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-border-light bg-card p-1.5 space-y-1.5">
+                <label
+                  className={cn(
+                    "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
+                    !form.partner_id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-text-primary">No partner</p>
+                    <p className="text-xs text-text-tertiary">Create job without assignment</p>
+                  </div>
+                  <input
+                    type="radio"
+                    name="partner-select"
+                    className="h-4 w-4"
+                    checked={!form.partner_id}
+                    onChange={() => update("partner_id", "")}
+                  />
+                </label>
+                {filteredPartners.map((p) => {
+                  const pid = p.id;
+                  const selected = form.partner_id === pid;
+                  const match = targetWorkType ? safePartnerMatchesTypeOfWork(p, targetWorkType) : false;
+                  return (
+                    <label
+                      key={pid}
+                      className={cn(
+                        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
+                        selected ? "border-primary bg-primary/5" : match ? "border-amber-300 bg-amber-50/40 hover:border-primary/30" : "border-border hover:border-primary/30",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-text-primary truncate">{p.company_name?.trim() || p.contact_name || "Partner"}</p>
+                        <p className="text-xs text-text-tertiary truncate">{p.trade ?? "—"} · {p.location ?? "—"}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {match ? <Badge variant="warning" size="sm">Match</Badge> : null}
+                        <input
+                          type="radio"
+                          name="partner-select"
+                          className="h-4 w-4"
+                          checked={selected}
+                          onChange={() => update("partner_id", pid)}
+                        />
+                      </div>
+                    </label>
+                  );
+                })}
+                {filteredPartners.length === 0 ? (
+                  <p className="text-xs text-text-tertiary px-2 py-2">No partners match this search.</p>
+                ) : null}
+              </div>
+            </div>
           )}
         </div>
         {form.job_type === "hourly" ? (
