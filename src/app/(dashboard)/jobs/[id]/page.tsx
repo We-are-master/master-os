@@ -38,6 +38,12 @@ import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
 import { uploadManualJobReport } from "@/services/job-report-storage";
+import {
+  createSignedJobReportAssetUrl,
+  createSignedJobReportPdfUrl,
+  listAppJobReports,
+  type AppJobReportRow,
+} from "@/services/job-reports";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logFieldChanges } from "@/services/audit";
 import { LocationMiniMap } from "@/components/ui/location-picker";
@@ -187,6 +193,10 @@ export default function JobDetailPage() {
   const [analyzingManualReport, setAnalyzingManualReport] = useState(false);
   const [phaseReportFiles, setPhaseReportFiles] = useState<Record<number, File | null>>({});
   const [analyzingPhase, setAnalyzingPhase] = useState<number | null>(null);
+  const [appJobReports, setAppJobReports] = useState<AppJobReportRow[]>([]);
+  const [loadingAppJobReports, setLoadingAppJobReports] = useState(false);
+  const [openingReportId, setOpeningReportId] = useState<string | null>(null);
+  const [openingReportImageKey, setOpeningReportImageKey] = useState<string | null>(null);
   const [scopeDraft, setScopeDraft] = useState("");
   const [savingScope, setSavingScope] = useState(false);
   const isAdmin = profile?.role === "admin";
@@ -390,6 +400,28 @@ export default function JobDetailPage() {
   }, [id]);
 
   useEffect(() => {
+    if (!job?.id) {
+      setAppJobReports([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingAppJobReports(true);
+    (async () => {
+      try {
+        const rows = await listAppJobReports(job.id);
+        if (!cancelled) setAppJobReports(rows);
+      } catch {
+        if (!cancelled) setAppJobReports([]);
+      } finally {
+        if (!cancelled) setLoadingAppJobReports(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [job?.id, job?.updated_at]);
+
+  useEffect(() => {
     if (!job?.reference?.trim()) {
       setJobInvoices([]);
       return;
@@ -584,6 +616,49 @@ export default function JobDetailPage() {
       return undefined;
     }
   }, [profile?.id, profile?.full_name]);
+
+  const reportByPhase = useMemo(() => {
+    const map = new Map<number, AppJobReportRow>();
+    for (const row of appJobReports) {
+      const prev = map.get(row.phase);
+      const rowTs = new Date(row.uploaded_at ?? row.created_at ?? 0).getTime();
+      const prevTs = prev ? new Date(prev.uploaded_at ?? prev.created_at ?? 0).getTime() : -1;
+      if (!prev || rowTs >= prevTs) map.set(row.phase, row);
+    }
+    return map;
+  }, [appJobReports]);
+
+  const openPartnerReportPdf = useCallback(async (row: AppJobReportRow) => {
+    if (!row.pdf_url?.trim()) {
+      toast.error("This report has no PDF.");
+      return;
+    }
+    setOpeningReportId(row.id);
+    try {
+      const signed = await createSignedJobReportPdfUrl(row.pdf_url, 60 * 60);
+      if (!signed) {
+        toast.error("Could not sign PDF URL.");
+        return;
+      }
+      window.open(signed, "_blank", "noopener,noreferrer");
+    } finally {
+      setOpeningReportId(null);
+    }
+  }, []);
+
+  const openPartnerReportImage = useCallback(async (rawUrl: string, key: string) => {
+    setOpeningReportImageKey(key);
+    try {
+      const signed = await createSignedJobReportAssetUrl(rawUrl, 60 * 60);
+      if (!signed) {
+        toast.error("Could not sign image URL.");
+        return;
+      }
+      window.open(signed, "_blank", "noopener,noreferrer");
+    } finally {
+      setOpeningReportImageKey(null);
+    }
+  }, []);
 
   const handleSaveFinancials = useCallback(async () => {
     if (!job) return;
@@ -1573,6 +1648,12 @@ export default function JobDetailPage() {
                   const phaseLabel = reportPhaseLabel(n, job.total_phases);
                   const uploadCheck = canMarkReportUploaded(job, n);
                   const approveCheck = canApproveReport(job, n);
+                  const appReport = reportByPhase.get(n);
+                  const reportImages = [
+                    ...(appReport?.images ?? []),
+                    ...(appReport?.before_images ?? []),
+                    ...(appReport?.after_images ?? []),
+                  ].filter(Boolean);
                   return (
                     <div key={n} className={`rounded-xl border p-4 space-y-2 ${approved ? "border-emerald-200 bg-emerald-50/30 dark:bg-emerald-950/20" : uploaded ? "border-amber-200 bg-amber-50/30 dark:bg-amber-950/10" : "border-border-light bg-surface-hover/40"}`}>
                       <div className="flex items-start justify-between gap-2">
@@ -1586,6 +1667,48 @@ export default function JobDetailPage() {
                       </div>
                       {approvedAt && <p className="text-xs text-emerald-600">Approved {new Date(approvedAt).toLocaleDateString()}</p>}
                       {uploadedAt && !approvedAt && <p className="text-xs text-amber-600">Uploaded {new Date(uploadedAt).toLocaleDateString()}</p>}
+                      {appReport && (
+                        <div className="rounded-lg border border-border-light bg-card/70 p-3 space-y-2">
+                          {appReport.description?.trim() ? (
+                            <p className="text-xs text-text-secondary">
+                              <span className="font-semibold text-text-primary">Notes:</span> {appReport.description.trim()}
+                            </p>
+                          ) : null}
+                          {appReport.materials?.trim() ? (
+                            <p className="text-xs text-text-secondary">
+                              <span className="font-semibold text-text-primary">Materials:</span> {appReport.materials.trim()}
+                            </p>
+                          ) : null}
+                          {reportImages.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {reportImages.slice(0, 4).map((url, idx) => (
+                                <button
+                                  key={`${appReport.id}-${idx}`}
+                                  type="button"
+                                  onClick={() => void openPartnerReportImage(url, `${appReport.id}-${idx}`)}
+                                  className="text-[11px] underline text-primary hover:opacity-80"
+                                >
+                                  {openingReportImageKey === `${appReport.id}-${idx}` ? "Opening..." : `Image ${idx + 1}`}
+                                </button>
+                              ))}
+                              {reportImages.length > 4 && (
+                                <span className="text-[11px] text-text-tertiary">+{reportImages.length - 4} more</span>
+                              )}
+                            </div>
+                          )}
+                          {appReport.pdf_url ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              icon={<ExternalLink className="h-3.5 w-3.5" />}
+                              loading={openingReportId === appReport.id}
+                              onClick={() => void openPartnerReportPdf(appReport)}
+                            >
+                              Open PDF
+                            </Button>
+                          ) : null}
+                        </div>
+                      )}
                       <div className="space-y-2 pt-1">
                         {!uploaded && (
                           <>
@@ -1651,6 +1774,28 @@ export default function JobDetailPage() {
                     </div>
                   );
                 })}
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <p className="text-xs text-text-tertiary">
+                  {loadingAppJobReports ? "Loading partner reports..." : `${appJobReports.length} report record(s) from partner app`}
+                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<RefreshCw className="h-3.5 w-3.5" />}
+                  onClick={async () => {
+                    if (!job?.id) return;
+                    setLoadingAppJobReports(true);
+                    try {
+                      const rows = await listAppJobReports(job.id);
+                      setAppJobReports(rows);
+                    } finally {
+                      setLoadingAppJobReports(false);
+                    }
+                  }}
+                >
+                  Refresh reports
+                </Button>
               </div>
               {allConfiguredReportsApproved(job) && (
                 <div className="mt-3 p-3 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center gap-3">

@@ -9,6 +9,9 @@ export type AppJobReportRow = {
   pdf_url: string | null;
   description: string | null;
   materials: string | null;
+  images?: string[] | null;
+  before_images?: string[] | null;
+  after_images?: string[] | null;
   uploaded_at: string;
   created_at: string | null;
 };
@@ -18,7 +21,7 @@ export async function listAppJobReports(jobId: string): Promise<AppJobReportRow[
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("job_reports")
-    .select("id, job_id, phase, pdf_url, description, materials, uploaded_at, created_at")
+    .select("*")
     .eq("job_id", jobId)
     .order("phase", { ascending: true })
     .order("uploaded_at", { ascending: false });
@@ -49,6 +52,16 @@ export function jobReportPdfPathFromStoredUrl(pdfUrl: string): string | null {
 /** Time-limited URL for opening the PDF in the browser (private bucket). */
 export async function createSignedJobReportPdfUrl(pdfUrl: string, expiresSec = 3600): Promise<string | null> {
   const path = jobReportPdfPathFromStoredUrl(pdfUrl);
+  if (!path) return null;
+  const supabase = getSupabase();
+  const { data, error } = await supabase.storage.from(JOB_REPORTS_BUCKET).createSignedUrl(path, expiresSec);
+  if (error || !data?.signedUrl) return null;
+  return data.signedUrl;
+}
+
+/** Generic signer for any report asset URL/path stored by the app (PDF/images). */
+export async function createSignedJobReportAssetUrl(rawUrlOrPath: string, expiresSec = 3600): Promise<string | null> {
+  const path = jobReportPdfPathFromStoredUrl(rawUrlOrPath) ?? rawUrlOrPath.trim();
   if (!path) return null;
   const supabase = getSupabase();
   const { data, error } = await supabase.storage.from(JOB_REPORTS_BUCKET).createSignedUrl(path, expiresSec);
