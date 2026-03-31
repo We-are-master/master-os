@@ -21,7 +21,7 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, Download, List, LayoutGrid, Calendar, Map,
   FileText, BarChart3, Clock, ArrowRight,
-  Send, CheckCircle2, RotateCcw, XCircle,
+  Send, CheckCircle2, RotateCcw, RefreshCw, XCircle,
   Mail, Building2,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
   ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
@@ -1109,6 +1109,13 @@ function QuoteDetailDrawer({
     if (quote.quote_type === "partner") loadBids(quote.id);
   }, [quote.id, quote.quote_type, loadBids]);
 
+  const handleRefreshBids = useCallback(async () => {
+    if (quote.quote_type !== "partner") return;
+    await loadBids(quote.id);
+    const fresh = await getQuote(quote.id);
+    if (fresh) onQuoteUpdate?.(fresh);
+  }, [quote.id, quote.quote_type, loadBids, onQuoteUpdate]);
+
   useEffect(() => {
     if (!isAdmin) return;
     listAssignableUsers().then(setAssignableUsers).catch(() => {});
@@ -2042,7 +2049,24 @@ function QuoteDetailDrawer({
                 </Button>
               )}
               <div className="p-4 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
+                  {quote.quote_type === "partner" && (
+                    <button
+                      type="button"
+                      title="Refresh bids"
+                      aria-label="Refresh partner bids"
+                      disabled={bidsLoading}
+                      onClick={() => void handleRefreshBids()}
+                      className={cn(
+                        "shrink-0 rounded-lg border border-border-light bg-surface-tertiary p-2 text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary disabled:opacity-50",
+                        bidsLoading && "pointer-events-none",
+                      )}
+                    >
+                      <RefreshCw className={cn("h-4 w-4", bidsLoading && "animate-spin")} />
+                    </button>
+                  )}
+                </div>
                 <p className="text-xs text-text-tertiary mt-0.5">
                   Optional: approve one bid to lock <strong className="text-text-secondary">partner cost</strong> on the quote. The quote stays in bidding until you send it to the customer — it is{" "}
                   <strong className="text-text-secondary">not</strong> customer-accepted yet. Then set <strong className="text-text-secondary">your price</strong> on Review & Send, complete the proposal, and use{" "}
