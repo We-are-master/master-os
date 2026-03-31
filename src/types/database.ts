@@ -26,6 +26,7 @@ export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quot
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
 export type JobStatus =
   | "unassigned"
+  | "auto_assigning"
   | "scheduled"
   | "late"
   | "in_progress_phase1"

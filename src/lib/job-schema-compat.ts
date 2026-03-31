@@ -59,7 +59,8 @@ function stripOperationalFlowKeysIfDisabled(out: Record<string, unknown>): void 
 }
 
 function mapUnassignedStatus(status: unknown): unknown {
-  return status === "unassigned" ? "scheduled" : status;
+  if (status === "unassigned" || status === "auto_assigning") return "scheduled";
+  return status;
 }
 
 /** Slim row for older Postgres / PostgREST schema cache (used on retry and when legacy env is on). */

@@ -2036,8 +2036,8 @@ function ConvertToJobModal({
                   form.in_ccz ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
                 )}
               >
-                <p className="font-medium">Address in CCZ</p>
-                <p className="text-xs opacity-80">Adds +£15</p>
+                <p className="font-medium">{form.in_ccz ? "CCZ fee applied" : "Apply CCZ"}</p>
+                <p className="text-xs opacity-80">{form.in_ccz ? "+£15 applied" : "Adds +£15"}</p>
               </button>
               <button
                 type="button"
@@ -2047,8 +2047,8 @@ function ConvertToJobModal({
                   form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300",
                 )}
               >
-                <p className="font-medium">Free parking</p>
-                <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "No parking: +£15"}</p>
+                <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
+                <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "+£15 applied"}</p>
               </button>
             </div>
             <p className="text-xs text-text-tertiary">Access surcharge: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>
@@ -2335,8 +2335,8 @@ function CreateRequestModal({
                     form.in_ccz ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
                   )}
                 >
-                  <p className="font-medium">Address in CCZ</p>
-                  <p className="text-xs opacity-80">Adds +£15 on job</p>
+                  <p className="font-medium">{form.in_ccz ? "CCZ fee applied" : "Apply CCZ"}</p>
+                  <p className="text-xs opacity-80">{form.in_ccz ? "+£15 applied" : "Adds +£15 on job"}</p>
                 </button>
                 <button
                   type="button"
@@ -2346,8 +2346,8 @@ function CreateRequestModal({
                     form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300",
                   )}
                 >
-                  <p className="font-medium">Free parking</p>
-                  <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "No parking: +£15"}</p>
+                  <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
+                  <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "+£15 applied"}</p>
                 </button>
               </div>
               <p className="text-xs text-text-tertiary">Access surcharge for job: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>

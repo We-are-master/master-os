@@ -63,7 +63,7 @@ import {
 } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, isLikelyCczAddress } from "@/lib/ccz";
 
-const JOB_STATUSES = ["unassigned", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
+const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
 const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
 
@@ -132,6 +132,7 @@ function JobCardFinanceRow({ job }: { job: Job }) {
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
+  auto_assigning: { label: "Auto assigning", variant: "info", dot: true },
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
@@ -139,7 +140,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
   final_check: { label: "Final Check", variant: "warning", dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
-  need_attention: { label: "Need attention", variant: "warning", dot: true },
+  need_attention: { label: "Final Check", variant: "warning", dot: true },
   completed: { label: "Paid & Completed", variant: "success", dot: true },
   cancelled: { label: "Lost & Cancelled", variant: "danger", dot: true },
 };
@@ -230,13 +231,13 @@ function JobsPageContent() {
   const kanbanColumns = useMemo(() => {
     const ids = [
       "unassigned",
+      "auto_assigning",
       "scheduled",
       "in_progress",
       "final_check",
       "awaiting_payment",
       "completed",
       "cancelled",
-      "need_attention",
     ] as const;
     return ids.map((id) => {
       if (id === "in_progress") {
@@ -260,7 +261,7 @@ function JobsPageContent() {
           id,
           title: "Final checks",
           color: "bg-amber-500",
-          items: filteredData.filter((j) => j.status === "final_check"),
+          items: filteredData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
         };
       }
       return {
@@ -271,9 +272,7 @@ function JobsPageContent() {
             ? "bg-emerald-500"
             : id === "cancelled"
               ? "bg-stone-500"
-                : id === "need_attention"
-                ? "bg-orange-500"
-                  : id === "awaiting_payment"
+                : id === "awaiting_payment"
                   ? "bg-amber-600"
                     : id === "unassigned"
                       ? "bg-slate-500"
@@ -336,7 +335,7 @@ function JobsPageContent() {
 
   const scheduledTabCount = (tabCounts.scheduled ?? 0) + (tabCounts.late ?? 0);
 
-  const finalChecksTabCount = tabCounts.final_check ?? 0;
+  const finalChecksTabCount = (tabCounts.final_check ?? 0) + (tabCounts.need_attention ?? 0);
 
   const activeJobsKpiCount = useMemo(() => {
     const onSite =
@@ -345,18 +344,19 @@ function JobsPageContent() {
       (tabCounts.in_progress_phase3 ?? 0);
     return (
       (tabCounts.unassigned ?? 0) +
+      (tabCounts.auto_assigning ?? 0) +
       (tabCounts.scheduled ?? 0) +
       (tabCounts.late ?? 0) +
       onSite +
       (tabCounts.final_check ?? 0) +
-      (tabCounts.awaiting_payment ?? 0) +
-      (tabCounts.need_attention ?? 0)
+      (tabCounts.awaiting_payment ?? 0)
     );
   }, [tabCounts]);
 
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0 },
     { id: "unassigned", label: "Unassigned", count: tabCounts.unassigned ?? 0 },
+    { id: "auto_assigning", label: "Assigning", count: tabCounts.auto_assigning ?? 0 },
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount },
     { id: "in_progress", label: "In Progress", count: inProgressTabCount },
     { id: "final_check", label: "Final Checks", count: finalChecksTabCount },
@@ -429,7 +429,7 @@ function JobsPageContent() {
         partner_ids: formData.partner_ids,
         owner_id: formData.owner_id ?? profile?.id,
         owner_name: formData.owner_name ?? profile?.full_name,
-        status: jobHasPartnerSet(formData as Job) ? "scheduled" : "unassigned",
+        status: (formData.status as Job["status"]) ?? (jobHasPartnerSet(formData as Job) ? "scheduled" : "unassigned"),
         progress: 0,
         current_phase: 0,
         total_phases: normalizeTotalPhases(formData.total_phases),
@@ -960,7 +960,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     partner_cost: "",
     materials_cost: "",
     scheduled_date: "",
-    arrival_from: "",
+    arrival_from: "08:00",
     arrival_window_mins: "",
     expected_finish_date: "",
     job_type: "fixed",
@@ -970,11 +970,13 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     billed_hours: "1",
     in_ccz: false,
     has_free_parking: true,
+    assignment_mode: "manual",
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
+  const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
 
   useEffect(() => {
     if (!open) return;
@@ -994,13 +996,14 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title) { toast.error("Type of work is required"); return; }
+    if (form.job_type !== "hourly" && !form.title) { toast.error("Type of work is required"); return; }
     if (form.job_type === "hourly" && !form.catalog_service_id) {
       toast.error("For hourly jobs, select a Call Out type from Services.");
       return;
     }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
-    const hasPartner = !!(form.partner_id || form.partner_ids.length > 0);
+    const isAutoAssign = form.assignment_mode === "auto";
+    const hasPartner = !isAutoAssign && !!form.partner_id;
     const sched = resolveJobModalSchedule({
       scheduled_date: form.scheduled_date,
       arrival_from: form.arrival_from,
@@ -1035,15 +1038,18 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
 
     onCreate({
-      title: normalizeTypeOfWork(form.title.trim()) || form.title.trim(),
+      title: form.job_type === "hourly"
+        ? (selectedCatalogService?.name ? (normalizeTypeOfWork(selectedCatalogService.name) || selectedCatalogService.name) : (normalizeTypeOfWork(form.title.trim()) || form.title.trim()))
+        : (normalizeTypeOfWork(form.title.trim()) || form.title.trim()),
       catalog_service_id: form.catalog_service_id || null,
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
       property_address: clientAddress.property_address,
-      partner_id: form.partner_id || undefined,
-      partner_ids: form.partner_ids.length > 0 ? form.partner_ids : undefined,
-      partner_name: selectedPartner ? (selectedPartner.company_name?.trim() || selectedPartner.contact_name) : undefined,
+      partner_id: isAutoAssign ? null : (form.partner_id || undefined),
+      partner_ids: undefined,
+      partner_name: isAutoAssign ? null : (selectedPartner ? (selectedPartner.company_name?.trim() || selectedPartner.contact_name) : undefined),
+      status: isAutoAssign ? "auto_assigning" : undefined,
       job_type: (form.job_type as Job["job_type"]) ?? "fixed",
       hourly_client_rate: isHourly ? hourlyClientRate : null,
       hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
@@ -1070,7 +1076,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       partner_cost: "",
       materials_cost: "",
       scheduled_date: "",
-      arrival_from: "",
+      arrival_from: "08:00",
       arrival_window_mins: "",
       expected_finish_date: "",
       job_type: "fixed",
@@ -1080,6 +1086,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       billed_hours: "1",
       in_ccz: false,
       has_free_parking: true,
+      assignment_mode: "manual",
     });
     setClientAddress({ client_name: "", property_address: "" });
   };
@@ -1135,15 +1142,17 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             }}
           />
         )}
-        <Select
-          label="Type of work *"
-          value={form.title}
-          onChange={(e) => update("title", e.target.value)}
-          options={[
-            { value: "", label: "Select type of work..." },
-            ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
-          ]}
-        />
+        {form.job_type !== "hourly" && (
+          <Select
+            label="Type of work *"
+            value={form.title}
+            onChange={(e) => update("title", e.target.value)}
+            options={[
+              { value: "", label: "Select type of work..." },
+              ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
+            ]}
+          />
+        )}
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
         <JobModalScheduleFields
           scheduledDate={form.scheduled_date}
@@ -1173,8 +1182,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                 form.in_ccz ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
               )}
             >
-              <p className="font-medium">Address in CCZ</p>
-              <p className="text-xs opacity-80">Adds +£15</p>
+              <p className="font-medium">{form.in_ccz ? "CCZ fee applied" : "Apply CCZ"}</p>
+              <p className="text-xs opacity-80">{form.in_ccz ? "+£15 applied" : "Adds +£15"}</p>
             </button>
             <button
               type="button"
@@ -1184,36 +1193,52 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                 form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300",
               )}
             >
-              <p className="font-medium">Free parking</p>
-              <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "No parking: +£15"}</p>
+              <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
+              <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "+£15 applied"}</p>
             </button>
           </div>
           <p className="text-xs text-text-tertiary">Access surcharge total: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span></p>
         </div>
-        <Select
-          label="Partner"
-          options={[
-            { value: "", label: "No partner" },
-            ...partners.map((p) => ({
-              value: p.id,
-              label: p.company_name?.trim() || p.contact_name || "Partner",
-            })),
-          ]}
-          value={form.partner_id}
-          onChange={(e) => update("partner_id", e.target.value)}
-        />
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Partners (multiple)</label>
-          <select
-            multiple
-            value={form.partner_ids}
-            onChange={(e) => setForm((prev) => ({ ...prev, partner_ids: Array.from(e.target.selectedOptions).map((o) => o.value) }))}
-            className="w-full min-h-[96px] rounded-lg border border-border bg-card text-sm text-text-primary px-2 py-1.5"
-          >
-            {partners.map((p) => (
-              <option key={p.id} value={p.id}>{p.company_name?.trim() || p.contact_name || "Partner"}</option>
-            ))}
-          </select>
+        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner allocation</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "manual" }))}
+              className={cn(
+                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                form.assignment_mode === "manual" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+              )}
+            >
+              <p className="font-medium">Allocate partner</p>
+              <p className="text-xs opacity-80">Pick a specific partner now</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }))}
+              className={cn(
+                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                form.assignment_mode === "auto" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+              )}
+            >
+              <p className="font-medium">Auto assign</p>
+              <p className="text-xs opacity-80">System will assign after creation</p>
+            </button>
+          </div>
+          {form.assignment_mode === "manual" && (
+            <Select
+              label="Partner"
+              options={[
+                { value: "", label: "No partner" },
+                ...partners.map((p) => ({
+                  value: p.id,
+                  label: p.company_name?.trim() || p.contact_name || "Partner",
+                })),
+              ]}
+              value={form.partner_id}
+              onChange={(e) => update("partner_id", e.target.value)}
+            />
+          )}
         </div>
         {form.job_type === "hourly" ? (
           <div className="space-y-3">
