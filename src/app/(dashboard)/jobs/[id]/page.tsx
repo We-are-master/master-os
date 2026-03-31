@@ -82,6 +82,10 @@ import {
   formatOfficeTimer,
   statusChangeOfficeTimerPatch,
 } from "@/lib/office-job-timer";
+import {
+  computeHourlyTotals,
+  resolveJobHourlyRates,
+} from "@/lib/job-hourly-billing";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
 import {
   OFFICE_JOB_CANCELLATION_REASONS,
@@ -232,6 +236,23 @@ export default function JobDetailPage() {
     if (!useOffice) return null;
     return computeOfficeTimerElapsedSeconds(job);
   }, [job, officeTimerTick]);
+
+  const hourlyAutoBilling = useMemo(() => {
+    if (!job || job.job_type !== "hourly") return null;
+    const elapsedSeconds = officeTimerDisplaySeconds ?? (Number(job.timer_elapsed_seconds ?? 0) || 0);
+    const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+    const totals = computeHourlyTotals({
+      elapsedSeconds,
+      clientHourlyRate: clientRate,
+      partnerHourlyRate: partnerRate,
+    });
+    return {
+      ...totals,
+      clientRate,
+      partnerRate,
+      customerFinalPayment: totals.clientTotal - Number(job.customer_deposit ?? 0),
+    };
+  }, [job, officeTimerDisplaySeconds]);
 
   const loadPayments = useCallback(async (jobId: string) => {
     setLoadingPayments(true);
@@ -533,14 +554,37 @@ export default function JobDetailPage() {
     setSavingFin(true);
     try {
       const r2 = (s: string) => Math.round((parseFloat(s) || 0) * 100) / 100;
-      const client_price = r2(finForm.client_price);
+      let client_price = r2(finForm.client_price);
       const extras_amount = r2(finForm.extras_amount);
-      const partner_cost = r2(finForm.partner_cost);
+      let partner_cost = r2(finForm.partner_cost);
       const materials_cost = r2(finForm.materials_cost);
       const partner_agreed_value = r2(finForm.partner_agreed_value);
       const customer_deposit = r2(finForm.customer_deposit);
-      const customer_final_payment = r2(finForm.customer_final_payment);
-      const newFields = { client_price, extras_amount, partner_cost, materials_cost, partner_agreed_value, customer_deposit, customer_final_payment };
+      let customer_final_payment = r2(finForm.customer_final_payment);
+      let billed_hours: number | undefined;
+      if (job.job_type === "hourly") {
+        const elapsedSeconds = computeOfficeTimerElapsedSeconds(job);
+        const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+        const totals = computeHourlyTotals({
+          elapsedSeconds,
+          clientHourlyRate: clientRate,
+          partnerHourlyRate: partnerRate,
+        });
+        client_price = totals.clientTotal;
+        partner_cost = totals.partnerTotal;
+        customer_final_payment = Math.round(Math.max(0, client_price + extras_amount - customer_deposit) * 100) / 100;
+        billed_hours = totals.billedHours;
+      }
+      const newFields = {
+        client_price,
+        extras_amount,
+        partner_cost,
+        materials_cost,
+        partner_agreed_value,
+        customer_deposit,
+        customer_final_payment,
+        ...(billed_hours != null ? { billed_hours } : {}),
+      };
       await handleJobUpdate(job.id, newFields);
       await logFieldChanges(
         "job", job.id, job.reference,
@@ -652,9 +696,36 @@ export default function JobDetailPage() {
         });
         selfBillId = selfBill.id;
       }
+      const hourlyPatch: Partial<Job> = {};
+      if (j.job_type === "hourly") {
+        const elapsedSeconds = computeOfficeTimerElapsedSeconds(j);
+        const { clientRate, partnerRate } = resolveJobHourlyRates(j);
+        const totals = computeHourlyTotals({
+          elapsedSeconds,
+          clientHourlyRate: clientRate,
+          partnerHourlyRate: partnerRate,
+        });
+        const customerDeposit = Number(j.customer_deposit ?? 0);
+        const customerFinal = Math.max(0, totals.clientTotal - customerDeposit);
+        const derived = deriveStoredJobFinancials({
+          ...j,
+          client_price: totals.clientTotal,
+          partner_cost: totals.partnerTotal,
+        } as Job);
+        Object.assign(hourlyPatch, {
+          billed_hours: totals.billedHours,
+          hourly_client_rate: clientRate,
+          hourly_partner_rate: partnerRate,
+          client_price: totals.clientTotal,
+          partner_cost: totals.partnerTotal,
+          customer_final_payment: customerFinal,
+          ...derived,
+        });
+      }
       const statusPatch: Partial<Job> = {
         status: newStatus,
         ...(selfBillId ? { self_bill_id: selfBillId } : {}),
+        ...hourlyPatch,
         ...statusChangePartnerTimerPatch(j, newStatus),
         ...statusChangeOfficeTimerPatch(j, newStatus),
       };
@@ -1644,6 +1715,18 @@ export default function JobDetailPage() {
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 flex gap-2 text-xs text-amber-900 dark:text-amber-100">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                     Deposit + final ({formatCurrency(scheduledCustomerTotal)}) ≠ billable total ({formatCurrency(billableRevenue)}). Align below.
+                  </div>
+                )}
+                {hourlyAutoBilling && (
+                  <div className="rounded-xl border border-sky-500/35 bg-sky-500/10 p-3 text-xs text-sky-900 dark:text-sky-100 space-y-1">
+                    <p className="font-semibold">Hourly auto-billing active</p>
+                    <p>
+                      Logged: {formatOfficeTimer(computeOfficeTimerElapsedSeconds(job))} · Billed: {hourlyAutoBilling.billedHours}h
+                      (minimum 1h, then 30-minute increments).
+                    </p>
+                    <p>
+                      Client total: {formatCurrency(hourlyAutoBilling.clientTotal)} · Partner total: {formatCurrency(hourlyAutoBilling.partnerTotal)}
+                    </p>
                   </div>
                 )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

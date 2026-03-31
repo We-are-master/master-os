@@ -54,6 +54,14 @@ import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { jobBillableRevenue, jobMarginPercent, jobProfit } from "@/lib/job-financials";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import type { CatalogService } from "@/types/database";
+import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
+import {
+  computeHourlyTotals,
+  partnerHourlyRateFromCatalogBundle,
+} from "@/lib/job-hourly-billing";
+import { computeAccessSurcharge, isLikelyCczAddress } from "@/lib/ccz";
 
 const JOB_STATUSES = ["unassigned", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -405,9 +413,14 @@ function JobsPageContent() {
         return;
       }
     }
+    const accessSurcharge = computeAccessSurcharge({
+      inCcz: formData.in_ccz,
+      hasFreeParking: formData.has_free_parking,
+    });
     try {
       const result = await createJob({
         title: formData.title ?? "",
+        catalog_service_id: formData.catalog_service_id ?? null,
         client_id: formData.client_id,
         client_address_id: formData.client_address_id,
         client_name: formData.client_name ?? "",
@@ -421,7 +434,7 @@ function JobsPageContent() {
         current_phase: 0,
         total_phases: normalizeTotalPhases(formData.total_phases),
         client_price: cp,
-        extras_amount: 0,
+        extras_amount: accessSurcharge,
         partner_cost: pc,
         materials_cost: mc,
         margin_percent: margin,
@@ -430,8 +443,13 @@ function JobsPageContent() {
         scheduled_end_at: formData.scheduled_end_at,
         scheduled_finish_date: formData.scheduled_finish_date ?? null,
         job_type: formData.job_type ?? "fixed",
+        hourly_client_rate: formData.hourly_client_rate ?? null,
+        hourly_partner_rate: formData.hourly_partner_rate ?? null,
+        billed_hours: formData.billed_hours ?? null,
+        in_ccz: formData.in_ccz ?? null,
+        has_free_parking: formData.has_free_parking ?? null,
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
-        partner_agreed_value: 0, finance_status: "unpaid", service_value: cp,
+        partner_agreed_value: 0, finance_status: "unpaid", service_value: cp + accessSurcharge,
         report_submitted: false,
         report_1_uploaded: false, report_1_approved: false,
         report_2_uploaded: false, report_2_approved: false,
@@ -440,7 +458,7 @@ function JobsPageContent() {
         partner_payment_2: 0, partner_payment_2_paid: false,
         partner_payment_3: 0, partner_payment_3_paid: false,
         customer_deposit: 0, customer_deposit_paid: false,
-        customer_final_payment: cp, customer_final_paid: false,
+        customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
         scope: formData.scope?.trim() || undefined,
       });
       await logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
@@ -934,22 +952,53 @@ export default function JobsPage() {
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
   const [form, setForm] = useState({
-    title: "", partner_id: "", partner_ids: [] as string[], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "", job_type: "fixed", scope: "",
+    title: "",
+    catalog_service_id: "",
+    partner_id: "",
+    partner_ids: [] as string[],
+    client_price: "",
+    partner_cost: "",
+    materials_cost: "",
+    scheduled_date: "",
+    arrival_from: "",
+    arrival_window_mins: "",
+    expected_finish_date: "",
+    job_type: "fixed",
+    scope: "",
+    hourly_client_rate: "",
+    hourly_partner_rate: "",
+    billed_hours: "1",
+    in_ccz: false,
+    has_free_parking: true,
   });
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
 
   useEffect(() => {
     if (!open) return;
-    listPartners({ pageSize: 200, status: "all" })
-      .then((r) => setPartners(r.data ?? []))
-      .catch(() => setPartners([]));
+    Promise.all([
+      listPartners({ pageSize: 200, status: "all" }).then((r) => r.data ?? []).catch(() => []),
+      listCatalogServicesForPicker().catch(() => []),
+    ]).then(([ps, catalog]) => {
+      setPartners(ps);
+      setCatalogServices(catalog);
+    });
   }, [open]);
+
+  useEffect(() => {
+    const inCcz = isLikelyCczAddress(clientAddress.property_address);
+    setForm((prev) => ({ ...prev, in_ccz: inCcz }));
+  }, [clientAddress.property_address]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Type of work is required"); return; }
+    if (form.job_type === "hourly" && !form.catalog_service_id) {
+      toast.error("For hourly jobs, select a Call Out type from Services.");
+      return;
+    }
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
     const hasPartner = !!(form.partner_id || form.partner_ids.length > 0);
     const sched = resolveJobModalSchedule({
@@ -972,8 +1021,22 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     }
     const scheduled_finish_date = expected_finish ?? null;
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
+    const hourlyClientRate = Math.max(0, Number(form.hourly_client_rate) || 0);
+    const hourlyPartnerRate = Math.max(0, Number(form.hourly_partner_rate) || 0);
+    const initialBilledHours = Math.max(1, Number(form.billed_hours) || 1);
+    const hourlyTotals = computeHourlyTotals({
+      elapsedSeconds: initialBilledHours * 3600,
+      clientHourlyRate: hourlyClientRate,
+      partnerHourlyRate: hourlyPartnerRate,
+    });
+    const isHourly = form.job_type === "hourly";
+    const accessSurcharge = computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+    const clientPriceOut = isHourly ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
+    const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
+
     onCreate({
       title: normalizeTypeOfWork(form.title.trim()) || form.title.trim(),
+      catalog_service_id: form.catalog_service_id || null,
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
       client_name: clientAddress.client_name,
@@ -982,8 +1045,14 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       partner_ids: form.partner_ids.length > 0 ? form.partner_ids : undefined,
       partner_name: selectedPartner ? (selectedPartner.company_name?.trim() || selectedPartner.contact_name) : undefined,
       job_type: (form.job_type as Job["job_type"]) ?? "fixed",
-      client_price: Number(form.client_price) || 0,
-      partner_cost: Number(form.partner_cost) || 0,
+      hourly_client_rate: isHourly ? hourlyClientRate : null,
+      hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
+      billed_hours: isHourly ? hourlyTotals.billedHours : null,
+      in_ccz: form.in_ccz,
+      has_free_parking: form.has_free_parking,
+      client_price: clientPriceOut,
+      partner_cost: partnerCostOut,
+      extras_amount: accessSurcharge,
       materials_cost: Number(form.materials_cost) || 0,
       scheduled_date,
       scheduled_start_at,
@@ -992,7 +1061,26 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
     });
-    setForm({ title: "", partner_id: "", partner_ids: [], client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "", job_type: "fixed", scope: "" });
+    setForm({
+      title: "",
+      catalog_service_id: "",
+      partner_id: "",
+      partner_ids: [],
+      client_price: "",
+      partner_cost: "",
+      materials_cost: "",
+      scheduled_date: "",
+      arrival_from: "",
+      arrival_window_mins: "",
+      expected_finish_date: "",
+      job_type: "fixed",
+      scope: "",
+      hourly_client_rate: "",
+      hourly_partner_rate: "",
+      billed_hours: "1",
+      in_ccz: false,
+      has_free_parking: true,
+    });
     setClientAddress({ client_name: "", property_address: "" });
   };
 
@@ -1008,7 +1096,60 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
           ]}
         />
+        {form.job_type === "hourly" && (
+          <ServiceCatalogSelect
+            label="Call Out type *"
+            emptyOptionLabel="Select from Services..."
+            catalog={catalogServices}
+            value={form.catalog_service_id}
+            onChange={(id, service) => {
+              const hrs = Math.max(1, Number(service?.default_hours) || 1);
+              const clientRate = Number(service?.hourly_rate) || 0;
+              const partnerRate = partnerHourlyRateFromCatalogBundle(service?.partner_cost, service?.default_hours);
+              const totals = computeHourlyTotals({
+                elapsedSeconds: hrs * 3600,
+                clientHourlyRate: clientRate,
+                partnerHourlyRate: partnerRate,
+              });
+              setForm((prev) => ({
+                ...prev,
+                catalog_service_id: id,
+                title: service ? (normalizeTypeOfWork(service.name) || service.name) : prev.title,
+                scope: service?.default_description?.trim() || prev.scope,
+                hourly_client_rate: String(clientRate || ""),
+                hourly_partner_rate: String(partnerRate || ""),
+                billed_hours: String(hrs),
+                client_price: String(totals.clientTotal),
+                partner_cost: String(totals.partnerTotal),
+              }));
+            }}
+          />
+        )}
         <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span>Address in CCZ (+£15)</span>
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={!!form.in_ccz}
+              onChange={(e) => setForm((prev) => ({ ...prev, in_ccz: e.target.checked }))}
+            />
+          </label>
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span>Client has free parking</span>
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={!!form.has_free_parking}
+              onChange={(e) => setForm((prev) => ({ ...prev, has_free_parking: e.target.checked }))}
+            />
+          </label>
+          <p className="text-[11px] text-text-tertiary">
+            Access surcharge: {formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}
+          </p>
+        </div>
         <JobModalScheduleFields
           scheduledDate={form.scheduled_date}
           arrivalFrom={form.arrival_from}
@@ -1060,11 +1201,24 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             ))}
           </select>
         </div>
-        <div className="grid grid-cols-3 gap-4">
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" /></div>
-          <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
-        </div>
+        {form.job_type === "hourly" ? (
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate</label><Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" /></div>
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" /></div>
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
+          </div>
+        )}
+        {form.job_type === "hourly" && (
+          <p className="text-[11px] text-text-tertiary -mt-2">
+            Billing rule: up to 1h = 1h minimum, then rounds up in 30-minute increments from timer logs.
+          </p>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
           <Button type="submit">Create Job</Button>

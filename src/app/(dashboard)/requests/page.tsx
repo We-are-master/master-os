@@ -44,8 +44,10 @@ import type { CatalogService } from "@/types/database";
 import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
-import { cn, isUuid } from "@/lib/utils";
+import { cn, formatCurrency, isUuid } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { computeHourlyTotals, partnerHourlyRateFromCatalogBundle } from "@/lib/job-hourly-billing";
+import { computeAccessSurcharge, isLikelyCczAddress } from "@/lib/ccz";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
@@ -470,6 +472,8 @@ export default function RequestsPage() {
             : null,
           request_kind:
             formData.request_kind === "quote" || formData.request_kind === "work" ? formData.request_kind : "quote",
+          in_ccz: formData.in_ccz ?? null,
+          has_free_parking: formData.has_free_parking ?? null,
         });
         await logAudit({
           entityType: "request", entityId: result.id, entityRef: result.reference,
@@ -1270,6 +1274,7 @@ export default function RequestsPage() {
       {/* Convert to Job Modal */}
       <ConvertToJobModal
         request={convertToJobOpen}
+        catalogServices={catalogServices}
         onClose={() => setConvertToJobOpen(null)}
         onConvert={async (data) => {
           if (!convertToJobOpen) return;
@@ -1280,10 +1285,17 @@ export default function RequestsPage() {
             }
             const clientPrice = data.client_price ?? 0;
             const partnerCost = data.partner_cost ?? 0;
+            const accessSurcharge = computeAccessSurcharge({
+              inCcz: data.in_ccz,
+              hasFreeParking: data.has_free_parking,
+            });
             const margin = clientPrice > 0 ? Math.round(((clientPrice - partnerCost) / clientPrice) * 1000) / 10 : 0;
             const hasPartner = !!(data.partner_id?.trim() || data.partner_name?.trim());
             const job = await createJob({
               title: `${convertToJobOpen.service_type} — ${data.client_name}`,
+              catalog_service_id: data.catalog_service_id ?? null,
+              in_ccz: data.in_ccz ?? null,
+              has_free_parking: data.has_free_parking ?? null,
               client_id: data.client_id,
               client_address_id: data.client_address_id,
               client_name: data.client_name,
@@ -1299,7 +1311,7 @@ export default function RequestsPage() {
               current_phase: 0,
               total_phases: normalizeTotalPhases(data.total_phases),
               client_price: clientPrice,
-              extras_amount: 0,
+              extras_amount: accessSurcharge,
               partner_cost: partnerCost,
               materials_cost: 0,
               margin_percent: margin,
@@ -1308,7 +1320,7 @@ export default function RequestsPage() {
               internal_notes: data.internal_notes,
               cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
               finance_status: "unpaid",
-              service_value: clientPrice,
+              service_value: clientPrice + accessSurcharge,
               report_submitted: false,
               report_1_uploaded: false, report_1_approved: false,
               report_2_uploaded: false, report_2_approved: false,
@@ -1317,10 +1329,13 @@ export default function RequestsPage() {
               partner_payment_2: 0, partner_payment_2_paid: false,
               partner_payment_3: 0, partner_payment_3_paid: false,
               customer_deposit: 0, customer_deposit_paid: false,
-              customer_final_payment: 0, customer_final_paid: false,
+              customer_final_payment: clientPrice + accessSurcharge, customer_final_paid: false,
               owner_id: profile?.id,
               owner_name: profile?.full_name,
               job_type: data.job_type ?? "fixed",
+              hourly_client_rate: data.hourly_client_rate ?? null,
+              hourly_partner_rate: data.hourly_partner_rate ?? null,
+              billed_hours: data.billed_hours ?? null,
             });
             await Promise.all([
               updateRequestStatus(convertToJobOpen.id, "converted_to_job"),
@@ -1816,14 +1831,26 @@ function ManualQuoteModal({
 }
 
 function ConvertToJobModal({
-  request, onClose, onConvert,
+  request, catalogServices, onClose, onConvert,
 }: {
   request: ServiceRequest | null;
+  catalogServices: CatalogService[];
   onClose: () => void;
-  onConvert: (data: { client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string; client_price?: number; partner_cost?: number; total_phases?: number; job_type?: "fixed" | "hourly"; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null }) => void;
+  onConvert: (data: {
+    client_id?: string; client_address_id?: string; client_name: string; property_address: string;
+    partner_id?: string; partner_name?: string; scope?: string; notes?: string; internal_notes?: string;
+    catalog_service_id?: string | null;
+    in_ccz?: boolean | null;
+    has_free_parking?: boolean | null;
+    client_price?: number; partner_cost?: number; total_phases?: number; job_type?: "fixed" | "hourly";
+    hourly_client_rate?: number | null; hourly_partner_rate?: number | null; billed_hours?: number | null;
+    scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null
+  }) => void;
 }) {
   const [form, setForm] = useState({
     partner_id: "", scope: "", notes: "", internal_notes: "", client_price: "", partner_cost: "", job_type: "fixed",
+    catalog_service_id: "", hourly_client_rate: "", hourly_partner_rate: "", billed_hours: "1",
+    in_ccz: false, has_free_parking: true,
     scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "",
   });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
@@ -1837,6 +1864,12 @@ function ConvertToJobModal({
     setForm({
       partner_id: "", scope: "", notes: "", internal_notes: "",
       client_price: String(request.estimated_value ?? 0), partner_cost: "", job_type: "fixed",
+      catalog_service_id: request.catalog_service_id ?? "",
+      hourly_client_rate: "",
+      hourly_partner_rate: "",
+      billed_hours: "1",
+      in_ccz: !!request.in_ccz,
+      has_free_parking: request.has_free_parking ?? true,
       scheduled_date: "", arrival_from: "", arrival_window_mins: "", expected_finish_date: "",
     });
     setClientAddress(serviceRequestToClientAddressValue(request));
@@ -1851,6 +1884,32 @@ function ConvertToJobModal({
   if (!request) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedPartner = partners.find((p) => p.id === form.partner_id);
+  const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
+
+  useEffect(() => {
+    const inCcz = isLikelyCczAddress(clientAddress.property_address);
+    setForm((prev) => ({ ...prev, in_ccz: inCcz }));
+  }, [clientAddress.property_address]);
+
+  useEffect(() => {
+    if (!request || form.job_type !== "hourly" || !selectedCatalogService) return;
+    const hrs = Math.max(1, Number(form.billed_hours) || Number(selectedCatalogService.default_hours) || 1);
+    const clientRate = Number(form.hourly_client_rate) || Number(selectedCatalogService.hourly_rate) || 0;
+    const partnerRate = Number(form.hourly_partner_rate) || partnerHourlyRateFromCatalogBundle(selectedCatalogService.partner_cost, selectedCatalogService.default_hours);
+    const totals = computeHourlyTotals({
+      elapsedSeconds: hrs * 3600,
+      clientHourlyRate: clientRate,
+      partnerHourlyRate: partnerRate,
+    });
+    setForm((prev) => ({
+      ...prev,
+      client_price: String(totals.clientTotal),
+      partner_cost: String(totals.partnerTotal),
+      hourly_client_rate: String(clientRate || ""),
+      hourly_partner_rate: String(partnerRate || ""),
+      billed_hours: String(hrs),
+    }));
+  }, [request?.id, form.job_type, form.catalog_service_id]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1890,6 +1949,10 @@ function ConvertToJobModal({
         return;
       }
     }
+    if (form.job_type === "hourly" && !form.catalog_service_id) {
+      toast.error("For hourly jobs, select a Call Out type from Services.");
+      return;
+    }
     onConvert({
       client_id: clientAddress.client_id,
       client_address_id: clientAddress.client_address_id,
@@ -1900,10 +1963,16 @@ function ConvertToJobModal({
       scope: form.scope || undefined,
       notes: form.notes || undefined,
       internal_notes: form.internal_notes || undefined,
+      catalog_service_id: form.catalog_service_id || null,
+      in_ccz: form.in_ccz,
+      has_free_parking: form.has_free_parking,
       client_price: Number(form.client_price) || 0,
       partner_cost: Number(form.partner_cost) || 0,
       total_phases: normalizeTotalPhases(2),
       job_type: form.job_type as "fixed" | "hourly",
+      hourly_client_rate: form.job_type === "hourly" ? (Number(form.hourly_client_rate) || 0) : null,
+      hourly_partner_rate: form.job_type === "hourly" ? (Number(form.hourly_partner_rate) || 0) : null,
+      billed_hours: form.job_type === "hourly" ? (Math.max(1, Number(form.billed_hours) || 1)) : null,
       scheduled_date,
       scheduled_start_at,
       scheduled_end_at,
@@ -1927,16 +1996,77 @@ function ConvertToJobModal({
             { value: "hourly", label: "Hourly" },
           ]}
         />
+        {form.job_type === "hourly" && (
+          <ServiceCatalogSelect
+            label="Call Out type *"
+            emptyOptionLabel="Select from Services..."
+            catalog={catalogServices}
+            value={form.catalog_service_id}
+            onChange={(id, service) => {
+              const hrs = Math.max(1, Number(service?.default_hours) || 1);
+              const clientRate = Number(service?.hourly_rate) || 0;
+              const partnerRate = partnerHourlyRateFromCatalogBundle(service?.partner_cost, service?.default_hours);
+              const totals = computeHourlyTotals({
+                elapsedSeconds: hrs * 3600,
+                clientHourlyRate: clientRate,
+                partnerHourlyRate: partnerRate,
+              });
+              setForm((prev) => ({
+                ...prev,
+                catalog_service_id: id,
+                scope: service?.default_description?.trim() || prev.scope,
+                hourly_client_rate: String(clientRate || ""),
+                hourly_partner_rate: String(partnerRate || ""),
+                billed_hours: String(hrs),
+                client_price: String(totals.clientTotal),
+                partner_cost: String(totals.partnerTotal),
+              }));
+            }}
+          />
+        )}
+        {request.request_kind === "work" && (
+          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span>Address in CCZ (+£15)</span>
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={!!form.in_ccz}
+                onChange={(e) => setForm((prev) => ({ ...prev, in_ccz: e.target.checked }))}
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span>Client has free parking</span>
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={!!form.has_free_parking}
+                onChange={(e) => setForm((prev) => ({ ...prev, has_free_parking: e.target.checked }))}
+              />
+            </label>
+            <p className="text-[11px] text-text-tertiary">
+              Access surcharge: {formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Client price</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{form.job_type === "hourly" ? "Client total (auto)" : "Client price"}</label>
             <Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} placeholder="0.00" min={0} step="0.01" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">{form.job_type === "hourly" ? "Partner total (auto)" : "Partner cost"}</label>
             <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} placeholder="0.00" min={0} step="0.01" />
           </div>
         </div>
+        {form.job_type === "hourly" && (
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate</label><Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min={0} step="0.01" /></div>
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min={0} step="0.01" /></div>
+            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min={1} step="0.5" /></div>
+          </div>
+        )}
         <JobModalScheduleFields
           scheduledDate={form.scheduled_date}
           arrivalFrom={form.arrival_from}
@@ -2000,6 +2130,8 @@ function CreateRequestModal({
     service_type: "",
     description: "",
     priority: "medium",
+    in_ccz: false,
+    has_free_parking: true,
   });
   const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
 
@@ -2020,6 +2152,8 @@ function CreateRequestModal({
       service_type: "",
       description: "",
       priority: "medium",
+      in_ccz: false,
+      has_free_parking: true,
     });
   }, [open]);
 
@@ -2032,6 +2166,11 @@ function CreateRequestModal({
     const ex = extractUkPostcode(clientAddress.property_address);
     if (ex) setPostcode(ex);
     else if (!clientAddress.property_address.trim()) setPostcode("");
+  }, [clientAddress.property_address]);
+
+  useEffect(() => {
+    const inCcz = isLikelyCczAddress(clientAddress.property_address);
+    setForm((prev) => ({ ...prev, in_ccz: inCcz }));
   }, [clientAddress.property_address]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -2079,6 +2218,8 @@ function CreateRequestModal({
         description: form.description,
         priority: form.priority as ServiceRequest["priority"],
         request_kind: form.request_kind as "quote" | "work",
+        in_ccz: form.request_kind === "work" ? form.in_ccz : null,
+        has_free_parking: form.request_kind === "work" ? form.has_free_parking : null,
       },
       createPhotos.length > 0 ? createPhotos : undefined
     );
@@ -2093,8 +2234,8 @@ function CreateRequestModal({
       size="lg"
       scrollBody={false}
     >
-      <form onSubmit={handleSubmit} className="flex flex-col overflow-hidden">
-        <div className="space-y-4 overflow-y-auto overscroll-contain px-6 pt-6 pb-2 max-h-[min(65vh,calc(100dvh-11rem))]">
+      <form onSubmit={handleSubmit} className="flex min-h-0 flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 sm:px-6 pt-4 sm:pt-6 pb-2">
         <Select
           label="Request type *"
           value={form.request_kind}
@@ -2178,6 +2319,32 @@ function CreateRequestModal({
             { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
             { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
           ]} />
+          {form.request_kind === "work" && (
+            <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
+              <label className="flex items-center justify-between gap-3 text-sm">
+                <span>Address in CCZ (+£15 on job)</span>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={!!form.in_ccz}
+                  onChange={(e) => setForm((prev) => ({ ...prev, in_ccz: e.target.checked }))}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 text-sm">
+                <span>Client has free parking</span>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={!!form.has_free_parking}
+                  onChange={(e) => setForm((prev) => ({ ...prev, has_free_parking: e.target.checked }))}
+                />
+              </label>
+              <p className="text-[11px] text-text-tertiary">
+                Access surcharge for job: {formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}
+              </p>
+            </div>
+          )}
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description</label>
@@ -2209,9 +2376,9 @@ function CreateRequestModal({
             />
           </label>
           {createPhotoPreviews.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
               {createPhotoPreviews.map((src, i) => (
-                <div key={src} className="relative h-14 w-14 rounded-lg overflow-hidden border border-border-light shrink-0">
+                <div key={`${src}-${i}`} className="relative aspect-square rounded-lg overflow-hidden border border-border-light min-w-0">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={src} alt="" className="h-full w-full object-cover" />
                   <button
