@@ -2025,29 +2025,33 @@ function ConvertToJobModal({
           />
         )}
         {request.request_kind === "work" && (
-          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
+          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
-            <label className="flex items-center justify-between gap-3 text-sm">
-              <span>Address in CCZ (+£15)</span>
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={!!form.in_ccz}
-                onChange={(e) => setForm((prev) => ({ ...prev, in_ccz: e.target.checked }))}
-              />
-            </label>
-            <label className="flex items-center justify-between gap-3 text-sm">
-              <span>Client has free parking</span>
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={!!form.has_free_parking}
-                onChange={(e) => setForm((prev) => ({ ...prev, has_free_parking: e.target.checked }))}
-              />
-            </label>
-            <p className="text-[11px] text-text-tertiary">
-              Access surcharge: {formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}
-            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                className={cn(
+                  "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                  form.in_ccz ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+                )}
+              >
+                <p className="font-medium">Address in CCZ</p>
+                <p className="text-xs opacity-80">Adds +£15</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
+                className={cn(
+                  "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                  form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                )}
+              >
+                <p className="font-medium">Free parking</p>
+                <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "No parking: +£15"}</p>
+              </button>
+            </div>
+            <p className="text-xs text-text-tertiary">Access surcharge: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>
           </div>
         )}
         <div className="grid grid-cols-2 gap-4">
@@ -2234,7 +2238,7 @@ function CreateRequestModal({
       size="lg"
       scrollBody={false}
     >
-      <form onSubmit={handleSubmit} className="flex min-h-0 flex-col overflow-hidden">
+      <form onSubmit={handleSubmit} className="flex max-h-[min(85vh,calc(100dvh-6rem))] min-h-0 flex-col overflow-hidden">
         <div className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 sm:px-6 pt-4 sm:pt-6 pb-2">
         <Select
           label="Request type *"
@@ -2320,29 +2324,33 @@ function CreateRequestModal({
             { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
           ]} />
           {form.request_kind === "work" && (
-            <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
+            <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
               <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
-              <label className="flex items-center justify-between gap-3 text-sm">
-                <span>Address in CCZ (+£15 on job)</span>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4"
-                  checked={!!form.in_ccz}
-                  onChange={(e) => setForm((prev) => ({ ...prev, in_ccz: e.target.checked }))}
-                />
-              </label>
-              <label className="flex items-center justify-between gap-3 text-sm">
-                <span>Client has free parking</span>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4"
-                  checked={!!form.has_free_parking}
-                  onChange={(e) => setForm((prev) => ({ ...prev, has_free_parking: e.target.checked }))}
-                />
-              </label>
-              <p className="text-[11px] text-text-tertiary">
-                Access surcharge for job: {formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}
-              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                  className={cn(
+                    "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                    form.in_ccz ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
+                  )}
+                >
+                  <p className="font-medium">Address in CCZ</p>
+                  <p className="text-xs opacity-80">Adds +£15 on job</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
+                  className={cn(
+                    "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                    form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-300 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                  )}
+                >
+                  <p className="font-medium">Free parking</p>
+                  <p className="text-xs opacity-80">{form.has_free_parking ? "No surcharge" : "No parking: +£15"}</p>
+                </button>
+              </div>
+              <p className="text-xs text-text-tertiary">Access surcharge for job: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>
             </div>
           )}
         </div>
