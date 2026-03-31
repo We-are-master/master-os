@@ -1881,7 +1881,6 @@ function ConvertToJobModal({
       });
   }, [request?.id]);
 
-  if (!request) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedPartner = partners.find((p) => p.id === form.partner_id);
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
@@ -1913,6 +1912,7 @@ function ConvertToJobModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!request) return;
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) {
       toast.error("Select a client from the list (click the name) and choose or add a property address.");
       return;
@@ -1979,6 +1979,8 @@ function ConvertToJobModal({
       scheduled_finish_date: expected_finish ?? null,
     });
   };
+
+  if (!request) return null;
 
   return (
     <Modal open={!!request} onClose={onClose} title="Create Job" subtitle={`${request.reference} — Direct creation`} size="lg">
