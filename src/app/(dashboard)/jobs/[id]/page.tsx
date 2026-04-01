@@ -1487,6 +1487,13 @@ export default function JobDetailPage() {
         if (inv.status === "paid") {
           await syncJobAfterInvoicePaidToLedger(getSupabase(), inv.id, "Manual");
         }
+      } else if (primaryInvoiceId && customerDue > 0.02) {
+        // Keep linked invoice aligned with the latest approved totals (incl. hourly billed-hours changes).
+        await updateInvoice(primaryInvoiceId, {
+          amount: Math.max(0, customerDue),
+          paid_date: undefined,
+          collection_stage: "awaiting_final",
+        });
       } else if (customerDue <= 0.02 && primaryInvoiceId) {
         await updateInvoice(primaryInvoiceId, {
           status: "paid",
@@ -1533,12 +1540,15 @@ export default function JobDetailPage() {
       }
 
       if (customerDue > 0.02 || partnerDue > 0.02) {
-        await handleStatusChange(current, "awaiting_payment");
+        const next = await handleStatusChange(current, "awaiting_payment");
+        if (next) current = next;
         toast.success("Approved. Job moved to Awaiting payment.");
       } else {
-        await handleStatusChange(current, "completed");
+        const next = await handleStatusChange(current, "completed");
+        if (next) current = next;
         toast.success("Approved. Job marked Completed & paid.");
       }
+      await Promise.all([loadPayments(current.id), loadJobInvoices(current)]);
       setValidateCompleteOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to validate and complete job");
@@ -1554,6 +1564,8 @@ export default function JobDetailPage() {
     forceApprovalChecked,
     approvalBilledHoursInput,
     officeTimerDisplaySeconds,
+    loadPayments,
+    loadJobInvoices,
   ]);
 
   const billableRevenueForApproval = job ? Math.max(jobBillableRevenue(job), customerScheduledTotal(job)) : 0;
