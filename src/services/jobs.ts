@@ -159,8 +159,13 @@ export async function createJob(
   if (error) throw error;
   let job = (await getJob((data as Job).id)) ?? (data as Job);
 
-  /** Quote → job flow creates its own invoice(s); skip duplicate full-price row. */
-  const fromQuote = Boolean((job as { quote_id?: string | null }).quote_id?.toString().trim());
+  /** Quote → job flow creates its own invoice after insert; `quote_id` may be stripped on legacy DB retry — trust input too. */
+  const inputFromQuote = (() => {
+    const qid = (input as { quote_id?: string | null }).quote_id;
+    return qid != null && String(qid).trim() !== "";
+  })();
+  const fromQuote =
+    inputFromQuote || Boolean((job as { quote_id?: string | null }).quote_id?.toString().trim());
   if (job.client_price > 0.01 && !job.invoice_id && !fromQuote) {
     try {
       const due = new Date();

@@ -1302,8 +1302,9 @@ export default function JobDetailPage() {
       // Keep this action internal only: no external send/notify workflow.
       let primaryInvoiceId = current.invoice_id ?? null;
       const linked = await listInvoicesLinkedToJob(current.reference, current.invoice_id);
-      if (!primaryInvoiceId && linked[0]?.id) {
-        primaryInvoiceId = linked[0].id;
+      if (!primaryInvoiceId && linked.length > 0) {
+        const pick = linked.find((i) => i.invoice_kind === "combined") ?? linked[linked.length - 1];
+        primaryInvoiceId = pick.id;
       }
       if (!primaryInvoiceId) {
         const dueDate = new Date();

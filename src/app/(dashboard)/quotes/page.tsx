@@ -34,7 +34,7 @@ import type { Quote, Partner, Job, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
-import { createInvoice } from "@/services/invoices";
+import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
 import { listPartners } from "@/services/partners";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
@@ -590,16 +590,22 @@ function QuotesPageContent() {
         const dueStr = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
         const totalClient = Number(formData.client_price ?? 0);
         if (totalClient > 0.01) {
-          const combined = await createInvoice({
-            client_name: formData.client_name,
-            job_reference: job.reference,
-            amount: totalClient,
-            status: "pending",
-            due_date: dueStr,
-            collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
-            invoice_kind: "combined",
-          });
-          await updateJob(job.id, { invoice_id: combined.id });
+          const linked = await listInvoicesLinkedToJob(job.reference, job.invoice_id);
+          if (linked.length > 0) {
+            const pick = linked.find((i) => i.invoice_kind === "combined") ?? linked[linked.length - 1];
+            await updateJob(job.id, { invoice_id: pick.id });
+          } else {
+            const combined = await createInvoice({
+              client_name: formData.client_name,
+              job_reference: job.reference,
+              amount: totalClient,
+              status: "pending",
+              due_date: dueStr,
+              collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
+              invoice_kind: "combined",
+            });
+            await updateJob(job.id, { invoice_id: combined.id });
+          }
         }
 
         await Promise.all([

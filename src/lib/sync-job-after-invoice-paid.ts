@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Job } from "@/types/database";
-import { canMarkJobCompletedFinancially } from "@/lib/job-financials";
+import { customerCollectionsSatisfyBillable } from "@/lib/job-financials";
 import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 
@@ -89,8 +89,8 @@ export async function syncJobAfterInvoicePaidToLedger(
 }
 
 /**
- * If job is awaiting_payment and customer + partner financial gates are satisfied (same rules as manual Complete),
- * move to completed & paid.
+ * If job is awaiting_payment and customer collections cover billable revenue (e.g. Finance marked invoice paid),
+ * move to completed & paid. Partner payout is tracked separately in Self-bill / pay-run flows.
  */
 export async function maybeCompleteAwaitingPaymentJob(client: SupabaseClient, jobId: string): Promise<void> {
   const { data: row, error } = await client.from("jobs").select("*").eq("id", jobId).maybeSingle();
@@ -107,9 +107,8 @@ export async function maybeCompleteAwaitingPaymentJob(client: SupabaseClient, jo
   const customerPayments = list
     .filter((p) => p.type === "customer_deposit" || p.type === "customer_final")
     .map((p) => ({ type: p.type as "customer_deposit" | "customer_final", amount: Number(p.amount) }));
-  const partnerPayments = list.filter((p) => p.type === "partner").map((p) => ({ type: "partner" as const, amount: Number(p.amount) }));
 
-  if (!canMarkJobCompletedFinancially(job, customerPayments, partnerPayments).ok) return;
+  if (!customerCollectionsSatisfyBillable(job, customerPayments)) return;
 
   await client.from("jobs").update({ status: "completed", finance_status: "paid" }).eq("id", jobId);
 }

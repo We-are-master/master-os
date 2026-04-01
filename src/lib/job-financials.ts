@@ -73,3 +73,12 @@ export function canMarkJobCompletedFinancially(
   }
   return { ok: true };
 }
+
+/** True when recorded customer deposit + final payments cover billable revenue (for finance-driven job close). */
+export function customerCollectionsSatisfyBillable(job: Job, customerPayments: JobCompletionPaymentRow[]): boolean {
+  const billable = jobBillableRevenue(job);
+  const eps = 0.01;
+  if (billable <= eps) return true;
+  const customerTotal = customerPayments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
+  return customerTotal + eps >= billable;
+}
