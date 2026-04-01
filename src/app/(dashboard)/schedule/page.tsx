@@ -42,6 +42,7 @@ import {
 } from "@/lib/schedule-job-type-style";
 import { isJobInProgressStatus } from "@/lib/job-phases";
 import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financials";
+import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -294,24 +295,8 @@ export default function SchedulePage() {
     let cancelled = false;
     (async () => {
       const supabase = getSupabase();
-      const { data: client } = await supabase
-        .from("clients")
-        .select("source_account_id")
-        .eq("id", clientId)
-        .is("deleted_at", null)
-        .maybeSingle();
-      const aid = client?.source_account_id as string | undefined;
-      if (!aid) {
-        if (!cancelled) setSelectedJobAccountName(null);
-        return;
-      }
-      const { data: acc } = await supabase
-        .from("accounts")
-        .select("company_name")
-        .eq("id", aid)
-        .is("deleted_at", null)
-        .maybeSingle();
-      if (!cancelled) setSelectedJobAccountName((acc?.company_name as string | undefined)?.trim() || null);
+      const labels = await batchResolveLinkedAccountLabels(supabase, [clientId]);
+      if (!cancelled) setSelectedJobAccountName(labels.get(clientId) ?? null);
     })();
     return () => {
       cancelled = true;

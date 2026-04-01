@@ -1,98 +1,26 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
-import { getSupabase } from "@/services/base";
 import { formatCurrency, cn } from "@/lib/utils";
-import { jobBillableRevenue } from "@/lib/job-financials";
-import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { Award, Star } from "lucide-react";
 
-interface OwnerStat {
+export type BestSellerOwnerRow = {
   name: string;
   revenue: number;
   jobCount: number;
-}
+};
 
-function currentMonthLocalBounds(): { fromDay: string; toDay: string; label: string } {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const last = new Date(y, m + 1, 0).getDate();
-  return {
-    fromDay: `${y}-${pad(m + 1)}-01`,
-    toDay: `${y}-${pad(m + 1)}-${pad(last)}`,
-    label: new Date(y, m, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }),
-  };
-}
-
-export function BestSellersByOwner() {
-  const [data, setData] = useState<OwnerStat[]>([]);
-  const [loading, setLoading] = useState(true);
-  const monthMeta = useMemo(() => currentMonthLocalBounds(), []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const supabase = getSupabase();
-      setLoading(true);
-      const { fromDay, toDay } = monthMeta;
-      const selFull = "owner_name, client_price, extras_amount, status";
-      const selLegacy = "owner_name, client_price, status";
-
-      async function run(columns: string) {
-        return supabase
-          .from("jobs")
-          .select(columns)
-          .is("deleted_at", null)
-          .not("scheduled_finish_date", "is", null)
-          .gte("scheduled_finish_date", fromDay)
-          .lte("scheduled_finish_date", toDay)
-          .neq("status", "cancelled");
-      }
-
-      let res = await run(selFull);
-      if (res.error && isPostgrestWriteRetryableError(res.error)) {
-        res = await run(selLegacy);
-      }
-      if (cancelled) return;
-      if (res.error) {
-        setData([]);
-        setLoading(false);
-        return;
-      }
-
-      const rows = (res.data ?? []) as {
-        owner_name?: string | null;
-        client_price?: number;
-        extras_amount?: number | null;
-        status?: string;
-      }[];
-
-      const map = new Map<string, OwnerStat>();
-      for (const j of rows) {
-        const name = (j.owner_name?.trim() || "Unassigned") as string;
-        const row = map.get(name) ?? { name, revenue: 0, jobCount: 0 };
-        row.jobCount += 1;
-        row.revenue += jobBillableRevenue(j as Parameters<typeof jobBillableRevenue>[0]);
-        map.set(name, row);
-      }
-
-      const list = Array.from(map.values())
-        .sort((a, b) => b.revenue - a.revenue)
-        .slice(0, 8);
-
-      setData(list);
-      setLoading(false);
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [monthMeta.fromDay, monthMeta.toDay]);
-
-  const maxRev = Math.max(...data.map((d) => d.revenue), 1);
+export function BestSellersByOwner({
+  items,
+  loading,
+  rangeLabel,
+}: {
+  items: BestSellerOwnerRow[];
+  loading: boolean;
+  rangeLabel: string;
+}) {
+  const maxRev = useMemo(() => Math.max(...items.map((d) => d.revenue), 1), [items]);
 
   return (
     <Card padding="none" className="h-full border-border-light overflow-hidden">
@@ -102,9 +30,9 @@ export function BestSellersByOwner() {
             <Award className="h-4 w-4 text-emerald-600" />
           </div>
           <div className="min-w-0">
-            <CardTitle className="text-base">Best sellers</CardTitle>
+            <CardTitle className="text-base">Top 3 — job owners</CardTitle>
             <p className="text-xs text-text-tertiary mt-0.5">
-              Expected revenue by job owner · jobs with expected finish in {monthMeta.label}
+              Billable value by owner · jobs in range (excl. cancelled) · {rangeLabel}
             </p>
           </div>
         </div>
@@ -112,15 +40,15 @@ export function BestSellersByOwner() {
       <div className="px-5 pb-5">
         {loading ? (
           <div className="space-y-2">
-            {Array.from({ length: 5 }).map((_, i) => (
+            {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="h-12 animate-pulse rounded-xl bg-surface-hover" />
             ))}
           </div>
-        ) : data.length === 0 ? (
-          <p className="text-sm text-text-tertiary py-8 text-center">No jobs scheduled to finish this month</p>
+        ) : items.length === 0 ? (
+          <p className="text-sm text-text-tertiary py-8 text-center">No jobs in this period</p>
         ) : (
-          <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {data.map((row, i) => (
+          <ul className="grid gap-3 sm:grid-cols-3">
+            {items.slice(0, 3).map((row, i) => (
               <li
                 key={row.name}
                 className="rounded-xl border border-border-light/80 bg-surface-hover/30 p-3 flex flex-col gap-2 min-h-[5.5rem]"
@@ -149,7 +77,9 @@ export function BestSellersByOwner() {
                     style={{ width: `${(row.revenue / maxRev) * 100}%` }}
                   />
                 </div>
-                <p className="text-[10px] text-text-tertiary">{row.jobCount} job{row.jobCount === 1 ? "" : "s"}</p>
+                <p className="text-[10px] text-text-tertiary">
+                  {row.jobCount} job{row.jobCount === 1 ? "" : "s"}
+                </p>
               </li>
             ))}
           </ul>

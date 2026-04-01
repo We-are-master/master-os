@@ -883,8 +883,10 @@ function TierRow({
   const [rate, setRate] = useState(String(tier.rate_percent));
 
   useEffect(() => {
-    setBreakeven(String(tier.breakeven_amount));
-    setRate(String(tier.rate_percent));
+    queueMicrotask(() => {
+      setBreakeven(String(tier.breakeven_amount));
+      setRate(String(tier.rate_percent));
+    });
   }, [tier.id, tier.breakeven_amount, tier.rate_percent]);
 
   return (
@@ -930,7 +932,7 @@ function PoolRow({
   const [val, setVal] = useState(String(share.share_percent));
 
   useEffect(() => {
-    setVal(String(share.share_percent));
+    queueMicrotask(() => setVal(String(share.share_percent)));
   }, [share.id, share.share_percent]);
 
   return (
@@ -1036,7 +1038,7 @@ function NavigationTab() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold text-text-primary">Navigation (Sidebar)</h3>
-          <p className="text-sm text-text-tertiary">The menu is modular. Only Admin can edit groups and items; visibility depends on each role's permissions.</p>
+          <p className="text-sm text-text-tertiary">The menu is modular. Only Admin can edit groups and items; visibility depends on each role&apos;s permissions.</p>
         </div>
         {canEditConfig && (
           <Button size="sm" onClick={handleSave} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}>
@@ -1325,6 +1327,7 @@ function SystemTab() {
     quote_footer_notes: "",
     currency: "GBP",
     job_auto_assign_offer_minutes: "5",
+    dashboard_sales_goal_monthly: "35000",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
@@ -1354,6 +1357,10 @@ function SystemTab() {
           job_auto_assign_offer_minutes: String(
             (data as { job_auto_assign_offer_minutes?: number | null }).job_auto_assign_offer_minutes ?? 5,
           ),
+          dashboard_sales_goal_monthly: (() => {
+            const v = (data as { dashboard_sales_goal_monthly?: number | null }).dashboard_sales_goal_monthly;
+            return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "35000";
+          })(),
         });
       }
       setLoading(false);
@@ -1375,6 +1382,7 @@ function SystemTab() {
         logo_dark_theme_url: form.logo_dark_theme_url.trim() || null,
         favicon_url: form.favicon_url.trim() || null,
         job_auto_assign_offer_minutes: jam,
+        dashboard_sales_goal_monthly: Math.max(0, Number(form.dashboard_sales_goal_monthly) || 35000),
       };
       if (settingsId) {
         const { error } = await supabase.from("company_settings").update(payload).eq("id", settingsId);
@@ -1453,6 +1461,21 @@ function SystemTab() {
               <label className="block text-xs font-medium text-text-secondary mb-1.5">VAT % (quote line items)</label>
               <Input type="number" min={0} max={100} step={0.5} value={form.vat_percent} onChange={(e) => update("vat_percent", e.target.value)} placeholder="20" />
               <p className="text-[10px] text-text-tertiary mt-1">Applied when VAT is ticked on manual quote lines (e.g. 20 for 20%).</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Monthly sales goal (Overview)</label>
+              <Input
+                type="number"
+                min={0}
+                step={100}
+                value={form.dashboard_sales_goal_monthly}
+                onChange={(e) => update("dashboard_sales_goal_monthly", e.target.value)}
+                placeholder="35000"
+              />
+              <p className="text-[10px] text-text-tertiary mt-1">
+                Pipeline target for the Sales goal bar on the dashboard (same currency as the app). Scales to the selected date range; falls back to{" "}
+                <code className="text-[10px]">NEXT_PUBLIC_DASHBOARD_SALES_GOAL_MONTHLY_GBP</code> if unset.
+              </p>
             </div>
           </div>
         </Card>

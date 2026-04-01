@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,15 @@ import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/dat
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listInvoices, createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { syncInvoiceCollectionStagesForJob, COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
-import { getStatusCounts, getSupabase } from "@/services/base";
+import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
+import { reopenInvoiceToPending } from "@/lib/invoice-reopen";
+import { invoiceBalanceDue, invoiceAmountPaid } from "@/lib/invoice-balance";
+import { recordInvoicePartialPayment } from "@/services/invoice-partial";
+import { isJobForcePaid } from "@/lib/job-force-paid";
+import { getStatusCounts, getSupabase, type ListParams } from "@/services/base";
+import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
+import type { FinancePeriodMode } from "@/lib/finance-period";
+import { getFinanceListDateFilter, getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { LocationMiniMap } from "@/components/ui/location-picker";
@@ -37,11 +45,12 @@ import { useProfile } from "@/hooks/use-profile";
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   paid: { label: "Paid", variant: "success" },
   pending: { label: "Pending", variant: "warning" },
+  partially_paid: { label: "Partial", variant: "info" },
   overdue: { label: "Overdue", variant: "danger" },
   cancelled: { label: "Cancelled", variant: "default" },
 };
 
-const INVOICE_STATUSES: InvoiceStatus[] = ["paid", "pending", "overdue", "cancelled"];
+const INVOICE_STATUSES: InvoiceStatus[] = ["paid", "pending", "partially_paid", "overdue", "cancelled"];
 
 const COLLECTION_STAGE_OPTIONS: InvoiceCollectionStage[] = [
   "awaiting_deposit",
@@ -59,6 +68,7 @@ interface LinkedJob {
   partner_id?: string;
   partner_name?: string;
   owner_name?: string;
+  internal_notes?: string | null;
   status: string;
   progress: number;
   current_phase: number;
@@ -72,56 +82,153 @@ interface LinkedJob {
 }
 
 export default function InvoicesPage() {
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
+
+  const invoiceListParams = useMemo(
+    (): Partial<ListParams> => getFinanceListDateFilter(periodMode, weekAnchor, rangeFrom, rangeTo, "created_at"),
+    [periodMode, weekAnchor, rangeFrom, rangeTo]
+  );
+
   const {
     data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh,
-  } = useSupabaseList<Invoice>({ fetcher: listInvoices, realtimeTable: "invoices" });
+  } = useSupabaseList<Invoice>({
+    fetcher: listInvoices,
+    realtimeTable: "invoices",
+    listParams: invoiceListParams,
+  });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [tabCounts, setTabCounts] = useState<Record<string, number>>({ all: 0, paid: 0, pending: 0, overdue: 0, cancelled: 0 });
-  const [kpis, setKpis] = useState({ totalInvoiced: 0, pendingAmount: 0, pendingCount: 0, overdueAmount: 0, overdueCount: 0 });
+  const [tabCounts, setTabCounts] = useState<Record<string, number>>({
+    all: 0, paid: 0, pending: 0, partially_paid: 0, overdue: 0, cancelled: 0,
+  });
+  const [kpis, setKpis] = useState({
+    totalInvoiced: 0,
+    pendingAmount: 0,
+    pendingCount: 0,
+    overdueAmount: 0,
+    overdueCount: 0,
+    avgCollectionDays: null as number | null,
+  });
   const { profile } = useProfile();
 
   const loadCounts = useCallback(async () => {
     try {
-      const counts = await getStatusCounts("invoices", INVOICE_STATUSES);
+      const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo);
+      const counts = await getStatusCounts(
+        "invoices",
+        INVOICE_STATUSES,
+        "status",
+        bounds ? { dateColumn: "created_at", dateFrom: bounds.from, dateTo: bounds.to } : undefined
+      );
       setTabCounts(counts);
     } catch { /* cosmetic */ }
-  }, []);
+  }, [periodMode, weekAnchor, rangeFrom, rangeTo]);
 
   const loadKpis = useCallback(async () => {
     try {
-      const { data: rows, error } = await getSupabase().from("invoices").select("amount, status");
+      const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo);
+      let q = getSupabase().from("invoices").select("amount, status, amount_paid, paid_date, created_at");
+      if (bounds) {
+        q = q.gte("created_at", bounds.from).lte("created_at", bounds.to);
+      }
+      const { data: rows, error } = await q;
       if (error) throw error;
-      const all = (rows ?? []) as { amount: number; status: string }[];
+      const all = (rows ?? []) as {
+        amount: number;
+        status: string;
+        amount_paid?: number;
+        paid_date?: string | null;
+        created_at: string;
+      }[];
       const totalInvoiced = all.reduce((sum, r) => sum + Number(r.amount), 0);
-      const pending = all.filter((r) => r.status === "pending");
+      const pending = all.filter((r) => r.status === "pending" || r.status === "partially_paid");
       const overdue = all.filter((r) => r.status === "overdue");
+      const paidWithDates = all.filter((r) => r.status === "paid" && r.paid_date);
+      let avgCollectionDays: number | null = null;
+      if (paidWithDates.length > 0) {
+        let sumDays = 0;
+        let n = 0;
+        for (const r of paidWithDates) {
+          const c = new Date(r.created_at).getTime();
+          const p = new Date(r.paid_date!).getTime();
+          if (!Number.isFinite(c) || !Number.isFinite(p)) continue;
+          sumDays += Math.max(0, (p - c) / 864e5);
+          n += 1;
+        }
+        if (n > 0) avgCollectionDays = sumDays / n;
+      }
       setKpis({
         totalInvoiced,
-        pendingAmount: pending.reduce((sum, r) => sum + Number(r.amount), 0),
+        pendingAmount: pending.reduce((sum, r) => sum + invoiceBalanceDue(r as Invoice), 0),
         pendingCount: pending.length,
         overdueAmount: overdue.reduce((sum, r) => sum + Number(r.amount), 0),
         overdueCount: overdue.length,
+        avgCollectionDays,
       });
     } catch { /* cosmetic */ }
-  }, []);
+  }, [periodMode, weekAnchor, rangeFrom, rangeTo]);
 
-  useEffect(() => { loadCounts(); loadKpis(); }, [loadCounts, loadKpis]);
+  useEffect(() => {
+    loadCounts();
+    loadKpis();
+  }, [loadCounts, loadKpis]);
+
+  const kpiPeriodDesc = useMemo(
+    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
+    [periodMode, weekAnchor, rangeFrom, rangeTo]
+  );
+  const kpiScoped = periodMode !== "all";
 
   const handleStatusChange = useCallback(async (invoice: Invoice, newStatus: InvoiceStatus) => {
     const supabase = getSupabase();
-    const updates: Record<string, unknown> = { status: newStatus };
-    if (newStatus === "paid") {
-      updates.paid_date = new Date().toISOString().split("T")[0];
-      updates.collection_stage = "completed";
-    } else if (invoice.status === "paid") {
-      updates.paid_date = null;
-    }
     try {
-      const { error } = await supabase.from("invoices").update(updates).eq("id", invoice.id);
-      if (error) throw error;
+      if (
+        (newStatus === "pending" || newStatus === "overdue") &&
+        (invoice.status === "paid" || invoice.status === "partially_paid")
+      ) {
+        await reopenInvoiceToPending(supabase, invoice);
+        if (newStatus === "overdue") {
+          await supabase.from("invoices").update({ status: "overdue" }).eq("id", invoice.id);
+        }
+        await logAudit({
+          entityType: "invoice",
+          entityId: invoice.id,
+          entityRef: invoice.reference,
+          action: "status_changed",
+          fieldName: "status",
+          oldValue: invoice.status,
+          newValue: newStatus === "overdue" ? "overdue" : "pending",
+          userId: profile?.id,
+          userName: profile?.full_name,
+        });
+        toast.success(newStatus === "overdue" ? "Invoice reopened as overdue" : "Invoice reopened — linked job may return to Awaiting payment");
+        const { data: fresh } = await supabase.from("invoices").select("*").eq("id", invoice.id).maybeSingle();
+        setSelectedInvoice((fresh as Invoice) ?? null);
+        if (invoice.job_reference?.trim()) {
+          const { data: jobRow } = await supabase.from("jobs").select("id").eq("reference", invoice.job_reference.trim()).maybeSingle();
+          const jid = (jobRow as { id?: string } | null)?.id;
+          if (jid) await syncInvoiceCollectionStagesForJob(supabase, jid);
+        }
+        refresh();
+        loadCounts();
+        loadKpis();
+        return;
+      }
+
+      const updates: Record<string, unknown> = { status: newStatus };
+      if (newStatus === "paid") {
+        updates.paid_date = new Date().toISOString().split("T")[0];
+        updates.collection_stage = "completed";
+        updates.amount_paid = Number(invoice.amount);
+      } else if (invoice.status === "paid") {
+        updates.paid_date = null;
+      }
+      await updateInvoice(invoice.id, updates as Partial<Invoice>);
       await logAudit({
         entityType: "invoice",
         entityId: invoice.id,
@@ -147,6 +254,7 @@ export default function InvoicesPage() {
         status: newStatus,
         paid_date: paidDate,
         collection_stage: newStatus === "paid" ? "completed" : invoice.collection_stage,
+        amount_paid: newStatus === "paid" ? Number(invoice.amount) : invoice.amount_paid,
       };
       setSelectedInvoice(nextInv);
       if (invoice.job_reference?.trim()) {
@@ -154,27 +262,73 @@ export default function InvoicesPage() {
         const jid = (jobRow as { id?: string } | null)?.id;
         if (jid) await syncInvoiceCollectionStagesForJob(supabase, jid);
       }
+      if (newStatus === "paid") {
+        await syncJobAfterInvoicePaidToLedger(supabase, invoice.id, "Manual");
+      }
       refresh();
       loadCounts();
       loadKpis();
-    } catch { toast.error("Failed to update invoice"); }
+    } catch {
+      toast.error("Failed to update invoice");
+    }
   }, [refresh, loadCounts, loadKpis, profile?.id, profile?.full_name]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
     const supabase = getSupabase();
-    const updates: Record<string, unknown> = { status: newStatus };
-    if (newStatus === "paid") updates.paid_date = new Date().toISOString().split("T")[0];
     try {
-      const { error } = await supabase.from("invoices").update(updates).in("id", Array.from(selectedIds));
+      const ids = Array.from(selectedIds);
+      if (newStatus === "pending") {
+        for (const id of ids) {
+          const { data: inv } = await supabase.from("invoices").select("*").eq("id", id).maybeSingle();
+          if (!inv) continue;
+          if (inv.status === "paid" || inv.status === "partially_paid") {
+            await reopenInvoiceToPending(supabase, inv as Invoice);
+          } else {
+            await supabase.from("invoices").update({ status: "pending", paid_date: null }).eq("id", id);
+          }
+        }
+        await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+        toast.success(`${ids.length} invoice(s) set to pending`);
+        setSelectedIds(new Set());
+        refresh();
+        loadCounts();
+        loadKpis();
+        return;
+      }
+      if (newStatus === "paid") {
+        const today = new Date().toISOString().split("T")[0];
+        for (const id of ids) {
+          const { data: inv } = await supabase.from("invoices").select("amount").eq("id", id).maybeSingle();
+          const amt = Number((inv as { amount?: number } | null)?.amount ?? 0);
+          await updateInvoice(id, {
+            status: "paid",
+            paid_date: today,
+            collection_stage: "completed",
+            amount_paid: amt,
+          });
+          await syncJobAfterInvoicePaidToLedger(supabase, id, "Manual");
+        }
+        await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+        toast.success(`${ids.length} invoices marked paid`);
+        setSelectedIds(new Set());
+        refresh();
+        loadCounts();
+        loadKpis();
+        return;
+      }
+      const updates: Record<string, unknown> = { status: newStatus };
+      const { error } = await supabase.from("invoices").update(updates).in("id", ids);
       if (error) throw error;
-      await logBulkAction("invoice", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name);
-      toast.success(`${selectedIds.size} invoices updated to ${newStatus}`);
+      await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
+      toast.success(`${ids.length} invoices updated to ${newStatus}`);
       setSelectedIds(new Set());
       refresh();
       loadCounts();
       loadKpis();
-    } catch { toast.error("Failed to update invoices"); }
+    } catch {
+      toast.error("Failed to update invoices");
+    }
   };
 
   const handleCreate = useCallback(async (formData: CreateInvoiceInput) => {
@@ -197,9 +351,18 @@ export default function InvoicesPage() {
   }, [refresh, loadCounts, loadKpis, profile?.id, profile?.full_name]);
 
   const handleExportCSV = useCallback(() => {
-    const headers = ["Reference", "Client", "Job Reference", "Amount", "Status", "Due Date", "Paid Date", "Created At"];
+    const headers = ["Reference", "Client", "Job Reference", "Amount", "Amount Paid", "Balance Due", "Status", "Due Date", "Paid Date", "Created At"];
     const rows = data.map((inv) => [
-      inv.reference, inv.client_name, inv.job_reference ?? "", String(inv.amount), inv.status, inv.due_date, inv.paid_date ?? "", inv.created_at,
+      inv.reference,
+      inv.client_name,
+      inv.job_reference ?? "",
+      String(inv.amount),
+      String(invoiceAmountPaid(inv)),
+      String(invoiceBalanceDue(inv)),
+      inv.status,
+      inv.due_date,
+      inv.paid_date ?? "",
+      inv.created_at,
     ]);
     const csv = [headers, ...rows].map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -217,7 +380,11 @@ export default function InvoicesPage() {
   const tabs = [
     { id: "all", label: "All", count: tabCounts.all },
     { id: "paid", label: "Paid", count: tabCounts.paid },
-    { id: "pending", label: "Pending", count: tabCounts.pending },
+    {
+      id: "pending",
+      label: "Pending",
+      count: (tabCounts.pending ?? 0) + (tabCounts.partially_paid ?? 0),
+    },
     { id: "overdue", label: "Overdue", count: tabCounts.overdue },
     { id: "cancelled", label: "Cancelled", count: tabCounts.cancelled },
   ];
@@ -253,7 +420,18 @@ export default function InvoicesPage() {
     },
     {
       key: "amount", label: "Amount", align: "right",
-      render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(item.amount)}</span>,
+      render: (item) => {
+        const bal = invoiceBalanceDue(item);
+        const paid = invoiceAmountPaid(item);
+        return (
+          <div className="text-right">
+            <span className="text-sm font-semibold text-text-primary">{formatCurrency(item.amount)}</span>
+            {(item.status === "partially_paid" || paid > 0.02) && item.status !== "paid" ? (
+              <p className="text-[11px] text-text-tertiary">Due {formatCurrency(bal)}</p>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       key: "collection_stage", label: "Collection", width: "150px",
@@ -274,7 +452,7 @@ export default function InvoicesPage() {
     {
       key: "status", label: "Status",
       render: (item) => {
-        const sConf = statusConfig[item.status];
+        const sConf = statusConfig[item.status] ?? statusConfig.pending;
         const hasLink = !!item.stripe_payment_link_url;
         const stripePd = item.stripe_payment_status === "paid";
         return (
@@ -302,11 +480,60 @@ export default function InvoicesPage() {
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>Create Invoice</Button>
         </PageHeader>
 
+        <FinanceWeekRangeBar
+          mode={periodMode}
+          onModeChange={setPeriodMode}
+          weekAnchor={weekAnchor}
+          onWeekAnchorChange={setWeekAnchor}
+          rangeFrom={rangeFrom}
+          rangeTo={rangeTo}
+          onRangeFromChange={setRangeFrom}
+          onRangeToChange={setRangeTo}
+        />
+
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Total Invoiced" value={kpis.totalInvoiced} format="currency" change={18.2} changeLabel="this quarter" icon={Receipt} accent="primary" />
-          <KpiCard title="Pending Collection" value={kpis.pendingAmount} format="currency" description={`${kpis.pendingCount} invoices`} icon={DollarSign} accent="amber" />
-          <KpiCard title="Avg Collection Time" value="12 Days" change={-8.5} changeLabel="faster" icon={Clock} accent="blue" />
-          <KpiCard title="Overdue Amount" value={kpis.overdueAmount} format="currency" description={`${kpis.overdueCount} invoices overdue`} icon={AlertTriangle} accent="primary" />
+          <KpiCard
+            title="Total Invoiced"
+            value={kpis.totalInvoiced}
+            format="currency"
+            change={kpiScoped ? undefined : 18.2}
+            changeLabel={kpiScoped ? undefined : "this quarter"}
+            description={kpiScoped ? kpiPeriodDesc : undefined}
+            icon={Receipt}
+            accent="primary"
+          />
+          <KpiCard
+            title="Pending Collection"
+            value={kpis.pendingAmount}
+            format="currency"
+            description={`${kpis.pendingCount} invoice${kpis.pendingCount === 1 ? "" : "s"} · ${kpiPeriodDesc}`}
+            icon={DollarSign}
+            accent="amber"
+          />
+          <KpiCard
+            title="Avg Collection Time"
+            value={kpis.avgCollectionDays != null ? `${Math.round(kpis.avgCollectionDays)} Days` : "—"}
+            format="none"
+            change={kpiScoped ? undefined : -8.5}
+            changeLabel={kpiScoped ? undefined : "faster"}
+            description={
+              kpiScoped
+                ? kpis.avgCollectionDays != null
+                  ? `Paid in period · ${kpiPeriodDesc}`
+                  : `No paid invoices · ${kpiPeriodDesc}`
+                : undefined
+            }
+            icon={Clock}
+            accent="blue"
+          />
+          <KpiCard
+            title="Overdue Amount"
+            value={kpis.overdueAmount}
+            format="currency"
+            description={`${kpis.overdueCount} overdue · ${kpiPeriodDesc}`}
+            icon={AlertTriangle}
+            accent="primary"
+          />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
@@ -387,6 +614,9 @@ function InvoiceDetailDrawer({
   const [collStage, setCollStage] = useState<InvoiceCollectionStage>("awaiting_final");
   const [collLocked, setCollLocked] = useState(false);
   const [savingColl, setSavingColl] = useState(false);
+  const [partialAmount, setPartialAmount] = useState("");
+  const [partialPaymentDate, setPartialPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [savingPartial, setSavingPartial] = useState(false);
 
   useEffect(() => {
     if (!invoice) return;
@@ -403,6 +633,8 @@ function InvoiceDetailDrawer({
     setLinkCopied(false);
     setCollStage(invoice.collection_stage ?? "awaiting_final");
     setCollLocked(!!invoice.collection_stage_locked);
+    setPartialAmount("");
+    setPartialPaymentDate(new Date().toISOString().slice(0, 10));
 
     const supabase = getSupabase();
 
@@ -495,7 +727,7 @@ function InvoiceDetailDrawer({
 
   if (!invoice) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
-  const config = statusConfig[invoice.status];
+  const config = statusConfig[invoice.status] ?? statusConfig.pending;
   const isOverdue = invoice.status !== "paid" && invoice.status !== "cancelled" && new Date(invoice.due_date) < new Date();
   const daysUntilDue = Math.ceil((new Date(invoice.due_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   const hasStripeLink = !!stripeState.linkUrl;
@@ -511,6 +743,7 @@ function InvoiceDetailDrawer({
 
   const linkedJobTotalCost = linkedJob ? linkedJob.partner_cost + linkedJob.materials_cost : 0;
   const linkedJobMarginAmount = linkedJob ? linkedJob.client_price - linkedJobTotalCost : 0;
+  const linkedJobForcedPaidBySystemOwner = linkedJob ? isJobForcePaid(linkedJob.internal_notes) : false;
 
   return (
     <Drawer open={!!invoice} onClose={onClose} title={invoice.reference} subtitle={invoice.client_name} width="w-[580px]">
@@ -525,34 +758,47 @@ function InvoiceDetailDrawer({
             {/* Status Banner */}
             <div className={`p-4 rounded-xl border ${
               invoice.status === "paid" ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200" :
+              invoice.status === "partially_paid" ? "bg-sky-50 dark:bg-sky-950/25 border-sky-200" :
               invoice.status === "overdue" || isOverdue ? "bg-red-50 dark:bg-red-950/30 border-red-200" :
               invoice.status === "cancelled" ? "bg-surface-hover border-border" :
               "bg-amber-50 dark:bg-amber-950/30 border-amber-200"
             }`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`h-10 w-10 shrink-0 rounded-xl flex items-center justify-center ${
                     invoice.status === "paid" ? "bg-emerald-100" :
+                    invoice.status === "partially_paid" ? "bg-sky-100 dark:bg-sky-900/40" :
                     invoice.status === "overdue" || isOverdue ? "bg-red-100" :
                     invoice.status === "cancelled" ? "bg-surface-tertiary" :
                     "bg-amber-100"
                   }`}>
                     {invoice.status === "paid" ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> :
+                     invoice.status === "partially_paid" ? <Banknote className="h-5 w-5 text-sky-600" /> :
                      invoice.status === "overdue" || isOverdue ? <AlertTriangle className="h-5 w-5 text-red-600" /> :
                      invoice.status === "cancelled" ? <XCircle className="h-5 w-5 text-text-secondary" /> :
                      <Clock className="h-5 w-5 text-amber-600" />}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <Badge variant={config.variant} dot size="md">{config.label}</Badge>
                     <p className="text-xs text-text-tertiary mt-0.5">
                       {invoice.status === "paid" && invoice.paid_date ? `Paid on ${formatDate(invoice.paid_date)}` :
+                       invoice.status === "partially_paid" ? `${formatCurrency(invoiceAmountPaid(invoice))} received · ${formatCurrency(invoiceBalanceDue(invoice))} left` :
                        isOverdue ? `Overdue by ${Math.abs(daysUntilDue)} days` :
                        invoice.status === "cancelled" ? "This invoice was cancelled" :
                        `Due in ${daysUntilDue} days`}
                     </p>
                   </div>
                 </div>
-                <p className="text-2xl font-bold text-text-primary">{formatCurrency(invoice.amount)}</p>
+                <div className="text-right shrink-0">
+                  {invoice.status === "partially_paid" ? (
+                    <>
+                      <p className="text-2xl font-bold text-text-primary tabular-nums">{formatCurrency(invoiceBalanceDue(invoice))}</p>
+                      <p className="text-[11px] text-text-tertiary">due · total {formatCurrency(invoice.amount)}</p>
+                    </>
+                  ) : (
+                    <p className="text-2xl font-bold text-text-primary tabular-nums">{formatCurrency(invoice.amount)}</p>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -604,6 +850,59 @@ function InvoiceDetailDrawer({
                   <span className="text-text-secondary">Invoice Amount</span>
                   <span className="font-semibold text-text-primary">{formatCurrency(invoice.amount)}</span>
                 </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-text-secondary">Amount paid</span>
+                  <span className="font-semibold text-text-primary">{formatCurrency(invoiceAmountPaid(invoice))}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-text-secondary">Balance due</span>
+                  <span className="font-semibold text-primary">{formatCurrency(invoiceBalanceDue(invoice))}</span>
+                </div>
+                {invoice.job_reference &&
+                  onInvoiceUpdated &&
+                  (invoice.status === "pending" || invoice.status === "partially_paid" || invoice.status === "overdue") && (
+                  <div className="pt-3 mt-1 border-t border-border space-y-2">
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partial payment</p>
+                    <p className="text-[11px] text-text-tertiary">Posts to the linked job (deposit/final split) and updates amount due on the job.</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="Amount"
+                        value={partialAmount}
+                        onChange={(e) => setPartialAmount(e.target.value)}
+                      />
+                      <Input type="date" value={partialPaymentDate} onChange={(e) => setPartialPaymentDate(e.target.value)} />
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="w-full"
+                      loading={savingPartial}
+                      disabled={!partialAmount || Number(partialAmount) <= 0}
+                      onClick={async () => {
+                        if (!invoice || !onInvoiceUpdated) return;
+                        setSavingPartial(true);
+                        try {
+                          const updated = await recordInvoicePartialPayment(invoice.id, Number(partialAmount), {
+                            paymentDate: partialPaymentDate,
+                            createdBy: profile?.id,
+                          });
+                          onInvoiceUpdated(updated);
+                          setPartialAmount("");
+                          toast.success("Partial payment recorded");
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Failed to record payment");
+                        } finally {
+                          setSavingPartial(false);
+                        }
+                      }}
+                    >
+                      Record partial payment
+                    </Button>
+                  </div>
+                )}
                 {linkedJob && (
                   <>
                     <div className="h-px bg-border" />
@@ -639,8 +938,16 @@ function InvoiceDetailDrawer({
                 <TimelineStep done={invoice.status !== "cancelled"} label="Sent to Client" date={formatDate(invoice.created_at)} />
                 <TimelineStep
                   done={invoice.status === "paid"}
-                  active={invoice.status === "pending" || invoice.status === "overdue"}
-                  label={invoice.status === "paid" ? "Payment Received" : isOverdue ? "Payment Overdue" : "Awaiting Payment"}
+                  active={invoice.status === "pending" || invoice.status === "overdue" || invoice.status === "partially_paid"}
+                  label={
+                    invoice.status === "paid"
+                      ? "Payment Received"
+                      : invoice.status === "partially_paid"
+                        ? "Partially paid"
+                        : isOverdue
+                          ? "Payment Overdue"
+                          : "Awaiting Payment"
+                  }
                   date={invoice.paid_date ? formatDate(invoice.paid_date) : `Due ${formatDate(invoice.due_date)}`}
                   danger={isOverdue}
                 />
@@ -653,6 +960,13 @@ function InvoiceDetailDrawer({
                 <>
                   <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark as Paid</Button>
                   <Button variant="outline" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => toast.success("Reminder sent")}>Send Reminder</Button>
+                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Cancel</Button>
+                </>
+              )}
+              {invoice.status === "partially_paid" && (
+                <>
+                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark fully paid</Button>
+                  <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reopen (reset)</Button>
                   <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Cancel</Button>
                 </>
               )}
@@ -730,8 +1044,15 @@ function InvoiceDetailDrawer({
                 <p className="text-xs text-text-tertiary">{invoice.client_name}</p>
               </div>
               <div className="p-3 rounded-xl bg-surface-hover">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Amount</p>
-                <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(invoice.amount)}</p>
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
+                  {invoice.status === "partially_paid" ? "Balance due" : "Amount"}
+                </p>
+                <p className="text-lg font-bold text-text-primary mt-0.5">
+                  {invoice.status === "partially_paid" ? formatCurrency(invoiceBalanceDue(invoice)) : formatCurrency(invoice.amount)}
+                </p>
+                {invoice.status === "partially_paid" ? (
+                  <p className="text-[10px] text-text-tertiary mt-0.5">of {formatCurrency(invoice.amount)}</p>
+                ) : null}
               </div>
             </div>
 
@@ -945,6 +1266,11 @@ function InvoiceDetailDrawer({
                     {linkedJob.scheduled_date && <InfoRow icon={Calendar} label="Scheduled" value={formatDate(linkedJob.scheduled_date)} />}
                     {linkedJob.completed_date && <InfoRow icon={CheckCircle2} label="Completed" value={formatDate(linkedJob.completed_date)} />}
                   </div>
+                  {linkedJobForcedPaidBySystemOwner ? (
+                    <p className="mt-2 text-xs font-semibold text-red-600">
+                      Forced and guaranteed by system owner.
+                    </p>
+                  ) : null}
                   <LocationMiniMap address={linkedJob.property_address} className="mt-3" />
                 </div>
 

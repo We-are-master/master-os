@@ -161,10 +161,9 @@ export async function POST(req: NextRequest) {
             : undefined,
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tPdf = nowMs();
-    const pdfBuffer = await (renderToBuffer as any)(
-      React.createElement(QuotePDF, { data: pdfData, branding }),
+    const pdfBuffer = await renderToBuffer(
+      React.createElement(QuotePDF, { data: pdfData, branding }) as Parameters<typeof renderToBuffer>[0],
     );
     marks.push(["pdf_render", nowMs() - tPdf]);
 

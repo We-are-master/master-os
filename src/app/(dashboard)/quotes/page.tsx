@@ -21,7 +21,7 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, Download, List, LayoutGrid, Calendar, Map,
   FileText, BarChart3, Clock, ArrowRight,
-  Send, CheckCircle2, RotateCcw, XCircle,
+  Send, CheckCircle2, RotateCcw, RefreshCw, XCircle,
   Mail, Building2,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
   ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
@@ -34,7 +34,7 @@ import type { Quote, Partner, Job, CatalogService } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
-import { createInvoice } from "@/services/invoices";
+import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
 import { listPartners } from "@/services/partners";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
@@ -570,7 +570,7 @@ function QuotesPageContent() {
           owner_id: profile?.id, owner_name: profile?.full_name,
           job_type: formData.job_type ?? "fixed",
           cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
-          partner_agreed_value: quoteToConvert.partner_cost ?? 0,
+          partner_agreed_value: (formData.partner_cost ?? 0) + (formData.materials_cost ?? 0),
           finance_status: "unpaid",
           service_value: formData.client_price,
           report_submitted: false,
@@ -588,39 +588,24 @@ function QuotesPageContent() {
         });
 
         const dueStr = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
-        let depositInvId: string | null = null;
-        let finalInvId: string | null = null;
-
-        const [depositInv, finalInv] = await Promise.all([
-          scheduledDeposit > 0.01
-            ? createInvoice({
-                client_name: formData.client_name,
-                job_reference: job.reference,
-                amount: scheduledDeposit,
-                status: "pending",
-                due_date: dueStr,
-                collection_stage: "awaiting_deposit",
-                invoice_kind: "deposit",
-              })
-            : Promise.resolve(null),
-          scheduledFinal > 0.01
-            ? createInvoice({
-                client_name: formData.client_name,
-                job_reference: job.reference,
-                amount: scheduledFinal,
-                status: "pending",
-                due_date: dueStr,
-                collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
-                invoice_kind: "final",
-              })
-            : Promise.resolve(null),
-        ]);
-        depositInvId = depositInv?.id ?? null;
-        finalInvId = finalInv?.id ?? null;
-
-        const primaryInvoiceId = depositInvId ?? finalInvId;
-        if (primaryInvoiceId) {
-          await updateJob(job.id, { invoice_id: primaryInvoiceId });
+        const totalClient = Number(formData.client_price ?? 0);
+        if (totalClient > 0.01) {
+          const linked = await listInvoicesLinkedToJob(job.reference, job.invoice_id);
+          if (linked.length > 0) {
+            const pick = linked.find((i) => i.invoice_kind === "combined") ?? linked[linked.length - 1];
+            await updateJob(job.id, { invoice_id: pick.id });
+          } else {
+            const combined = await createInvoice({
+              client_name: formData.client_name,
+              job_reference: job.reference,
+              amount: totalClient,
+              status: "pending",
+              due_date: dueStr,
+              collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
+              invoice_kind: "combined",
+            });
+            await updateJob(job.id, { invoice_id: combined.id });
+          }
         }
 
         await Promise.all([
@@ -660,6 +645,9 @@ function QuotesPageContent() {
         const updated = await updateQuote(quote.id, { status: newStatus as Quote["status"] });
         await logAudit({ entityType: "quote", entityId: quote.id, entityRef: quote.reference, action: "status_changed", fieldName: "status", oldValue: quote.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
         setSelectedQuote(updated);
+        if (newStatus === "accepted") {
+          setQuoteToConvert(updated);
+        }
         toast.success(`Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
         refreshWithKpis();
         if (newStatus === "bidding" && quote.service_type) {
@@ -717,6 +705,14 @@ function QuotesPageContent() {
           <span className="text-sm text-text-primary font-medium">{item.client_name}</span>
         </div>
       ),
+    },
+    {
+      key: "service_type",
+      label: "Type of work",
+      render: (item) => {
+        const type = normalizeTypeOfWork(item.service_type) || normalizeTypeOfWork(item.title) || item.title || "—";
+        return <span className="text-sm text-text-secondary truncate block max-w-[180px]">{type}</span>;
+      },
     },
     {
       key: "quote_type", label: "Type",
@@ -950,7 +946,14 @@ function QuotesPageContent() {
         }}
       />
       ) : null}
-      <CreateJobFromQuoteModal quote={quoteToConvert} onClose={() => setQuoteToConvert(null)} onSubmit={handleConfirmCreateJob} />
+      {quoteToConvert ? (
+        <CreateJobFromQuoteModal
+          key={quoteToConvert.id}
+          quote={quoteToConvert}
+          onClose={() => setQuoteToConvert(null)}
+          onSubmit={handleConfirmCreateJob}
+        />
+      ) : null}
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create Quote" subtitle="Add line items and optionally request partner bids" size="lg">
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
@@ -990,6 +993,8 @@ function QuoteDetailDrawer({
   const [sendingInvitePush, setSendingInvitePush] = useState(false);
   const [bids, setBids] = useState<QuoteBid[]>([]);
   const [bidsLoading, setBidsLoading] = useState(false);
+  /** Partner bid cards: collapsed preview shows total only; expand for breakdown, dates, scope, notes. */
+  const [expandedBidIds, setExpandedBidIds] = useState<Set<string>>(new Set());
   const [proposalSaving, setProposalSaving] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
@@ -1030,9 +1035,10 @@ function QuoteDetailDrawer({
       setQuoteEmailedInSession(false);
       setSendState("idle");
       setProposalScalePercent(100);
-    setOwnerOpen(false);
-    setPricingOpen(false);
-    setQuoteClientPick({
+      setOwnerOpen(false);
+      setPricingOpen(false);
+      setExpandedBidIds(new Set());
+      setQuoteClientPick({
       client_id: quote.client_id,
       client_address_id: quote.client_address_id,
       client_name: quote.client_name ?? "",
@@ -1112,12 +1118,24 @@ function QuoteDetailDrawer({
     if (quote.quote_type === "partner") loadBids(quote.id);
   }, [quote.id, quote.quote_type, loadBids]);
 
+  const handleRefreshBids = useCallback(async () => {
+    if (quote.quote_type !== "partner") return;
+    await loadBids(quote.id);
+    const fresh = await getQuote(quote.id);
+    if (fresh) onQuoteUpdate?.(fresh);
+  }, [quote.id, quote.quote_type, loadBids, onQuoteUpdate]);
+
   useEffect(() => {
     if (!isAdmin) return;
     listAssignableUsers().then(setAssignableUsers).catch(() => {});
   }, [isAdmin]);
 
   const approvedBid = useMemo(() => bids.find((b) => b.status === "approved") ?? null, [bids]);
+  const approvedBidPartnerUnits = useMemo(() => {
+    if (!approvedBid) return null;
+    const payload = parseBidProposalFromNotes(approvedBid.notes);
+    return splitBidPartnerCosts(approvedBid.bid_amount, payload);
+  }, [approvedBid]);
 
   const avgBidPrice = useMemo(() => {
     if (!bids.length) return null;
@@ -1127,6 +1145,30 @@ function QuoteDetailDrawer({
 
   const bidsReceivedCount =
     quote.quote_type !== "partner" ? 0 : bidsLoading ? Number(quote.partner_quotes_count) || 0 : bids.length;
+  const invitedPartnersCount = quote.quote_type !== "partner" ? 0 : Math.max(0, Number(quote.partner_quotes_count) || 0);
+  const quotedPartnersCount = useMemo(
+    () => bids.filter((b) => b.status === "submitted" || b.status === "approved" || b.status === "rejected").length,
+    [bids]
+  );
+
+  useEffect(() => {
+    if (!approvedBidPartnerUnits) return;
+    setLineItems((prev) => {
+      if (!prev.length) return prev;
+      const next = [...prev];
+      let changed = false;
+      const target = [approvedBidPartnerUnits.labour, approvedBidPartnerUnits.materials];
+      for (let i = 0; i < Math.min(2, next.length); i += 1) {
+        const current = Number(next[i]?.partnerUnitCost ?? 0);
+        const desired = Math.max(0, Number(target[i] ?? 0));
+        if (Math.abs(current - desired) > 0.005) {
+          next[i] = { ...next[i], partnerUnitCost: String(desired) };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [approvedBidPartnerUnits]);
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
   const actions = getQuoteActions(quote);
@@ -1470,10 +1512,10 @@ function QuoteDetailDrawer({
                   )}
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-4 rounded-xl bg-surface-hover">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Avg price</p>
-                  <p className="text-xl font-bold text-text-primary mt-1 tabular-nums">
+              <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-3">
+                <div className="min-w-0 p-4 rounded-xl bg-surface-hover border border-border-light/60">
+                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">Avg price</p>
+                  <p className="text-2xl font-bold text-text-primary mt-2 tabular-nums tracking-tight break-all sm:break-normal">
                     {quote.quote_type !== "partner"
                       ? "—"
                       : bidsLoading
@@ -1483,9 +1525,10 @@ function QuoteDetailDrawer({
                           : "—"}
                   </p>
                 </div>
-                <div className="p-4 rounded-xl bg-surface-hover">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Bids received</p>
-                  <p className="text-xl font-bold text-text-primary mt-1 tabular-nums">{bidsReceivedCount}</p>
+                <div className="min-w-0 p-4 rounded-xl bg-surface-hover border border-border-light/60">
+                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">Bids received</p>
+                  <p className="text-2xl font-bold text-text-primary mt-2 tabular-nums tracking-tight">{bidsReceivedCount}</p>
+                  <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">Partner submissions in this quote</p>
                 </div>
               </div>
 
@@ -1985,6 +2028,16 @@ function QuoteDetailDrawer({
           {/* BIDS TAB — Partner bids from app; approve to set quote partner */}
           {tab === "bids" && (
             <div className="p-6 space-y-5">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-border-light bg-surface-hover px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Invited partners</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums text-text-primary">{invitedPartnersCount}</p>
+                </div>
+                <div className="rounded-xl border border-border-light bg-surface-hover px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Quoted already</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums text-primary">{quotedPartnersCount}</p>
+                </div>
+              </div>
               <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="w-full">
                 Invite more partners
               </Button>
@@ -2005,11 +2058,30 @@ function QuoteDetailDrawer({
                 </Button>
               )}
               <div className="p-4 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
+                  {quote.quote_type === "partner" && (
+                    <button
+                      type="button"
+                      title="Refresh bids"
+                      aria-label="Refresh partner bids"
+                      disabled={bidsLoading}
+                      onClick={() => void handleRefreshBids()}
+                      className={cn(
+                        "shrink-0 rounded-lg border border-border-light bg-surface-tertiary p-2 text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary disabled:opacity-50",
+                        bidsLoading && "pointer-events-none",
+                      )}
+                    >
+                      <RefreshCw className={cn("h-4 w-4", bidsLoading && "animate-spin")} />
+                    </button>
+                  )}
+                </div>
                 <p className="text-xs text-text-tertiary mt-0.5">
-                  Optional: approve one bid to lock <strong className="text-text-secondary">partner cost</strong> on the quote. The quote stays in bidding until you send it to the customer — it is{" "}
-                  <strong className="text-text-secondary">not</strong> customer-accepted yet. Then set <strong className="text-text-secondary">your price</strong> on Review & Send, complete the proposal, and use{" "}
-                  <strong className="text-text-secondary">Send to Customer</strong>. After the client accepts, convert to a job.
+                  Optionally <strong className="text-text-secondary">approve a bid</strong> to lock{" "}
+                  <strong className="text-text-secondary">partner cost</strong>. Until you send, the quote is{" "}
+                  <strong className="text-text-secondary">not</strong> accepted by the customer. On Review & Send, set{" "}
+                  <strong className="text-text-secondary">your price</strong>, then <strong className="text-text-secondary">Send to Customer</strong>—after they accept,{" "}
+                  <strong className="text-text-secondary">convert to a job</strong>.
                 </p>
               </div>
               {quote.status === "bidding" && bids.some((b) => b.status === "approved") && (
@@ -2048,71 +2120,164 @@ function QuoteDetailDrawer({
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {bids.map((bid) => (
-                    <div key={bid.id} className="flex items-center justify-between p-4 rounded-xl bg-surface-hover border border-border-light">
-                      <div>
-                        <p className="text-sm font-semibold text-text-primary">{bid.partner_name ?? bid.partner_id}</p>
-                        <p className="text-lg font-bold text-primary mt-0.5">{formatCurrency(bid.bid_amount)}</p>
-                        {(() => {
-                          const bidNoteSummary = summarizeBidProposalNotes(bid.notes);
-                          if (bidNoteSummary) {
-                            return <p className="text-xs text-text-tertiary mt-1">{bidNoteSummary}</p>;
-                          }
-                          const notesPlain = bidPayloadTrimmedString(bid.notes as unknown);
-                          if (notesPlain) {
-                            return <p className="text-xs text-text-tertiary mt-1 whitespace-pre-wrap">{notesPlain}</p>;
-                          }
-                          return null;
-                        })()}
-                        <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="mt-2">{bid.status}</Badge>
-                      </div>
-                      {bid.status === "submitted" && (
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          onClick={async () => {
-                            try {
-                              const pre = computeCustomerProposalFromBid(bid, quote);
-                              const scopeMerged = pre.scopeText ?? scopeText;
-                              const d1 = pre.startDate1 ?? startDate1;
-                              const d2 = pre.startDate2 ?? startDate2;
-                              const dep = pre.depositRequired ?? depositRequired;
-
-                              await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
-
-                              const updated = await persistProposalToQuote({
-                                lineItemsOverride: pre.lines,
-                                scopeTextOverride: scopeMerged,
-                                startDate1Override: d1,
-                                startDate2Override: d2,
-                                depositOverride: dep,
-                                partnerCostOverride: bid.bid_amount,
+                  {bids.map((bid) => {
+                    const bidPayload = parseBidProposalFromNotes(bid.notes);
+                    const { labour, materials } = splitBidPartnerCosts(bid.bid_amount, bidPayload);
+                    const d1 = bidPayload ? bidPayloadTrimmedString(bidPayload.start_date_option_1 as unknown).slice(0, 10) : "";
+                    const d2 = bidPayload ? bidPayloadTrimmedString(bidPayload.start_date_option_2 as unknown).slice(0, 10) : "";
+                    const labourDesc = bidPayload ? bidPayloadTrimmedString(bidPayload.labour_description as unknown) : "";
+                    const matDesc = bidPayload ? bidPayloadTrimmedString(bidPayload.materials_description as unknown) : "";
+                    const scopeFromBid = bidPayload ? bidPayloadTrimmedString(bidPayload.scope as unknown) : "";
+                    const bidNoteSummary = summarizeBidProposalNotes(bid.notes);
+                    const notesPlain = bidPayloadTrimmedString(bid.notes as unknown);
+                    const hasStructuredBreakdown =
+                      bidPayload != null &&
+                      (bidPayload.labour_cost != null || bidPayload.materials_cost != null);
+                    const hasExpandableDetails =
+                      hasStructuredBreakdown ||
+                      !!(bidNoteSummary || notesPlain) ||
+                      !!(d1 || d2) ||
+                      !!scopeFromBid;
+                    const bidExpanded = expandedBidIds.has(bid.id);
+                    return (
+                    <div
+                      key={bid.id}
+                      className="rounded-xl bg-surface-hover border border-border-light p-3 sm:p-4"
+                    >
+                      <div className="flex gap-2 sm:gap-3">
+                        {hasExpandableDetails ? (
+                          <button
+                            type="button"
+                            aria-expanded={bidExpanded}
+                            aria-label={bidExpanded ? "Hide bid details" : "Show bid details"}
+                            onClick={() => {
+                              setExpandedBidIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(bid.id)) next.delete(bid.id);
+                                else next.add(bid.id);
+                                return next;
                               });
+                            }}
+                            className="shrink-0 self-start rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary"
+                          >
+                            <ChevronDown
+                              className={cn("h-5 w-5 transition-transform duration-200", bidExpanded && "rotate-180")}
+                            />
+                          </button>
+                        ) : null}
+                        <div className="min-w-0 flex-1 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <p className="text-base font-semibold text-text-primary truncate max-w-full">{bid.partner_name ?? bid.partner_id}</p>
+                              <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="shrink-0">
+                                {bid.status}
+                              </Badge>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total</p>
+                              <p className="text-2xl sm:text-[1.75rem] font-bold text-primary tabular-nums tracking-tight mt-0.5">{formatCurrency(bid.bid_amount)}</p>
+                            </div>
+                          </div>
+                          {bid.status === "submitted" && (
+                            <div className="flex shrink-0 w-full sm:w-auto sm:pt-0.5">
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                className="w-full sm:min-w-[7.5rem]"
+                                onClick={async () => {
+                                  try {
+                                    const pre = computeCustomerProposalFromBid(bid, quote);
+                                    const scopeMerged = pre.scopeText ?? scopeText;
+                                    const d1 = pre.startDate1 ?? startDate1;
+                                    const d2 = pre.startDate2 ?? startDate2;
+                                    const dep = pre.depositRequired ?? depositRequired;
 
-                              await loadBids(quote.id);
+                                    await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
 
-                              setLineItems(pre.lines);
-                              setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
-                              setStartDate1(d1);
-                              setStartDate2(d2);
-                              setDepositRequired(dep);
-                              setProposalScalePercent(100);
+                                    const updated = await persistProposalToQuote({
+                                      lineItemsOverride: pre.lines,
+                                      scopeTextOverride: scopeMerged,
+                                      startDate1Override: d1,
+                                      startDate2Override: d2,
+                                      depositOverride: dep,
+                                      partnerCostOverride: bid.bid_amount,
+                                    });
 
-                              onQuoteUpdate?.(updated);
-                              setTab("overview");
-                              toast.success(
-                                "Bid approved. Partner unit costs and customer sell (40% margin on sell) are pre-filled. Adjust on Review & Send if needed, then send to the customer.",
-                              );
-                            } catch (e) {
-                              toast.error(e instanceof Error ? e.message : "Failed to approve bid");
-                            }
-                          }}
-                        >
-                          Approve
-                        </Button>
-                      )}
+                                    await loadBids(quote.id);
+
+                                    setLineItems(pre.lines);
+                                    setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
+                                    setStartDate1(d1);
+                                    setStartDate2(d2);
+                                    setDepositRequired(dep);
+                                    setProposalScalePercent(100);
+
+                                    onQuoteUpdate?.(updated);
+                                    setTab("overview");
+                                    toast.success(
+                                      "Bid approved. Partner unit costs and customer sell (40% margin on sell) are pre-filled. Adjust on Review & Send if needed, then send to the customer.",
+                                    );
+                                  } catch (e) {
+                                    toast.error(e instanceof Error ? e.message : "Failed to approve bid");
+                                  }
+                                }}
+                              >
+                                Approve
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {bidExpanded && hasExpandableDetails ? (
+                        <div className="mt-3 pt-3 border-t border-border-light space-y-3 sm:pl-9">
+                          {hasStructuredBreakdown ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-border-light bg-card/50 dark:bg-surface-secondary/20 px-3 py-3">
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Labour</p>
+                                <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(labour)}</p>
+                                {labourDesc ? (
+                                  <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{labourDesc}</p>
+                                ) : null}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Materials</p>
+                                <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(materials)}</p>
+                                {matDesc ? (
+                                  <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{matDesc}</p>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : null}
+                          {bidNoteSummary ? (
+                            <p className="text-[13px] text-text-secondary leading-relaxed break-words">{bidNoteSummary}</p>
+                          ) : notesPlain ? (
+                            <p className="text-[13px] text-text-secondary leading-relaxed whitespace-pre-wrap break-words max-h-[10rem] overflow-y-auto">{notesPlain}</p>
+                          ) : null}
+                          {(d1 || d2) ? (
+                            <div className="flex flex-wrap gap-2">
+                              {d1 ? (
+                                <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
+                                  Option 1: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d1}</strong>
+                                </span>
+                              ) : null}
+                              {d2 ? (
+                                <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
+                                  Option 2: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d2}</strong>
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {scopeFromBid ? (
+                            <div className="rounded-lg border border-dashed border-border-light bg-surface-hover/80 px-3 py-2.5">
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope</p>
+                              <p className="text-[12px] text-text-secondary mt-1 leading-snug whitespace-pre-wrap break-words max-h-[7.5rem] overflow-y-auto pr-1">{scopeFromBid}</p>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2325,6 +2490,29 @@ function preferredScheduleDateFromQuote(q: Quote): string {
   return parseIsoDateOnly(raw);
 }
 
+/** Labour (line 1) vs materials (line 2) partner subtotals from stored proposal rows. */
+function splitPartnerCostFromFirstTwoLines(
+  rows: Array<{ quantity?: number | null; partner_unit_cost?: number | null }>,
+): { labour: number; materials: number; hasSplit: boolean } {
+  if (rows.length < 2) return { labour: 0, materials: 0, hasSplit: false };
+  const q0 = Number(rows[0]?.quantity) || 1;
+  const q1 = Number(rows[1]?.quantity) || 1;
+  const p0 = (Number(rows[0]?.partner_unit_cost ?? 0) || 0) * q0;
+  const p1 = (Number(rows[1]?.partner_unit_cost ?? 0) || 0) * q1;
+  if (p0 <= 0 && p1 <= 0) return { labour: 0, materials: 0, hasSplit: false };
+  return { labour: p0, materials: p1, hasSplit: true };
+}
+
+/** Narrative scope only for the job (bid `scope`, else saved `quotes.scope`, else plain bid notes) — no line-item £ or labour/materials breakdown. */
+function mergeCreateJobScopeFromQuote(q: Quote, approvedBid: QuoteBid | null): string {
+  const payload = approvedBid ? parseBidProposalFromNotes(approvedBid.notes) : null;
+  const bidScope = payload ? bidPayloadTrimmedString(payload.scope as unknown) : "";
+  const quoteScope = bidPayloadTrimmedString(q.scope as unknown);
+  const plainBidNotes =
+    approvedBid && !payload ? bidPayloadTrimmedString(approvedBid.notes as unknown) : "";
+  return (bidScope || quoteScope || plainBidNotes).trim();
+}
+
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   quote: Quote | null; onClose: () => void;
   onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => void;
@@ -2332,15 +2520,28 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "", scope: "", createWithoutDeposit: false, job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
+  /** DB / approved-bid partner when not in `partners` list (label for Select + submit). */
+  const [partnerFromQuote, setPartnerFromQuote] = useState<{ id: string; name: string } | null>(null);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- one-shot form bootstrap when modal opens (parent uses key=quote.id) */
   useEffect(() => {
     if (!quote) return;
+    const typeOfWorkInitial =
+      normalizeTypeOfWork(bidPayloadTrimmedString(quote.service_type as unknown)) || proposalFirstLineLabel(quote);
+    const qScope = bidPayloadTrimmedString(quote.scope as unknown);
     setForm({
-      title: quote.title ?? "", partner_id: quote.partner_id ?? "",
-      client_price: String(quote.total_value ?? 0), partner_cost: String(quote.partner_cost ?? 0),
-      materials_cost: "0", scheduled_date: preferredScheduleDateFromQuote(quote), arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
-      scope: quote.scope ?? "",
-      createWithoutDeposit: false, job_type: "fixed",
+      title: typeOfWorkInitial,
+      partner_id: quote.partner_id ?? "",
+      client_price: String(quote.total_value ?? 0),
+      partner_cost: String(quote.partner_cost ?? 0),
+      materials_cost: "0",
+      scheduled_date: preferredScheduleDateFromQuote(quote),
+      arrival_from: "09:00",
+      arrival_window_mins: "180",
+      expected_finish_date: "",
+      scope: qScope,
+      createWithoutDeposit: false,
+      job_type: "fixed",
     });
     setClientAddress({
       client_id: quote.client_id,
@@ -2350,12 +2551,79 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       property_address: quote.property_address ?? "",
     });
     listPartners({ pageSize: 200, status: "all" }).then((r) => setPartners(r.data ?? []));
-    if (quote.request_id) {
+    let cancelled = false;
+    (async () => {
+      const [fresh, bids, lineRes] = await Promise.all([
+        getQuote(quote.id),
+        getBidsByQuoteId(quote.id).catch(() => [] as QuoteBid[]),
+        getSupabase().from("quote_line_items").select("*").eq("quote_id", quote.id).order("sort_order"),
+      ]);
+      if (cancelled) return;
+      const q = fresh ?? quote;
+      const approvedBid = bids.find((b) => b.status === "approved") ?? null;
+      const pid =
+        bidPayloadTrimmedString(q.partner_id as unknown) ||
+        (approvedBid?.partner_id ? String(approvedBid.partner_id) : "");
+      const pname =
+        bidPayloadTrimmedString(q.partner_name as unknown) ||
+        bidPayloadTrimmedString(approvedBid?.partner_name as unknown) ||
+        "";
+      if (pid) {
+        setPartnerFromQuote({ id: pid, name: pname || pid });
+      } else {
+        setPartnerFromQuote(null);
+      }
+      const { data } = lineRes;
+      const items = (data ?? []) as Array<{
+        description?: string | null;
+        quantity?: number | null;
+        unit_price?: number | null;
+        partner_unit_cost?: number | null;
+        notes?: string | null;
+      }>;
+      const mergedScope = mergeCreateJobScopeFromQuote(q, approvedBid);
+      const split = splitPartnerCostFromFirstTwoLines(items);
+      const bidJobType = approvedBid?.job_type === "hourly" || approvedBid?.job_type === "fixed" ? approvedBid.job_type : undefined;
+      setForm((prev) => ({
+        ...prev,
+        partner_id: pid || prev.partner_id,
+        scope: mergedScope,
+        partner_cost: split.hasSplit ? String(split.labour) : String(q.partner_cost ?? prev.partner_cost),
+        materials_cost: split.hasSplit ? String(split.materials) : prev.materials_cost,
+        job_type: bidJobType ?? prev.job_type,
+      }));
+      setClientAddress({
+        client_id: q.client_id,
+        client_address_id: q.client_address_id,
+        client_name: q.client_name ?? "",
+        client_email: q.client_email ?? undefined,
+        property_address: q.property_address ?? "",
+      });
+    })();
+    if (quote.request_id && !quote.client_address_id?.trim()) {
       getRequest(quote.request_id).then((req) => {
-        if (req?.property_address) setClientAddress((p) => ({ ...p, property_address: req.property_address }));
+        if (cancelled || !req?.property_address) return;
+        setClientAddress((p) => {
+          if (p.property_address?.trim()) return p;
+          return { ...p, property_address: req.property_address };
+        });
       });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [quote]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const partnerSelectOptions = useMemo(() => {
+    const base = partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name || p.id }));
+    const pid = form.partner_id?.trim();
+    if (pid && !base.some((o) => o.value === pid)) {
+      const label = partnerFromQuote?.id === pid ? partnerFromQuote.name : pid;
+      return [{ value: "", label: "No partner" }, { value: pid, label }, ...base];
+    }
+    return [{ value: "", label: "No partner" }, ...base];
+  }, [partners, form.partner_id, partnerFromQuote]);
 
   const typeOfWorkOptions = useMemo(
     () => withTypeOfWorkFallback(form.title).map((name) => ({ value: name, label: name })),
@@ -2369,7 +2637,13 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     if (!form.title?.trim()) { toast.error("Job title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
-    const effectivePartnerId = form.partner_id || quote.partner_id;
+    const partnerNameResolved =
+      selectedPartner?.company_name ||
+      selectedPartner?.contact_name ||
+      (partnerFromQuote?.id === form.partner_id ? partnerFromQuote.name : undefined) ||
+      bidPayloadTrimmedString(quote.partner_name as unknown) ||
+      undefined;
+    const effectivePartnerId = form.partner_id || partnerFromQuote?.id || quote.partner_id;
     const sched = resolveJobModalSchedule({
       scheduled_date: form.scheduled_date,
       arrival_from: form.arrival_from,
@@ -2422,7 +2696,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       client_name: clientAddress.client_name,
       property_address: clientAddress.property_address,
       partner_id: form.partner_id || undefined,
-      partner_name: selectedPartner ? selectedPartner.company_name : quote.partner_name ?? undefined,
+      partner_name: partnerNameResolved,
       client_price: Number(form.client_price) || 0,
       partner_cost: Number(form.partner_cost) || 0,
       materials_cost: Number(form.materials_cost) || 0,
@@ -2483,7 +2757,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
             </p>
           }
         />
-        <Select label="Partner" options={[{ value: "", label: "No partner" }, ...partners.map((p) => ({ value: p.id, label: p.company_name || p.contact_name }))]} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
+        <Select label="Partner" options={partnerSelectOptions} value={form.partner_id} onChange={(e) => update("partner_id", e.target.value)} />
         <div className="grid grid-cols-3 gap-4">
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min={0} step="0.01" /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min={0} step="0.01" /></div>

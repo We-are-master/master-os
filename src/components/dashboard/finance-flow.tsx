@@ -65,7 +65,7 @@ function buildCashflowBuckets(
   if (granularity === "month") {
     const monthKeys: string[] = [];
     const buckets: Bucket[] = [];
-    let curM = new Date(new Date(fromIso).getFullYear(), new Date(fromIso).getMonth(), 1);
+    const curM = new Date(new Date(fromIso).getFullYear(), new Date(fromIso).getMonth(), 1);
     const endM = new Date(toIso);
     while (curM <= endM) {
       monthKeys.push(`${curM.getFullYear()}-${String(curM.getMonth() + 1).padStart(2, "0")}`);

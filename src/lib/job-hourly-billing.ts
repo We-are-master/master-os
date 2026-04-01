@@ -31,15 +31,25 @@ export function partnerHourlyRateFromCatalogBundle(
 }
 
 export function resolveJobHourlyRates(job: Job): { clientRate: number; partnerRate: number } {
-  const billedHours = Math.max(0.25, Number(job.billed_hours) || 1);
+  const rawBilled = Number(job.billed_hours);
+  const billedHours = Math.max(0.25, rawBilled > 0 ? rawBilled : 1);
+  /** Prefer implied £/h from stored totals when hours are known — beats stale `hourly_*_rate` after approve. */
+  const impliedClient =
+    rawBilled > 0 ? Math.round(((Number(job.client_price) || 0) / rawBilled) * 100) / 100 : 0;
+  const impliedPartner =
+    rawBilled > 0 ? Math.round(((Number(job.partner_cost) || 0) / rawBilled) * 100) / 100 : 0;
   const clientRate =
-    Number(job.hourly_client_rate) > 0
-      ? Number(job.hourly_client_rate)
-      : Math.round(((Number(job.client_price) || 0) / billedHours) * 100) / 100;
+    impliedClient > 0.02
+      ? impliedClient
+      : Number(job.hourly_client_rate) > 0
+        ? Number(job.hourly_client_rate)
+        : Math.round(((Number(job.client_price) || 0) / billedHours) * 100) / 100;
   const partnerRate =
-    Number(job.hourly_partner_rate) > 0
-      ? Number(job.hourly_partner_rate)
-      : Math.round(((Number(job.partner_cost) || 0) / billedHours) * 100) / 100;
+    impliedPartner > 0.02
+      ? impliedPartner
+      : Number(job.hourly_partner_rate) > 0
+        ? Number(job.hourly_partner_rate)
+        : Math.round(((Number(job.partner_cost) || 0) / billedHours) * 100) / 100;
   return {
     clientRate: Math.max(0, clientRate || 0),
     partnerRate: Math.max(0, partnerRate || 0),

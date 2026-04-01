@@ -70,7 +70,8 @@ function mapUnassignedStatus(status: unknown): unknown {
 export function applyJobDbCompat(row: Record<string, unknown>): Record<string, unknown> {
   const out = { ...row };
   for (const k of JOB_DB_COMPAT_STRIP_KEYS) delete out[k];
-  if ("status" in out) out.status = mapUnassignedStatus(out.status);
+  /** Only map unassigned→scheduled when legacy env is on. Otherwise retry would wrongly force "scheduled" with no partner. */
+  if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   stripOperationalFlowKeysIfDisabled(out);
   return out;
 }

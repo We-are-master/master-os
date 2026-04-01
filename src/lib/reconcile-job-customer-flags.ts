@@ -21,9 +21,16 @@ export async function reconcileJobCustomerPaymentFlags(client: SupabaseClient, j
 
   const depNeed = Number(job.customer_deposit ?? 0);
   const finNeed = Number(job.customer_final_payment ?? 0);
+  const totalCustomer = depSum + finSum;
+  const totalNeed = depNeed + finNeed;
 
-  const depositPaid = depNeed <= EPS || depSum >= depNeed - EPS;
-  const finalPaid = finNeed <= EPS || finSum >= finNeed - EPS;
+  let depositPaid = depNeed <= EPS || depSum >= depNeed - EPS;
+  let finalPaid = finNeed <= EPS || finSum >= finNeed - EPS;
+  /** One payment row (e.g. combined invoice / Stripe) covering deposit + final in full. */
+  if (depNeed > EPS && finNeed > EPS && totalCustomer >= totalNeed - EPS) {
+    depositPaid = true;
+    finalPaid = true;
+  }
 
   const patch: { customer_deposit_paid?: boolean; customer_final_paid?: boolean } = {};
   if (Boolean(job.customer_deposit_paid) !== depositPaid) patch.customer_deposit_paid = depositPaid;

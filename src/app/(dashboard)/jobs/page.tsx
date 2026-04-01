@@ -64,6 +64,7 @@ import {
 } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -134,7 +135,7 @@ function JobCardFinanceRow({ job }: { job: Job }) {
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
-  auto_assigning: { label: "Auto assigning", variant: "info", dot: true },
+  auto_assigning: { label: "Assigning", variant: "info", dot: true },
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
@@ -233,7 +234,6 @@ function JobsPageContent() {
   const kanbanColumns = useMemo(() => {
     const ids = [
       "unassigned",
-      "auto_assigning",
       "scheduled",
       "in_progress",
       "final_check",
@@ -279,7 +279,11 @@ function JobsPageContent() {
                     : id === "unassigned"
                       ? "bg-slate-500"
                       : "bg-primary",
-        items: filteredData.filter((j) => j.status === id),
+        items: filteredData.filter((j) =>
+          id === "unassigned"
+            ? j.status === "unassigned" || j.status === "auto_assigning"
+            : j.status === id,
+        ),
       };
     });
   }, [filteredData]);
@@ -339,6 +343,8 @@ function JobsPageContent() {
 
   const finalChecksTabCount = (tabCounts.final_check ?? 0) + (tabCounts.need_attention ?? 0);
 
+  const unassignedTabCount = (tabCounts.unassigned ?? 0) + (tabCounts.auto_assigning ?? 0);
+
   const activeJobsKpiCount = useMemo(() => {
     const onSite =
       (tabCounts.in_progress_phase1 ?? 0) +
@@ -357,8 +363,7 @@ function JobsPageContent() {
 
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0 },
-    { id: "unassigned", label: "Unassigned", count: tabCounts.unassigned ?? 0 },
-    { id: "auto_assigning", label: "Assigning", count: tabCounts.auto_assigning ?? 0 },
+    { id: "unassigned", label: "Unassigned", count: unassignedTabCount },
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount },
     { id: "in_progress", label: "In Progress", count: inProgressTabCount },
     { id: "final_check", label: "Final Checks", count: finalChecksTabCount },
@@ -376,19 +381,11 @@ function JobsPageContent() {
     const supabase = getSupabase();
     let cancelled = false;
     (async () => {
-      const { data: clients } = await supabase.from("clients").select("id, source_account_id").in("id", ids);
-      const accountIds = [...new Set((clients ?? []).map((c: { source_account_id?: string | null }) => c.source_account_id).filter(Boolean))] as string[];
-      const { data: accounts } = accountIds.length > 0
-        ? await supabase.from("accounts").select("id, company_name").in("id", accountIds)
-        : { data: [] as Array<{ id: string; company_name: string }> };
+      const labels = await batchResolveLinkedAccountLabels(supabase, ids);
       if (cancelled) return;
-      const accountById = new Map((accounts ?? []).map((a: { id: string; company_name: string }) => [a.id, a.company_name]));
       const next: Record<string, string> = {};
-      (clients ?? []).forEach((c: { id: string; source_account_id?: string | null }) => {
-        if (c.source_account_id) {
-          const name = accountById.get(c.source_account_id);
-          if (name) next[c.id] = name;
-        }
+      labels.forEach((label, clientId) => {
+        next[clientId] = label;
       });
       setClientAccountMap(next);
     })();
@@ -417,10 +414,15 @@ function JobsPageContent() {
         return;
       }
     }
-    const accessSurcharge = computeAccessSurcharge({
-      inCcz: formData.in_ccz,
-      hasFreeParking: formData.has_free_parking,
-    });
+    const housekeepFromPayload =
+      isHousekeepWorkLabel(formData.title) ||
+      isHousekeepWorkLabel((formData as { service_type?: string }).service_type);
+    const accessSurcharge = housekeepFromPayload
+      ? 0
+      : computeAccessSurcharge({
+          inCcz: formData.in_ccz,
+          hasFreeParking: formData.has_free_parking,
+        });
     try {
       const result = await createJob({
         title: formData.title ?? "",
@@ -433,7 +435,12 @@ function JobsPageContent() {
         partner_ids: formData.partner_ids,
         owner_id: formData.owner_id ?? profile?.id,
         owner_name: formData.owner_name ?? profile?.full_name,
-        status: (formData.status as Job["status"]) ?? (jobHasPartnerSet(formData as Job) ? "scheduled" : "unassigned"),
+        status: (() => {
+          const st = formData.status as Job["status"] | undefined;
+          if (st === "auto_assigning") return "auto_assigning";
+          if (!jobHasPartnerSet(formData as Job)) return "unassigned";
+          return st ?? "scheduled";
+        })(),
         progress: 0,
         current_phase: 0,
         total_phases: normalizeTotalPhases(formData.total_phases),
@@ -450,8 +457,8 @@ function JobsPageContent() {
         hourly_client_rate: formData.hourly_client_rate ?? null,
         hourly_partner_rate: formData.hourly_partner_rate ?? null,
         billed_hours: formData.billed_hours ?? null,
-        in_ccz: formData.in_ccz ?? null,
-        has_free_parking: formData.has_free_parking ?? null,
+        in_ccz: housekeepFromPayload ? false : (formData.in_ccz ?? null),
+        has_free_parking: housekeepFromPayload ? true : (formData.has_free_parking ?? null),
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
         partner_agreed_value: 0, finance_status: "unpaid", service_value: cp + accessSurcharge,
         report_submitted: false,
@@ -647,22 +654,6 @@ function JobsPageContent() {
       toast.error("Failed to archive jobs");
     }
   }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
-
-  const handleBulkDelete = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    if (typeof window !== "undefined" && !window.confirm(`Delete ${selectedIds.size} selected jobs permanently?`)) return;
-    try {
-      const supabase = getSupabase();
-      const { error } = await supabase.from("jobs").delete().in("id", Array.from(selectedIds));
-      if (error) throw error;
-      toast.success(`${selectedIds.size} jobs deleted`);
-      setSelectedIds(new Set());
-      refresh();
-      loadDashboardStats();
-    } catch {
-      toast.error("Failed to delete jobs");
-    }
-  }, [selectedIds, refresh, loadDashboardStats]);
 
   const columns: Column<Job>[] = [
     {
@@ -924,7 +915,7 @@ function JobsPageContent() {
               <SearchInput placeholder="Search jobs..." className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           </div>
-          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Paid & Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /><BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" /></div>} />}
+          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Paid & Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /></div>} />}
           {viewMode === "kanban" && (
             <div className="min-h-[400px]">
               {loading ? (
@@ -973,6 +964,12 @@ export default function JobsPage() {
   return <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-tertiary">Loading...</div>}><JobsPageContent /></Suspense>;
 }
 
+function isHousekeepWorkLabel(value: string | null | undefined): boolean {
+  const v = (value ?? "").trim().toLowerCase();
+  if (!v) return false;
+  return v.includes("housekeep") || v.includes("house keep");
+}
+
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({
   open,
@@ -1012,19 +1009,27 @@ function CreateJobModal({
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
+  const isHousekeepJob = isHousekeepWorkLabel(selectedCatalogService?.name) || isHousekeepWorkLabel(form.title);
   const targetWorkType =
     (form.job_type === "hourly" ? (selectedCatalogService?.name ?? form.title) : form.title).trim();
   const filteredPartners = useMemo(() => {
     const q = partnerSearch.trim().toLowerCase();
-    if (!q) return partners;
-    return partners.filter((p) => {
+    const base = !q
+      ? partners
+      : partners.filter((p) => {
       const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
       const trade = (p.trade ?? "").toLowerCase();
       const location = (p.location ?? "").toLowerCase();
       const tradesFlat = (p.trades ?? []).join(" ").toLowerCase();
       return name.includes(q) || trade.includes(q) || location.includes(q) || tradesFlat.includes(q);
     });
-  }, [partnerSearch, partners]);
+    return [...base].sort((a, b) => {
+      const aMatch = targetWorkType ? safePartnerMatchesTypeOfWork(a, targetWorkType) : false;
+      const bMatch = targetWorkType ? safePartnerMatchesTypeOfWork(b, targetWorkType) : false;
+      if (aMatch !== bMatch) return aMatch ? -1 : 1;
+      return (a.company_name ?? a.contact_name ?? "").localeCompare(b.company_name ?? b.contact_name ?? "");
+    });
+  }, [partnerSearch, partners, targetWorkType]);
 
   useEffect(() => {
     if (!open) return;
@@ -1044,8 +1049,13 @@ function CreateJobModal({
 
   useEffect(() => {
     const inCcz = isLikelyCczAddress(clientAddress.property_address);
-    setForm((prev) => ({ ...prev, in_ccz: inCcz }));
+    queueMicrotask(() => setForm((prev) => ({ ...prev, in_ccz: inCcz })));
   }, [clientAddress.property_address]);
+
+  useEffect(() => {
+    if (!isHousekeepJob) return;
+    setForm((prev) => (prev.in_ccz || !prev.has_free_parking ? { ...prev, in_ccz: false, has_free_parking: true } : prev));
+  }, [isHousekeepJob]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1086,7 +1096,7 @@ function CreateJobModal({
       partnerHourlyRate: hourlyPartnerRate,
     });
     const isHourly = form.job_type === "hourly";
-    const accessSurcharge = computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+    const accessSurcharge = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
     const clientPriceOut = isHourly ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
     const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
 
@@ -1109,8 +1119,8 @@ function CreateJobModal({
       hourly_client_rate: isHourly ? hourlyClientRate : null,
       hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
       billed_hours: isHourly ? hourlyTotals.billedHours : null,
-      in_ccz: form.in_ccz,
-      has_free_parking: form.has_free_parking,
+      in_ccz: isHousekeepJob ? false : form.in_ccz,
+      has_free_parking: isHousekeepJob ? true : form.has_free_parking,
       client_price: clientPriceOut,
       partner_cost: partnerCostOut,
       extras_amount: accessSurcharge,
@@ -1147,7 +1157,7 @@ function CreateJobModal({
     setClientAddress({ client_name: "", property_address: "" });
   };
 
-  const accessSurchargePreview = computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+  const accessSurchargePreview = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
   const hourlyPreview = computeHourlyTotals({
     elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
     clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
@@ -1233,12 +1243,19 @@ function CreateJobModal({
         </div>
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
+          {isHousekeepJob ? (
+            <p className="text-xs text-text-tertiary">
+              Housekeep: CCZ/Parking is included in the service price. Extra access surcharge is disabled.
+            </p>
+          ) : null}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
               type="button"
+              disabled={isHousekeepJob}
               onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
               className={cn(
                 "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                isHousekeepJob && "opacity-50 cursor-not-allowed",
                 form.in_ccz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
               )}
             >
@@ -1247,9 +1264,11 @@ function CreateJobModal({
             </button>
             <button
               type="button"
+              disabled={isHousekeepJob}
               onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
               className={cn(
                 "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                isHousekeepJob && "opacity-50 cursor-not-allowed",
                 !form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
               )}
             >

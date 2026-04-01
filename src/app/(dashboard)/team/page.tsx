@@ -480,7 +480,7 @@ function SquadModal({
   const [name, setName] = useState("");
 
   useEffect(() => {
-    setName(initial?.name ?? "");
+    queueMicrotask(() => setName(initial?.name ?? ""));
   }, [open, initial]);
 
   const submit = (e: React.FormEvent) => {
@@ -567,15 +567,13 @@ function MemberModal({
   const [linkedProfileId, setLinkedProfileId] = useState<string | null>(null);
   const [profileSearch, setProfileSearch] = useState("");
 
-  const activeAssignable = useMemo(() => profilesToAssignableActive(profiles), [profiles]);
-
-  const pickerUsers = useMemo(() => {
-    const base = activeAssignable;
+  const pickerUsers = (() => {
+    const base = profilesToAssignableActive(profiles);
     if (!initial?.profile_id) return base;
     const linked = profiles.find((p) => p.id === initial.profile_id);
     if (!linked || base.some((u) => u.id === linked.id)) return base;
     return [profileToAssignable(linked), ...base];
-  }, [initial?.profile_id, profiles, activeAssignable]);
+  })();
 
   const filteredPickerUsers = useMemo(() => {
     const q = profileSearch.trim().toLowerCase();
@@ -594,32 +592,34 @@ function MemberModal({
   }, [pickerUsers, profileSearch, linkedProfileId]);
 
   useEffect(() => {
-    if (!open) setProfileSearch("");
+    if (!open) queueMicrotask(() => setProfileSearch(""));
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
-    if (initial) {
-      setFullName(initial.full_name ?? "");
-      setEmail(initial.email ?? "");
-      setPhone(initial.phone ?? "");
-      setRole(initial.role ?? "am");
-      setSquadId(initial.squad_id ?? "");
-      setBaseSalary(initial.base_salary != null ? String(initial.base_salary) : "");
-      setStartDate(initial.start_date ?? "");
-      setStatus(initial.status ?? "active");
-      setLinkedProfileId(initial.profile_id ?? null);
-    } else {
-      setFullName(presetProfile?.full_name ?? "");
-      setEmail(presetProfile?.email ?? "");
-      setPhone("");
-      setRole("am");
-      setSquadId(presetSquadId ?? "");
-      setBaseSalary("");
-      setStartDate("");
-      setStatus("active");
-      setLinkedProfileId(presetProfile?.id ?? null);
-    }
+    queueMicrotask(() => {
+      if (initial) {
+        setFullName(initial.full_name ?? "");
+        setEmail(initial.email ?? "");
+        setPhone(initial.phone ?? "");
+        setRole(initial.role ?? "am");
+        setSquadId(initial.squad_id ?? "");
+        setBaseSalary(initial.base_salary != null ? String(initial.base_salary) : "");
+        setStartDate(initial.start_date ?? "");
+        setStatus(initial.status ?? "active");
+        setLinkedProfileId(initial.profile_id ?? null);
+      } else {
+        setFullName(presetProfile?.full_name ?? "");
+        setEmail(presetProfile?.email ?? "");
+        setPhone("");
+        setRole("am");
+        setSquadId(presetSquadId ?? "");
+        setBaseSalary("");
+        setStartDate("");
+        setStatus("active");
+        setLinkedProfileId(presetProfile?.id ?? null);
+      }
+    });
   }, [open, initial, presetSquadId, presetProfile]);
 
   const handlePickProfile = (id: string | undefined) => {

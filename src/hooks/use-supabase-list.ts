@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react";
 import type { ListResult, ListParams } from "@/services/base";
 import { createClient } from "@/lib/supabase/client";
 
@@ -36,9 +36,13 @@ interface UseSupabaseListReturn<T> {
 export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupabaseListReturn<T> {
   const { fetcher, pageSize = 10, realtimeTable, initialStatus = "all", listParams } = options;
   const fetcherRef = useRef(fetcher);
-  fetcherRef.current = fetcher;
   const listParamsRef = useRef(listParams);
-  listParamsRef.current = listParams;
+  useLayoutEffect(() => {
+    fetcherRef.current = fetcher;
+  }, [fetcher]);
+  useLayoutEffect(() => {
+    listParamsRef.current = listParams;
+  }, [listParams]);
 
   const [data, setData] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +69,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     }
     if (prevRangeKeyRef.current === scheduleRangeKey) return;
     prevRangeKeyRef.current = scheduleRangeKey;
-    setPage(1);
+    queueMicrotask(() => setPage(1));
   }, [scheduleRangeKey]);
   const prevDateRangeKeyRef = useRef<string | null>(null);
   useEffect(() => {
@@ -75,7 +79,7 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     }
     if (prevDateRangeKeyRef.current === dateRangeKey) return;
     prevDateRangeKeyRef.current = dateRangeKey;
-    setPage(1);
+    queueMicrotask(() => setPage(1));
   }, [dateRangeKey]);
 
   const setSearch = useCallback((s: string) => {
@@ -104,8 +108,10 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     skipLoadingRef.current = false;
 
     if (!silent) {
-      setLoading(true);
-      setError(null);
+      queueMicrotask(() => {
+        setLoading(true);
+        setError(null);
+      });
     }
 
     fetcherRef
@@ -138,7 +144,9 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   }, [page, pageSize, search, status, tick, scheduleRangeKey, dateRangeKey]);
 
   const refreshSilentRef = useRef(refreshSilent);
-  refreshSilentRef.current = refreshSilent;
+  useLayoutEffect(() => {
+    refreshSilentRef.current = refreshSilent;
+  }, [refreshSilent]);
 
   useEffect(() => {
     if (!realtimeTable?.trim()) return;

@@ -292,7 +292,7 @@ function LocationMiniMapInner({
 
   useEffect(() => {
     if (!address || !MAPBOX_TOKEN) {
-      setLoading(false);
+      queueMicrotask(() => setLoading(false));
       return;
     }
     fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${MAPBOX_TOKEN}&limit=1`)

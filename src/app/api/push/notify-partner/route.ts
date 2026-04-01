@@ -41,7 +41,7 @@ async function sendExpoPush(
       return { sent: 0, errors: tokens.length };
     }
     const json = await res.json();
-    const errors = (json?.data ?? []).filter((r: any) => r.status === "error").length;
+    const errors = (json?.data ?? []).filter((r: { status?: string }) => r.status === "error").length;
     return { sent: tokens.length - errors, errors };
   } catch (err) {
     console.error("[push/notify-partner] sendExpoPush fetch failed:", err);

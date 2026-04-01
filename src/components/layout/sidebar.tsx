@@ -160,7 +160,7 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   const [imgErr, setImgErr] = useState(false);
 
   useEffect(() => {
-    setImgErr(false);
+    queueMicrotask(() => setImgErr(false));
   }, [logoSrc, resolved]);
 
   const title = logos.companyName?.trim() || APP_NAME;

@@ -10,14 +10,12 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
-import { SearchInput, Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
-import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
   Download,
-  Filter,
   Wallet,
   DollarSign,
   Users,
@@ -26,13 +24,15 @@ import {
   CheckCircle2,
   AlertTriangle,
   ExternalLink,
-  CalendarRange,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import type { SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
-import { weekPeriodHelpText, parseDateRangeOrWeek, weekPresetsFromYear } from "@/lib/self-bill-period";
+import { weekPeriodHelpText, parseDateRangeOrWeek, getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
+import type { FinancePeriodMode } from "@/lib/finance-period";
+import { formatFinancePeriodKpiDescription } from "@/lib/finance-period";
 import { listJobsForSelfBill } from "@/services/self-bills";
 import type { Job } from "@/types/database";
 
@@ -53,27 +53,24 @@ export default function SelfBillPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [weekPreset, setWeekPreset] = useState("");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
+  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
   const [jobsModal, setJobsModal] = useState<{ selfBill: SelfBill; jobs: Awaited<ReturnType<typeof listJobsForSelfBill>> } | null>(null);
   const [loadingJobs, setLoadingJobs] = useState(false);
-  const [closeWeekSelectKey, setCloseWeekSelectKey] = useState(0);
-  const [backfillLoading, setBackfillLoading] = useState(false);
-
-  const weekOptions = useMemo(() => weekPresetsFromYear(2026), []);
-
   const loadData = useCallback(async () => {
     setLoading(true);
     const supabase = getSupabase();
     try {
       let q = supabase.from("self_bills").select("*").order("week_start", { ascending: false }).order("created_at", { ascending: false });
-      if (weekPreset.trim()) {
-        q = q.eq("week_label", weekPreset.trim());
-      } else {
+      if (periodMode === "week") {
+        const { weekLabel } = getWeekBoundsForDate(weekAnchor);
+        q = q.eq("week_label", weekLabel);
+      } else if (periodMode === "range") {
         const range = parseDateRangeOrWeek({
-          from: dateFrom.trim() || undefined,
-          to: dateTo.trim() || undefined,
+          from: rangeFrom.trim() || undefined,
+          to: rangeTo.trim() || undefined,
         });
         if (range.weekStartMin) q = q.gte("week_start", range.weekStartMin);
         if (range.weekStartMax) q = q.lte("week_start", range.weekStartMax);
@@ -86,7 +83,7 @@ export default function SelfBillPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, weekPreset]);
+  }, [periodMode, weekAnchor, rangeFrom, rangeTo]);
 
   useEffect(() => {
     loadData();
@@ -108,6 +105,11 @@ export default function SelfBillPage() {
     }
     return result;
   }, [selfBills, activeTab, search]);
+
+  const kpiPeriodDesc = useMemo(
+    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
+    [periodMode, weekAnchor, rangeFrom, rangeTo]
+  );
 
   const totals = useMemo(() => {
     const all = selfBills;
@@ -137,40 +139,6 @@ export default function SelfBillPage() {
       loadData();
     } catch {
       toast.error("Failed to update self-bills");
-    }
-  };
-
-  const backfillFromJobs = async () => {
-    setBackfillLoading(true);
-    try {
-      const res = await fetch("/api/self-bills/backfill-from-jobs", { method: "POST" });
-      const data = (await res.json()) as { ok?: boolean; error?: string; billsCreated?: number; jobsLinked?: number; partnerWeekGroups?: number };
-      if (!res.ok) throw new Error(data.error ?? "Failed");
-      toast.success(
-        `Backfill: ${data.billsCreated ?? 0} bill(s) created, ${data.jobsLinked ?? 0} job(s) linked (${data.partnerWeekGroups ?? 0} partner-week groups).`
-      );
-      loadData();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Backfill failed");
-    } finally {
-      setBackfillLoading(false);
-    }
-  };
-
-  const closeWeek = async (weekStart: string) => {
-    try {
-      const res = await fetch("/api/self-bills/close-week", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weekStart }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed");
-      toast.success(`Closed week: ${data.moved} self-bill(s) moved to Review & approve`);
-      setCloseWeekSelectKey((k) => k + 1);
-      loadData();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to close week");
     }
   };
 
@@ -284,7 +252,7 @@ export default function SelfBillPage() {
       <div className="space-y-5">
         <PageHeader
           title="Partner self-billing"
-          subtitle={`Weekly partner payouts. ${weekPeriodHelpText()} Close a week to move open batches into Review & approve.`}
+          subtitle={`Weekly partner payouts. ${weekPeriodHelpText()}`}
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>
             Export CSV
@@ -292,59 +260,51 @@ export default function SelfBillPage() {
         </PageHeader>
 
         <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <Select
-              label="Week (ISO)"
-              value={weekPreset}
-              onChange={(e) => {
-                setWeekPreset(e.target.value);
-                setDateFrom("");
-                setDateTo("");
-              }}
-              options={[{ value: "", label: "All weeks" }, ...weekOptions.map((w) => ({ value: w.label, label: w.label }))]}
-            />
-            <div className="grid grid-cols-2 gap-2 min-w-[220px]">
-              <div>
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase">From</label>
-                <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setWeekPreset(""); }} className="text-sm" />
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase">To</label>
-                <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setWeekPreset(""); }} className="text-sm" />
-              </div>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => loadData()} icon={<Filter className="h-3.5 w-3.5" />}>
-              Apply
-            </Button>
-            <Button variant="secondary" size="sm" disabled={backfillLoading} onClick={() => void backfillFromJobs()}>
-              {backfillLoading ? "Generating…" : "Generate from jobs"}
-            </Button>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border-light">
-            <span className="text-xs text-text-tertiary flex items-center gap-1">
-              <CalendarRange className="h-3.5 w-3.5" />
-              Close week (move Open → Review)
-            </span>
-            <Select
-              key={closeWeekSelectKey}
-              value=""
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v) void closeWeek(v);
-              }}
-              options={[
-                { value: "", label: "Select Monday (week start)…" },
-                ...weekOptions.map((w) => ({ value: w.weekStart, label: `Close ${w.label} (from ${w.weekStart})` })),
-              ]}
-            />
-          </div>
+          <FinanceWeekRangeBar
+            mode={periodMode}
+            onModeChange={setPeriodMode}
+            weekAnchor={weekAnchor}
+            onWeekAnchorChange={setWeekAnchor}
+            rangeFrom={rangeFrom}
+            rangeTo={rangeTo}
+            onRangeFromChange={setRangeFrom}
+            onRangeToChange={setRangeTo}
+          />
         </div>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Total payouts (loaded)" value={totals.totalPayouts} format="currency" icon={Wallet} accent="primary" />
-          <KpiCard title="Review queue" value={totals.reviewCount} format="number" description="pending_review" icon={Users} accent="amber" />
-          <KpiCard title="Ready / paid" value={totals.readyCount + totals.paidCount} format="number" icon={DollarSign} accent="emerald" />
-          <KpiCard title="Needs attention" value={totals.attentionCount} format="number" icon={Clock} accent="blue" />
+          <KpiCard
+            title="Total payouts (loaded)"
+            value={totals.totalPayouts}
+            format="currency"
+            description={kpiPeriodDesc}
+            icon={Wallet}
+            accent="primary"
+          />
+          <KpiCard
+            title="Review queue"
+            value={totals.reviewCount}
+            format="number"
+            description={`Pending review · ${kpiPeriodDesc}`}
+            icon={Users}
+            accent="amber"
+          />
+          <KpiCard
+            title="Ready / paid"
+            value={totals.readyCount + totals.paidCount}
+            format="number"
+            description={`Ready + paid · ${kpiPeriodDesc}`}
+            icon={DollarSign}
+            accent="emerald"
+          />
+          <KpiCard
+            title="Needs attention"
+            value={totals.attentionCount}
+            format="number"
+            description={`${kpiPeriodDesc}`}
+            icon={Clock}
+            accent="blue"
+          />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">

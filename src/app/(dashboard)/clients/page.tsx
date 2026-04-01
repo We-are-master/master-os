@@ -1053,7 +1053,7 @@ function EditClientForm({
       status: client.status,
       notes: client.notes ?? "",
     };
-    setForm(base);
+    queueMicrotask(() => setForm(base));
 
     // If the client has no address saved, try to backfill from their default property address.
     // This fixes clients created before the create-form backfill was added.

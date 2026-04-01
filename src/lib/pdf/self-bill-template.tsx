@@ -44,6 +44,15 @@ const styles = StyleSheet.create({
   cellNum: { width: "10%", textAlign: "right" },
   totals: { marginTop: 16, padding: 12, backgroundColor: "#FAFAF9", borderRadius: 4 },
   totalRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
+  ukNote: {
+    marginTop: 20,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#E7E5E4",
+    fontSize: 7,
+    color: "#57534E",
+    lineHeight: 1.45,
+  },
 });
 
 function fmt(n: number): string {
@@ -54,7 +63,7 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        <Text style={styles.title}>Partner self-bill</Text>
+        <Text style={styles.title}>Self-billing statement (UK)</Text>
         <Text style={styles.subtitle}>
           {data.reference} · {data.partnerName}
           {data.weekLabel ? ` · Week ${data.weekLabel}` : ` · ${data.period}`}
@@ -106,6 +115,10 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           </View>
           <Text style={{ marginTop: 8, fontSize: 8, color: "#78716C" }}>Status: {data.status}</Text>
         </View>
+
+        <Text style={styles.ukNote}>
+          This document is issued under a self-billing arrangement in line with UK practice (including HMRC guidance on self-billing, e.g. VAT Notice 700/62 where VAT applies). The partner named above is the supplier for the supplies summarised here; they must not issue a separate invoice or self-billed document for the same amounts. Where Construction Industry Scheme (CIS) or VAT applies, each party remains responsible for their own returns and records. Retain this statement for your business and tax records.
+        </Text>
       </Page>
     </Document>
   );

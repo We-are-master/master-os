@@ -15,17 +15,21 @@ function uniqueRef(weekLabel: string, jobRef: string): string {
 /** Recompute aggregates from all jobs linked to this self-bill. */
 export async function recomputeSelfBillTotals(selfBillId: string): Promise<void> {
   const supabase = getSupabase();
-  const agg = await supabase
+  // Sum in app: PostgREST often returns 400 when combining id.count() with column.sum() in one select.
+  const { data: rows, error: selErr } = await supabase
     .from("jobs")
-    .select("id.count(), partner_cost.sum(), materials_cost.sum()")
+    .select("partner_cost, materials_cost")
     .eq("self_bill_id", selfBillId)
-    .is("deleted_at", null)
-    .maybeSingle();
-  if (agg.error) throw agg.error;
-  const row = (agg.data ?? {}) as Record<string, unknown>;
-  const jobsCount = Number(row.id_count ?? 0) || 0;
-  const jobValue = Number(row.partner_cost_sum ?? 0) || 0;
-  const materials = Number(row.materials_cost_sum ?? 0) || 0;
+    .is("deleted_at", null);
+  if (selErr) throw selErr;
+  const list = (rows ?? []) as { partner_cost?: number | null; materials_cost?: number | null }[];
+  const jobsCount = list.length;
+  let jobValue = 0;
+  let materials = 0;
+  for (const r of list) {
+    jobValue += Number(r.partner_cost) || 0;
+    materials += Number(r.materials_cost) || 0;
+  }
   const commission = 0;
   const netPayout = jobValue + materials - commission;
   const { error: uErr } = await supabase
@@ -56,7 +60,8 @@ export async function ensureWeeklySelfBillForJob(job: Job): Promise<string | nul
     .select("id")
     .eq("partner_id", job.partner_id)
     .eq("week_start", weekStart)
-    .eq("status", "accumulating")
+    .in("status", ["accumulating", "pending_review"])
+    .limit(1)
     .maybeSingle();
 
   if (selErr) throw selErr;
@@ -83,19 +88,48 @@ export async function ensureWeeklySelfBillForJob(job: Job): Promise<string | nul
     };
     const { data: ins, error: insErr } = await supabase.from("self_bills").insert(row).select("id").single();
     if (insErr) {
-      const { data: race } = await supabase
-        .from("self_bills")
-        .select("id")
-        .eq("partner_id", job.partner_id)
-        .eq("week_start", weekStart)
-        .eq("status", "accumulating")
-        .maybeSingle();
-      sbId = race?.id as string | undefined;
-      if (!sbId) throw insErr;
+      const code = (insErr as { code?: string }).code;
+      const msg = insErr.message ?? "";
+      const isStatusCheck =
+        code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint");
+      if (isStatusCheck) {
+        const { data: ins2, error: insErr2 } = await supabase
+          .from("self_bills")
+          .insert({ ...row, status: "pending_review" as const })
+          .select("id")
+          .single();
+        if (!insErr2 && ins2) {
+          sbId = ins2.id as string;
+        } else if (insErr2) {
+          const { data: race } = await supabase
+            .from("self_bills")
+            .select("id")
+            .eq("partner_id", job.partner_id)
+            .eq("week_start", weekStart)
+            .in("status", ["accumulating", "pending_review"])
+            .limit(1)
+            .maybeSingle();
+          sbId = race?.id as string | undefined;
+          if (!sbId) throw insErr2;
+        }
+      } else {
+        const { data: race } = await supabase
+          .from("self_bills")
+          .select("id")
+          .eq("partner_id", job.partner_id)
+          .eq("week_start", weekStart)
+          .in("status", ["accumulating", "pending_review"])
+          .limit(1)
+          .maybeSingle();
+        sbId = race?.id as string | undefined;
+        if (!sbId) throw insErr;
+      }
     } else {
       sbId = ins.id as string;
     }
   }
+
+  if (!sbId) throw new Error("Failed to create or find weekly self-bill");
 
   const { error: linkErr } = await supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
   if (linkErr) throw linkErr;
@@ -104,18 +138,51 @@ export async function ensureWeeklySelfBillForJob(job: Job): Promise<string | nul
   return sbId;
 }
 
-/** Call after job create/update when partner and money fields may have changed. */
+/**
+ * Call after job create/update when partner and money fields may have changed.
+ * Only recomputes totals when the job is already linked — does **not** auto-insert weekly self-bills
+ * (avoids DB/RLS/constraint errors on every `updateJob` until backend is aligned). Linking is done
+ * explicitly from approval flow or the job self-bill panel when the insert succeeds.
+ */
 export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
   if (!job.partner_id?.trim()) return;
+  if (!job.self_bill_id) return;
   try {
-    if (job.self_bill_id) {
-      await recomputeSelfBillTotals(job.self_bill_id);
-      return;
-    }
-    await ensureWeeklySelfBillForJob(job);
-  } catch {
-    /* non-fatal — finance can fix from Self-billing */
+    await recomputeSelfBillTotals(job.self_bill_id);
+  } catch (e) {
+    console.error("syncSelfBillAfterJobChange failed:", e);
   }
+}
+
+/**
+ * Self-bills tied to a job (by jobs.reference + optional primary self_bill id on the job).
+ * Mirrors listInvoicesLinkedToJob (invoices): resolves from DB so stale client state still picks up links.
+ */
+export async function listSelfBillsLinkedToJob(
+  jobReference: string,
+  primarySelfBillId?: string | null,
+): Promise<SelfBill[]> {
+  const supabase = getSupabase();
+  const { data: jobRow, error: jobErr } = await supabase
+    .from("jobs")
+    .select("self_bill_id")
+    .eq("reference", jobReference)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (jobErr) throw jobErr;
+  const ids = new Set<string>();
+  if (jobRow?.self_bill_id) ids.add(jobRow.self_bill_id as string);
+  if (primarySelfBillId) ids.add(primarySelfBillId);
+  if (ids.size === 0) return [];
+  const { data, error } = await supabase.from("self_bills").select("*").in("id", [...ids]);
+  if (error) throw error;
+  const rows = (data ?? []) as SelfBill[];
+  if (primarySelfBillId && !rows.some((r) => r.id === primarySelfBillId)) {
+    const { data: primary } = await supabase.from("self_bills").select("*").eq("id", primarySelfBillId).maybeSingle();
+    const p = primary as SelfBill | null;
+    if (p) rows.unshift(p);
+  }
+  return rows;
 }
 
 /**
@@ -128,9 +195,16 @@ export async function createSelfBillFromJob(job: CreateSelfBillFromJobInput): Pr
   if (!full) throw new Error("Job not found");
   const id = await ensureWeeklySelfBillForJob(full as Job);
   if (!id) throw new Error("Partner required for self-bill");
-  const { data, error } = await supabase.from("self_bills").select("*").eq("id", id).single();
+  const row = await getSelfBill(id);
+  if (!row) throw new Error("Self-bill not found after create");
+  return row;
+}
+
+export async function getSelfBill(id: string): Promise<SelfBill | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.from("self_bills").select("*").eq("id", id).maybeSingle();
   if (error) throw error;
-  return data as SelfBill;
+  return (data as SelfBill) ?? null;
 }
 
 export async function listJobsForSelfBill(selfBillId: string): Promise<Pick<Job, "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address">[]> {

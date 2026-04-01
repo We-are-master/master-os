@@ -11,7 +11,7 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ className, icon, error, ...props }, ref) => {
-    const isDateOrTime = props.type === "date" || props.type === "time";
+    const isDateOrTime = props.type === "date" || props.type === "time" || props.type === "datetime-local";
     return (
       <div className="relative">
         {icon && (

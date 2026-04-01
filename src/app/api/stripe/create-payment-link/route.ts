@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     // Load invoice server-side — never trust client-supplied amount or reference.
     const { data: invRow, error: invErr } = await supabaseAdmin
       .from("invoices")
-      .select("amount, reference, job_reference")
+      .select("amount, amount_paid, reference, job_reference")
       .eq("id", invoiceId)
       .maybeSingle();
 
@@ -30,7 +30,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
     }
 
-    const amount: number = invRow.amount;
+    const total = Number(invRow.amount ?? 0);
+    const paid = Number((invRow as { amount_paid?: number }).amount_paid ?? 0);
+    const amount = Math.max(0, Math.round((total - paid) * 100) / 100);
+    if (amount <= 0) {
+      return NextResponse.json({ error: "Nothing left to collect on this invoice" }, { status: 400 });
+    }
     const reference: string = invRow.reference;
 
     let jobIdMeta = "";

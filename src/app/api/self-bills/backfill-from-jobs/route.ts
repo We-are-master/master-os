@@ -20,17 +20,20 @@ type JobRow = {
 };
 
 async function recomputeSelfBillTotalsFromDb(supabase: ReturnType<typeof createServiceClient>, selfBillId: string) {
-  const agg = await supabase
+  const { data: rows, error } = await supabase
     .from("jobs")
-    .select("id.count(), partner_cost.sum(), materials_cost.sum()")
+    .select("partner_cost, materials_cost")
     .eq("self_bill_id", selfBillId)
-    .is("deleted_at", null)
-    .maybeSingle();
-  if (agg.error) throw agg.error;
-  const row = (agg.data ?? {}) as Record<string, unknown>;
-  const jobsCount = Number(row.id_count ?? 0) || 0;
-  const jobValue = Number(row.partner_cost_sum ?? 0) || 0;
-  const materials = Number(row.materials_cost_sum ?? 0) || 0;
+    .is("deleted_at", null);
+  if (error) throw error;
+  const list = (rows ?? []) as { partner_cost?: number | null; materials_cost?: number | null }[];
+  const jobsCount = list.length;
+  let jobValue = 0;
+  let materials = 0;
+  for (const r of list) {
+    jobValue += Number(r.partner_cost) || 0;
+    materials += Number(r.materials_cost) || 0;
+  }
   const commission = 0;
   await supabase
     .from("self_bills")

@@ -34,12 +34,12 @@ export function MarginChart() {
         const bounds = dateCtx?.bounds ?? null;
         const now = new Date();
 
-        let monthStarts: Date[] = [];
+        const monthStarts: Date[] = [];
         let queryFrom: string;
         let queryTo: string;
 
         if (bounds) {
-          let cur = new Date(new Date(bounds.fromIso).getFullYear(), new Date(bounds.fromIso).getMonth(), 1);
+          const cur = new Date(new Date(bounds.fromIso).getFullYear(), new Date(bounds.fromIso).getMonth(), 1);
           const end = new Date(bounds.toIso);
           while (cur <= end) {
             monthStarts.push(new Date(cur));

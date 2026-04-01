@@ -10,6 +10,7 @@ import {
   prepareJobRowForUpdate,
 } from "@/lib/job-schema-compat";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { jobHasPartnerSet } from "@/lib/job-partner-assign";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
@@ -112,6 +113,17 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
       }
     );
   }
+  if (params.status === "unassigned") {
+    const { status: _omit, ...rest } = params;
+    return queryList<Job>(
+      "jobs",
+      { ...rest, statusIn: ["unassigned", "auto_assigning"] },
+      {
+        searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+        defaultSort: "created_at",
+      }
+    );
+  }
   return queryList<Job>("jobs", params, {
     searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
     defaultSort: "created_at",
@@ -149,6 +161,10 @@ export async function createJob(
   const supabase = getSupabase();
   const { data: ref } = await supabase.rpc("next_job_ref");
   const baseRow = { ...input, reference: ref } as Record<string, unknown>;
+  /** No partner → stay in Unassigned (Work Request + Auto assign keeps `auto_assigning`). */
+  if (!jobHasPartnerSet(input as Job) && (input as Job).status !== "auto_assigning") {
+    baseRow.status = "unassigned";
+  }
   const row = prepareJobRowForInsert(baseRow);
   let { data, error } = await supabase.from("jobs").insert(row).select().single();
   if (error && isPostgrestWriteRetryableError(error)) {
@@ -159,14 +175,24 @@ export async function createJob(
   if (error) throw error;
   let job = (await getJob((data as Job).id)) ?? (data as Job);
 
-  if (job.client_price > 0.01 && !job.invoice_id) {
+  /** Quote → job flow creates its own invoice after insert; `quote_id` may be stripped on legacy DB retry — trust input too. */
+  const inputFromQuote = (() => {
+    const qid = (input as { quote_id?: string | null }).quote_id;
+    return qid != null && String(qid).trim() !== "";
+  })();
+  const fromQuote =
+    inputFromQuote || Boolean((job as { quote_id?: string | null }).quote_id?.toString().trim());
+  const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
+  const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
+  if (invoiceTotal > 0.01 && !job.invoice_id && !fromQuote) {
     try {
       const due = new Date();
       due.setDate(due.getDate() + 14);
       const inv = await createInvoice({
         client_name: job.client_name,
         job_reference: job.reference,
-        amount: job.client_price,
+        amount: invoiceTotal,
         status: "pending",
         due_date: due.toISOString().slice(0, 10),
         invoice_kind: "final",
