@@ -278,6 +278,7 @@ export default function JobDetailPage() {
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
   const autoOwnerFillRef = useRef<Set<string>>(new Set());
+  const autoInvoiceEnsureRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
@@ -364,7 +365,30 @@ export default function JobDetailPage() {
     }
     setLoadingInvoices(true);
     try {
-      const rows = await listInvoicesLinkedToJob(j.reference, j.invoice_id);
+      let rows = await listInvoicesLinkedToJob(j.reference, j.invoice_id);
+      if (rows.length === 0 && !j.invoice_id && !autoInvoiceEnsureRef.current.has(j.id)) {
+        autoInvoiceEnsureRef.current.add(j.id);
+        const amount = Math.max(0, jobBillableRevenue(j));
+        if (amount > 0.01) {
+          try {
+            const due = new Date();
+            due.setDate(due.getDate() + 14);
+            const inv = await createInvoice({
+              client_name: j.client_name ?? "Client",
+              job_reference: j.reference,
+              amount,
+              status: "pending",
+              due_date: due.toISOString().slice(0, 10),
+              invoice_kind: "final",
+            });
+            const updated = await updateJob(j.id, { invoice_id: inv.id });
+            setJob(updated);
+            rows = await listInvoicesLinkedToJob(updated.reference, updated.invoice_id);
+          } catch {
+            // Non-blocking fallback: user can still link manually from Job card.
+          }
+        }
+      }
       setJobInvoices(rows);
     } catch {
       toast.error("Failed to load invoices");

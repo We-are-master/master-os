@@ -166,14 +166,15 @@ export async function createJob(
   })();
   const fromQuote =
     inputFromQuote || Boolean((job as { quote_id?: string | null }).quote_id?.toString().trim());
-  if (job.client_price > 0.01 && !job.invoice_id && !fromQuote) {
+  const invoiceTotal = Math.max(0, Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0));
+  if (invoiceTotal > 0.01 && !job.invoice_id && !fromQuote) {
     try {
       const due = new Date();
       due.setDate(due.getDate() + 14);
       const inv = await createInvoice({
         client_name: job.client_name,
         job_reference: job.reference,
-        amount: job.client_price,
+        amount: invoiceTotal,
         status: "pending",
         due_date: due.toISOString().slice(0, 10),
         invoice_kind: "final",
