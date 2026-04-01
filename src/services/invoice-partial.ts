@@ -5,6 +5,7 @@ import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
 import { listJobPayments } from "./job-payments";
+import { updateInvoice } from "./invoices";
 
 const EPS = 0.02;
 
@@ -105,10 +106,7 @@ export async function recordInvoicePartialPayment(
     updates.collection_stage = "completed";
   }
 
-  const { data: updated, error: uErr } = await supabase.from("invoices").update(updates).eq("id", invoiceId).select("*").single();
-  if (uErr || !updated) throw uErr ?? new Error("Failed to update invoice");
-
-  const nextInv = updated as Invoice;
+  const nextInv = await updateInvoice(invoiceId, updates as Partial<Invoice>);
   if (full) {
     await syncJobAfterInvoicePaidToLedger(supabase, invoiceId, "Manual");
   }

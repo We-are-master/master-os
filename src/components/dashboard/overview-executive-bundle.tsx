@@ -38,56 +38,29 @@ async function fetchSalesJobRows(
   fromIso: string,
   toIso: string,
 ): Promise<JobRow[]> {
-  const awaitingPaymentStatuses = ["awaiting_payment"] as const;
   const selFull = "id, client_id, partner_name, client_price, extras_amount, partner_cost, materials_cost, commission";
   const selLegacy = "id, client_id, partner_name, client_price, partner_cost, materials_cost, commission";
 
-  async function pair() {
-    const [awaitingRes, completedRes] = await Promise.all([
-      supabase
-        .from("jobs")
-        .select(selFull)
-        .in("status", awaitingPaymentStatuses)
-        .gte("updated_at", fromIso)
-        .lte("updated_at", toIso),
-      supabase
-        .from("jobs")
-        .select(selFull)
-        .eq("status", "completed")
-        .eq("finance_status", "paid")
-        .not("completed_date", "is", null)
-        .gte("completed_date", fromIso)
-        .lte("completed_date", toIso),
-    ]);
-    return { awaitingRes, completedRes };
+  async function loadCompletedPaid(selectCols: string) {
+    return supabase
+      .from("jobs")
+      .select(selectCols)
+      .eq("status", "completed")
+      .eq("finance_status", "paid")
+      .not("completed_date", "is", null)
+      .gte("completed_date", fromIso)
+      .lte("completed_date", toIso);
   }
 
-  const { awaitingRes, completedRes } = await pair();
-  const err = awaitingRes.error ?? completedRes.error;
-  let awaitingRows = (awaitingRes.data ?? []) as JobRow[];
-  let completedRows = (completedRes.data ?? []) as JobRow[];
+  let completedRes = await loadCompletedPaid(selFull);
+  let err = completedRes.error;
+  let completedRows = (completedRes.data ?? []) as unknown as JobRow[];
   if (err && isPostgrestWriteRetryableError(err)) {
-    const [a2, c2] = await Promise.all([
-      supabase
-        .from("jobs")
-        .select(selLegacy)
-        .in("status", awaitingPaymentStatuses)
-        .gte("updated_at", fromIso)
-        .lte("updated_at", toIso),
-      supabase
-        .from("jobs")
-        .select(selLegacy)
-        .eq("status", "completed")
-        .eq("finance_status", "paid")
-        .not("completed_date", "is", null)
-        .gte("completed_date", fromIso)
-        .lte("completed_date", toIso),
-    ]);
-    awaitingRows = (a2.data ?? []) as JobRow[];
-    completedRows = (c2.data ?? []) as JobRow[];
+    completedRes = await loadCompletedPaid(selLegacy);
+    completedRows = (completedRes.data ?? []) as unknown as JobRow[];
   }
 
-  const rows = [...awaitingRows, ...completedRows];
+  const rows = [...completedRows];
   const seen = new Set<string>();
   return rows.filter((r) => {
     if (seen.has(r.id)) return false;
