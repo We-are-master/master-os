@@ -36,12 +36,14 @@ export function useThemeProvider() {
   const [resolved, setResolved] = useState<"light" | "dark">("light");
 
   useEffect(() => {
-    const stored = localStorage.getItem("master-os-theme") as Theme | null;
-    const initial = stored ?? "system";
-    setThemeState(initial);
-    const r = resolveTheme(initial);
-    setResolved(r);
-    document.documentElement.classList.toggle("dark", r === "dark");
+    queueMicrotask(() => {
+      const stored = localStorage.getItem("master-os-theme") as Theme | null;
+      const initial = stored ?? "system";
+      setThemeState(initial);
+      const r = resolveTheme(initial);
+      setResolved(r);
+      document.documentElement.classList.toggle("dark", r === "dark");
+    });
   }, []);
 
   useEffect(() => {

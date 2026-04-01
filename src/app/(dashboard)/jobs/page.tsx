@@ -1000,7 +1000,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
 
   useEffect(() => {
     const inCcz = isLikelyCczAddress(clientAddress.property_address);
-    setForm((prev) => ({ ...prev, in_ccz: inCcz }));
+    queueMicrotask(() => setForm((prev) => ({ ...prev, in_ccz: inCcz })));
   }, [clientAddress.property_address]);
 
   const handleSubmit = (e: React.FormEvent) => {

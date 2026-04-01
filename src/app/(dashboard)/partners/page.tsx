@@ -815,12 +815,14 @@ function AddPartnerDocumentModal({
 
   useEffect(() => {
     if (!open) return;
-    setName(initialName ?? "");
-    setFile(null);
-    setPreview(null);
-    setExpiresAt("");
-    setCertificateNumber("");
-    setDocType(initialDocType ?? "insurance");
+    queueMicrotask(() => {
+      setName(initialName ?? "");
+      setFile(null);
+      setPreview(null);
+      setExpiresAt("");
+      setCertificateNumber("");
+      setDocType(initialDocType ?? "insurance");
+    });
   }, [open, initialDocType, initialName]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -936,7 +938,7 @@ function PartnerDocumentDetailModal({
   useEffect(() => {
     if (!doc) return;
     let cancelled = false;
-    setLoadingUrls(true);
+    queueMicrotask(() => setLoadingUrls(true));
     Promise.all([
       doc.file_path ? getPartnerDocumentSignedUrl(doc.file_path) : Promise.resolve(null),
       doc.preview_image_path ? getPartnerDocumentSignedUrl(doc.preview_image_path) : Promise.resolve(null),
@@ -2523,9 +2525,11 @@ function InternalProfileTab({ partner, onUpdate }: { partner: Partner; onUpdate:
   const [permission, setPermission] = useState(partner.permission ?? "");
 
   useEffect(() => {
-    setInternalNotes(partner.internal_notes ?? "");
-    setRole(partner.role ?? "");
-    setPermission(partner.permission ?? "");
+    queueMicrotask(() => {
+      setInternalNotes(partner.internal_notes ?? "");
+      setRole(partner.role ?? "");
+      setPermission(partner.permission ?? "");
+    });
   }, [partner.id, partner.internal_notes, partner.role, partner.permission]);
 
   return (

@@ -297,14 +297,15 @@ function BillModal({
   const [recurrence_interval, setRecurrenceInterval] = useState<Bill["recurrence_interval"]>("monthly");
 
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    queueMicrotask(() => {
       setDescription(initial?.description ?? "");
       setCategory(initial?.category ?? "");
       setAmount(initial?.amount != null ? String(initial.amount) : "");
       setDueDate(initial?.due_date ?? "");
       setIsRecurring(initial?.is_recurring ?? false);
       setRecurrenceInterval(initial?.recurrence_interval ?? "monthly");
-    }
+    });
   }, [open, initial]);
 
   const submit = (e: React.FormEvent) => {

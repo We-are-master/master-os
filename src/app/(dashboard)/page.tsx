@@ -125,7 +125,6 @@ function DashboardInner() {
   const firstName = profile?.full_name?.split(" ")[0] || "there";
   const { visibleViews, loading: viewsLoading, canEdit } = useDashboardConfig();
   const { bounds } = useDashboardDateRange();
-  const boundsKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
 
   const [activeFilters, setActiveFilters] = useState<Set<DashboardFilter>>(new Set());
   const [filterCounts, setFilterCounts] = useState<Record<string, number>>({});
@@ -136,10 +135,9 @@ function DashboardInner() {
 
   // Set default view when views load
   useEffect(() => {
-    if (visibleViews.length > 0 && !activeViewId) {
-      const def = visibleViews.find((v) => v.is_default) ?? visibleViews[0];
-      setActiveViewId(def.id);
-    }
+    if (visibleViews.length === 0 || activeViewId) return;
+    const def = visibleViews.find((v) => v.is_default) ?? visibleViews[0];
+    queueMicrotask(() => setActiveViewId(def.id));
   }, [visibleViews, activeViewId]);
 
   const activeView = useMemo(
@@ -184,9 +182,11 @@ function DashboardInner() {
         financial_status:   jobs.filter((j) => j.finance_status !== "paid" && !["completed", "scheduled"].includes(j.status)).length,
       });
     } catch { /* non-critical */ }
-  }, [boundsKey]);
+  }, [bounds]);
 
-  useEffect(() => { void loadFilterCounts(); }, [loadFilterCounts]);
+  useEffect(() => {
+    queueMicrotask(() => void loadFilterCounts());
+  }, [loadFilterCounts]);
 
   const greeting = getGreeting();
 

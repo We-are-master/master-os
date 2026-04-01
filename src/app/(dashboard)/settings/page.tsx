@@ -883,8 +883,10 @@ function TierRow({
   const [rate, setRate] = useState(String(tier.rate_percent));
 
   useEffect(() => {
-    setBreakeven(String(tier.breakeven_amount));
-    setRate(String(tier.rate_percent));
+    queueMicrotask(() => {
+      setBreakeven(String(tier.breakeven_amount));
+      setRate(String(tier.rate_percent));
+    });
   }, [tier.id, tier.breakeven_amount, tier.rate_percent]);
 
   return (
@@ -930,7 +932,7 @@ function PoolRow({
   const [val, setVal] = useState(String(share.share_percent));
 
   useEffect(() => {
-    setVal(String(share.share_percent));
+    queueMicrotask(() => setVal(String(share.share_percent)));
   }, [share.id, share.share_percent]);
 
   return (
@@ -1036,7 +1038,7 @@ function NavigationTab() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-semibold text-text-primary">Navigation (Sidebar)</h3>
-          <p className="text-sm text-text-tertiary">The menu is modular. Only Admin can edit groups and items; visibility depends on each role's permissions.</p>
+          <p className="text-sm text-text-tertiary">The menu is modular. Only Admin can edit groups and items; visibility depends on each role&apos;s permissions.</p>
         </div>
         {canEditConfig && (
           <Button size="sm" onClick={handleSave} disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}>

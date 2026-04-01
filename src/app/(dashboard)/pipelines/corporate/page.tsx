@@ -183,7 +183,7 @@ function DealDetailDrawer({
 
   useEffect(() => {
     if (!deal) return;
-    setTab("details");
+    queueMicrotask(() => setTab("details"));
     const supabase = getSupabase();
     supabase.from("accounts").select("id, company_name, status, total_revenue")
       .ilike("company_name", `%${deal.account_name.split(" ")[0]}%`)

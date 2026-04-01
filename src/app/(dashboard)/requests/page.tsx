@@ -232,18 +232,22 @@ export default function RequestsPage() {
     listCatalogServicesForPicker().then(setCatalogServices).catch(() => setCatalogServices([]));
   }, []);
 
-  useEffect(() => { setDrawerTab("details"); }, [selectedRequest?.id]);
   useEffect(() => {
-    setPropertyAddressEditing(false);
+    queueMicrotask(() => setDrawerTab("details"));
+  }, [selectedRequest?.id]);
+  useEffect(() => {
+    queueMicrotask(() => setPropertyAddressEditing(false));
   }, [selectedRequest?.id]);
   useEffect(() => {
     if (!selectedRequest) return;
-    setDrawerFields({
-      property_address: selectedRequest.property_address ?? "",
-      service_type: selectedRequest.service_type ?? "",
-      description: selectedRequest.description ?? "",
-      catalog_service_id: selectedRequest.catalog_service_id ?? "",
-    });
+    queueMicrotask(() =>
+      setDrawerFields({
+        property_address: selectedRequest.property_address ?? "",
+        service_type: selectedRequest.service_type ?? "",
+        description: selectedRequest.description ?? "",
+        catalog_service_id: selectedRequest.catalog_service_id ?? "",
+      }),
+    );
   }, [
     selectedRequest?.id,
     selectedRequest?.property_address,
@@ -254,10 +258,10 @@ export default function RequestsPage() {
 
   useEffect(() => {
     if (!selectedRequest) {
-      setRequestImageUrls([]);
+      queueMicrotask(() => setRequestImageUrls([]));
       return;
     }
-    setRequestImageUrls(normalizeJsonImageArray(selectedRequest.images));
+    queueMicrotask(() => setRequestImageUrls(normalizeJsonImageArray(selectedRequest.images)));
   }, [selectedRequest?.id, selectedRequest?.updated_at, selectedRequest?.images]);
 
   const serviceFilterOptions = useMemo(() => {
@@ -1481,39 +1485,43 @@ function InvitePartnerToQuote({
 
   useEffect(() => {
     if (!request?.id) {
-      setPartners([]);
-      setPartnersLoading(false);
+      queueMicrotask(() => {
+        setPartners([]);
+        setPartnersLoading(false);
+      });
       return;
     }
     const serviceType = request.service_type;
-    setSearchTerm("");
-    setSummaryExpanded(true);
-    setPartners([]);
-    setClientAddress(serviceRequestToClientAddressValue(request));
-    setInvitePhotos([]);
-    setInvitePhotoPreviews((prev) => {
-      prev.forEach((u) => URL.revokeObjectURL(u));
-      return [];
-    });
     let cancelled = false;
-    setPartnersLoading(true);
-    loadPartners()
-      .then((list) => {
-        if (cancelled) return;
-        setPartners(list);
-        const matched = list.filter((p) => safePartnerMatchesTypeOfWork(p, serviceType));
-        setSelectedIds(new Set(matched.map((p) => p.id)));
-      })
-      .catch((err) => {
-        console.error("[InvitePartnerToQuote] listPartnersAll", err);
-        if (!cancelled) {
-          toast.error("Could not load partners. Try again.");
-          setPartners([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setPartnersLoading(false);
+    queueMicrotask(() => {
+      setSearchTerm("");
+      setSummaryExpanded(true);
+      setPartners([]);
+      setClientAddress(serviceRequestToClientAddressValue(request));
+      setInvitePhotos([]);
+      setInvitePhotoPreviews((prev) => {
+        prev.forEach((u) => URL.revokeObjectURL(u));
+        return [];
       });
+      setPartnersLoading(true);
+      loadPartners()
+        .then((list) => {
+          if (cancelled) return;
+          setPartners(list);
+          const matched = list.filter((p) => safePartnerMatchesTypeOfWork(p, serviceType));
+          setSelectedIds(new Set(matched.map((p) => p.id)));
+        })
+        .catch((err) => {
+          console.error("[InvitePartnerToQuote] listPartnersAll", err);
+          if (!cancelled) {
+            toast.error("Could not load partners. Try again.");
+            setPartners([]);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setPartnersLoading(false);
+        });
+    });
     return () => {
       cancelled = true;
     };
@@ -1779,16 +1787,17 @@ function ManualQuoteModal({
   const [catalogTemplateId, setCatalogTemplateId] = useState("");
 
   useEffect(() => {
-    if (request) {
+    if (!request) return;
+    queueMicrotask(() => {
       setCatalogTemplateId(request.catalog_service_id ?? "");
       setLineItems([{ description: request.service_type, quantity: "1", unitPrice: String(request.estimated_value ?? 0), vat: false }]);
       setClientAddress(serviceRequestToClientAddressValue(request));
-      void Promise.resolve(
-        getSupabase().from("company_settings").select("vat_percent").limit(1).single(),
-      ).then(({ data }) => {
-        setVatPercent(data?.vat_percent != null ? Number(data.vat_percent) : 20);
-      }).catch(() => setVatPercent(20));
-    }
+    });
+    void Promise.resolve(
+      getSupabase().from("company_settings").select("vat_percent").limit(1).single(),
+    ).then(({ data }) => {
+      setVatPercent(data?.vat_percent != null ? Number(data.vat_percent) : 20);
+    }).catch(() => setVatPercent(20));
   }, [request]);
 
   if (!request) return null;
@@ -1926,22 +1935,24 @@ function ConvertToJobModal({
 
   useEffect(() => {
     if (!request) {
-      setPartners([]);
+      queueMicrotask(() => setPartners([]));
       return;
     }
-    setForm({
-      partner_id: "", scope: "", notes: "", internal_notes: "",
-      client_price: String(request.estimated_value ?? 0), partner_cost: "", job_type: "fixed",
-      catalog_service_id: request.catalog_service_id ?? "",
-      hourly_client_rate: "",
-      hourly_partner_rate: "",
-      billed_hours: "1",
-      assignment_mode: "manual",
-      in_ccz: !!request.in_ccz,
-      has_free_parking: request.has_free_parking ?? true,
-      scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
+    queueMicrotask(() => {
+      setForm({
+        partner_id: "", scope: "", notes: "", internal_notes: "",
+        client_price: String(request.estimated_value ?? 0), partner_cost: "", job_type: "fixed",
+        catalog_service_id: request.catalog_service_id ?? "",
+        hourly_client_rate: "",
+        hourly_partner_rate: "",
+        billed_hours: "1",
+        assignment_mode: "manual",
+        in_ccz: !!request.in_ccz,
+        has_free_parking: request.has_free_parking ?? true,
+        scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
+      });
+      setClientAddress(serviceRequestToClientAddressValue(request));
     });
-    setClientAddress(serviceRequestToClientAddressValue(request));
     loadPartners()
       .then(setPartners)
       .catch(() => {
@@ -1968,7 +1979,7 @@ function ConvertToJobModal({
 
   useEffect(() => {
     const inCcz = isLikelyCczAddress(clientAddress.property_address);
-    setForm((prev) => ({ ...prev, in_ccz: inCcz }));
+    queueMicrotask(() => setForm((prev) => ({ ...prev, in_ccz: inCcz })));
   }, [clientAddress.property_address]);
 
   useEffect(() => {
@@ -1981,14 +1992,16 @@ function ConvertToJobModal({
       clientHourlyRate: clientRate,
       partnerHourlyRate: partnerRate,
     });
-    setForm((prev) => ({
-      ...prev,
-      client_price: String(totals.clientTotal),
-      partner_cost: String(totals.partnerTotal),
-      hourly_client_rate: String(clientRate || ""),
-      hourly_partner_rate: String(partnerRate || ""),
-      billed_hours: String(hrs),
-    }));
+    queueMicrotask(() =>
+      setForm((prev) => ({
+        ...prev,
+        client_price: String(totals.clientTotal),
+        partner_cost: String(totals.partnerTotal),
+        hourly_client_rate: String(clientRate || ""),
+        hourly_partner_rate: String(partnerRate || ""),
+        billed_hours: String(hrs),
+      })),
+    );
   }, [request?.id, form.job_type, form.catalog_service_id]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -2327,24 +2340,26 @@ function CreateRequestModal({
 
   useEffect(() => {
     if (!open) return;
-    setClientAddress({ client_name: "", property_address: "" });
-    setPostcode("");
-    setCreatePhotos([]);
-    setCreatePhotoPreviews((prev) => {
-      prev.forEach((u) => URL.revokeObjectURL(u));
-      return [];
-    });
-    setForm({
-      onsite_contact_name: "",
-      client_phone: "",
-      request_kind: "",
-      source: "manual",
-      catalog_service_id: "",
-      service_type: "",
-      description: "",
-      priority: "medium",
-      in_ccz: false,
-      has_free_parking: true,
+    queueMicrotask(() => {
+      setClientAddress({ client_name: "", property_address: "" });
+      setPostcode("");
+      setCreatePhotos([]);
+      setCreatePhotoPreviews((prev) => {
+        prev.forEach((u) => URL.revokeObjectURL(u));
+        return [];
+      });
+      setForm({
+        onsite_contact_name: "",
+        client_phone: "",
+        request_kind: "",
+        source: "manual",
+        catalog_service_id: "",
+        service_type: "",
+        description: "",
+        priority: "medium",
+        in_ccz: false,
+        has_free_parking: true,
+      });
     });
   }, [open]);
 
@@ -2355,13 +2370,15 @@ function CreateRequestModal({
 
   useEffect(() => {
     const ex = extractUkPostcode(clientAddress.property_address);
-    if (ex) setPostcode(ex);
-    else if (!clientAddress.property_address.trim()) setPostcode("");
+    queueMicrotask(() => {
+      if (ex) setPostcode(ex);
+      else if (!clientAddress.property_address.trim()) setPostcode("");
+    });
   }, [clientAddress.property_address]);
 
   useEffect(() => {
     const inCcz = isLikelyCczAddress(clientAddress.property_address);
-    setForm((prev) => ({ ...prev, in_ccz: inCcz }));
+    queueMicrotask(() => setForm((prev) => ({ ...prev, in_ccz: inCcz })));
   }, [clientAddress.property_address]);
 
   const handleSubmit = (e: React.FormEvent) => {

@@ -700,13 +700,14 @@ function InternalCostModal({
   const [status, setStatus] = useState<InternalCostStatus>("pending");
 
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    queueMicrotask(() => {
       setDescription(initial?.description ?? "");
       setAmount(initial?.amount != null ? String(initial.amount) : "");
       setCategory(initial?.category ?? "");
       setDueDate(initial?.due_date ?? "");
       setStatus(initial?.status ?? "pending");
-    }
+    });
   }, [open, initial]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -781,7 +782,8 @@ function RecurringBillModal({
   const [status, setStatus] = useState<RecurringBillStatus>("active");
 
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    queueMicrotask(() => {
       setName(initial?.name ?? "");
       setDescription(initial?.description ?? "");
       setAmount(initial?.amount != null ? String(initial.amount) : "");
@@ -789,7 +791,7 @@ function RecurringBillModal({
       setNextDueDate(initial?.next_due_date ?? "");
       setCategory(initial?.category ?? "");
       setStatus(initial?.status ?? "active");
-    }
+    });
   }, [open, initial]);
 
   const handleSubmit = (e: React.FormEvent) => {

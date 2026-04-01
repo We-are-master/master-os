@@ -315,7 +315,7 @@ export function OverviewExecutiveBundle() {
           }
         } else {
           const monthKeys: string[] = [];
-          let curM = new Date(new Date(fromIso).getFullYear(), new Date(fromIso).getMonth(), 1);
+          const curM = new Date(new Date(fromIso).getFullYear(), new Date(fromIso).getMonth(), 1);
           const endM = new Date(toBound);
           while (curM <= endM) {
             monthKeys.push(`${curM.getFullYear()}-${String(curM.getMonth() + 1).padStart(2, "0")}`);
