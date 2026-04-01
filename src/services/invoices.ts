@@ -36,8 +36,35 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<Invoice>
     .insert({ ...row, reference: ref })
     .select()
     .single();
-  if (error) throw error;
-  return data as Invoice;
+  if (!error) return data as Invoice;
+
+  // Compatibility fallback for older DB constraints/schemas in production.
+  const code = (error as { code?: string }).code;
+  const msg = (error as { message?: string }).message ?? "";
+  const maybeCompatIssue =
+    code === "23514" ||
+    msg.includes("invoice") ||
+    msg.includes("collection_stage") ||
+    msg.includes("invoice_kind") ||
+    msg.includes("Could not find the") ||
+    msg.includes("does not exist");
+  if (!maybeCompatIssue) throw error;
+
+  const legacyRow = {
+    ...input,
+    amount_paid: input.amount_paid ?? 0,
+    invoice_kind: input.invoice_kind === "combined" ? "final" : (input.invoice_kind ?? "other"),
+  } as Record<string, unknown>;
+  delete legacyRow.collection_stage;
+  delete legacyRow.collection_stage_locked;
+
+  const { data: legacyData, error: legacyErr } = await supabase
+    .from("invoices")
+    .insert({ ...legacyRow, reference: ref })
+    .select()
+    .single();
+  if (legacyErr) throw legacyErr;
+  return legacyData as Invoice;
 }
 
 /** Invoices tied to a job (by reference on the invoice + optional primary invoice id on the job). */
