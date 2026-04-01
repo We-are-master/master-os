@@ -71,7 +71,7 @@ export async function syncJobAfterInvoicePaidToLedger(
 
   if (!existingSource && payAmt > EPS) {
     const paidDate = (inv.paid_date as string) || new Date().toISOString().split("T")[0];
-    const { error: insErr } = await client.from("job_payments").insert({
+    const paymentRow = {
       job_id: job.id,
       type: "customer_final",
       amount: Math.round(payAmt * 100) / 100,
@@ -79,11 +79,29 @@ export async function syncJobAfterInvoicePaidToLedger(
       note: `${sourceLabel} · ${(inv as { reference?: string }).reference ?? invoiceId}`,
       source_invoice_id: invoiceId,
       linked_invoice_id: invoiceId,
-    });
+    };
+    let { error: insErr } = await client.from("job_payments").insert(paymentRow);
+
+    if (insErr && (insErr as { code?: string }).code !== "23505") {
+      const msg = (insErr as { message?: string }).message ?? "";
+      const maybeLegacySchema =
+        msg.includes("source_invoice_id") ||
+        msg.includes("linked_invoice_id") ||
+        msg.includes("Could not find the") ||
+        msg.includes("does not exist");
+      if (maybeLegacySchema) {
+        ({ error: insErr } = await client.from("job_payments").insert({
+          job_id: paymentRow.job_id,
+          type: paymentRow.type,
+          amount: paymentRow.amount,
+          payment_date: paymentRow.payment_date,
+          note: paymentRow.note,
+        }));
+      }
+    }
 
     if (insErr && (insErr as { code?: string }).code !== "23505") {
       console.error("syncJobAfterInvoicePaidToLedger: job_payments insert", insErr);
-      return;
     }
   }
 
@@ -112,7 +130,17 @@ export async function maybeCompleteAwaitingPaymentJob(client: SupabaseClient, jo
     .filter((p) => p.type === "customer_deposit" || p.type === "customer_final")
     .map((p) => ({ type: p.type as "customer_deposit" | "customer_final", amount: Number(p.amount) }));
 
-  if (!customerCollectionsSatisfyBillable(job, customerPayments)) return;
+  if (!customerCollectionsSatisfyBillable(job, customerPayments)) {
+    // Legacy fallback: if primary linked invoice is already paid, close the job even when
+    // job_payments ledger columns are missing and customer rows could not be inserted.
+    if (!job.invoice_id) return;
+    const { data: inv } = await client
+      .from("invoices")
+      .select("status")
+      .eq("id", job.invoice_id)
+      .maybeSingle();
+    if ((inv as { status?: string } | null)?.status !== "paid") return;
+  }
 
   await client.from("jobs").update({ status: "completed", finance_status: "paid" }).eq("id", jobId);
 }
