@@ -115,6 +115,33 @@ export async function updateInvoice(id: string, input: Partial<Invoice>): Promis
     .eq("id", id)
     .select()
     .single();
-  if (error) throw error;
-  return data as Invoice;
+  if (!error) return data as Invoice;
+
+  // Compatibility fallback for older DB schemas (missing amount_paid/collection fields/invoice_kind).
+  const code = (error as { code?: string }).code;
+  const msg = (error as { message?: string }).message ?? "";
+  const maybeCompatIssue =
+    code === "23514" ||
+    msg.includes("invoice") ||
+    msg.includes("collection_stage") ||
+    msg.includes("collection_stage_locked") ||
+    msg.includes("invoice_kind") ||
+    msg.includes("amount_paid") ||
+    msg.includes("Could not find the") ||
+    msg.includes("does not exist");
+  if (!maybeCompatIssue) throw error;
+
+  const legacyPatch = { ...input } as Record<string, unknown>;
+  delete legacyPatch.collection_stage;
+  delete legacyPatch.collection_stage_locked;
+  delete legacyPatch.invoice_kind;
+  delete legacyPatch.amount_paid;
+  const { data: legacyData, error: legacyErr } = await supabase
+    .from("invoices")
+    .update(legacyPatch)
+    .eq("id", id)
+    .select()
+    .single();
+  if (!legacyErr) return legacyData as Invoice;
+  throw legacyErr;
 }

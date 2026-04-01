@@ -228,8 +228,7 @@ export default function InvoicesPage() {
       } else if (invoice.status === "paid") {
         updates.paid_date = null;
       }
-      const { error } = await supabase.from("invoices").update(updates).eq("id", invoice.id);
-      if (error) throw error;
+      await updateInvoice(invoice.id, updates as Partial<Invoice>);
       await logAudit({
         entityType: "invoice",
         entityId: invoice.id,
@@ -302,10 +301,12 @@ export default function InvoicesPage() {
         for (const id of ids) {
           const { data: inv } = await supabase.from("invoices").select("amount").eq("id", id).maybeSingle();
           const amt = Number((inv as { amount?: number } | null)?.amount ?? 0);
-          await supabase
-            .from("invoices")
-            .update({ status: "paid", paid_date: today, collection_stage: "completed", amount_paid: amt })
-            .eq("id", id);
+          await updateInvoice(id, {
+            status: "paid",
+            paid_date: today,
+            collection_stage: "completed",
+            amount_paid: amt,
+          });
           await syncJobAfterInvoicePaidToLedger(supabase, id, "Manual");
         }
         await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
