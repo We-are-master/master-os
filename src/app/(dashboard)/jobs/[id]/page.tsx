@@ -1537,7 +1537,7 @@ export default function JobDetailPage() {
         const pick = linked.find((i) => i.invoice_kind === "combined") ?? linked[linked.length - 1];
         primaryInvoiceId = pick.id;
       }
-      if (!primaryInvoiceId) {
+      if (!primaryInvoiceId && customerDue > 0.02) {
         const dueDate = new Date();
         dueDate.setDate(dueDate.getDate() + 7);
         const inv = await createInvoice({
@@ -1554,7 +1554,7 @@ export default function JobDetailPage() {
         if (inv.status === "paid") {
           await syncJobAfterInvoicePaidToLedger(getSupabase(), inv.id, "Manual");
         }
-      } else if (customerDue <= 0.02) {
+      } else if (customerDue <= 0.02 && primaryInvoiceId) {
         await updateInvoice(primaryInvoiceId, {
           status: "paid",
           paid_date: new Date().toISOString().slice(0, 10),
@@ -2908,50 +2908,68 @@ export default function JobDetailPage() {
                 </div>
               </div>
               <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs text-text-secondary space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    Timer spent: <span className="font-semibold text-text-primary">{approvalTimeSpentLabel}</span>
-                  </span>
-                  {job.job_type === "hourly" && canEditJobTimer ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-[11px]"
-                      icon={<Pencil className="h-3 w-3" />}
-                      onClick={() => {
-                        if (!timerAdjustEditing) {
-                          const total = computeOfficeTimerElapsedSeconds(job);
-                          const { start, stop } = inferStartStopFromElapsedSeconds(total, Date.now());
-                          setAdjustStartLocal(start);
-                          setAdjustStopLocal(stop);
-                        }
-                        setTimerAdjustEditing((v) => !v);
-                      }}
-                    >
-                      {timerAdjustEditing ? "Close" : "Edit"}
-                    </Button>
-                  ) : null}
-                </div>
-                {job.job_type === "hourly" && approvalTimerPreviewStartStop && !timerAdjustEditing ? (
-                  <div className="flex flex-col gap-0.5 text-[11px] sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-3">
+                {job.job_type === "hourly" ? (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Start &amp; stop (hourly billing)
+                      </span>
+                      {canEditJobTimer ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[11px]"
+                          icon={<Pencil className="h-3 w-3" />}
+                          onClick={() => {
+                            if (!timerAdjustEditing) {
+                              const total = computeOfficeTimerElapsedSeconds(job);
+                              const { start, stop } = inferStartStopFromElapsedSeconds(total, Date.now());
+                              setAdjustStartLocal(start);
+                              setAdjustStopLocal(stop);
+                            }
+                            setTimerAdjustEditing((v) => !v);
+                          }}
+                        >
+                          {timerAdjustEditing ? "Close" : "Edit"}
+                        </Button>
+                      ) : null}
+                    </div>
+                    {approvalTimerPreviewStartStop && !timerAdjustEditing ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-[10px] text-text-tertiary block">Start</span>
+                          <span className="text-sm font-semibold text-text-primary">
+                            {formatDatetimeLocalForDisplay(approvalTimerPreviewStartStop.start)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-text-tertiary block">Stop</span>
+                          <span className="text-sm font-semibold text-text-primary">
+                            {formatDatetimeLocalForDisplay(approvalTimerPreviewStartStop.stop)}
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
+                    {!timerAdjustEditing ? (
+                      <p className="text-[10px] text-text-tertiary">
+                        Duration: <span className="font-medium text-text-secondary">{formatOfficeTimer(approvalModalElapsedSeconds)}</span>
+                      </p>
+                    ) : null}
+                    {approvalModalHourlyTotals ? (
+                      <p className="text-[10px] text-text-tertiary">
+                        Billed hours (30-min rule): <span className="font-medium text-text-secondary">{approvalModalHourlyTotals.billedHours}h</span>
+                        {timerAdjustEditing ? " · Preview updates totals above until you save." : null}
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <span>
-                      <span className="text-text-tertiary">Start: </span>
-                      <span className="font-medium text-text-primary">{formatDatetimeLocalForDisplay(approvalTimerPreviewStartStop.start)}</span>
+                      Timer spent: <span className="font-semibold text-text-primary">{approvalTimeSpentLabel}</span>
                     </span>
-                    <span>
-                      <span className="text-text-tertiary">Stop: </span>
-                      <span className="font-medium text-text-primary">{formatDatetimeLocalForDisplay(approvalTimerPreviewStartStop.stop)}</span>
-                    </span>
-                    <span className="text-text-tertiary">(inferred from duration — edit to set exact times)</span>
                   </div>
-                ) : null}
-                {job.job_type === "hourly" && approvalModalHourlyTotals ? (
-                  <p className="text-[10px] text-text-tertiary">
-                    Billed hours (30-min rule): <span className="font-medium text-text-secondary">{approvalModalHourlyTotals.billedHours}h</span>
-                    {timerAdjustEditing ? " · Preview updates totals above until you save." : null}
-                  </p>
-                ) : null}
+                )}
                 {timerAdjustEditing && job.job_type === "hourly" ? (
                   <div className="space-y-2 pt-1 border-t border-border-light">
                     <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Manual correction — logged to job history with your note.</p>
@@ -2976,7 +2994,7 @@ export default function JobDetailPage() {
                       </div>
                     </div>
                     <p className="text-[10px] text-text-tertiary">
-                      Duration from start → stop: <span className="font-medium text-text-secondary">{formatOfficeTimer(approvalModalElapsedSeconds)}</span>
+                      Duration: <span className="font-medium text-text-secondary">{formatOfficeTimer(approvalModalElapsedSeconds)}</span>
                     </p>
                     <div>
                       <label className="block text-[10px] font-medium text-text-tertiary mb-0.5">Note (required)</label>

@@ -60,7 +60,8 @@ export async function ensureWeeklySelfBillForJob(job: Job): Promise<string | nul
     .select("id")
     .eq("partner_id", job.partner_id)
     .eq("week_start", weekStart)
-    .eq("status", "accumulating")
+    .in("status", ["accumulating", "pending_review"])
+    .limit(1)
     .maybeSingle();
 
   if (selErr) throw selErr;
@@ -87,19 +88,48 @@ export async function ensureWeeklySelfBillForJob(job: Job): Promise<string | nul
     };
     const { data: ins, error: insErr } = await supabase.from("self_bills").insert(row).select("id").single();
     if (insErr) {
-      const { data: race } = await supabase
-        .from("self_bills")
-        .select("id")
-        .eq("partner_id", job.partner_id)
-        .eq("week_start", weekStart)
-        .eq("status", "accumulating")
-        .maybeSingle();
-      sbId = race?.id as string | undefined;
-      if (!sbId) throw insErr;
+      const code = (insErr as { code?: string }).code;
+      const msg = insErr.message ?? "";
+      const isStatusCheck =
+        code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint");
+      if (isStatusCheck) {
+        const { data: ins2, error: insErr2 } = await supabase
+          .from("self_bills")
+          .insert({ ...row, status: "pending_review" as const })
+          .select("id")
+          .single();
+        if (!insErr2 && ins2) {
+          sbId = ins2.id as string;
+        } else if (insErr2) {
+          const { data: race } = await supabase
+            .from("self_bills")
+            .select("id")
+            .eq("partner_id", job.partner_id)
+            .eq("week_start", weekStart)
+            .in("status", ["accumulating", "pending_review"])
+            .limit(1)
+            .maybeSingle();
+          sbId = race?.id as string | undefined;
+          if (!sbId) throw insErr2;
+        }
+      } else {
+        const { data: race } = await supabase
+          .from("self_bills")
+          .select("id")
+          .eq("partner_id", job.partner_id)
+          .eq("week_start", weekStart)
+          .in("status", ["accumulating", "pending_review"])
+          .limit(1)
+          .maybeSingle();
+        sbId = race?.id as string | undefined;
+        if (!sbId) throw insErr;
+      }
     } else {
       sbId = ins.id as string;
     }
   }
+
+  if (!sbId) throw new Error("Failed to create or find weekly self-bill");
 
   const { error: linkErr } = await supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
   if (linkErr) throw linkErr;
