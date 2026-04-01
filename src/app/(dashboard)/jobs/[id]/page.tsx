@@ -34,7 +34,7 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { listQuoteLineItems } from "@/services/quotes";
-import { createSelfBillFromJob, getSelfBill } from "@/services/self-bills";
+import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob } from "@/services/self-bills";
 import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
@@ -1046,18 +1046,32 @@ export default function JobDetailPage() {
     }
     try {
       let selfBillId: string | undefined = j.self_bill_id ?? undefined;
-      if (newStatus === "awaiting_payment" && !j.self_bill_id && j.partner_id?.trim()) {
+      if (newStatus === "awaiting_payment" && j.partner_id?.trim()) {
+        const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
+        const partnerDue = Math.max(0, partnerPaymentCap(j) - partnerPaid);
+        let primarySelfBillId = j.self_bill_id ?? null;
         try {
-          const selfBill = await createSelfBillFromJob({
-            id: j.id,
-            reference: j.reference,
-            partner_name: j.partner_name ?? "Unassigned",
-            partner_cost: j.partner_cost,
-            materials_cost: j.materials_cost,
-          });
-          selfBillId = selfBill.id;
+          const linkedSelfBills = await listSelfBillsLinkedToJob(j.reference, primarySelfBillId);
+          if (!primarySelfBillId && linkedSelfBills.length > 0) {
+            const pick =
+              linkedSelfBills.find((s) => s.status === "accumulating") ??
+              linkedSelfBills.find((s) => s.status === "pending_review") ??
+              linkedSelfBills[linkedSelfBills.length - 1];
+            primarySelfBillId = pick.id;
+          }
+          if (!primarySelfBillId && partnerDue > 0.02) {
+            const selfBill = await createSelfBillFromJob({
+              id: j.id,
+              reference: j.reference,
+              partner_name: j.partner_name ?? "Unassigned",
+              partner_cost: j.partner_cost,
+              materials_cost: j.materials_cost,
+            });
+            primarySelfBillId = selfBill.id;
+          }
+          if (primarySelfBillId) selfBillId = primarySelfBillId;
         } catch {
-          // Non-blocking: keep status progression even if self-bill issuance fails.
+          // Non-blocking: keep status progression even if self-bill resolution fails.
         }
       }
       const hourlyPatch: Partial<Job> = {};
@@ -1121,7 +1135,13 @@ export default function JobDetailPage() {
       }
       await logAudit({ entityType: "job", entityId: j.id, entityRef: j.reference, action: "status_changed", fieldName: "status", oldValue: j.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
       setJob(updated);
-      toast.success(forceCloseFromAwaitingPayment ? "Job marked Completed & paid." : (selfBillId ? "Self-bill created. Job updated." : "Job updated"));
+      toast.success(
+        forceCloseFromAwaitingPayment
+          ? "Job marked Completed & paid."
+          : selfBillId && selfBillId !== j.self_bill_id
+            ? "Self-bill linked. Job updated."
+            : "Job updated",
+      );
       if (updated.partner_id && j.status !== newStatus) {
         notifyAssignedPartnerAboutJob({
           partnerId: updated.partner_id,
@@ -1496,21 +1516,6 @@ export default function JobDetailPage() {
     setValidatingComplete(true);
     try {
       let current = j;
-      if (!current.self_bill_id && current.partner_id?.trim()) {
-        try {
-          const selfBill = await createSelfBillFromJob({
-            id: current.id,
-            reference: current.reference,
-            partner_name: current.partner_name ?? "Unassigned",
-            partner_cost: current.partner_cost,
-            materials_cost: current.materials_cost,
-          });
-          const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: selfBill.id }, { notifyPartner: false });
-          if (withSelfBill) current = withSelfBill;
-        } catch {
-          // Do not block approval flow on self-bill issuance errors.
-        }
-      }
 
       const approvedPatch = await handleJobUpdate(
         current.id,
@@ -1565,6 +1570,33 @@ export default function JobDetailPage() {
       if (primaryInvoiceId && primaryInvoiceId !== current.invoice_id) {
         const withInvoice = await handleJobUpdate(current.id, { invoice_id: primaryInvoiceId }, { notifyPartner: false });
         if (withInvoice) current = withInvoice;
+      }
+
+      // Partner self-bill: same pattern as client invoice — resolve linked rows from DB, then create only if still missing and partner is owed.
+      let primarySelfBillId = current.self_bill_id ?? null;
+      if (current.partner_id?.trim()) {
+        const linkedSelfBills = await listSelfBillsLinkedToJob(current.reference, primarySelfBillId);
+        if (!primarySelfBillId && linkedSelfBills.length > 0) {
+          const pick =
+            linkedSelfBills.find((s) => s.status === "accumulating") ??
+            linkedSelfBills.find((s) => s.status === "pending_review") ??
+            linkedSelfBills[linkedSelfBills.length - 1];
+          primarySelfBillId = pick.id;
+        }
+        if (!primarySelfBillId && partnerDue > 0.02) {
+          const selfBill = await createSelfBillFromJob({
+            id: current.id,
+            reference: current.reference,
+            partner_name: current.partner_name ?? "Unassigned",
+            partner_cost: current.partner_cost,
+            materials_cost: current.materials_cost,
+          });
+          primarySelfBillId = selfBill.id;
+        }
+        if (primarySelfBillId && primarySelfBillId !== current.self_bill_id) {
+          const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: primarySelfBillId }, { notifyPartner: false });
+          if (withSelfBill) current = withSelfBill;
+        }
       }
 
       if (customerDue > 0.02 || partnerDue > 0.02) {
