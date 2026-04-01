@@ -33,7 +33,8 @@ export function getPartnerAssignmentBlockReason(job: PartnerAssignGateFields): s
 }
 
 export function jobHasPartnerSet(job: Pick<Job, "partner_id" | "partner_ids">): boolean {
-  if (job.partner_id) return true;
+  const pid = job.partner_id != null && String(job.partner_id).trim() !== "";
+  if (pid) return true;
   const ids = job.partner_ids;
-  return Array.isArray(ids) && ids.length > 0;
+  return Array.isArray(ids) && ids.some((id) => id != null && String(id).trim() !== "");
 }

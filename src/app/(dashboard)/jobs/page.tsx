@@ -432,7 +432,12 @@ function JobsPageContent() {
         partner_ids: formData.partner_ids,
         owner_id: formData.owner_id ?? profile?.id,
         owner_name: formData.owner_name ?? profile?.full_name,
-        status: (formData.status as Job["status"]) ?? (jobHasPartnerSet(formData as Job) ? "scheduled" : "unassigned"),
+        status: (() => {
+          const st = formData.status as Job["status"] | undefined;
+          if (st === "auto_assigning") return "auto_assigning";
+          if (!jobHasPartnerSet(formData as Job)) return "unassigned";
+          return st ?? "scheduled";
+        })(),
         progress: 0,
         current_phase: 0,
         total_phases: normalizeTotalPhases(formData.total_phases),
