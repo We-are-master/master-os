@@ -23,6 +23,9 @@ import { getSupabase } from "@/services/base";
 import { createCommissionRun, listCommissionRuns, getCommissionRunWithItems, updateCommissionRunItem, approveCommissionRun } from "@/services/commission-runs";
 import type { CommissionRun, CommissionRunItem } from "@/types/database";
 import { useProfile } from "@/hooks/use-profile";
+import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
+import type { FinancePeriodMode } from "@/lib/finance-period";
+import { getFinancePeriodClosedBounds } from "@/lib/finance-period";
 
 const INTERNAL_COST_STATUSES: InternalCostStatus[] = ["pending", "paid"];
 const RECURRING_FREQUENCIES: RecurringBillFrequency[] = ["monthly", "quarterly", "yearly"];
@@ -61,6 +64,16 @@ export default function PayrollPage() {
   const [runCommissionDraft, setRunCommissionDraft] = useState<{ run: CommissionRun; items: CommissionRunItem[] } | null>(null);
   const [runCommissionBusy, setRunCommissionBusy] = useState(false);
   const [runCommissionApproving, setRunCommissionApproving] = useState(false);
+
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
+
+  const periodBounds = useMemo(
+    () => getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo),
+    [periodMode, weekAnchor, rangeFrom, rangeTo]
+  );
 
   const loadInternal = useCallback(async () => {
     const supabase = getSupabase();
@@ -105,8 +118,29 @@ export default function PayrollPage() {
     loadData();
   }, [loadData]);
 
+  const scopedInternal = useMemo(() => {
+    if (!periodBounds) return internalCosts;
+    return internalCosts.filter(
+      (c) => c.due_date && c.due_date >= periodBounds.from && c.due_date <= periodBounds.to
+    );
+  }, [internalCosts, periodBounds]);
+
+  const scopedRecurring = useMemo(() => {
+    if (!periodBounds) return recurringBills;
+    return recurringBills.filter(
+      (b) => b.next_due_date && b.next_due_date >= periodBounds.from && b.next_due_date <= periodBounds.to
+    );
+  }, [recurringBills, periodBounds]);
+
+  const filteredCommissionRuns = useMemo(() => {
+    if (!periodBounds) return commissionRuns;
+    return commissionRuns.filter(
+      (r) => r.period_end >= periodBounds.from && r.period_start <= periodBounds.to
+    );
+  }, [commissionRuns, periodBounds]);
+
   const filteredInternal = useMemo(() => {
-    let list = internalCosts;
+    let list = scopedInternal;
     if (internalFilter !== "all") list = list.filter((c) => c.status === internalFilter);
     if (search) {
       const q = search.toLowerCase();
@@ -118,10 +152,10 @@ export default function PayrollPage() {
       );
     }
     return list;
-  }, [internalCosts, internalFilter, search]);
+  }, [scopedInternal, internalFilter, search]);
 
   const filteredRecurring = useMemo(() => {
-    let list = recurringBills;
+    let list = scopedRecurring;
     if (recurringFilter !== "all") list = list.filter((b) => b.status === recurringFilter);
     if (search) {
       const q = search.toLowerCase();
@@ -133,21 +167,21 @@ export default function PayrollPage() {
       );
     }
     return list;
-  }, [recurringBills, recurringFilter, search]);
+  }, [scopedRecurring, recurringFilter, search]);
 
   const internalTotals = useMemo(() => {
-    const pending = internalCosts.filter((c) => c.status === "pending");
-    const paid = internalCosts.filter((c) => c.status === "paid");
+    const pending = scopedInternal.filter((c) => c.status === "pending");
+    const paid = scopedInternal.filter((c) => c.status === "paid");
     return {
       totalPending: pending.reduce((s, c) => s + Number(c.amount), 0),
       totalPaid: paid.reduce((s, c) => s + Number(c.amount), 0),
       pendingCount: pending.length,
       paidCount: paid.length,
     };
-  }, [internalCosts]);
+  }, [scopedInternal]);
 
   const recurringTotals = useMemo(() => {
-    const active = recurringBills.filter((b) => b.status === "active");
+    const active = scopedRecurring.filter((b) => b.status === "active");
     const monthlyEquivalent = active.reduce((s, b) => {
       const amt = Number(b.amount);
       if (b.frequency === "monthly") return s + amt;
@@ -157,11 +191,11 @@ export default function PayrollPage() {
     return {
       activeCount: active.length,
       totalMonthlyEquivalent: monthlyEquivalent,
-      nextDueCount: recurringBills.filter(
+      nextDueCount: scopedRecurring.filter(
         (b) => b.status === "active" && b.next_due_date && b.next_due_date <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
       ).length,
     };
-  }, [recurringBills]);
+  }, [scopedRecurring]);
 
   const openAddInternal = () => {
     setEditingInternal(null);
@@ -308,9 +342,9 @@ export default function PayrollPage() {
   };
 
   const sectionTabs = [
-    { id: "internal", label: "Internal costs", count: internalCosts.length },
-    { id: "recurring", label: "Recurring bills", count: recurringBills.length },
-    { id: "commission", label: "Run Commission", count: commissionRuns.length },
+    { id: "internal", label: "Internal costs", count: scopedInternal.length },
+    { id: "recurring", label: "Recurring bills", count: scopedRecurring.length },
+    { id: "commission", label: "Run Commission", count: filteredCommissionRuns.length },
   ];
 
   const internalColumns: Column<InternalCost>[] = [
@@ -371,7 +405,18 @@ export default function PayrollPage() {
           {section === "commission" && <Button size="sm" icon={<Play className="h-3.5 w-3.5" />} onClick={() => { setRunCommissionDraft(null); setRunCommissionOpen(true); }}>Run Commission</Button>}
         </PageHeader>
 
-        <Tabs tabs={sectionTabs} activeTab={section} onChange={(id) => setSection(id as "internal" | "recurring")} />
+        <FinanceWeekRangeBar
+          mode={periodMode}
+          onModeChange={setPeriodMode}
+          weekAnchor={weekAnchor}
+          onWeekAnchorChange={setWeekAnchor}
+          rangeFrom={rangeFrom}
+          rangeTo={rangeTo}
+          onRangeFromChange={setRangeFrom}
+          onRangeToChange={setRangeTo}
+        />
+
+        <Tabs tabs={sectionTabs} activeTab={section} onChange={(id) => setSection(id as "internal" | "recurring" | "commission")} />
 
         {section === "internal" && (
           <>
@@ -460,7 +505,7 @@ export default function PayrollPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {commissionRuns.slice(0, 10).map((r) => (
+                  {filteredCommissionRuns.slice(0, 10).map((r) => (
                     <tr key={r.id} className="border-b border-border last:border-0">
                       <td className="p-3 font-medium">{formatDate(r.period_start)} – {formatDate(r.period_end)}</td>
                       <td className="p-3">
@@ -470,7 +515,7 @@ export default function PayrollPage() {
                   ))}
                 </tbody>
               </table>
-              {commissionRuns.length === 0 && <p className="p-6 text-center text-text-tertiary">No commission runs yet. Click Run Commission to create one.</p>}
+              {filteredCommissionRuns.length === 0 && <p className="p-6 text-center text-text-tertiary">No commission runs yet. Click Run Commission to create one.</p>}
             </div>
           </motion.div>
         )}

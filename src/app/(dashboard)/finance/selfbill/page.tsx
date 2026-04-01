@@ -10,14 +10,13 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
-import { SearchInput, Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
   Download,
-  Filter,
   Wallet,
   DollarSign,
   Users,
@@ -32,7 +31,9 @@ import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import type { SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
-import { weekPeriodHelpText, parseDateRangeOrWeek, weekPresetsFromYear } from "@/lib/self-bill-period";
+import { weekPeriodHelpText, parseDateRangeOrWeek, weekPresetsFromYear, getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
+import type { FinancePeriodMode } from "@/lib/finance-period";
 import { listJobsForSelfBill } from "@/services/self-bills";
 import type { Job } from "@/types/database";
 
@@ -53,9 +54,10 @@ export default function SelfBillPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [weekPreset, setWeekPreset] = useState("");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
+  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
   const [jobsModal, setJobsModal] = useState<{ selfBill: SelfBill; jobs: Awaited<ReturnType<typeof listJobsForSelfBill>> } | null>(null);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [closeWeekSelectKey, setCloseWeekSelectKey] = useState(0);
@@ -68,12 +70,13 @@ export default function SelfBillPage() {
     const supabase = getSupabase();
     try {
       let q = supabase.from("self_bills").select("*").order("week_start", { ascending: false }).order("created_at", { ascending: false });
-      if (weekPreset.trim()) {
-        q = q.eq("week_label", weekPreset.trim());
-      } else {
+      if (periodMode === "week") {
+        const { weekLabel } = getWeekBoundsForDate(weekAnchor);
+        q = q.eq("week_label", weekLabel);
+      } else if (periodMode === "range") {
         const range = parseDateRangeOrWeek({
-          from: dateFrom.trim() || undefined,
-          to: dateTo.trim() || undefined,
+          from: rangeFrom.trim() || undefined,
+          to: rangeTo.trim() || undefined,
         });
         if (range.weekStartMin) q = q.gte("week_start", range.weekStartMin);
         if (range.weekStartMax) q = q.lte("week_start", range.weekStartMax);
@@ -86,7 +89,7 @@ export default function SelfBillPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, weekPreset]);
+  }, [periodMode, weekAnchor, rangeFrom, rangeTo]);
 
   useEffect(() => {
     loadData();
@@ -292,30 +295,17 @@ export default function SelfBillPage() {
         </PageHeader>
 
         <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <Select
-              label="Week (ISO)"
-              value={weekPreset}
-              onChange={(e) => {
-                setWeekPreset(e.target.value);
-                setDateFrom("");
-                setDateTo("");
-              }}
-              options={[{ value: "", label: "All weeks" }, ...weekOptions.map((w) => ({ value: w.label, label: w.label }))]}
-            />
-            <div className="grid grid-cols-2 gap-2 min-w-[220px]">
-              <div>
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase">From</label>
-                <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setWeekPreset(""); }} className="text-sm" />
-              </div>
-              <div>
-                <label className="text-[10px] font-semibold text-text-tertiary uppercase">To</label>
-                <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setWeekPreset(""); }} className="text-sm" />
-              </div>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => loadData()} icon={<Filter className="h-3.5 w-3.5" />}>
-              Apply
-            </Button>
+          <FinanceWeekRangeBar
+            mode={periodMode}
+            onModeChange={setPeriodMode}
+            weekAnchor={weekAnchor}
+            onWeekAnchorChange={setWeekAnchor}
+            rangeFrom={rangeFrom}
+            rangeTo={rangeTo}
+            onRangeFromChange={setRangeFrom}
+            onRangeToChange={setRangeTo}
+          />
+          <div className="flex flex-wrap items-center gap-2 border-t border-border-light pt-3">
             <Button variant="secondary" size="sm" disabled={backfillLoading} onClick={() => void backfillFromJobs()}>
               {backfillLoading ? "Generating…" : "Generate from jobs"}
             </Button>
