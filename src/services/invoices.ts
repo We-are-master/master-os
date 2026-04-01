@@ -44,6 +44,7 @@ export async function listInvoicesLinkedToJob(
     .from("invoices")
     .select("*")
     .eq("job_reference", jobReference)
+    .is("deleted_at", null)
     .order("created_at", { ascending: false });
   if (e1) throw e1;
   const rows: Invoice[] = [...((byRef ?? []) as Invoice[])];
