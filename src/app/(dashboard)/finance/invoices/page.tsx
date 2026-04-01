@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,10 @@ import { listInvoices, createInvoice, updateInvoice, type CreateInvoiceInput } f
 import { syncInvoiceCollectionStagesForJob, COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import { isJobForcePaid } from "@/lib/job-force-paid";
-import { getStatusCounts, getSupabase } from "@/services/base";
+import { getStatusCounts, getSupabase, type ListParams } from "@/services/base";
+import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
+import type { FinancePeriodMode } from "@/lib/finance-period";
+import { getFinanceListDateFilter } from "@/lib/finance-period";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { LocationMiniMap } from "@/components/ui/location-picker";
@@ -75,9 +78,23 @@ interface LinkedJob {
 }
 
 export default function InvoicesPage() {
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
+
+  const invoiceListParams = useMemo(
+    (): Partial<ListParams> => getFinanceListDateFilter(periodMode, weekAnchor, rangeFrom, rangeTo, "created_at"),
+    [periodMode, weekAnchor, rangeFrom, rangeTo]
+  );
+
   const {
     data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh,
-  } = useSupabaseList<Invoice>({ fetcher: listInvoices, realtimeTable: "invoices" });
+  } = useSupabaseList<Invoice>({
+    fetcher: listInvoices,
+    realtimeTable: "invoices",
+    listParams: invoiceListParams,
+  });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -313,6 +330,17 @@ export default function InvoicesPage() {
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>Export CSV</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>Create Invoice</Button>
         </PageHeader>
+
+        <FinanceWeekRangeBar
+          mode={periodMode}
+          onModeChange={setPeriodMode}
+          weekAnchor={weekAnchor}
+          onWeekAnchorChange={setWeekAnchor}
+          rangeFrom={rangeFrom}
+          rangeTo={rangeTo}
+          onRangeFromChange={setRangeFrom}
+          onRangeToChange={setRangeTo}
+        />
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Total Invoiced" value={kpis.totalInvoiced} format="currency" change={18.2} changeLabel="this quarter" icon={Receipt} accent="primary" />
