@@ -6,7 +6,6 @@ import { getSupabase } from "@/services/base";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { formatCurrency, cn } from "@/lib/utils";
 import { jobBillableRevenue, jobDirectCost } from "@/lib/job-financials";
-import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { listCommissionTiers } from "@/services/tiers";
 import type { CommissionTier } from "@/types/database";
 import {
@@ -19,55 +18,14 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { TrendingUp, Star, Building2, Layers } from "lucide-react";
+import { Building2, Layers, Target } from "lucide-react";
 import { BestSellersByOwner } from "@/components/dashboard/best-sellers-by-owner";
-
-type JobRow = {
-  id: string;
-  client_id?: string | null;
-  partner_name?: string | null;
-  client_price: number;
-  extras_amount?: number | null;
-  partner_cost: number;
-  materials_cost: number;
-  commission?: number | null;
-};
-
-async function fetchSalesJobRows(
-  supabase: ReturnType<typeof getSupabase>,
-  fromIso: string,
-  toIso: string,
-): Promise<JobRow[]> {
-  const selFull = "id, client_id, partner_name, client_price, extras_amount, partner_cost, materials_cost, commission";
-  const selLegacy = "id, client_id, partner_name, client_price, partner_cost, materials_cost, commission";
-
-  async function loadCompletedPaid(selectCols: string) {
-    return supabase
-      .from("jobs")
-      .select(selectCols)
-      .eq("status", "completed")
-      .eq("finance_status", "paid")
-      .not("completed_date", "is", null)
-      .gte("completed_date", fromIso)
-      .lte("completed_date", toIso);
-  }
-
-  let completedRes = await loadCompletedPaid(selFull);
-  let err = completedRes.error;
-  let completedRows = (completedRes.data ?? []) as unknown as JobRow[];
-  if (err && isPostgrestWriteRetryableError(err)) {
-    completedRes = await loadCompletedPaid(selLegacy);
-    completedRows = (completedRes.data ?? []) as unknown as JobRow[];
-  }
-
-  const rows = [...completedRows];
-  const seen = new Set<string>();
-  return rows.filter((r) => {
-    if (seen.has(r.id)) return false;
-    seen.add(r.id);
-    return true;
-  });
-}
+import {
+  fetchPipelineJobsForDashboard,
+  defaultMonthlySalesGoalGbp,
+  periodSalesGoalGbp,
+  type OverviewPipelineJobRow,
+} from "@/lib/dashboard-overview-jobs";
 
 async function paidInvoiceTotal(supabase: ReturnType<typeof getSupabase>, fromIso: string, toIso: string): Promise<number> {
   const fromDay = fromIso.slice(0, 10);
@@ -125,7 +83,7 @@ export function OverviewExecutiveBundle() {
   const [commission, setCommission] = useState(0);
   const [billingForTier, setBillingForTier] = useState(0);
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
-  const [topPartner, setTopPartner] = useState<{ name: string; revenue: number } | null>(null);
+  const [ownerLeaderboard, setOwnerLeaderboard] = useState<{ name: string; revenue: number; jobCount: number }[]>([]);
   const [topAccounts, setTopAccounts] = useState<{ name: string; revenue: number }[]>([]);
   const [cashflow, setCashflow] = useState<CashBucket[]>([]);
 
@@ -140,8 +98,8 @@ export function OverviewExecutiveBundle() {
         const fromIso = bounds?.fromIso ?? "2000-01-01T00:00:00.000Z";
         const toBound = bounds?.toIso ?? toIso;
 
-        const [jobRows, tiersList, invTotal] = await Promise.all([
-          fetchSalesJobRows(supabase, fromIso, toBound),
+        const [pipelineRows, tiersList, invTotal] = await Promise.all([
+          fetchPipelineJobsForDashboard(supabase, bounds),
           listCommissionTiers().catch(() => [] as CommissionTier[]),
           paidInvoiceTotal(supabase, fromIso, toBound),
         ]);
@@ -151,10 +109,10 @@ export function OverviewExecutiveBundle() {
         let rev = 0;
         let direct = 0;
         let comm = 0;
-        for (const r of jobRows) {
+        for (const r of pipelineRows) {
           const j = r as Parameters<typeof jobBillableRevenue>[0];
           rev += jobBillableRevenue(j);
-          direct += jobDirectCost(r);
+          direct += jobDirectCost(r as OverviewPipelineJobRow);
           comm += Number(r.commission ?? 0);
         }
         const gross = rev - direct;
@@ -165,17 +123,21 @@ export function OverviewExecutiveBundle() {
         setBillingForTier(invTotal);
         setTiers(tiersList);
 
-        const partnerMap = new Map<string, number>();
-        for (const r of jobRows) {
-          const n = r.partner_name?.trim();
-          if (!n) continue;
-          partnerMap.set(n, (partnerMap.get(n) ?? 0) + jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]));
+        const ownerMap = new Map<string, { revenue: number; jobCount: number }>();
+        for (const r of pipelineRows) {
+          const name = r.owner_name?.trim() || "Unassigned";
+          const o = ownerMap.get(name) ?? { revenue: 0, jobCount: 0 };
+          o.revenue += jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]);
+          o.jobCount += 1;
+          ownerMap.set(name, o);
         }
-        const topP = [...partnerMap.entries()].sort((a, b) => b[1] - a[1])[0];
-        setTopPartner(topP ? { name: topP[0], revenue: topP[1] } : null);
+        const ownerSorted = [...ownerMap.entries()]
+          .map(([name, v]) => ({ name, revenue: v.revenue, jobCount: v.jobCount }))
+          .sort((a, b) => b.revenue - a.revenue);
+        setOwnerLeaderboard(ownerSorted.slice(0, 3));
 
         const clientTotals = new Map<string, number>();
-        for (const r of jobRows) {
+        for (const r of pipelineRows) {
           const cid = r.client_id?.trim();
           if (!cid) continue;
           clientTotals.set(cid, (clientTotals.get(cid) ?? 0) + jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]));
@@ -219,7 +181,7 @@ export function OverviewExecutiveBundle() {
             ...[...unlinked.entries()].map(([name, revenue]) => ({ name, revenue })),
           ]
             .sort((a, b) => b.revenue - a.revenue)
-            .slice(0, 5);
+            .slice(0, 3);
         }
         setTopAccounts(accountsOut);
 
@@ -334,6 +296,8 @@ export function OverviewExecutiveBundle() {
           setPartnerDirect(0);
           setGrossProfit(0);
           setCommission(0);
+          setOwnerLeaderboard([]);
+          setTopAccounts([]);
           setCashflow([]);
         }
       } finally {
@@ -351,6 +315,11 @@ export function OverviewExecutiveBundle() {
   const netPct = revenue > 0 ? Math.round((netProfit / revenue) * 1000) / 10 : 0;
   const { current, next, fillPct } = tierProgress(billingForTier, tiers);
 
+  const monthlySalesGoal = defaultMonthlySalesGoalGbp();
+  const periodGoal = periodSalesGoalGbp(bounds, monthlySalesGoal);
+  const salesGoalFillPct =
+    periodGoal != null && periodGoal > 0 ? Math.min(100, (revenue / periodGoal) * 100) : 0;
+
   return (
     <div className="space-y-5">
       <Card padding="none" className="overflow-hidden border-border-light shadow-sm">
@@ -358,13 +327,13 @@ export function OverviewExecutiveBundle() {
           <div>
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider">Executive snapshot</p>
             <p className="text-xs text-text-tertiary mt-0.5">
-              Sales jobs in range · {bounds ? rangeLabel : "All time"}
+              Pipeline billable value · jobs created in range (excl. cancelled) · {bounds ? rangeLabel : "All time"}
             </p>
           </div>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-border-light">
           {[
-            { label: "Revenue", value: revenue, sub: "Sold job value (customer total)", accent: "text-emerald-600" },
+            { label: "Revenue", value: revenue, sub: "Customer total (client price + extras)", accent: "text-emerald-600" },
             { label: "Partner & materials", value: partnerDirect, sub: "Direct job cost", accent: "text-amber-600" },
             {
               label: "Gross margin",
@@ -441,68 +410,107 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card>
 
-      <BestSellersByOwner />
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
-        <Card padding="none" className="h-full min-h-0 flex flex-col border-border-light">
-          <CardHeader className="px-5 pt-4 flex flex-row items-center justify-between shrink-0 mb-0">
-            <div>
-              <CardTitle className="text-base">Top partner</CardTitle>
-              <p className="text-xs text-text-tertiary mt-0.5">By revenue in range</p>
+      <Card padding="none" className="overflow-hidden border-border-light">
+        <CardHeader className="px-5 pt-4 pb-2">
+          <div className="flex items-start gap-3">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-emerald-500/20 to-cyan-500/10 flex items-center justify-center">
+              <Target className="h-4 w-4 text-emerald-600" />
             </div>
-            <TrendingUp className="h-4 w-4 text-text-tertiary" />
-          </CardHeader>
-          <div className="px-5 pb-5 flex-1 flex flex-col min-h-0">
-            {loading ? (
-              <div className="h-24 animate-pulse rounded-xl bg-surface-hover" />
-            ) : topPartner ? (
-              <div className="flex items-center gap-4 p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/5 border border-amber-200/40 dark:border-amber-900/30">
-                <div className="h-12 w-12 rounded-full bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center">
-                  <Star className="h-6 w-6 text-amber-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-text-primary">{topPartner.name}</p>
-                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-400 tabular-nums">{formatCurrency(topPartner.revenue)}</p>
-                </div>
+            <div>
+              <CardTitle className="text-base">Sales goal</CardTitle>
+              <p className="text-xs text-text-tertiary mt-0.5">
+                Pipeline value vs period target (monthly baseline {formatCurrency(monthlySalesGoal)} scaled to your date range)
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+        <div className="px-5 pb-5 space-y-3">
+          {loading ? (
+            <div className="h-16 animate-pulse rounded-xl bg-surface-hover" />
+          ) : !bounds ? (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-lg font-bold text-text-primary tabular-nums">{formatCurrency(revenue)}</span>
+                <span className="text-sm text-text-tertiary">pipeline billable (all time)</span>
               </div>
-            ) : (
-              <p className="text-sm text-text-tertiary py-6 text-center">No partner revenue in this period</p>
-            )}
-          </div>
-        </Card>
-
-        <Card padding="none" className="h-full min-h-0 flex flex-col border-border-light">
-          <CardHeader className="px-5 pt-4 flex flex-row items-center justify-between shrink-0 mb-0">
-            <div>
-              <CardTitle className="text-base">Top 5 accounts</CardTitle>
-              <p className="text-xs text-text-tertiary mt-0.5">Linked corporate accounts · revenue in range</p>
+              <p className="text-[11px] text-text-tertiary">
+                Pick a date range in the toolbar (7d, MTD, custom…) to compare progress against a sales goal.
+              </p>
             </div>
-            <Building2 className="h-4 w-4 text-text-tertiary" />
-          </CardHeader>
-          <div className="px-5 pb-5 space-y-2 flex-1 flex flex-col min-h-0">
-            {loading ? (
-              Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-10 animate-pulse rounded-lg bg-surface-hover" />)
-            ) : topAccounts.length === 0 ? (
-              <p className="text-sm text-text-tertiary py-4 text-center">No account-linked revenue in this period</p>
-            ) : (
-              topAccounts.map((row, i) => (
-                <div key={row.name} className="flex items-center gap-3 py-2 border-b border-border-light/60 last:border-0">
-                  <span
-                    className={cn(
-                      "h-7 w-7 rounded-lg flex items-center justify-center text-[11px] font-bold shrink-0",
-                      i === 0 ? "bg-indigo-100 text-indigo-700" : "bg-surface-hover text-text-tertiary",
-                    )}
-                  >
-                    {i + 1}
+          ) : periodGoal != null && periodGoal > 0 ? (
+            <>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-lg font-bold text-text-primary tabular-nums">{formatCurrency(revenue)}</span>
+                  <span className="text-sm text-text-tertiary">sold (pipeline)</span>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200">
+                    {revenue >= periodGoal ? "Goal met" : `${Math.round(salesGoalFillPct)}% of goal`}
                   </span>
-                  <p className="text-sm font-medium text-text-primary truncate flex-1">{row.name}</p>
-                  <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(row.revenue)}</p>
                 </div>
-              ))
-            )}
+                <span className="text-xs text-text-tertiary">
+                  Target: <strong className="text-text-secondary">{formatCurrency(periodGoal)}</strong>
+                </span>
+              </div>
+              <div className="h-3 rounded-full overflow-hidden bg-surface-hover ring-1 ring-inset ring-border-light/60">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-400 transition-all duration-500"
+                  style={{ width: `${salesGoalFillPct}%` }}
+                />
+              </div>
+              <p className="text-[11px] text-text-tertiary">
+                Same job set as Jobs Management (excl. cancelled), filtered by job <strong className="font-medium text-text-secondary">created</strong> date ·{" "}
+                {rangeLabel}
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-text-tertiary">Unable to compute period goal for this range.</p>
+          )}
+        </div>
+      </Card>
+
+      <BestSellersByOwner
+        items={ownerLeaderboard}
+        loading={loading}
+        rangeLabel={bounds ? rangeLabel : "All time"}
+      />
+
+      <Card padding="none" className="h-full min-h-0 flex flex-col border-border-light">
+        <CardHeader className="px-5 pt-4 flex flex-row items-center justify-between shrink-0 mb-0">
+          <div>
+            <CardTitle className="text-base">Top 3 — accounts</CardTitle>
+            <p className="text-xs text-text-tertiary mt-0.5">Linked corporate accounts · billable in range</p>
           </div>
-        </Card>
-      </div>
+          <Building2 className="h-4 w-4 text-text-tertiary" />
+        </CardHeader>
+        <div className="px-5 pb-5 space-y-2 flex-1 flex flex-col min-h-0">
+          {loading ? (
+            Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-10 animate-pulse rounded-lg bg-surface-hover" />)
+          ) : topAccounts.length === 0 ? (
+            <p className="text-sm text-text-tertiary py-4 text-center">No account-linked revenue in this period</p>
+          ) : (
+            topAccounts.map((row, i) => (
+              <div key={row.name} className="flex items-center gap-3 py-2 border-b border-border-light/60 last:border-0">
+                <span
+                  className={cn(
+                    "h-7 w-7 rounded-lg flex items-center justify-center text-[11px] font-bold shrink-0",
+                    i === 0
+                      ? "bg-indigo-100 text-indigo-700"
+                      : i === 1
+                        ? "bg-slate-100 text-slate-600"
+                        : i === 2
+                          ? "bg-violet-100 text-violet-700"
+                          : "bg-surface-hover text-text-tertiary",
+                  )}
+                >
+                  {i + 1}
+                </span>
+                <p className="text-sm font-medium text-text-primary truncate flex-1">{row.name}</p>
+                <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(row.revenue)}</p>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
 
       <Card padding="none" className="border-border-light">
         <CardHeader className="px-5 pt-4">

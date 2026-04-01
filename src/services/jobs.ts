@@ -10,6 +10,7 @@ import {
   prepareJobRowForUpdate,
 } from "@/lib/job-schema-compat";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { jobHasPartnerSet } from "@/lib/job-partner-assign";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
@@ -112,6 +113,17 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
       }
     );
   }
+  if (params.status === "unassigned") {
+    const { status: _omit, ...rest } = params;
+    return queryList<Job>(
+      "jobs",
+      { ...rest, statusIn: ["unassigned", "auto_assigning"] },
+      {
+        searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+        defaultSort: "created_at",
+      }
+    );
+  }
   return queryList<Job>("jobs", params, {
     searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
     defaultSort: "created_at",
@@ -149,6 +161,10 @@ export async function createJob(
   const supabase = getSupabase();
   const { data: ref } = await supabase.rpc("next_job_ref");
   const baseRow = { ...input, reference: ref } as Record<string, unknown>;
+  /** No partner → stay in Unassigned (Work Request + Auto assign keeps `auto_assigning`). */
+  if (!jobHasPartnerSet(input as Job) && (input as Job).status !== "auto_assigning") {
+    baseRow.status = "unassigned";
+  }
   const row = prepareJobRowForInsert(baseRow);
   let { data, error } = await supabase.from("jobs").insert(row).select().single();
   if (error && isPostgrestWriteRetryableError(error)) {
