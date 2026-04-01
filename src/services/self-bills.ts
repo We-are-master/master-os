@@ -138,15 +138,17 @@ export async function ensureWeeklySelfBillForJob(job: Job): Promise<string | nul
   return sbId;
 }
 
-/** Call after job create/update when partner and money fields may have changed. */
+/**
+ * Call after job create/update when partner and money fields may have changed.
+ * Only recomputes totals when the job is already linked — does **not** auto-insert weekly self-bills
+ * (avoids DB/RLS/constraint errors on every `updateJob` until backend is aligned). Linking is done
+ * explicitly from approval flow or the job self-bill panel when the insert succeeds.
+ */
 export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
   if (!job.partner_id?.trim()) return;
+  if (!job.self_bill_id) return;
   try {
-    if (job.self_bill_id) {
-      await recomputeSelfBillTotals(job.self_bill_id);
-      return;
-    }
-    await ensureWeeklySelfBillForJob(job);
+    await recomputeSelfBillTotals(job.self_bill_id);
   } catch (e) {
     console.error("syncSelfBillAfterJobChange failed:", e);
   }

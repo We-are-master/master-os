@@ -27,7 +27,6 @@ import {
   CreditCard,
   RefreshCw,
   Timer,
-  Pencil,
   X,
 } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
@@ -93,34 +92,6 @@ import {
   statusChangeOfficeTimerPatch,
 } from "@/lib/office-job-timer";
 import { computeHourlyTotals, resolveJobHourlyRates } from "@/lib/job-hourly-billing";
-
-/** For timer review: local `datetime-local` value (YYYY-MM-DDTHH:mm). */
-function toDatetimeLocalValue(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function elapsedSecondsFromStartStopLocal(start: string, stop: string): number {
-  if (!start?.trim() || !stop?.trim()) return 0;
-  const a = new Date(start).getTime();
-  const b = new Date(stop).getTime();
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
-  return Math.max(0, Math.floor((b - a) / 1000));
-}
-
-/** Infer start/stop from total seconds (end defaults to now). */
-function inferStartStopFromElapsedSeconds(elapsedSeconds: number, endMs: number = Date.now()): { start: string; stop: string } {
-  const end = new Date(endMs);
-  const start = new Date(end.getTime() - Math.max(0, elapsedSeconds) * 1000);
-  return { start: toDatetimeLocalValue(start), stop: toDatetimeLocalValue(end) };
-}
-
-function formatDatetimeLocalForDisplay(value: string): string {
-  if (!value?.trim()) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
-}
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
 import { isJobForcePaid, markJobAsForcePaidNote } from "@/lib/job-force-paid";
 import {
@@ -264,11 +235,6 @@ export default function JobDetailPage() {
   const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   const [forceApprovalChecked, setForceApprovalChecked] = useState(false);
-  const [timerAdjustEditing, setTimerAdjustEditing] = useState(false);
-  const [adjustStartLocal, setAdjustStartLocal] = useState("");
-  const [adjustStopLocal, setAdjustStopLocal] = useState("");
-  const [adjustNote, setAdjustNote] = useState("");
-  const [savingTimerAdjust, setSavingTimerAdjust] = useState(false);
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
   const [cancellingJob, setCancellingJob] = useState(false);
@@ -310,24 +276,11 @@ export default function JobDetailPage() {
   const [scopeDraft, setScopeDraft] = useState("");
   const [savingScope, setSavingScope] = useState(false);
   const isAdmin = profile?.role === "admin";
-  const canEditJobTimer = profile?.role === "admin" || profile?.role === "manager";
   const jobRef = useRef<Job | null>(null);
   const autoOwnerFillRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
-
-  useEffect(() => {
-    if (!validateCompleteOpen) return;
-    const j = jobRef.current;
-    if (!j) return;
-    setTimerAdjustEditing(false);
-    setAdjustNote("");
-    const total = computeOfficeTimerElapsedSeconds(j);
-    const { start, stop } = inferStartStopFromElapsedSeconds(total, Date.now());
-    setAdjustStartLocal(start);
-    setAdjustStopLocal(stop);
-  }, [validateCompleteOpen, job?.id]);
 
   const [partnerTimerTick, setPartnerTimerTick] = useState(0);
   useEffect(() => {
@@ -768,100 +721,6 @@ export default function JobDetailPage() {
       return undefined;
     }
   }, [profile?.id, profile?.full_name]);
-
-  const parseApprovalAdjustSeconds = useCallback(() => {
-    return elapsedSecondsFromStartStopLocal(adjustStartLocal, adjustStopLocal);
-  }, [adjustStartLocal, adjustStopLocal]);
-
-  const handleSaveTimerAdjust = useCallback(async () => {
-    const j = jobRef.current;
-    if (!j || j.job_type !== "hourly") return;
-    if (!adjustNote.trim()) {
-      toast.error("Add a note explaining the timer adjustment.");
-      return;
-    }
-    const newElapsed = parseApprovalAdjustSeconds();
-    setSavingTimerAdjust(true);
-    try {
-      const { clientRate, partnerRate } = resolveJobHourlyRates(j);
-      const totals = computeHourlyTotals({
-        elapsedSeconds: newElapsed,
-        clientHourlyRate: clientRate,
-        partnerHourlyRate: partnerRate,
-      });
-      const customerDeposit = Number(j.customer_deposit ?? 0);
-      const customerFinal = Math.max(0, totals.clientTotal - customerDeposit);
-      const merged = {
-        ...j,
-        client_price: totals.clientTotal,
-        partner_cost: totals.partnerTotal,
-      } as Job;
-      const derived = deriveStoredJobFinancials(merged);
-      const oldElapsed = computeOfficeTimerElapsedSeconds(j);
-      const patch: Partial<Job> = {
-        timer_elapsed_seconds: newElapsed,
-        timer_is_running: false,
-        timer_last_started_at: null,
-        billed_hours: totals.billedHours,
-        hourly_client_rate: clientRate,
-        hourly_partner_rate: partnerRate,
-        client_price: totals.clientTotal,
-        partner_cost: totals.partnerTotal,
-        customer_final_payment: customerFinal,
-        ...derived,
-      };
-      const updated = await updateJob(j.id, patch);
-      setJob(updated);
-      await logFieldChanges(
-        "job",
-        j.id,
-        j.reference,
-        j as unknown as Record<string, unknown>,
-        patch as unknown as Record<string, unknown>,
-        profile?.id,
-        profile?.full_name,
-      );
-      await logAudit({
-        entityType: "job",
-        entityId: j.id,
-        entityRef: j.reference,
-        action: "updated",
-        fieldName: "timer_manager_adjustment",
-        oldValue: `${oldElapsed}s (${formatOfficeTimer(oldElapsed)})`,
-        newValue: `${newElapsed}s (${formatOfficeTimer(newElapsed)})`,
-        userId: profile?.id,
-        userName: profile?.full_name,
-        metadata: {
-          note: adjustNote.trim(),
-          timer_start_local: adjustStartLocal,
-          timer_stop_local: adjustStopLocal,
-          billed_hours: totals.billedHours,
-          client_price: totals.clientTotal,
-          partner_cost: totals.partnerTotal,
-        },
-      });
-      await loadPayments(updated.id);
-      await loadJobInvoices(updated);
-      await loadJobSelfBill(updated);
-      setTimerAdjustEditing(false);
-      setAdjustNote("");
-      toast.success("Timer saved — client/partner totals updated from billed time.");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save timer");
-    } finally {
-      setSavingTimerAdjust(false);
-    }
-  }, [
-    parseApprovalAdjustSeconds,
-    adjustNote,
-    adjustStartLocal,
-    adjustStopLocal,
-    profile?.id,
-    profile?.full_name,
-    loadPayments,
-    loadJobInvoices,
-    loadJobSelfBill,
-  ]);
 
   const reportByPhase = useMemo(() => {
     const map = new Map<number, AppJobReportRow>();
@@ -1572,31 +1431,36 @@ export default function JobDetailPage() {
         if (withInvoice) current = withInvoice;
       }
 
-      // Partner self-bill: same pattern as client invoice — resolve linked rows from DB, then create only if still missing and partner is owed.
-      let primarySelfBillId = current.self_bill_id ?? null;
-      if (current.partner_id?.trim()) {
-        const linkedSelfBills = await listSelfBillsLinkedToJob(current.reference, primarySelfBillId);
-        if (!primarySelfBillId && linkedSelfBills.length > 0) {
-          const pick =
-            linkedSelfBills.find((s) => s.status === "accumulating") ??
-            linkedSelfBills.find((s) => s.status === "pending_review") ??
-            linkedSelfBills[linkedSelfBills.length - 1];
-          primarySelfBillId = pick.id;
+      // Partner self-bill: same idea as invoice, but never block approval if the DB rejects the insert.
+      // (Client invoice path above remains the source of truth for closing the job.)
+      try {
+        let primarySelfBillId = current.self_bill_id ?? null;
+        if (current.partner_id?.trim()) {
+          const linkedSelfBills = await listSelfBillsLinkedToJob(current.reference, primarySelfBillId);
+          if (!primarySelfBillId && linkedSelfBills.length > 0) {
+            const pick =
+              linkedSelfBills.find((s) => s.status === "accumulating") ??
+              linkedSelfBills.find((s) => s.status === "pending_review") ??
+              linkedSelfBills[linkedSelfBills.length - 1];
+            primarySelfBillId = pick.id;
+          }
+          if (!primarySelfBillId && partnerDue > 0.02) {
+            const selfBill = await createSelfBillFromJob({
+              id: current.id,
+              reference: current.reference,
+              partner_name: current.partner_name ?? "Unassigned",
+              partner_cost: current.partner_cost,
+              materials_cost: current.materials_cost,
+            });
+            primarySelfBillId = selfBill.id;
+          }
+          if (primarySelfBillId && primarySelfBillId !== current.self_bill_id) {
+            const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: primarySelfBillId }, { notifyPartner: false });
+            if (withSelfBill) current = withSelfBill;
+          }
         }
-        if (!primarySelfBillId && partnerDue > 0.02) {
-          const selfBill = await createSelfBillFromJob({
-            id: current.id,
-            reference: current.reference,
-            partner_name: current.partner_name ?? "Unassigned",
-            partner_cost: current.partner_cost,
-            materials_cost: current.materials_cost,
-          });
-          primarySelfBillId = selfBill.id;
-        }
-        if (primarySelfBillId && primarySelfBillId !== current.self_bill_id) {
-          const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: primarySelfBillId }, { notifyPartner: false });
-          if (withSelfBill) current = withSelfBill;
-        }
+      } catch {
+        toast.info("Partner self-bill could not be linked automatically; you can attach it later from Finance or this job.");
       }
 
       if (customerDue > 0.02 || partnerDue > 0.02) {
@@ -1619,16 +1483,7 @@ export default function JobDetailPage() {
 
   const approvalModalElapsedSeconds = useMemo(() => {
     if (!job) return 0;
-    if (job.job_type === "hourly" && timerAdjustEditing) {
-      return elapsedSecondsFromStartStopLocal(adjustStartLocal, adjustStopLocal);
-    }
     return officeTimerDisplaySeconds ?? computeOfficeTimerElapsedSeconds(job);
-  }, [job, timerAdjustEditing, adjustStartLocal, adjustStopLocal, officeTimerDisplaySeconds]);
-
-  const approvalTimerPreviewStartStop = useMemo(() => {
-    if (!job || job.job_type !== "hourly") return null;
-    const elapsed = officeTimerDisplaySeconds ?? computeOfficeTimerElapsedSeconds(job);
-    return inferStartStopFromElapsedSeconds(elapsed, Date.now());
   }, [job, officeTimerDisplaySeconds]);
 
   const approvalModalHourlyTotals = useMemo(() => {
@@ -1735,7 +1590,7 @@ export default function JobDetailPage() {
   const ownerAttestationText = `I, ${job.owner_name?.trim() || "job owner"}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
   const mandatoryChecksOk = reportsUploaded && reportsApproved && ownerApprovalChecked;
-  const canSubmitApproval = (mandatoryChecksOk || forceApprovalChecked) && !timerAdjustEditing;
+  const canSubmitApproval = mandatoryChecksOk || forceApprovalChecked;
   const customerPaidPct = billableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / billableRevenue) * 100)) : 100;
   const partnerPaidPct = partnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / partnerCap) * 100)) : 100;
 
@@ -1749,8 +1604,6 @@ export default function JobDetailPage() {
     approvalBillableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / approvalBillableRevenue) * 100)) : 100;
   const approvalPartnerPaidPct =
     approvalPartnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / approvalPartnerCap) * 100)) : 100;
-  const approvalTimeSpentLabel = formatOfficeTimer(approvalModalElapsedSeconds);
-
   return (
     <PageTransition>
       <div className="space-y-5 pb-12">
@@ -2885,8 +2738,6 @@ export default function JobDetailPage() {
           setValidateCompleteOpen(false);
           setOwnerApprovalChecked(false);
           setForceApprovalChecked(false);
-          setTimerAdjustEditing(false);
-          setAdjustNote("");
         }}
         title={approvalMode === "review_approve" ? "Review and approve" : "Validate and complete"}
         subtitle={`${job.reference} — review before approval`}
@@ -2939,129 +2790,9 @@ export default function JobDetailPage() {
                   <span className={cn("font-semibold", approvalPartnerPayRemaining <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalPartnerPayRemaining)}</span>
                 </div>
               </div>
-              <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs text-text-secondary space-y-2">
-                {job.job_type === "hourly" ? (
-                  <>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        Start &amp; stop (hourly billing)
-                      </span>
-                      {canEditJobTimer ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-[11px]"
-                          icon={<Pencil className="h-3 w-3" />}
-                          onClick={() => {
-                            if (!timerAdjustEditing) {
-                              const total = computeOfficeTimerElapsedSeconds(job);
-                              const { start, stop } = inferStartStopFromElapsedSeconds(total, Date.now());
-                              setAdjustStartLocal(start);
-                              setAdjustStopLocal(stop);
-                            }
-                            setTimerAdjustEditing((v) => !v);
-                          }}
-                        >
-                          {timerAdjustEditing ? "Close" : "Edit"}
-                        </Button>
-                      ) : null}
-                    </div>
-                    {approvalTimerPreviewStartStop && !timerAdjustEditing ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div>
-                          <span className="text-[10px] text-text-tertiary block">Start</span>
-                          <span className="text-sm font-semibold text-text-primary">
-                            {formatDatetimeLocalForDisplay(approvalTimerPreviewStartStop.start)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-text-tertiary block">Stop</span>
-                          <span className="text-sm font-semibold text-text-primary">
-                            {formatDatetimeLocalForDisplay(approvalTimerPreviewStartStop.stop)}
-                          </span>
-                        </div>
-                      </div>
-                    ) : null}
-                    {!timerAdjustEditing ? (
-                      <p className="text-[10px] text-text-tertiary">
-                        Duration: <span className="font-medium text-text-secondary">{formatOfficeTimer(approvalModalElapsedSeconds)}</span>
-                      </p>
-                    ) : null}
-                    {approvalModalHourlyTotals ? (
-                      <p className="text-[10px] text-text-tertiary">
-                        Billed hours (30-min rule): <span className="font-medium text-text-secondary">{approvalModalHourlyTotals.billedHours}h</span>
-                        {timerAdjustEditing ? " · Preview updates totals above until you save." : null}
-                      </p>
-                    ) : null}
-                  </>
-                ) : (
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span>
-                      Timer spent: <span className="font-semibold text-text-primary">{approvalTimeSpentLabel}</span>
-                    </span>
-                  </div>
-                )}
-                {timerAdjustEditing && job.job_type === "hourly" ? (
-                  <div className="space-y-2 pt-1 border-t border-border-light">
-                    <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Manual correction — logged to job history with your note.</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[10px] font-medium text-text-tertiary mb-0.5">Start</label>
-                        <Input
-                          type="datetime-local"
-                          value={adjustStartLocal}
-                          onChange={(e) => setAdjustStartLocal(e.target.value)}
-                          className="h-9 text-xs"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-medium text-text-tertiary mb-0.5">Stop</label>
-                        <Input
-                          type="datetime-local"
-                          value={adjustStopLocal}
-                          onChange={(e) => setAdjustStopLocal(e.target.value)}
-                          className="h-9 text-xs"
-                        />
-                      </div>
-                    </div>
-                    <p className="text-[10px] text-text-tertiary">
-                      Duration: <span className="font-medium text-text-secondary">{formatOfficeTimer(approvalModalElapsedSeconds)}</span>
-                    </p>
-                    <div>
-                      <label className="block text-[10px] font-medium text-text-tertiary mb-0.5">Note (required)</label>
-                      <textarea
-                        value={adjustNote}
-                        onChange={(e) => setAdjustNote(e.target.value)}
-                        rows={2}
-                        placeholder="Why the timer total was changed (e.g. app lost connection, partner forgot to stop)…"
-                        className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[52px]"
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" size="sm" loading={savingTimerAdjust} onClick={() => void handleSaveTimerAdjust()}>
-                        Save timer &amp; recalc billing
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={savingTimerAdjust}
-                        onClick={() => {
-                          setTimerAdjustEditing(false);
-                          setAdjustNote("");
-                          const total = computeOfficeTimerElapsedSeconds(job);
-                          const { start, stop } = inferStartStopFromElapsedSeconds(total, Date.now());
-                          setAdjustStartLocal(start);
-                          setAdjustStopLocal(stop);
-                        }}
-                      >
-                        Discard
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
+              <p className="text-[10px] text-text-tertiary px-1 leading-snug">
+                Client invoice is created or updated on approve. Partner self-bill links when the database allows; otherwise use Finance or this job’s self-bill section. Totals use the figures stored on the job (adjust hourly/timer on the job page if needed).
+              </p>
             </div>
 
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
@@ -3131,7 +2862,7 @@ export default function JobDetailPage() {
             </label>
           </div>
           <p className="text-xs text-text-tertiary">
-            Clicking review and approve applies internal finance updates only: self-bill linkage, invoice record/status update, and routing to Awaiting payment or Completed & paid.
+            Approve updates the client invoice first, then attempts partner self-bill linkage, then moves the job to Awaiting payment or Completed &amp; paid.
           </p>
           {!mandatoryChecksOk && !forceApprovalChecked ? (
             <p className="text-xs text-red-600">
@@ -3143,9 +2874,6 @@ export default function JobDetailPage() {
               Force approve enabled: approval will continue with missing mandatory checks.
             </p>
           ) : null}
-          {timerAdjustEditing ? (
-            <p className="text-xs text-amber-600">Finish or discard timer edit before Review &amp; approve.</p>
-          ) : null}
           <div className="flex justify-end gap-2 pt-2">
             <Button
               variant="outline"
@@ -3155,8 +2883,6 @@ export default function JobDetailPage() {
                 setValidateCompleteOpen(false);
                 setOwnerApprovalChecked(false);
                 setForceApprovalChecked(false);
-                setTimerAdjustEditing(false);
-                setAdjustNote("");
               }}
             >
               Cancel
