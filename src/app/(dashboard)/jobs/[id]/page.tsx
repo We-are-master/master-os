@@ -1414,7 +1414,8 @@ export default function JobDetailPage() {
 
       const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
       const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
-      const customerDue = Math.max(0, jobBillableRevenue(current) - (depositPaid + finalPaid));
+      const billableForCollections = Math.max(jobBillableRevenue(current), customerScheduledTotal(current));
+      const customerDue = Math.max(0, billableForCollections - (depositPaid + finalPaid));
       const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
       const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
 
@@ -1502,7 +1503,7 @@ export default function JobDetailPage() {
     }
   }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments, ownerApprovalChecked, forceApprovalChecked]);
 
-  const billableRevenueForApproval = job ? jobBillableRevenue(job) : 0;
+  const billableRevenueForApproval = job ? Math.max(jobBillableRevenue(job), customerScheduledTotal(job)) : 0;
   const partnerCapForApproval = job ? partnerPaymentCap(job) : 0;
 
   const approvalModalElapsedSeconds = useMemo(() => {
@@ -1562,7 +1563,7 @@ export default function JobDetailPage() {
   }
 
   const config = statusConfig[job.status] ?? { label: job.status, variant: "default" as const };
-  const billableRevenue = jobBillableRevenue(job);
+  const billableRevenue = Math.max(jobBillableRevenue(job), customerScheduledTotal(job));
   const directCost = jobDirectCost(job);
   const profit = jobProfit(job);
   const marginPct = jobMarginPercent(job);

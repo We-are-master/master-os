@@ -166,7 +166,9 @@ export async function createJob(
   })();
   const fromQuote =
     inputFromQuote || Boolean((job as { quote_id?: string | null }).quote_id?.toString().trim());
-  const invoiceTotal = Math.max(0, Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0));
+  const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
+  const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
   if (invoiceTotal > 0.01 && !job.invoice_id && !fromQuote) {
     try {
       const due = new Date();
