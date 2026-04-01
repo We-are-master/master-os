@@ -440,8 +440,10 @@ export default function JobDetailPage() {
     }
   }, []);
 
+  const [refreshingJob, setRefreshingJob] = useState(false);
   const refreshJobFinance = useCallback(async () => {
     if (!id) return;
+    setRefreshingJob(true);
     try {
       const j = await getJob(id);
       setJob(j);
@@ -450,6 +452,8 @@ export default function JobDetailPage() {
       }
     } catch {
       toast.error("Failed to refresh");
+    } finally {
+      setRefreshingJob(false);
     }
   }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill]);
 
@@ -971,15 +975,24 @@ export default function JobDetailPage() {
       }
       const hourlyPatch: Partial<Job> = {};
       if (j.job_type === "hourly") {
-        const elapsedSeconds = computeOfficeTimerElapsedSeconds(j);
         const { clientRate, partnerRate } = resolveJobHourlyRates(j);
+        const billedH = Number(j.billed_hours ?? 0);
+        // After approval, `billed_hours` is the confirmed total — do not overwrite with raw timer seconds
+        // (timer can disagree with "Final billed hours" in the modal and would desync job vs invoice).
+        const elapsedSeconds =
+          j.internal_invoice_approved && billedH > 0
+            ? Math.round(billedH * 3600)
+            : computeOfficeTimerElapsedSeconds(j);
         const totals = computeHourlyTotals({
           elapsedSeconds,
           clientHourlyRate: clientRate,
           partnerHourlyRate: partnerRate,
         });
         const customerDeposit = Number(j.customer_deposit ?? 0);
-        const customerFinal = Math.max(0, totals.clientTotal - customerDeposit);
+        const customerFinal = Math.max(
+          0,
+          totals.clientTotal + Number(j.extras_amount ?? 0) - customerDeposit,
+        );
         const derived = deriveStoredJobFinancials({
           ...j,
           client_price: totals.clientTotal,
@@ -1548,7 +1561,7 @@ export default function JobDetailPage() {
         if (next) current = next;
         toast.success("Approved. Job marked Completed & paid.");
       }
-      await Promise.all([loadPayments(current.id), loadJobInvoices(current)]);
+      await refreshJobFinance();
       setValidateCompleteOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to validate and complete job");
@@ -1564,8 +1577,7 @@ export default function JobDetailPage() {
     forceApprovalChecked,
     approvalBilledHoursInput,
     officeTimerDisplaySeconds,
-    loadPayments,
-    loadJobInvoices,
+    refreshJobFinance,
   ]);
 
   const billableRevenueForApproval = job ? Math.max(jobBillableRevenue(job), customerScheduledTotal(job)) : 0;
@@ -1708,9 +1720,20 @@ export default function JobDetailPage() {
       <div className="space-y-5 pb-12">
 
         {/* ── HEADER ── */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <Button variant="ghost" size="sm" icon={<ArrowLeft className="h-4 w-4" />} onClick={() => router.push("/jobs")}>
             Back to Jobs
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            loading={refreshingJob}
+            icon={<RefreshCw className="h-4 w-4" />}
+            onClick={() => void refreshJobFinance()}
+            title="Reload job, payments, and documents from the server"
+          >
+            Refresh
           </Button>
         </div>
 
