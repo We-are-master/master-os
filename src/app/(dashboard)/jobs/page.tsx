@@ -407,10 +407,15 @@ function JobsPageContent() {
         return;
       }
     }
-    const accessSurcharge = computeAccessSurcharge({
-      inCcz: formData.in_ccz,
-      hasFreeParking: formData.has_free_parking,
-    });
+    const housekeepFromPayload =
+      isHousekeepWorkLabel(formData.title) ||
+      isHousekeepWorkLabel((formData as { service_type?: string }).service_type);
+    const accessSurcharge = housekeepFromPayload
+      ? 0
+      : computeAccessSurcharge({
+          inCcz: formData.in_ccz,
+          hasFreeParking: formData.has_free_parking,
+        });
     try {
       const result = await createJob({
         title: formData.title ?? "",
@@ -440,8 +445,8 @@ function JobsPageContent() {
         hourly_client_rate: formData.hourly_client_rate ?? null,
         hourly_partner_rate: formData.hourly_partner_rate ?? null,
         billed_hours: formData.billed_hours ?? null,
-        in_ccz: formData.in_ccz ?? null,
-        has_free_parking: formData.has_free_parking ?? null,
+        in_ccz: housekeepFromPayload ? false : (formData.in_ccz ?? null),
+        has_free_parking: housekeepFromPayload ? true : (formData.has_free_parking ?? null),
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
         partner_agreed_value: 0, finance_status: "unpaid", service_value: cp + accessSurcharge,
         report_submitted: false,
@@ -943,6 +948,12 @@ export default function JobsPage() {
   return <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-tertiary">Loading...</div>}><JobsPageContent /></Suspense>;
 }
 
+function isHousekeepWorkLabel(value: string | null | undefined): boolean {
+  const v = (value ?? "").trim().toLowerCase();
+  if (!v) return false;
+  return v.includes("housekeep") || v.includes("house keep");
+}
+
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
   const requiredFieldClass = "border-red-300 focus:border-red-400 focus:ring-red-100 hover:border-red-300";
@@ -973,6 +984,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
+  const isHousekeepJob = isHousekeepWorkLabel(selectedCatalogService?.name) || isHousekeepWorkLabel(form.title);
   const targetWorkType =
     (form.job_type === "hourly" ? (selectedCatalogService?.name ?? form.title) : form.title).trim();
   const filteredPartners = useMemo(() => {
@@ -1002,6 +1014,11 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     const inCcz = isLikelyCczAddress(clientAddress.property_address);
     queueMicrotask(() => setForm((prev) => ({ ...prev, in_ccz: inCcz })));
   }, [clientAddress.property_address]);
+
+  useEffect(() => {
+    if (!isHousekeepJob) return;
+    setForm((prev) => (prev.in_ccz || !prev.has_free_parking ? { ...prev, in_ccz: false, has_free_parking: true } : prev));
+  }, [isHousekeepJob]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1042,7 +1059,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       partnerHourlyRate: hourlyPartnerRate,
     });
     const isHourly = form.job_type === "hourly";
-    const accessSurcharge = computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+    const accessSurcharge = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
     const clientPriceOut = isHourly ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
     const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
 
@@ -1063,8 +1080,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       hourly_client_rate: isHourly ? hourlyClientRate : null,
       hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
       billed_hours: isHourly ? hourlyTotals.billedHours : null,
-      in_ccz: form.in_ccz,
-      has_free_parking: form.has_free_parking,
+      in_ccz: isHousekeepJob ? false : form.in_ccz,
+      has_free_parking: isHousekeepJob ? true : form.has_free_parking,
       client_price: clientPriceOut,
       partner_cost: partnerCostOut,
       extras_amount: accessSurcharge,
@@ -1100,7 +1117,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     setClientAddress({ client_name: "", property_address: "" });
   };
 
-  const accessSurchargePreview = computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+  const accessSurchargePreview = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
   const hourlyPreview = computeHourlyTotals({
     elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
     clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
@@ -1186,12 +1203,19 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
         </div>
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
+          {isHousekeepJob ? (
+            <p className="text-xs text-text-tertiary">
+              Housekeep: CCZ/Parking is included in the service price. Extra access surcharge is disabled.
+            </p>
+          ) : null}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
               type="button"
+              disabled={isHousekeepJob}
               onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
               className={cn(
                 "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                isHousekeepJob && "opacity-50 cursor-not-allowed",
                 form.in_ccz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
               )}
             >
@@ -1200,9 +1224,11 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             </button>
             <button
               type="button"
+              disabled={isHousekeepJob}
               onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
               className={cn(
                 "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                isHousekeepJob && "opacity-50 cursor-not-allowed",
                 !form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
               )}
             >

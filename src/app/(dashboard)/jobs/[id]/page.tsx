@@ -235,6 +235,7 @@ export default function JobDetailPage() {
   const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   const [forceApprovalChecked, setForceApprovalChecked] = useState(false);
+  const [approvalBilledHoursInput, setApprovalBilledHoursInput] = useState("");
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
   const [cancellingJob, setCancellingJob] = useState(false);
@@ -282,6 +283,17 @@ export default function JobDetailPage() {
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
+
+  useEffect(() => {
+    if (!validateCompleteOpen || !job || job.job_type !== "hourly") return;
+    const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+    const preview = computeHourlyTotals({
+      elapsedSeconds: computeOfficeTimerElapsedSeconds(job),
+      clientHourlyRate: clientRate,
+      partnerHourlyRate: partnerRate,
+    });
+    setApprovalBilledHoursInput(String(preview.billedHours));
+  }, [validateCompleteOpen, job?.id, job?.job_type]);
 
   const [partnerTimerTick, setPartnerTimerTick] = useState(0);
   useEffect(() => {
@@ -1412,6 +1424,38 @@ export default function JobDetailPage() {
       );
       if (approvedPatch) current = approvedPatch;
 
+      if (current.job_type === "hourly") {
+        const { clientRate, partnerRate } = resolveJobHourlyRates(current);
+        const typedHours = Math.max(0, Number(approvalBilledHoursInput) || 0);
+        const elapsedSeconds =
+          typedHours > 0
+            ? Math.round(typedHours * 3600)
+            : (officeTimerDisplaySeconds ?? computeOfficeTimerElapsedSeconds(current));
+        const totals = computeHourlyTotals({
+          elapsedSeconds,
+          clientHourlyRate: clientRate,
+          partnerHourlyRate: partnerRate,
+        });
+        const customerDeposit = Number(current.customer_deposit ?? 0);
+        const customerFinal = Math.max(0, totals.clientTotal + Number(current.extras_amount ?? 0) - customerDeposit);
+        const mergedForDerived = {
+          ...current,
+          client_price: totals.clientTotal,
+          partner_cost: totals.partnerTotal,
+        } as Job;
+        const hourlyPatch: Partial<Job> = {
+          billed_hours: totals.billedHours,
+          hourly_client_rate: clientRate,
+          hourly_partner_rate: partnerRate,
+          client_price: totals.clientTotal,
+          partner_cost: totals.partnerTotal,
+          customer_final_payment: customerFinal,
+          ...deriveStoredJobFinancials(mergedForDerived),
+        };
+        const withHourly = await handleJobUpdate(current.id, hourlyPatch, { notifyPartner: false });
+        if (withHourly) current = withHourly;
+      }
+
       const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
       const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
       const billableForCollections = Math.max(jobBillableRevenue(current), customerScheduledTotal(current));
@@ -1501,7 +1545,16 @@ export default function JobDetailPage() {
     } finally {
       setValidatingComplete(false);
     }
-  }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments, ownerApprovalChecked, forceApprovalChecked]);
+  }, [
+    handleJobUpdate,
+    handleStatusChange,
+    customerPayments,
+    partnerPayments,
+    ownerApprovalChecked,
+    forceApprovalChecked,
+    approvalBilledHoursInput,
+    officeTimerDisplaySeconds,
+  ]);
 
   const billableRevenueForApproval = job ? Math.max(jobBillableRevenue(job), customerScheduledTotal(job)) : 0;
   const partnerCapForApproval = job ? partnerPaymentCap(job) : 0;
@@ -1514,12 +1567,14 @@ export default function JobDetailPage() {
   const approvalModalHourlyTotals = useMemo(() => {
     if (!job || job.job_type !== "hourly") return null;
     const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+    const typedHours = Math.max(0, Number(approvalBilledHoursInput) || 0);
+    const elapsedSeconds = typedHours > 0 ? Math.round(typedHours * 3600) : approvalModalElapsedSeconds;
     return computeHourlyTotals({
-      elapsedSeconds: approvalModalElapsedSeconds,
+      elapsedSeconds,
       clientHourlyRate: clientRate,
       partnerHourlyRate: partnerRate,
     });
-  }, [job, approvalModalElapsedSeconds]);
+  }, [job, approvalModalElapsedSeconds, approvalBilledHoursInput]);
 
   const approvalBillableRevenue = useMemo(() => {
     if (!job) return 0;
@@ -1583,6 +1638,13 @@ export default function JobDetailPage() {
   // Use actual payment records sum — not boolean flags — so the UI stays live without a page reload.
   const customerPaidTotal = customerDepositPaid + customerFinalPaidSum;
   const amountDue = Math.max(0, billableRevenue - customerPaidTotal);
+  const finalBalanceTotal = Math.max(0, Number(job.customer_final_payment ?? 0));
+  const finalCczParking = Math.min(finalBalanceTotal, Math.max(0, Number(job.extras_amount ?? 0)));
+  const finalMaterials = Math.min(
+    Math.max(0, finalBalanceTotal - finalCczParking),
+    Math.max(0, Number(job.materials_cost ?? 0)),
+  );
+  const finalLabour = Math.max(0, finalBalanceTotal - finalCczParking - finalMaterials);
 
   const paymentAmountMax =
     addPaymentType === "partner"
@@ -2454,9 +2516,16 @@ export default function JobDetailPage() {
                   )}
                   {(job.customer_final_payment ?? 0) > 0 && (
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-text-primary">Final balance</span>
-                        <Badge variant={job.customer_final_paid ? "success" : "default"} size="sm">{job.customer_final_paid ? "Paid" : "Pending"}</Badge>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-text-primary">Final balance</span>
+                          <Badge variant={job.customer_final_paid ? "success" : "default"} size="sm">{job.customer_final_paid ? "Paid" : "Pending"}</Badge>
+                        </div>
+                        <div className="text-[11px] text-text-tertiary space-y-0.5 pl-0.5">
+                          <p>Labour {formatCurrency(finalLabour)}</p>
+                          <p>Materials {formatCurrency(finalMaterials)}</p>
+                          <p>CCZ / Parking {formatCurrency(finalCczParking)}</p>
+                        </div>
                       </div>
                       <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_final_payment ?? 0)}</span>
                     </div>
@@ -2652,7 +2721,10 @@ export default function JobDetailPage() {
                             </button>
                             <div className="min-w-0 flex-1 space-y-2">
                               {!invOpen ? (
-                                <p className="text-lg font-bold tabular-nums text-primary tracking-tight pt-0.5">{formatCurrency(inv.amount)}</p>
+                                <div className="flex items-center justify-between gap-2 pt-0.5">
+                                  <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
+                                  <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(inv.amount)}</p>
+                                </div>
                               ) : (
                                 <>
                                   <div className="flex items-center justify-between gap-2">
@@ -2763,6 +2835,7 @@ export default function JobDetailPage() {
           setValidateCompleteOpen(false);
           setOwnerApprovalChecked(false);
           setForceApprovalChecked(false);
+          setApprovalBilledHoursInput("");
         }}
         title={approvalMode === "review_approve" ? "Review and approve" : "Validate and complete"}
         subtitle={`${job.reference} — review before approval`}
@@ -2815,6 +2888,27 @@ export default function JobDetailPage() {
                   <span className={cn("font-semibold", approvalPartnerPayRemaining <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalPartnerPayRemaining)}</span>
                 </div>
               </div>
+              {job.job_type === "hourly" ? (
+                <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Final billed hours confirmation</p>
+                  <div className="flex items-end gap-2">
+                    <div className="flex-1">
+                      <label className="block text-[10px] text-text-tertiary mb-1">Final billed hours</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.5"
+                        value={approvalBilledHoursInput}
+                        onChange={(e) => setApprovalBilledHoursInput(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                    </div>
+                    <div className="text-[11px] text-text-tertiary pb-1">
+                      Confirm total hours before approve
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <p className="text-[10px] text-text-tertiary px-1 leading-snug">
                 Client invoice is created or updated on approve. Partner self-bill links when the database allows; otherwise use Finance or this job’s self-bill section. Totals use the figures stored on the job (adjust hourly/timer on the job page if needed).
               </p>
@@ -2908,6 +3002,7 @@ export default function JobDetailPage() {
                 setValidateCompleteOpen(false);
                 setOwnerApprovalChecked(false);
                 setForceApprovalChecked(false);
+                setApprovalBilledHoursInput("");
               }}
             >
               Cancel
