@@ -63,7 +63,7 @@ import {
 } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
-import { accountLinkedLabel } from "@/lib/account-display";
+import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -376,24 +376,11 @@ function JobsPageContent() {
     const supabase = getSupabase();
     let cancelled = false;
     (async () => {
-      const { data: clients } = await supabase.from("clients").select("id, source_account_id").in("id", ids);
-      const accountIds = [...new Set((clients ?? []).map((c: { source_account_id?: string | null }) => c.source_account_id).filter(Boolean))] as string[];
-      const { data: accounts } = accountIds.length > 0
-        ? await supabase.from("accounts").select("id, company_name, contact_name, email").in("id", accountIds)
-        : { data: [] as Array<{ id: string; company_name: string; contact_name: string; email: string }> };
+      const labels = await batchResolveLinkedAccountLabels(supabase, ids);
       if (cancelled) return;
-      const accountById = new Map(
-        (accounts ?? []).map((a: { id: string; company_name?: string; contact_name?: string; email?: string }) => [
-          a.id,
-          accountLinkedLabel(a) || "Account",
-        ]),
-      );
       const next: Record<string, string> = {};
-      (clients ?? []).forEach((c: { id: string; source_account_id?: string | null }) => {
-        if (c.source_account_id) {
-          const name = accountById.get(c.source_account_id);
-          next[c.id] = name ?? "Linked account";
-        }
+      labels.forEach((label, clientId) => {
+        next[clientId] = label;
       });
       setClientAccountMap(next);
     })();

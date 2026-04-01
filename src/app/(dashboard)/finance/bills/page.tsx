@@ -12,12 +12,15 @@ import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
-import { Plus, FileCheck, DollarSign, Calendar, Loader2, CheckCircle2, XCircle, Banknote } from "lucide-react";
+import { Plus, FileCheck, DollarSign, Loader2, Banknote } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Bill, BillStatus } from "@/types/database";
 import { listBills, createBill, updateBill, markBillPaid } from "@/services/bills";
 import { useProfile } from "@/hooks/use-profile";
+import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
+import type { FinancePeriodMode } from "@/lib/finance-period";
+import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
 
 const BILL_STATUSES: BillStatus[] = ["submitted", "approved", "paid", "rejected"];
 
@@ -36,6 +39,15 @@ export default function BillsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [saving, setSaving] = useState(false);
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
+
+  const periodBounds = useMemo(
+    () => getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo),
+    [periodMode, weekAnchor, rangeFrom, rangeTo]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,15 +65,27 @@ export default function BillsPage() {
     load();
   }, [load]);
 
+  const scopedBills = useMemo(() => {
+    if (!periodBounds) return bills;
+    return bills.filter(
+      (b) => b.due_date && b.due_date >= periodBounds.from && b.due_date <= periodBounds.to
+    );
+  }, [bills, periodBounds]);
+
   const filtered = useMemo(() => {
-    if (statusFilter === "all") return bills;
-    return bills.filter((b) => b.status === statusFilter);
-  }, [bills, statusFilter]);
+    if (statusFilter === "all") return scopedBills;
+    return scopedBills.filter((b) => b.status === statusFilter);
+  }, [scopedBills, statusFilter]);
+
+  const kpiPeriodDesc = useMemo(
+    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
+    [periodMode, weekAnchor, rangeFrom, rangeTo]
+  );
 
   const kpis = useMemo(() => {
-    const submitted = bills.filter((b) => b.status === "submitted");
-    const approved = bills.filter((b) => b.status === "approved");
-    const paid = bills.filter((b) => b.status === "paid");
+    const submitted = scopedBills.filter((b) => b.status === "submitted");
+    const approved = scopedBills.filter((b) => b.status === "approved");
+    const paid = scopedBills.filter((b) => b.status === "paid");
     return {
       submittedCount: submitted.length,
       submittedAmount: submitted.reduce((s, b) => s + Number(b.amount), 0),
@@ -69,7 +93,7 @@ export default function BillsPage() {
       approvedAmount: approved.reduce((s, b) => s + Number(b.amount), 0),
       paidAmount: paid.reduce((s, b) => s + Number(b.amount), 0),
     };
-  }, [bills]);
+  }, [scopedBills]);
 
   const handleApprove = async (bill: Bill) => {
     try {
@@ -152,10 +176,42 @@ export default function BillsPage() {
           </Button>
         </PageHeader>
 
+        <FinanceWeekRangeBar
+          mode={periodMode}
+          onModeChange={setPeriodMode}
+          weekAnchor={weekAnchor}
+          onWeekAnchorChange={setWeekAnchor}
+          rangeFrom={rangeFrom}
+          rangeTo={rangeTo}
+          onRangeFromChange={setRangeFrom}
+          onRangeToChange={setRangeTo}
+        />
+
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Submitted" value={kpis.submittedAmount} format="currency" description={`${kpis.submittedCount} bills`} icon={FileCheck} accent="amber" />
-          <KpiCard title="Approved (pending pay)" value={kpis.approvedAmount} format="currency" description={`${kpis.approvedCount} bills`} icon={DollarSign} accent="primary" />
-          <KpiCard title="Paid (period)" value={kpis.paidAmount} format="currency" icon={Banknote} accent="emerald" />
+          <KpiCard
+            title="Submitted"
+            value={kpis.submittedAmount}
+            format="currency"
+            description={`${kpis.submittedCount} bill${kpis.submittedCount === 1 ? "" : "s"} · Due ${kpiPeriodDesc}`}
+            icon={FileCheck}
+            accent="amber"
+          />
+          <KpiCard
+            title="Approved (pending pay)"
+            value={kpis.approvedAmount}
+            format="currency"
+            description={`${kpis.approvedCount} bill${kpis.approvedCount === 1 ? "" : "s"} · Due ${kpiPeriodDesc}`}
+            icon={DollarSign}
+            accent="primary"
+          />
+          <KpiCard
+            title="Paid (period)"
+            value={kpis.paidAmount}
+            format="currency"
+            description={`Due date · ${kpiPeriodDesc}`}
+            icon={Banknote}
+            accent="emerald"
+          />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">

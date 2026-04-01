@@ -12,6 +12,8 @@ export interface CreateJobPaymentInput {
   payment_method?: JobPaymentMethod;
   bank_reference?: string;
   created_by?: string;
+  source_invoice_id?: string | null;
+  linked_invoice_id?: string | null;
 }
 
 export async function listJobPayments(jobId: string, type?: JobPaymentType): Promise<JobPayment[]> {
@@ -43,6 +45,8 @@ export async function createJobPayment(input: CreateJobPaymentInput): Promise<Jo
       payment_method: input.payment_method ?? "bank_transfer",
       bank_reference: input.bank_reference ?? null,
       created_by: input.created_by ?? null,
+      source_invoice_id: input.source_invoice_id ?? null,
+      linked_invoice_id: input.linked_invoice_id ?? null,
     })
     .select()
     .single();

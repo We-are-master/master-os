@@ -1,17 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { parseISO, isValid } from "date-fns";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { Card } from "@/components/ui/card";
+import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
+import type { FinancePeriodMode } from "@/lib/finance-period";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
-import { ChevronLeft, ChevronRight, CalendarClock, DollarSign, Download, Loader2, CheckCircle2 } from "lucide-react";
+import { CalendarClock, DollarSign, Download, Loader2, CheckCircle2 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { PayRun, PayRunItem } from "@/types/database";
+import type { PayRunItem } from "@/types/database";
 import {
   getWeekBounds,
   getOrCreatePayRun,
@@ -20,23 +22,37 @@ import {
   markPayRunItemsPaid,
   exportPayRunToCsv,
 } from "@/services/pay-runs";
+import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 
 export default function PayRunPage() {
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
-  const [payRun, setPayRun] = useState<PayRun | null>(null);
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
   const [items, setItems] = useState<PayRunItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [building, setBuilding] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [paying, setPaying] = useState(false);
 
-  const { week_start, week_end } = getWeekBounds(weekAnchor);
+  const boundsDate = useMemo(() => {
+    if (periodMode === "range" && rangeFrom.trim()) {
+      const d = parseISO(rangeFrom.trim());
+      if (isValid(d)) return d;
+    }
+    return weekAnchor;
+  }, [periodMode, rangeFrom, weekAnchor]);
+
+  const { week_start, week_end } = getWeekBounds(boundsDate);
+
+  const payRunKpiDesc = useMemo(() => {
+    const { weekLabel, weekStart, weekEnd } = getWeekBoundsForDate(boundsDate);
+    return `${weekLabel} · ${weekStart}–${weekEnd}`;
+  }, [boundsDate]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const run = await getOrCreatePayRun(week_start, week_end);
-      setPayRun(run);
       await buildPayRunItems(run.id, week_start, week_end);
       const list = await getPayRunWithItems(run.id);
       setItems(list);
@@ -58,8 +74,21 @@ export default function PayRunPage() {
   const totalDue = dueThisWeek.reduce((s, i) => s + Number(i.amount), 0);
   const totalPaid = paidThisWeek.reduce((s, i) => s + Number(i.amount), 0);
 
-  const goPrev = () => setWeekAnchor((d) => { const x = new Date(d); x.setDate(x.getDate() - 7); return x; });
-  const goNext = () => setWeekAnchor((d) => { const x = new Date(d); x.setDate(x.getDate() + 7); return x; });
+  const handlePeriodModeChange = (m: FinancePeriodMode) => {
+    setPeriodMode(m);
+    if (m === "range" && rangeFrom.trim()) {
+      const d = parseISO(rangeFrom.trim());
+      if (isValid(d)) setWeekAnchor(d);
+    }
+  };
+
+  const handleRangeFromChange = (v: string) => {
+    setRangeFrom(v);
+    if (periodMode === "range" && v.trim()) {
+      const d = parseISO(v.trim());
+      if (isValid(d)) setWeekAnchor(d);
+    }
+  };
 
   const handlePaySelected = async () => {
     if (selectedIds.size === 0) {
@@ -116,23 +145,44 @@ export default function PayRunPage() {
           </Button>
         </PageHeader>
 
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" icon={<ChevronLeft className="h-4 w-4" />} onClick={goPrev} />
-            <Card padding="md" className="min-w-[200px] text-center">
-              <p className="text-xs text-text-tertiary uppercase tracking-wide">Week</p>
-              <p className="text-lg font-bold text-text-primary">
-                {formatDate(week_start)} – {formatDate(week_end)}
-              </p>
-            </Card>
-            <Button variant="outline" size="sm" icon={<ChevronRight className="h-4 w-4" />} onClick={goNext} />
-          </div>
-        </div>
+        <FinanceWeekRangeBar
+          showAllOption={false}
+          mode={periodMode}
+          onModeChange={handlePeriodModeChange}
+          weekAnchor={weekAnchor}
+          onWeekAnchorChange={setWeekAnchor}
+          rangeFrom={rangeFrom}
+          rangeTo={rangeTo}
+          onRangeFromChange={handleRangeFromChange}
+          onRangeToChange={setRangeTo}
+          rangeHelperText="Pay run is weekly. In date range mode, the week containing “From” is used (adjust “From” to jump to another week)."
+        />
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <KpiCard title="Due this week" value={totalDue} format="currency" description={`${dueThisWeek.length} items`} icon={DollarSign} accent="amber" />
-          <KpiCard title="Overdue" value={overdue.length} format="number" description="pending from before" icon={CalendarClock} accent="amber" />
-          <KpiCard title="Paid this week" value={totalPaid} format="currency" description={`${paidThisWeek.length} items`} icon={CheckCircle2} accent="emerald" />
+          <KpiCard
+            title="Due this week"
+            value={totalDue}
+            format="currency"
+            description={`${dueThisWeek.length} item${dueThisWeek.length === 1 ? "" : "s"} · ${payRunKpiDesc}`}
+            icon={DollarSign}
+            accent="amber"
+          />
+          <KpiCard
+            title="Overdue"
+            value={overdue.length}
+            format="number"
+            description={`Before ${week_start} · ${payRunKpiDesc}`}
+            icon={CalendarClock}
+            accent="amber"
+          />
+          <KpiCard
+            title="Paid this week"
+            value={totalPaid}
+            format="currency"
+            description={`${paidThisWeek.length} item${paidThisWeek.length === 1 ? "" : "s"} · ${payRunKpiDesc}`}
+            icon={CheckCircle2}
+            accent="emerald"
+          />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">

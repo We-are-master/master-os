@@ -53,6 +53,7 @@ const fieldLabels: Record<string, string> = {
   stripe_payment_status: "Stripe Status",
   margin_percent: "Margin %",
   quote_figures: "Quote figures",
+  timer_manager_adjustment: "Work timer (manager)",
 };
 
 function formatFieldName(field: string): string {
@@ -255,7 +256,9 @@ function getLogTitle(log: AuditLog): string {
     case "document_added": return "Document added";
     case "payment": return `Payment ${formatValue(log.new_value)}`;
     case "bulk_update": return `Bulk update — ${formatFieldName(log.field_name ?? "")}`;
-    case "updated": return `${formatFieldName(log.field_name ?? "Record")} updated`;
+    case "updated":
+      if (log.field_name === "timer_manager_adjustment") return "Work timer adjusted (manager)";
+      return `${formatFieldName(log.field_name ?? "Record")} updated`;
     default: return "Activity recorded";
   }
 }
@@ -268,6 +271,11 @@ function getLogDescription(log: AuditLog): string {
   if (log.action === "bulk_update") {
     const count = (log.metadata as Record<string, number>)?.bulk_count;
     return count ? `Part of a batch update of ${count} items` : "Bulk operation";
+  }
+  if (log.field_name === "timer_manager_adjustment") {
+    const note = (log.metadata as Record<string, unknown>)?.note;
+    const noteStr = typeof note === "string" && note.trim() ? ` Note: ${note.trim()}` : "";
+    return `Elapsed time changed; client/partner totals recalculated.${noteStr}`;
   }
   if (log.field_name && log.old_value) {
     return `${formatFieldName(log.field_name)}: ${formatValue(log.old_value)} → ${formatValue(log.new_value)}`;

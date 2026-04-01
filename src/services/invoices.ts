@@ -7,7 +7,12 @@ export type CreateInvoiceInput = Omit<Invoice, "id" | "reference" | "created_at"
 };
 
 export async function listInvoices(params: ListParams): Promise<ListResult<Invoice>> {
-  return queryList<Invoice>("invoices", params, {
+  const p: ListParams = { ...params };
+  if (p.status === "pending") {
+    p.statusIn = ["pending", "partially_paid"];
+    p.status = undefined;
+  }
+  return queryList<Invoice>("invoices", p, {
     searchColumns: ["reference", "client_name", "job_reference"],
     defaultSort: "created_at",
   });
@@ -21,6 +26,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<Invoice>
     (input.invoice_kind === "deposit" ? "awaiting_deposit" : "awaiting_final");
   const row = {
     ...input,
+    amount_paid: input.amount_paid ?? 0,
     collection_stage,
     collection_stage_locked: input.collection_stage_locked ?? false,
     invoice_kind: input.invoice_kind ?? "other",

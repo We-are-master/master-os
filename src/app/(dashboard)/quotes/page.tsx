@@ -993,6 +993,8 @@ function QuoteDetailDrawer({
   const [sendingInvitePush, setSendingInvitePush] = useState(false);
   const [bids, setBids] = useState<QuoteBid[]>([]);
   const [bidsLoading, setBidsLoading] = useState(false);
+  /** Partner bid cards: collapsed preview shows total only; expand for breakdown, dates, scope, notes. */
+  const [expandedBidIds, setExpandedBidIds] = useState<Set<string>>(new Set());
   const [proposalSaving, setProposalSaving] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
@@ -1033,9 +1035,10 @@ function QuoteDetailDrawer({
       setQuoteEmailedInSession(false);
       setSendState("idle");
       setProposalScalePercent(100);
-    setOwnerOpen(false);
-    setPricingOpen(false);
-    setQuoteClientPick({
+      setOwnerOpen(false);
+      setPricingOpen(false);
+      setExpandedBidIds(new Set());
+      setQuoteClientPick({
       client_id: quote.client_id,
       client_address_id: quote.client_address_id,
       client_name: quote.client_name ?? "",
@@ -2074,9 +2077,11 @@ function QuoteDetailDrawer({
                   )}
                 </div>
                 <p className="text-xs text-text-tertiary mt-0.5">
-                  Optional: approve one bid to lock <strong className="text-text-secondary">partner cost</strong> on the quote. The quote stays in bidding until you send it to the customer — it is{" "}
-                  <strong className="text-text-secondary">not</strong> customer-accepted yet. Then set <strong className="text-text-secondary">your price</strong> on Review & Send, complete the proposal, and use{" "}
-                  <strong className="text-text-secondary">Send to Customer</strong>. After the client accepts, convert to a job.
+                  Optionally <strong className="text-text-secondary">approve a bid</strong> to lock{" "}
+                  <strong className="text-text-secondary">partner cost</strong>. Until you send, the quote is{" "}
+                  <strong className="text-text-secondary">not</strong> accepted by the customer. On Review & Send, set{" "}
+                  <strong className="text-text-secondary">your price</strong>, then <strong className="text-text-secondary">Send to Customer</strong>—after they accept,{" "}
+                  <strong className="text-text-secondary">convert to a job</strong>.
                 </p>
               </div>
               {quote.status === "bidding" && bids.some((b) => b.status === "approved") && (
@@ -2128,113 +2133,148 @@ function QuoteDetailDrawer({
                     const hasStructuredBreakdown =
                       bidPayload != null &&
                       (bidPayload.labour_cost != null || bidPayload.materials_cost != null);
+                    const hasExpandableDetails =
+                      hasStructuredBreakdown ||
+                      !!(bidNoteSummary || notesPlain) ||
+                      !!(d1 || d2) ||
+                      !!scopeFromBid;
+                    const bidExpanded = expandedBidIds.has(bid.id);
                     return (
                     <div
                       key={bid.id}
-                      className="rounded-xl bg-surface-hover border border-border-light p-4 sm:p-5 flex flex-col gap-4 sm:flex-row sm:items-stretch sm:justify-between sm:gap-5"
+                      className="rounded-xl bg-surface-hover border border-border-light p-3 sm:p-4"
                     >
-                      <div className="min-w-0 flex-1 space-y-3">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <p className="text-base font-semibold text-text-primary truncate max-w-full">{bid.partner_name ?? bid.partner_id}</p>
-                          <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="shrink-0">
-                            {bid.status}
-                          </Badge>
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Bid total</p>
-                          <p className="text-2xl sm:text-[1.75rem] font-bold text-primary tabular-nums tracking-tight mt-0.5">{formatCurrency(bid.bid_amount)}</p>
-                        </div>
-                        {hasStructuredBreakdown ? (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-border-light bg-card/50 dark:bg-surface-secondary/20 px-3 py-3">
-                            <div className="min-w-0">
-                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Labour</p>
-                              <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(labour)}</p>
-                              {labourDesc ? (
-                                <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{labourDesc}</p>
-                              ) : null}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Materials</p>
-                              <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(materials)}</p>
-                              {matDesc ? (
-                                <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{matDesc}</p>
-                              ) : null}
-                            </div>
-                          </div>
-                        ) : bidNoteSummary ? (
-                          <p className="text-[13px] text-text-secondary leading-relaxed break-words">{bidNoteSummary}</p>
-                        ) : notesPlain ? (
-                          <p className="text-[13px] text-text-secondary leading-relaxed whitespace-pre-wrap break-words line-clamp-6">{notesPlain}</p>
-                        ) : null}
-                        {(d1 || d2) && (
-                          <div className="flex flex-wrap gap-2">
-                            {d1 ? (
-                              <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
-                                Start A: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d1}</strong>
-                              </span>
-                            ) : null}
-                            {d2 ? (
-                              <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
-                                Start B: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d2}</strong>
-                              </span>
-                            ) : null}
-                          </div>
-                        )}
-                        {scopeFromBid ? (
-                          <div className="rounded-lg border border-dashed border-border-light bg-surface-hover/80 px-3 py-2.5">
-                            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope (from bid)</p>
-                            <p className="text-[12px] text-text-secondary mt-1 leading-snug whitespace-pre-wrap break-words max-h-[7.5rem] overflow-y-auto pr-1">{scopeFromBid}</p>
-                          </div>
-                        ) : null}
-                      </div>
-                      {bid.status === "submitted" && (
-                        <div className="flex shrink-0 sm:items-start sm:pt-1 w-full sm:w-auto">
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          className="w-full sm:min-w-[7.5rem]"
-                          onClick={async () => {
-                            try {
-                              const pre = computeCustomerProposalFromBid(bid, quote);
-                              const scopeMerged = pre.scopeText ?? scopeText;
-                              const d1 = pre.startDate1 ?? startDate1;
-                              const d2 = pre.startDate2 ?? startDate2;
-                              const dep = pre.depositRequired ?? depositRequired;
-
-                              await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
-
-                              const updated = await persistProposalToQuote({
-                                lineItemsOverride: pre.lines,
-                                scopeTextOverride: scopeMerged,
-                                startDate1Override: d1,
-                                startDate2Override: d2,
-                                depositOverride: dep,
-                                partnerCostOverride: bid.bid_amount,
+                      <div className="flex gap-2 sm:gap-3">
+                        {hasExpandableDetails ? (
+                          <button
+                            type="button"
+                            aria-expanded={bidExpanded}
+                            aria-label={bidExpanded ? "Hide bid details" : "Show bid details"}
+                            onClick={() => {
+                              setExpandedBidIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(bid.id)) next.delete(bid.id);
+                                else next.add(bid.id);
+                                return next;
                               });
+                            }}
+                            className="shrink-0 self-start rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary"
+                          >
+                            <ChevronDown
+                              className={cn("h-5 w-5 transition-transform duration-200", bidExpanded && "rotate-180")}
+                            />
+                          </button>
+                        ) : null}
+                        <div className="min-w-0 flex-1 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <p className="text-base font-semibold text-text-primary truncate max-w-full">{bid.partner_name ?? bid.partner_id}</p>
+                              <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="shrink-0">
+                                {bid.status}
+                              </Badge>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total</p>
+                              <p className="text-2xl sm:text-[1.75rem] font-bold text-primary tabular-nums tracking-tight mt-0.5">{formatCurrency(bid.bid_amount)}</p>
+                            </div>
+                          </div>
+                          {bid.status === "submitted" && (
+                            <div className="flex shrink-0 w-full sm:w-auto sm:pt-0.5">
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                className="w-full sm:min-w-[7.5rem]"
+                                onClick={async () => {
+                                  try {
+                                    const pre = computeCustomerProposalFromBid(bid, quote);
+                                    const scopeMerged = pre.scopeText ?? scopeText;
+                                    const d1 = pre.startDate1 ?? startDate1;
+                                    const d2 = pre.startDate2 ?? startDate2;
+                                    const dep = pre.depositRequired ?? depositRequired;
 
-                              await loadBids(quote.id);
+                                    await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
 
-                              setLineItems(pre.lines);
-                              setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
-                              setStartDate1(d1);
-                              setStartDate2(d2);
-                              setDepositRequired(dep);
-                              setProposalScalePercent(100);
+                                    const updated = await persistProposalToQuote({
+                                      lineItemsOverride: pre.lines,
+                                      scopeTextOverride: scopeMerged,
+                                      startDate1Override: d1,
+                                      startDate2Override: d2,
+                                      depositOverride: dep,
+                                      partnerCostOverride: bid.bid_amount,
+                                    });
 
-                              onQuoteUpdate?.(updated);
-                              setTab("overview");
-                              toast.success(
-                                "Bid approved. Partner unit costs and customer sell (40% margin on sell) are pre-filled. Adjust on Review & Send if needed, then send to the customer.",
-                              );
-                            } catch (e) {
-                              toast.error(e instanceof Error ? e.message : "Failed to approve bid");
-                            }
-                          }}
-                        >
-                          Approve
-                        </Button>
+                                    await loadBids(quote.id);
+
+                                    setLineItems(pre.lines);
+                                    setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
+                                    setStartDate1(d1);
+                                    setStartDate2(d2);
+                                    setDepositRequired(dep);
+                                    setProposalScalePercent(100);
+
+                                    onQuoteUpdate?.(updated);
+                                    setTab("overview");
+                                    toast.success(
+                                      "Bid approved. Partner unit costs and customer sell (40% margin on sell) are pre-filled. Adjust on Review & Send if needed, then send to the customer.",
+                                    );
+                                  } catch (e) {
+                                    toast.error(e instanceof Error ? e.message : "Failed to approve bid");
+                                  }
+                                }}
+                              >
+                                Approve
+                              </Button>
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
+                      {bidExpanded && hasExpandableDetails ? (
+                        <div className="mt-3 pt-3 border-t border-border-light space-y-3 sm:pl-9">
+                          {hasStructuredBreakdown ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-border-light bg-card/50 dark:bg-surface-secondary/20 px-3 py-3">
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Labour</p>
+                                <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(labour)}</p>
+                                {labourDesc ? (
+                                  <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{labourDesc}</p>
+                                ) : null}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Materials</p>
+                                <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(materials)}</p>
+                                {matDesc ? (
+                                  <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{matDesc}</p>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : null}
+                          {bidNoteSummary ? (
+                            <p className="text-[13px] text-text-secondary leading-relaxed break-words">{bidNoteSummary}</p>
+                          ) : notesPlain ? (
+                            <p className="text-[13px] text-text-secondary leading-relaxed whitespace-pre-wrap break-words max-h-[10rem] overflow-y-auto">{notesPlain}</p>
+                          ) : null}
+                          {(d1 || d2) ? (
+                            <div className="flex flex-wrap gap-2">
+                              {d1 ? (
+                                <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
+                                  Option 1: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d1}</strong>
+                                </span>
+                              ) : null}
+                              {d2 ? (
+                                <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
+                                  Option 2: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d2}</strong>
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {scopeFromBid ? (
+                            <div className="rounded-lg border border-dashed border-border-light bg-surface-hover/80 px-3 py-2.5">
+                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope</p>
+                              <p className="text-[12px] text-text-secondary mt-1 leading-snug whitespace-pre-wrap break-words max-h-[7.5rem] overflow-y-auto pr-1">{scopeFromBid}</p>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                     );
                   })}

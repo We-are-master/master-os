@@ -39,7 +39,7 @@ export type JobStatus =
   | "cancelled";
 export type JobFinanceStatus = "unpaid" | "partial" | "paid";
 export type PartnerStatus = "active" | "inactive" | "on_break" | "onboarding";
-export type InvoiceStatus = "paid" | "pending" | "overdue" | "cancelled";
+export type InvoiceStatus = "paid" | "pending" | "partially_paid" | "overdue" | "cancelled";
 
 /** Customer collection lifecycle for job-linked invoices (synced from job flags unless locked). */
 export type InvoiceCollectionStage =
@@ -318,6 +318,8 @@ export interface JobPayment {
   bank_reference?: string | null;
   /** When set, this row was created from a paid invoice (e.g. Stripe); dedupes webhook. */
   source_invoice_id?: string | null;
+  /** All rows tied to an invoice (partials + reopen cleanup). */
+  linked_invoice_id?: string | null;
   created_at: string;
   created_by?: string;
 }
@@ -377,6 +379,8 @@ export interface Invoice {
   client_name: string;
   job_reference?: string;
   amount: number;
+  /** Cumulative applied to this invoice (manual partials, Stripe full pay, etc.). */
+  amount_paid?: number;
   status: InvoiceStatus;
   due_date: string;
   paid_date?: string;

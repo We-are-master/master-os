@@ -31,11 +31,14 @@ export async function POST(req: NextRequest) {
     const invoiceId = metadata.invoice_id;
 
     if (invoiceId) {
+      const { data: invRow } = await supabaseAdmin.from("invoices").select("amount").eq("id", invoiceId).maybeSingle();
+      const invAmt = Number((invRow as { amount?: number } | null)?.amount ?? 0);
       await supabaseAdmin.from("invoices").update({
         stripe_payment_status: "paid",
         stripe_paid_at: new Date().toISOString(),
         status: "paid",
         paid_date: new Date().toISOString().split("T")[0],
+        amount_paid: invAmt,
       }).eq("id", invoiceId);
 
       await syncJobAfterStripeInvoicePaid(supabaseAdmin, invoiceId);

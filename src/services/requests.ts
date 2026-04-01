@@ -1,4 +1,5 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
+import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import type { ServiceRequest } from "@/types/database";
 
 /** Nullable UUID columns: empty string breaks PostgREST (invalid uuid) — coerce to null. */
@@ -62,34 +63,14 @@ function buildServiceRequestInsertPayload(
   return out;
 }
 
-/** Enrich rows with `accounts.company_name` via client → `source_account_id`. */
+/** Enrich rows with linked account label (FK + company/contact/email, then email match). */
 async function enrichRequestsWithAccountNames(requests: ServiceRequest[]): Promise<ServiceRequest[]> {
   const clientIds = [...new Set(requests.map((r) => r.client_id).filter(Boolean))] as string[];
   if (clientIds.length === 0) return requests;
-  const supabase = getSupabase();
-  const { data: clients, error: cErr } = await supabase
-    .from("clients")
-    .select("id, source_account_id")
-    .in("id", clientIds);
-  if (cErr || !clients?.length) return requests;
-  const accountIds = [...new Set(clients.map((c) => c.source_account_id).filter(Boolean))] as string[];
-  let accountNameById = new Map<string, string>();
-  if (accountIds.length > 0) {
-    const { data: accounts } = await supabase
-      .from("accounts")
-      .select("id, company_name")
-      .in("id", accountIds)
-      .is("deleted_at", null);
-    accountNameById = new Map((accounts ?? []).map((a) => [a.id, a.company_name]));
-  }
-  const accountNameByClientId = new Map<string, string | null>();
-  for (const c of clients) {
-    const nm = c.source_account_id ? accountNameById.get(c.source_account_id) ?? null : null;
-    accountNameByClientId.set(c.id, nm);
-  }
+  const labels = await batchResolveLinkedAccountLabels(getSupabase(), clientIds);
   return requests.map((r) => ({
     ...r,
-    source_account_name: r.client_id ? accountNameByClientId.get(r.client_id) ?? null : null,
+    source_account_name: r.client_id ? labels.get(r.client_id) ?? null : null,
   }));
 }
 

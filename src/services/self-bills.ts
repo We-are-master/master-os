@@ -15,17 +15,21 @@ function uniqueRef(weekLabel: string, jobRef: string): string {
 /** Recompute aggregates from all jobs linked to this self-bill. */
 export async function recomputeSelfBillTotals(selfBillId: string): Promise<void> {
   const supabase = getSupabase();
-  const agg = await supabase
+  // Sum in app: PostgREST often returns 400 when combining id.count() with column.sum() in one select.
+  const { data: rows, error: selErr } = await supabase
     .from("jobs")
-    .select("id.count(), partner_cost.sum(), materials_cost.sum()")
+    .select("partner_cost, materials_cost")
     .eq("self_bill_id", selfBillId)
-    .is("deleted_at", null)
-    .maybeSingle();
-  if (agg.error) throw agg.error;
-  const row = (agg.data ?? {}) as Record<string, unknown>;
-  const jobsCount = Number(row.id_count ?? 0) || 0;
-  const jobValue = Number(row.partner_cost_sum ?? 0) || 0;
-  const materials = Number(row.materials_cost_sum ?? 0) || 0;
+    .is("deleted_at", null);
+  if (selErr) throw selErr;
+  const list = (rows ?? []) as { partner_cost?: number | null; materials_cost?: number | null }[];
+  const jobsCount = list.length;
+  let jobValue = 0;
+  let materials = 0;
+  for (const r of list) {
+    jobValue += Number(r.partner_cost) || 0;
+    materials += Number(r.materials_cost) || 0;
+  }
   const commission = 0;
   const netPayout = jobValue + materials - commission;
   const { error: uErr } = await supabase
@@ -113,8 +117,8 @@ export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
       return;
     }
     await ensureWeeklySelfBillForJob(job);
-  } catch {
-    /* non-fatal — finance can fix from Self-billing */
+  } catch (e) {
+    console.error("syncSelfBillAfterJobChange failed:", e);
   }
 }
 
@@ -128,9 +132,16 @@ export async function createSelfBillFromJob(job: CreateSelfBillFromJobInput): Pr
   if (!full) throw new Error("Job not found");
   const id = await ensureWeeklySelfBillForJob(full as Job);
   if (!id) throw new Error("Partner required for self-bill");
-  const { data, error } = await supabase.from("self_bills").select("*").eq("id", id).single();
+  const row = await getSelfBill(id);
+  if (!row) throw new Error("Self-bill not found after create");
+  return row;
+}
+
+export async function getSelfBill(id: string): Promise<SelfBill | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.from("self_bills").select("*").eq("id", id).maybeSingle();
   if (error) throw error;
-  return data as SelfBill;
+  return (data as SelfBill) ?? null;
 }
 
 export async function listJobsForSelfBill(selfBillId: string): Promise<Pick<Job, "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address">[]> {

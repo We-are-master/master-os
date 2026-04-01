@@ -27,13 +27,14 @@ import {
   CreditCard,
   RefreshCw,
   Timer,
+  Pencil,
   X,
 } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { listQuoteLineItems } from "@/services/quotes";
-import { createSelfBillFromJob } from "@/services/self-bills";
+import { createSelfBillFromJob, getSelfBill } from "@/services/self-bills";
 import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
@@ -52,7 +53,7 @@ import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
-import type { Invoice, Job, JobPayment, JobPaymentType, Partner, QuoteLineItem } from "@/types/database";
+import type { Invoice, Job, JobPayment, JobPaymentType, Partner, QuoteLineItem, SelfBill } from "@/types/database";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getSupabase } from "@/services/base";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
@@ -91,10 +92,35 @@ import {
   formatOfficeTimer,
   statusChangeOfficeTimerPatch,
 } from "@/lib/office-job-timer";
-import {
-  computeHourlyTotals,
-  resolveJobHourlyRates,
-} from "@/lib/job-hourly-billing";
+import { computeHourlyTotals, resolveJobHourlyRates } from "@/lib/job-hourly-billing";
+
+/** For timer review: local `datetime-local` value (YYYY-MM-DDTHH:mm). */
+function toDatetimeLocalValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function elapsedSecondsFromStartStopLocal(start: string, stop: string): number {
+  if (!start?.trim() || !stop?.trim()) return 0;
+  const a = new Date(start).getTime();
+  const b = new Date(stop).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.max(0, Math.floor((b - a) / 1000));
+}
+
+/** Infer start/stop from total seconds (end defaults to now). */
+function inferStartStopFromElapsedSeconds(elapsedSeconds: number, endMs: number = Date.now()): { start: string; stop: string } {
+  const end = new Date(endMs);
+  const start = new Date(end.getTime() - Math.max(0, elapsedSeconds) * 1000);
+  return { start: toDatetimeLocalValue(start), stop: toDatetimeLocalValue(end) };
+}
+
+function formatDatetimeLocalForDisplay(value: string): string {
+  if (!value?.trim()) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+}
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
 import { isJobForcePaid, markJobAsForcePaidNote } from "@/lib/job-force-paid";
 import {
@@ -103,6 +129,7 @@ import {
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
+import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
@@ -118,6 +145,64 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   completed: { label: "Completed", variant: "success", dot: true },
   cancelled: { label: "Cancelled", variant: "danger", dot: true },
 };
+
+const selfBillStatusConfig: Record<
+  string,
+  { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
+> = {
+  accumulating: { label: "Open week", variant: "default" },
+  pending_review: { label: "Review & approve", variant: "primary" },
+  needs_attention: { label: "Needs attention", variant: "danger" },
+  awaiting_payment: { label: "Awaiting payment", variant: "warning" },
+  ready_to_pay: { label: "Ready to pay", variant: "info" },
+  paid: { label: "Paid", variant: "success" },
+  audit_required: { label: "Audit required", variant: "danger" },
+  rejected: { label: "Rejected", variant: "default" },
+};
+
+function JobDetailSelfBillPanel({ sb }: { sb: SelfBill }) {
+  const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
+  const weekLine =
+    sb.week_start && sb.week_end
+      ? `${sb.week_start} → ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
+      : sb.week_label ?? sb.period;
+  return (
+    <div className="rounded-lg border border-border-light p-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-text-primary">{sb.reference}</p>
+        <Badge variant={st.variant} size="sm">{st.label}</Badge>
+      </div>
+      <p className="text-[11px] text-text-secondary truncate" title={sb.partner_name}>
+        Partner → us · {sb.partner_name}
+      </p>
+      <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(sb.net_payout)}</p>
+      <p className="text-[10px] text-text-tertiary uppercase tracking-wide">Net payout (whole bill)</p>
+      <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+        <div>
+          <p className="text-text-tertiary">Labour (bill)</p>
+          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(sb.job_value)}</p>
+        </div>
+        <div>
+          <p className="text-text-tertiary">Materials (bill)</p>
+          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(sb.materials)}</p>
+        </div>
+      </div>
+      <p className="text-[11px] text-text-tertiary pt-0.5">
+        Week: {weekLine} · {sb.jobs_count} job{sb.jobs_count === 1 ? "" : "s"} on this bill
+      </p>
+      <div className="flex items-center gap-1.5 flex-wrap pt-1">
+        <Button
+          size="sm"
+          variant="outline"
+          icon={<FileText className="h-3 w-3" />}
+          onClick={() => window.open(`/api/self-bills/${sb.id}/pdf`, "_blank", "noopener,noreferrer")}
+        >
+          PDF
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 const JOB_FLOW_STEPS: { label: string; statuses: Job["status"][] }[] = [
   { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"] },
@@ -179,6 +264,11 @@ export default function JobDetailPage() {
   const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   const [forceApprovalChecked, setForceApprovalChecked] = useState(false);
+  const [timerAdjustEditing, setTimerAdjustEditing] = useState(false);
+  const [adjustStartLocal, setAdjustStartLocal] = useState("");
+  const [adjustStopLocal, setAdjustStopLocal] = useState("");
+  const [adjustNote, setAdjustNote] = useState("");
+  const [savingTimerAdjust, setSavingTimerAdjust] = useState(false);
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
   const [cancellingJob, setCancellingJob] = useState(false);
@@ -201,6 +291,11 @@ export default function JobDetailPage() {
   const [jobInvoices, setJobInvoices] = useState<Invoice[]>([]);
   const [quoteLineItems, setQuoteLineItems] = useState<QuoteLineItem[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+  /** Job invoice cards: collapsed shows amount only; expand for ref, status, Stripe, actions. */
+  const [expandedInvoiceIds, setExpandedInvoiceIds] = useState<Set<string>>(new Set());
+  const [jobSelfBill, setJobSelfBill] = useState<SelfBill | null>(null);
+  const [loadingSelfBill, setLoadingSelfBill] = useState(false);
+  const [linkingSelfBill, setLinkingSelfBill] = useState(false);
   const [syncingInvoiceId, setSyncingInvoiceId] = useState<string | null>(null);
   const [manualReportFile, setManualReportFile] = useState<File | null>(null);
   const [manualReportNotes, setManualReportNotes] = useState("");
@@ -215,11 +310,24 @@ export default function JobDetailPage() {
   const [scopeDraft, setScopeDraft] = useState("");
   const [savingScope, setSavingScope] = useState(false);
   const isAdmin = profile?.role === "admin";
+  const canEditJobTimer = profile?.role === "admin" || profile?.role === "manager";
   const jobRef = useRef<Job | null>(null);
   const autoOwnerFillRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
+
+  useEffect(() => {
+    if (!validateCompleteOpen) return;
+    const j = jobRef.current;
+    if (!j) return;
+    setTimerAdjustEditing(false);
+    setAdjustNote("");
+    const total = computeOfficeTimerElapsedSeconds(j);
+    const { start, stop } = inferStartStopFromElapsedSeconds(total, Date.now());
+    setAdjustStartLocal(start);
+    setAdjustStopLocal(stop);
+  }, [validateCompleteOpen, job?.id]);
 
   const [partnerTimerTick, setPartnerTimerTick] = useState(0);
   useEffect(() => {
@@ -313,6 +421,23 @@ export default function JobDetailPage() {
     }
   }, []);
 
+  const loadJobSelfBill = useCallback(async (j: Job) => {
+    if (!j.self_bill_id?.trim()) {
+      setJobSelfBill(null);
+      return;
+    }
+    setLoadingSelfBill(true);
+    try {
+      const sb = await getSelfBill(j.self_bill_id);
+      setJobSelfBill(sb);
+    } catch {
+      toast.error("Failed to load self-bill");
+      setJobSelfBill(null);
+    } finally {
+      setLoadingSelfBill(false);
+    }
+  }, []);
+
   const loadQuoteLineItems = useCallback(async (j: Job) => {
     if (!j.quote_id) {
       setQuoteLineItems([]);
@@ -332,12 +457,12 @@ export default function JobDetailPage() {
       const j = await getJob(id);
       setJob(j);
       if (j) {
-        await Promise.all([loadPayments(j.id), loadJobInvoices(j), loadQuoteLineItems(j)]);
+        await Promise.all([loadPayments(j.id), loadJobInvoices(j), loadQuoteLineItems(j), loadJobSelfBill(j)]);
       }
     } catch {
       toast.error("Failed to refresh");
     }
-  }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems]);
+  }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill]);
 
   const quoteLineBreakdown = useMemo(() => {
     if (!quoteLineItems.length) return null;
@@ -437,12 +562,24 @@ export default function JobDetailPage() {
   }, [job?.id, job?.updated_at]);
 
   useEffect(() => {
+    setExpandedInvoiceIds(new Set());
+  }, [job?.id]);
+
+  useEffect(() => {
     if (!job?.reference?.trim()) {
       setJobInvoices([]);
       return;
     }
     void loadJobInvoices(job);
   }, [job?.id, job?.reference, job?.invoice_id, job?.updated_at, loadJobInvoices]);
+
+  useEffect(() => {
+    if (!job) {
+      setJobSelfBill(null);
+      return;
+    }
+    void loadJobSelfBill(job);
+  }, [job?.id, job?.self_bill_id, job?.updated_at, loadJobSelfBill]);
 
   useEffect(() => {
     if (job?.scheduled_start_at) {
@@ -631,6 +768,100 @@ export default function JobDetailPage() {
       return undefined;
     }
   }, [profile?.id, profile?.full_name]);
+
+  const parseApprovalAdjustSeconds = useCallback(() => {
+    return elapsedSecondsFromStartStopLocal(adjustStartLocal, adjustStopLocal);
+  }, [adjustStartLocal, adjustStopLocal]);
+
+  const handleSaveTimerAdjust = useCallback(async () => {
+    const j = jobRef.current;
+    if (!j || j.job_type !== "hourly") return;
+    if (!adjustNote.trim()) {
+      toast.error("Add a note explaining the timer adjustment.");
+      return;
+    }
+    const newElapsed = parseApprovalAdjustSeconds();
+    setSavingTimerAdjust(true);
+    try {
+      const { clientRate, partnerRate } = resolveJobHourlyRates(j);
+      const totals = computeHourlyTotals({
+        elapsedSeconds: newElapsed,
+        clientHourlyRate: clientRate,
+        partnerHourlyRate: partnerRate,
+      });
+      const customerDeposit = Number(j.customer_deposit ?? 0);
+      const customerFinal = Math.max(0, totals.clientTotal - customerDeposit);
+      const merged = {
+        ...j,
+        client_price: totals.clientTotal,
+        partner_cost: totals.partnerTotal,
+      } as Job;
+      const derived = deriveStoredJobFinancials(merged);
+      const oldElapsed = computeOfficeTimerElapsedSeconds(j);
+      const patch: Partial<Job> = {
+        timer_elapsed_seconds: newElapsed,
+        timer_is_running: false,
+        timer_last_started_at: null,
+        billed_hours: totals.billedHours,
+        hourly_client_rate: clientRate,
+        hourly_partner_rate: partnerRate,
+        client_price: totals.clientTotal,
+        partner_cost: totals.partnerTotal,
+        customer_final_payment: customerFinal,
+        ...derived,
+      };
+      const updated = await updateJob(j.id, patch);
+      setJob(updated);
+      await logFieldChanges(
+        "job",
+        j.id,
+        j.reference,
+        j as unknown as Record<string, unknown>,
+        patch as unknown as Record<string, unknown>,
+        profile?.id,
+        profile?.full_name,
+      );
+      await logAudit({
+        entityType: "job",
+        entityId: j.id,
+        entityRef: j.reference,
+        action: "updated",
+        fieldName: "timer_manager_adjustment",
+        oldValue: `${oldElapsed}s (${formatOfficeTimer(oldElapsed)})`,
+        newValue: `${newElapsed}s (${formatOfficeTimer(newElapsed)})`,
+        userId: profile?.id,
+        userName: profile?.full_name,
+        metadata: {
+          note: adjustNote.trim(),
+          timer_start_local: adjustStartLocal,
+          timer_stop_local: adjustStopLocal,
+          billed_hours: totals.billedHours,
+          client_price: totals.clientTotal,
+          partner_cost: totals.partnerTotal,
+        },
+      });
+      await loadPayments(updated.id);
+      await loadJobInvoices(updated);
+      await loadJobSelfBill(updated);
+      setTimerAdjustEditing(false);
+      setAdjustNote("");
+      toast.success("Timer saved — client/partner totals updated from billed time.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save timer");
+    } finally {
+      setSavingTimerAdjust(false);
+    }
+  }, [
+    parseApprovalAdjustSeconds,
+    adjustNote,
+    adjustStartLocal,
+    adjustStopLocal,
+    profile?.id,
+    profile?.full_name,
+    loadPayments,
+    loadJobInvoices,
+    loadJobSelfBill,
+  ]);
 
   const reportByPhase = useMemo(() => {
     const map = new Map<number, AppJobReportRow>();
@@ -1351,6 +1582,55 @@ export default function JobDetailPage() {
     }
   }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments, ownerApprovalChecked, forceApprovalChecked]);
 
+  const billableRevenueForApproval = job ? jobBillableRevenue(job) : 0;
+  const partnerCapForApproval = job ? partnerPaymentCap(job) : 0;
+
+  const approvalModalElapsedSeconds = useMemo(() => {
+    if (!job) return 0;
+    if (job.job_type === "hourly" && timerAdjustEditing) {
+      return elapsedSecondsFromStartStopLocal(adjustStartLocal, adjustStopLocal);
+    }
+    return officeTimerDisplaySeconds ?? computeOfficeTimerElapsedSeconds(job);
+  }, [job, timerAdjustEditing, adjustStartLocal, adjustStopLocal, officeTimerDisplaySeconds]);
+
+  const approvalTimerPreviewStartStop = useMemo(() => {
+    if (!job || job.job_type !== "hourly") return null;
+    const elapsed = officeTimerDisplaySeconds ?? computeOfficeTimerElapsedSeconds(job);
+    return inferStartStopFromElapsedSeconds(elapsed, Date.now());
+  }, [job, officeTimerDisplaySeconds]);
+
+  const approvalModalHourlyTotals = useMemo(() => {
+    if (!job || job.job_type !== "hourly") return null;
+    const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+    return computeHourlyTotals({
+      elapsedSeconds: approvalModalElapsedSeconds,
+      clientHourlyRate: clientRate,
+      partnerHourlyRate: partnerRate,
+    });
+  }, [job, approvalModalElapsedSeconds]);
+
+  const approvalBillableRevenue = useMemo(() => {
+    if (!job) return 0;
+    if (job.job_type === "hourly" && approvalModalHourlyTotals) {
+      return approvalModalHourlyTotals.clientTotal + Number(job.extras_amount ?? 0);
+    }
+    return billableRevenueForApproval;
+  }, [job, approvalModalHourlyTotals, billableRevenueForApproval]);
+
+  const approvalPartnerCostForDirect = useMemo(() => {
+    if (!job) return 0;
+    if (job.job_type === "hourly" && approvalModalHourlyTotals) return approvalModalHourlyTotals.partnerTotal;
+    return Number(job.partner_cost ?? 0);
+  }, [job, approvalModalHourlyTotals]);
+
+  const approvalPartnerCap = useMemo(() => {
+    if (!job) return 0;
+    if (job.job_type === "hourly" && approvalModalHourlyTotals) {
+      return partnerPaymentCap({ ...job, partner_cost: approvalModalHourlyTotals.partnerTotal });
+    }
+    return partnerCapForApproval;
+  }, [job, approvalModalHourlyTotals, partnerCapForApproval]);
+
   if (loading || !id) {
     return (
       <PageTransition>
@@ -1423,9 +1703,21 @@ export default function JobDetailPage() {
   const ownerAttestationText = `I, ${job.owner_name?.trim() || "job owner"}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
   const mandatoryChecksOk = reportsUploaded && reportsApproved && ownerApprovalChecked;
-  const canSubmitApproval = mandatoryChecksOk || forceApprovalChecked;
+  const canSubmitApproval = (mandatoryChecksOk || forceApprovalChecked) && !timerAdjustEditing;
   const customerPaidPct = billableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / billableRevenue) * 100)) : 100;
   const partnerPaidPct = partnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / partnerCap) * 100)) : 100;
+
+  const approvalMaterialsCost = Number(job.materials_cost ?? 0);
+  const approvalProfit = approvalBillableRevenue - approvalPartnerCostForDirect - approvalMaterialsCost;
+  const approvalMarginPct = approvalBillableRevenue > 0 ? Math.round((approvalProfit / approvalBillableRevenue) * 10000) / 100 : 0;
+
+  const approvalAmountDue = Math.max(0, approvalBillableRevenue - customerPaidTotal);
+  const approvalPartnerPayRemaining = Math.max(0, approvalPartnerCap - partnerPaidTotal);
+  const approvalCustomerPaidPct =
+    approvalBillableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / approvalBillableRevenue) * 100)) : 100;
+  const approvalPartnerPaidPct =
+    approvalPartnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / approvalPartnerCap) * 100)) : 100;
+  const approvalTimeSpentLabel = formatOfficeTimer(approvalModalElapsedSeconds);
 
   return (
     <PageTransition>
@@ -2196,7 +2488,7 @@ export default function JobDetailPage() {
             {/* FINANCIAL COMPLETION */}
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-4">
               <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
-                <CreditCard className="h-3.5 w-3.5" /> Financial completion
+                <CreditCard className="h-3.5 w-3.5" /> Finance summary
               </p>
 
               {/* CLIENT cash in */}
@@ -2400,36 +2692,149 @@ export default function JobDetailPage() {
               )}
             </div>
 
-            {/* INVOICES & STRIPE */}
-            {jobInvoices.length > 0 && (
-              <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invoices</p>
-                  <Link href="/finance/invoices" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1">All <ExternalLink className="h-3 w-3" /></Link>
+            {/* Financial documents: client invoices (us→client) + partner self-bill (partner→us, weekly Mon–Sun) */}
+            <div className="rounded-xl border border-border-light bg-card p-4 space-y-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] shrink-0">
+                  <Link href="/finance/invoices" className="text-primary hover:underline inline-flex items-center gap-1">
+                    All invoices <ExternalLink className="h-3 w-3" />
+                  </Link>
+                  <Link href="/finance/selfbill" className="text-primary hover:underline inline-flex items-center gap-1">
+                    All self bills <ExternalLink className="h-3 w-3" />
+                  </Link>
                 </div>
-                {loadingInvoices ? <p className="text-xs text-text-tertiary">Loading…</p> : jobInvoices.map((inv) => {
-                  const stripePaid = inv.stripe_payment_status === "paid";
-                  return (
-                    <div key={inv.id} className="rounded-lg border border-border-light p-3 space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-semibold text-text-primary">{inv.reference}</p>
-                        <Badge variant={inv.status === "paid" ? "success" : "warning"} size="sm">{inv.status}</Badge>
-                      </div>
-                      <p className="text-sm font-bold tabular-nums">{formatCurrency(inv.amount)}</p>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Badge variant={stripePaid ? "success" : "default"} size="sm">Stripe: {inv.stripe_payment_status ?? "none"}</Badge>
-                        {inv.stripe_payment_link_url && (
-                          <>
-                            <Button size="sm" variant="outline" icon={<CreditCard className="h-3 w-3" />} onClick={() => window.open(inv.stripe_payment_link_url!, "_blank", "noopener,noreferrer")}>Pay link</Button>
-                            <Button size="sm" variant="secondary" loading={syncingInvoiceId === inv.id} icon={<RefreshCw className="h-3 w-3" />} onClick={() => void handleStripeInvoiceSync(inv)}>Sync</Button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
               </div>
-            )}
+
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client invoices</p>
+                <p className="text-[11px] text-text-tertiary leading-snug">
+                  We invoice the <strong className="font-medium text-text-secondary">client</strong> for this job.
+                </p>
+                {loadingInvoices ? (
+                  <p className="text-xs text-text-tertiary">Loading…</p>
+                ) : jobInvoices.length === 0 ? (
+                  <p className="text-xs text-text-tertiary">
+                    No invoices linked yet. They appear when finance raises an invoice for this job reference (or when a job is created with auto-invoice).
+                  </p>
+                ) : (
+                  jobInvoices.map((inv) => {
+                      const stripePaid = inv.stripe_payment_status === "paid";
+                      const invOpen = expandedInvoiceIds.has(inv.id);
+                      return (
+                        <div key={inv.id} className="rounded-lg border border-border-light p-3">
+                          <div className="flex items-start gap-2">
+                            <button
+                              type="button"
+                              aria-expanded={invOpen}
+                              aria-label={invOpen ? "Hide invoice details" : "Show invoice details"}
+                              onClick={() => {
+                                setExpandedInvoiceIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(inv.id)) next.delete(inv.id);
+                                  else next.add(inv.id);
+                                  return next;
+                                });
+                              }}
+                              className="shrink-0 rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary mt-0.5"
+                            >
+                              <ChevronDown className={cn("h-5 w-5 transition-transform duration-200", invOpen && "rotate-180")} />
+                            </button>
+                            <div className="min-w-0 flex-1 space-y-2">
+                              {!invOpen ? (
+                                <p className="text-lg font-bold tabular-nums text-primary tracking-tight pt-0.5">{formatCurrency(inv.amount)}</p>
+                              ) : (
+                                <>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
+                                    <Badge
+                                      variant={
+                                        inv.status === "paid"
+                                          ? "success"
+                                          : inv.status === "partially_paid"
+                                            ? "info"
+                                            : "warning"
+                                      }
+                                      size="sm"
+                                    >
+                                      {inv.status === "partially_paid" ? "Partial" : inv.status}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-sm font-bold tabular-nums">{formatCurrency(inv.amount)}</p>
+                                  {(inv.status === "partially_paid" || invoiceAmountPaid(inv) > 0.02) && inv.status !== "paid" ? (
+                                    <p className="text-[11px] text-text-tertiary">
+                                      Paid {formatCurrency(invoiceAmountPaid(inv))} · Due {formatCurrency(invoiceBalanceDue(inv))}
+                                    </p>
+                                  ) : null}
+                                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                    <Badge variant={stripePaid ? "success" : "default"} size="sm">Stripe: {inv.stripe_payment_status ?? "none"}</Badge>
+                                    {inv.stripe_payment_link_url && (
+                                      <>
+                                        <Button size="sm" variant="outline" icon={<CreditCard className="h-3 w-3" />} onClick={() => window.open(inv.stripe_payment_link_url!, "_blank", "noopener,noreferrer")}>Pay link</Button>
+                                        <Button size="sm" variant="secondary" loading={syncingInvoiceId === inv.id} icon={<RefreshCw className="h-3 w-3" />} onClick={() => void handleStripeInvoiceSync(inv)}>Sync</Button>
+                                      </>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-border-light">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner self-bill</p>
+                  <p className="text-[11px] text-text-tertiary leading-snug">
+                    The <strong className="font-medium text-text-secondary">partner</strong> bills us. Amounts roll into one weekly self bill per partner (Monday–Sunday); this job shares that bill with other jobs in the same week.
+                  </p>
+                  {!job.partner_id?.trim() ? (
+                    <p className="text-xs text-text-tertiary">Assign a partner on this job to use self billing.</p>
+                  ) : loadingSelfBill ? (
+                    <p className="text-xs text-text-tertiary">Loading…</p>
+                  ) : jobSelfBill ? (
+                    <JobDetailSelfBillPanel sb={jobSelfBill} />
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-text-tertiary">
+                        This job is not linked to a weekly self bill yet. New jobs with a partner usually link automatically; you can attach it now.
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        loading={linkingSelfBill}
+                        onClick={async () => {
+                          if (!job) return;
+                          setLinkingSelfBill(true);
+                          try {
+                            await createSelfBillFromJob({
+                              id: job.id,
+                              reference: job.reference,
+                              partner_name: job.partner_name,
+                              partner_cost: job.partner_cost,
+                              materials_cost: job.materials_cost,
+                            });
+                            const j2 = await getJob(job.id);
+                            if (j2) {
+                              setJob(j2);
+                              await loadJobSelfBill(j2);
+                            }
+                            toast.success("Linked to this week’s self bill");
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : "Could not link self bill");
+                          } finally {
+                            setLinkingSelfBill(false);
+                          }
+                        }}
+                      >
+                        Link weekly self bill
+                      </Button>
+                    </div>
+                  )}
+              </div>
+            </div>
 
             {/* COMMAND HISTORY */}
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
@@ -2448,6 +2853,8 @@ export default function JobDetailPage() {
           setValidateCompleteOpen(false);
           setOwnerApprovalChecked(false);
           setForceApprovalChecked(false);
+          setTimerAdjustEditing(false);
+          setAdjustNote("");
         }}
         title={approvalMode === "review_approve" ? "Review and approve" : "Validate and complete"}
         subtitle={`${job.reference} — review before approval`}
@@ -2458,20 +2865,20 @@ export default function JobDetailPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="rounded-xl border border-border-light bg-card p-3">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total price</p>
-              <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(billableRevenue)}</p>
-              {amountDue > 0.02 ? (
-                <p className="text-[11px] font-semibold text-amber-600 mt-1">Amount due: {formatCurrency(amountDue)}</p>
+              <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(approvalBillableRevenue)}</p>
+              {approvalAmountDue > 0.02 ? (
+                <p className="text-[11px] font-semibold text-amber-600 mt-1">Amount due: {formatCurrency(approvalAmountDue)}</p>
               ) : null}
             </div>
             <div className="rounded-xl border border-border-light bg-card p-3">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner cost</p>
-              <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(partnerCap)}</p>
+              <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(approvalPartnerCap)}</p>
               <p className="text-[11px] text-text-tertiary mt-1">Total partner payout cap</p>
             </div>
             <div className="rounded-xl border border-border-light bg-card p-3">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Operating margin</p>
-              <p className={cn("text-2xl font-bold mt-1", profit >= 0 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(profit)}</p>
-              <p className="text-[11px] text-text-tertiary mt-1">{formatCurrency(profit)} / {Math.max(0, marginPct).toFixed(1)}%</p>
+              <p className={cn("text-2xl font-bold mt-1", approvalProfit >= 0 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalProfit)}</p>
+              <p className="text-[11px] text-text-tertiary mt-1">{formatCurrency(approvalProfit)} / {Math.max(0, approvalMarginPct).toFixed(1)}%</p>
             </div>
           </div>
 
@@ -2483,10 +2890,10 @@ export default function JobDetailPage() {
                   <span className="text-text-secondary">Client payment: Paid</span>
                   <span className="font-semibold text-text-primary">{formatCurrency(customerPaidTotal)}</span>
                 </div>
-                <Progress value={customerPaidPct} className="h-2 mt-2" />
+                <Progress value={approvalCustomerPaidPct} className="h-2 mt-2" />
                 <div className="flex items-center justify-between text-xs mt-1">
                   <span className="text-text-secondary">Client payment: Due</span>
-                  <span className={cn("font-semibold", amountDue <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(amountDue)}</span>
+                  <span className={cn("font-semibold", approvalAmountDue <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalAmountDue)}</span>
                 </div>
               </div>
               <div>
@@ -2494,14 +2901,116 @@ export default function JobDetailPage() {
                   <span className="text-text-secondary">Partner payment: Paid</span>
                   <span className="font-semibold text-text-primary">{formatCurrency(partnerPaidTotal)}</span>
                 </div>
-                <Progress value={partnerPaidPct} className="h-2 mt-2" />
+                <Progress value={approvalPartnerPaidPct} className="h-2 mt-2" />
                 <div className="flex items-center justify-between text-xs mt-1">
                   <span className="text-text-secondary">Partner payment: Due</span>
-                  <span className={cn("font-semibold", partnerPayRemaining <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(partnerPayRemaining)}</span>
+                  <span className={cn("font-semibold", approvalPartnerPayRemaining <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalPartnerPayRemaining)}</span>
                 </div>
               </div>
-              <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs text-text-secondary">
-                Timer spent: <span className="font-semibold text-text-primary">{timeSpentLabel}</span>
+              <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs text-text-secondary space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Timer spent: <span className="font-semibold text-text-primary">{approvalTimeSpentLabel}</span>
+                  </span>
+                  {job.job_type === "hourly" && canEditJobTimer ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-[11px]"
+                      icon={<Pencil className="h-3 w-3" />}
+                      onClick={() => {
+                        if (!timerAdjustEditing) {
+                          const total = computeOfficeTimerElapsedSeconds(job);
+                          const { start, stop } = inferStartStopFromElapsedSeconds(total, Date.now());
+                          setAdjustStartLocal(start);
+                          setAdjustStopLocal(stop);
+                        }
+                        setTimerAdjustEditing((v) => !v);
+                      }}
+                    >
+                      {timerAdjustEditing ? "Close" : "Edit"}
+                    </Button>
+                  ) : null}
+                </div>
+                {job.job_type === "hourly" && approvalTimerPreviewStartStop && !timerAdjustEditing ? (
+                  <div className="flex flex-col gap-0.5 text-[11px] sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-3">
+                    <span>
+                      <span className="text-text-tertiary">Start: </span>
+                      <span className="font-medium text-text-primary">{formatDatetimeLocalForDisplay(approvalTimerPreviewStartStop.start)}</span>
+                    </span>
+                    <span>
+                      <span className="text-text-tertiary">Stop: </span>
+                      <span className="font-medium text-text-primary">{formatDatetimeLocalForDisplay(approvalTimerPreviewStartStop.stop)}</span>
+                    </span>
+                    <span className="text-text-tertiary">(inferred from duration — edit to set exact times)</span>
+                  </div>
+                ) : null}
+                {job.job_type === "hourly" && approvalModalHourlyTotals ? (
+                  <p className="text-[10px] text-text-tertiary">
+                    Billed hours (30-min rule): <span className="font-medium text-text-secondary">{approvalModalHourlyTotals.billedHours}h</span>
+                    {timerAdjustEditing ? " · Preview updates totals above until you save." : null}
+                  </p>
+                ) : null}
+                {timerAdjustEditing && job.job_type === "hourly" ? (
+                  <div className="space-y-2 pt-1 border-t border-border-light">
+                    <p className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">Manual correction — logged to job history with your note.</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-medium text-text-tertiary mb-0.5">Start</label>
+                        <Input
+                          type="datetime-local"
+                          value={adjustStartLocal}
+                          onChange={(e) => setAdjustStartLocal(e.target.value)}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-text-tertiary mb-0.5">Stop</label>
+                        <Input
+                          type="datetime-local"
+                          value={adjustStopLocal}
+                          onChange={(e) => setAdjustStopLocal(e.target.value)}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-text-tertiary">
+                      Duration from start → stop: <span className="font-medium text-text-secondary">{formatOfficeTimer(approvalModalElapsedSeconds)}</span>
+                    </p>
+                    <div>
+                      <label className="block text-[10px] font-medium text-text-tertiary mb-0.5">Note (required)</label>
+                      <textarea
+                        value={adjustNote}
+                        onChange={(e) => setAdjustNote(e.target.value)}
+                        rows={2}
+                        placeholder="Why the timer total was changed (e.g. app lost connection, partner forgot to stop)…"
+                        className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[52px]"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" size="sm" loading={savingTimerAdjust} onClick={() => void handleSaveTimerAdjust()}>
+                        Save timer &amp; recalc billing
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={savingTimerAdjust}
+                        onClick={() => {
+                          setTimerAdjustEditing(false);
+                          setAdjustNote("");
+                          const total = computeOfficeTimerElapsedSeconds(job);
+                          const { start, stop } = inferStartStopFromElapsedSeconds(total, Date.now());
+                          setAdjustStartLocal(start);
+                          setAdjustStopLocal(stop);
+                        }}
+                      >
+                        Discard
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -2514,7 +3023,9 @@ export default function JobDetailPage() {
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-text-secondary">Partner self-bill</span>
-                  <span className="font-semibold text-amber-600">Auto-issued on approval</span>
+                  <span className={cn("font-semibold", job.self_bill_id ? "text-emerald-600" : "text-amber-600")}>
+                    {job.self_bill_id ? "Linked (weekly Mon–Sun)" : "Not linked"}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-text-secondary">All reports uploaded</span>
@@ -2527,7 +3038,7 @@ export default function JobDetailPage() {
               </div>
               <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs">
                 <p className="text-text-tertiary">Next status</p>
-                <p className="font-semibold text-text-primary mt-0.5">{amountDue > 0.02 || partnerPayRemaining > 0.02 ? "Awaiting payment" : "Completed & paid"}</p>
+                <p className="font-semibold text-text-primary mt-0.5">{approvalAmountDue > 0.02 || approvalPartnerPayRemaining > 0.02 ? "Awaiting payment" : "Completed & paid"}</p>
               </div>
             </div>
           </div>
@@ -2582,6 +3093,9 @@ export default function JobDetailPage() {
               Force approve enabled: approval will continue with missing mandatory checks.
             </p>
           ) : null}
+          {timerAdjustEditing ? (
+            <p className="text-xs text-amber-600">Finish or discard timer edit before Review &amp; approve.</p>
+          ) : null}
           <div className="flex justify-end gap-2 pt-2">
             <Button
               variant="outline"
@@ -2591,6 +3105,8 @@ export default function JobDetailPage() {
                 setValidateCompleteOpen(false);
                 setOwnerApprovalChecked(false);
                 setForceApprovalChecked(false);
+                setTimerAdjustEditing(false);
+                setAdjustNote("");
               }}
             >
               Cancel
