@@ -23,6 +23,9 @@ const JOB_DB_COMPAT_STRIP_KEYS = [
   "hourly_client_rate",
   "hourly_partner_rate",
   "billed_hours",
+  "auto_assign_expires_at",
+  "auto_assign_minutes",
+  "auto_assign_invited_partner_ids",
 ] as const;
 
 /**

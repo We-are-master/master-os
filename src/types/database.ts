@@ -299,6 +299,10 @@ export interface Job {
   internal_invoice_approved?: boolean;
   /** Optional checklist items for Start Job modal (when set). */
   operational_checklist?: unknown;
+  /** Auto-assign offer window (set when office broadcasts). */
+  auto_assign_expires_at?: string | null;
+  auto_assign_minutes?: number | null;
+  auto_assign_invited_partner_ids?: string[] | null;
   created_at: string;
   updated_at: string;
 }

@@ -34,8 +34,9 @@ export async function middleware(request: NextRequest) {
   const isAuthPage = pathname.startsWith("/login");
 
   // API routes: do not redirect; let the route return 401 if unauthenticated
+  // Use SAMEORIGIN (not DENY) so same-site iframes can embed PDF previews (e.g. quotes send-pdf GET).
   if (isApiRoute) {
-    addSecurityHeaders(supabaseResponse);
+    addSecurityHeaders(supabaseResponse, { api: true });
     return supabaseResponse;
   }
 
@@ -59,9 +60,10 @@ export async function middleware(request: NextRequest) {
   return supabaseResponse;
 }
 
-function addSecurityHeaders(res: NextResponse) {
+function addSecurityHeaders(res: NextResponse, opts?: { api?: boolean }) {
   res.headers.set("X-Content-Type-Options", "nosniff");
-  res.headers.set("X-Frame-Options", "DENY");
+  // DENY blocks embedding our own PDF preview iframes on the dashboard. SAMEORIGIN still blocks cross-site framing.
+  res.headers.set("X-Frame-Options", opts?.api ? "SAMEORIGIN" : "DENY");
   res.headers.set("X-XSS-Protection", "1; mode=block");
   res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
