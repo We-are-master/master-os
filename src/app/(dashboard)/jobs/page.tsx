@@ -632,22 +632,6 @@ function JobsPageContent() {
     }
   }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
 
-  const handleBulkDelete = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    if (typeof window !== "undefined" && !window.confirm(`Delete ${selectedIds.size} selected jobs permanently?`)) return;
-    try {
-      const supabase = getSupabase();
-      const { error } = await supabase.from("jobs").delete().in("id", Array.from(selectedIds));
-      if (error) throw error;
-      toast.success(`${selectedIds.size} jobs deleted`);
-      setSelectedIds(new Set());
-      refresh();
-      loadDashboardStats();
-    } catch {
-      toast.error("Failed to delete jobs");
-    }
-  }, [selectedIds, refresh, loadDashboardStats]);
-
   const columns: Column<Job>[] = [
     {
       key: "reference",
@@ -908,7 +892,7 @@ function JobsPageContent() {
               <SearchInput placeholder="Search jobs..." className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           </div>
-          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Paid & Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /><BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" /></div>} />}
+          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Paid & Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /></div>} />}
           {viewMode === "kanban" && (
             <div className="min-h-[400px]">
               {loading ? (
