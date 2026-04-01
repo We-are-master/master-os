@@ -153,6 +153,37 @@ export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
 }
 
 /**
+ * Self-bills tied to a job (by jobs.reference + optional primary self_bill id on the job).
+ * Mirrors listInvoicesLinkedToJob (invoices): resolves from DB so stale client state still picks up links.
+ */
+export async function listSelfBillsLinkedToJob(
+  jobReference: string,
+  primarySelfBillId?: string | null,
+): Promise<SelfBill[]> {
+  const supabase = getSupabase();
+  const { data: jobRow, error: jobErr } = await supabase
+    .from("jobs")
+    .select("self_bill_id")
+    .eq("reference", jobReference)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (jobErr) throw jobErr;
+  const ids = new Set<string>();
+  if (jobRow?.self_bill_id) ids.add(jobRow.self_bill_id as string);
+  if (primarySelfBillId) ids.add(primarySelfBillId);
+  if (ids.size === 0) return [];
+  const { data, error } = await supabase.from("self_bills").select("*").in("id", [...ids]);
+  if (error) throw error;
+  const rows = (data ?? []) as SelfBill[];
+  if (primarySelfBillId && !rows.some((r) => r.id === primarySelfBillId)) {
+    const { data: primary } = await supabase.from("self_bills").select("*").eq("id", primarySelfBillId).maybeSingle();
+    const p = primary as SelfBill | null;
+    if (p) rows.unshift(p);
+  }
+  return rows;
+}
+
+/**
  * Legacy hook: when a job hits Awaiting Payment without a bill, attach to the weekly bucket.
  * Prefer syncSelfBillAfterJobChange from job create.
  */
