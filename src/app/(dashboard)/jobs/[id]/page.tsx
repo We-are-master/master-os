@@ -104,7 +104,7 @@ import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
-  auto_assigning: { label: "Auto assigning", variant: "info", dot: true },
+  auto_assigning: { label: "Assigning", variant: "info", dot: true },
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
@@ -975,38 +975,50 @@ export default function JobDetailPage() {
       }
       const hourlyPatch: Partial<Job> = {};
       if (j.job_type === "hourly") {
-        const { clientRate, partnerRate } = resolveJobHourlyRates(j);
         const billedH = Number(j.billed_hours ?? 0);
-        // After approval, `billed_hours` is the confirmed total — do not overwrite with raw timer seconds
-        // (timer can disagree with "Final billed hours" in the modal and would desync job vs invoice).
-        const elapsedSeconds =
-          j.internal_invoice_approved && billedH > 0
-            ? Math.round(billedH * 3600)
-            : computeOfficeTimerElapsedSeconds(j);
-        const totals = computeHourlyTotals({
-          elapsedSeconds,
-          clientHourlyRate: clientRate,
-          partnerHourlyRate: partnerRate,
-        });
-        const customerDeposit = Number(j.customer_deposit ?? 0);
-        const customerFinal = Math.max(
-          0,
-          totals.clientTotal + Number(j.extras_amount ?? 0) - customerDeposit,
-        );
-        const derived = deriveStoredJobFinancials({
-          ...j,
-          client_price: totals.clientTotal,
-          partner_cost: totals.partnerTotal,
-        } as Job);
-        Object.assign(hourlyPatch, {
-          billed_hours: totals.billedHours,
-          hourly_client_rate: clientRate,
-          hourly_partner_rate: partnerRate,
-          client_price: totals.clientTotal,
-          partner_cost: totals.partnerTotal,
-          customer_final_payment: customerFinal,
-          ...derived,
-        });
+        /**
+         * Review & approve already persists client/partner totals from the modal. If `billed_hours` is missing
+         * (e.g. legacy DB strip) or zero, the timer path below would overwrite approved amounts and desync
+         * the Finance summary from the updated invoice — skip recalculation when totals are already on the row.
+         */
+        const shouldSkipHourlyRecalc =
+          j.internal_invoice_approved &&
+          billedH <= 0 &&
+          (Number(j.client_price) > 0.02 || Number(j.partner_cost) > 0.02);
+
+        if (!shouldSkipHourlyRecalc) {
+          const { clientRate, partnerRate } = resolveJobHourlyRates(j);
+          // After approval, `billed_hours` is the confirmed total — do not overwrite with raw timer seconds
+          // (timer can disagree with "Final billed hours" in the modal and would desync job vs invoice).
+          const elapsedSeconds =
+            j.internal_invoice_approved && billedH > 0
+              ? Math.round(billedH * 3600)
+              : computeOfficeTimerElapsedSeconds(j);
+          const totals = computeHourlyTotals({
+            elapsedSeconds,
+            clientHourlyRate: clientRate,
+            partnerHourlyRate: partnerRate,
+          });
+          const customerDeposit = Number(j.customer_deposit ?? 0);
+          const customerFinal = Math.max(
+            0,
+            totals.clientTotal + Number(j.extras_amount ?? 0) - customerDeposit,
+          );
+          const derived = deriveStoredJobFinancials({
+            ...j,
+            client_price: totals.clientTotal,
+            partner_cost: totals.partnerTotal,
+          } as Job);
+          Object.assign(hourlyPatch, {
+            billed_hours: totals.billedHours,
+            hourly_client_rate: clientRate,
+            hourly_partner_rate: partnerRate,
+            client_price: totals.clientTotal,
+            partner_cost: totals.partnerTotal,
+            customer_final_payment: customerFinal,
+            ...derived,
+          });
+        }
       }
       const forcePaidPatch: Partial<Job> = forceCloseFromAwaitingPayment
         ? {

@@ -134,7 +134,7 @@ function JobCardFinanceRow({ job }: { job: Job }) {
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
-  auto_assigning: { label: "Auto assigning", variant: "info", dot: true },
+  auto_assigning: { label: "Assigning", variant: "info", dot: true },
   scheduled: { label: "Scheduled", variant: "info", dot: true },
   late: { label: "Late", variant: "danger", dot: true },
   in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
@@ -233,7 +233,6 @@ function JobsPageContent() {
   const kanbanColumns = useMemo(() => {
     const ids = [
       "unassigned",
-      "auto_assigning",
       "scheduled",
       "in_progress",
       "final_check",
@@ -279,7 +278,11 @@ function JobsPageContent() {
                     : id === "unassigned"
                       ? "bg-slate-500"
                       : "bg-primary",
-        items: filteredData.filter((j) => j.status === id),
+        items: filteredData.filter((j) =>
+          id === "unassigned"
+            ? j.status === "unassigned" || j.status === "auto_assigning"
+            : j.status === id,
+        ),
       };
     });
   }, [filteredData]);
@@ -339,6 +342,8 @@ function JobsPageContent() {
 
   const finalChecksTabCount = (tabCounts.final_check ?? 0) + (tabCounts.need_attention ?? 0);
 
+  const unassignedTabCount = (tabCounts.unassigned ?? 0) + (tabCounts.auto_assigning ?? 0);
+
   const activeJobsKpiCount = useMemo(() => {
     const onSite =
       (tabCounts.in_progress_phase1 ?? 0) +
@@ -357,8 +362,7 @@ function JobsPageContent() {
 
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0 },
-    { id: "unassigned", label: "Unassigned", count: tabCounts.unassigned ?? 0 },
-    { id: "auto_assigning", label: "Assigning", count: tabCounts.auto_assigning ?? 0 },
+    { id: "unassigned", label: "Unassigned", count: unassignedTabCount },
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount },
     { id: "in_progress", label: "In Progress", count: inProgressTabCount },
     { id: "final_check", label: "Final Checks", count: finalChecksTabCount },
