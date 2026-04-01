@@ -1326,6 +1326,7 @@ function SystemTab() {
     favicon_url: "",
     quote_footer_notes: "",
     currency: "GBP",
+    dashboard_sales_goal_monthly: "35000",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
@@ -1352,6 +1353,10 @@ function SystemTab() {
           favicon_url: (data as { favicon_url?: string | null }).favicon_url ?? "",
           quote_footer_notes: data.quote_footer_notes ?? "",
           currency: row.currency && ["GBP", "USD", "EUR", "BRL"].includes(row.currency) ? row.currency : "GBP",
+          dashboard_sales_goal_monthly: (() => {
+            const v = (data as { dashboard_sales_goal_monthly?: number | null }).dashboard_sales_goal_monthly;
+            return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "35000";
+          })(),
         });
       }
       setLoading(false);
@@ -1371,6 +1376,7 @@ function SystemTab() {
         logo_light_theme_url: form.logo_light_theme_url.trim() || null,
         logo_dark_theme_url: form.logo_dark_theme_url.trim() || null,
         favicon_url: form.favicon_url.trim() || null,
+        dashboard_sales_goal_monthly: Math.max(0, Number(form.dashboard_sales_goal_monthly) || 35000),
       };
       if (settingsId) {
         const { error } = await supabase.from("company_settings").update(payload).eq("id", settingsId);
@@ -1449,6 +1455,21 @@ function SystemTab() {
               <label className="block text-xs font-medium text-text-secondary mb-1.5">VAT % (quote line items)</label>
               <Input type="number" min={0} max={100} step={0.5} value={form.vat_percent} onChange={(e) => update("vat_percent", e.target.value)} placeholder="20" />
               <p className="text-[10px] text-text-tertiary mt-1">Applied when VAT is ticked on manual quote lines (e.g. 20 for 20%).</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Monthly sales goal (Overview)</label>
+              <Input
+                type="number"
+                min={0}
+                step={100}
+                value={form.dashboard_sales_goal_monthly}
+                onChange={(e) => update("dashboard_sales_goal_monthly", e.target.value)}
+                placeholder="35000"
+              />
+              <p className="text-[10px] text-text-tertiary mt-1">
+                Pipeline target for the Sales goal bar on the dashboard (same currency as the app). Scales to the selected date range; falls back to{" "}
+                <code className="text-[10px]">NEXT_PUBLIC_DASHBOARD_SALES_GOAL_MONTHLY_GBP</code> if unset.
+              </p>
             </div>
           </div>
         </Card>

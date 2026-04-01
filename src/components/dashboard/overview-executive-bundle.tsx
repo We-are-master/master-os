@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabase } from "@/services/base";
+import { getCompanySettings } from "@/services/company";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { formatCurrency, cn } from "@/lib/utils";
 import { jobBillableRevenue, jobDirectCost } from "@/lib/job-financials";
@@ -24,6 +25,7 @@ import {
   fetchPipelineJobsForDashboard,
   defaultMonthlySalesGoalGbp,
   periodSalesGoalGbp,
+  resolveMonthlySalesGoalFromCompany,
   type OverviewPipelineJobRow,
 } from "@/lib/dashboard-overview-jobs";
 
@@ -86,6 +88,7 @@ export function OverviewExecutiveBundle() {
   const [ownerLeaderboard, setOwnerLeaderboard] = useState<{ name: string; revenue: number; jobCount: number }[]>([]);
   const [topAccounts, setTopAccounts] = useState<{ name: string; revenue: number }[]>([]);
   const [cashflow, setCashflow] = useState<CashBucket[]>([]);
+  const [monthlySalesGoal, setMonthlySalesGoal] = useState(() => defaultMonthlySalesGoalGbp());
 
   useEffect(() => {
     let cancelled = false;
@@ -98,13 +101,16 @@ export function OverviewExecutiveBundle() {
         const fromIso = bounds?.fromIso ?? "2000-01-01T00:00:00.000Z";
         const toBound = bounds?.toIso ?? toIso;
 
-        const [pipelineRows, tiersList, invTotal] = await Promise.all([
+        const [companySettings, pipelineRows, tiersList, invTotal] = await Promise.all([
+          getCompanySettings(),
           fetchPipelineJobsForDashboard(supabase, bounds),
           listCommissionTiers().catch(() => [] as CommissionTier[]),
           paidInvoiceTotal(supabase, fromIso, toBound),
         ]);
 
         if (cancelled) return;
+
+        setMonthlySalesGoal(resolveMonthlySalesGoalFromCompany(companySettings));
 
         let rev = 0;
         let direct = 0;
@@ -310,15 +316,24 @@ export function OverviewExecutiveBundle() {
     };
   }, [boundsKey]);
 
+  useEffect(() => {
+    function refreshGoal() {
+      void getCompanySettings().then((s) => setMonthlySalesGoal(resolveMonthlySalesGoalFromCompany(s)));
+    }
+    window.addEventListener("master-os-company-settings", refreshGoal);
+    return () => window.removeEventListener("master-os-company-settings", refreshGoal);
+  }, []);
+
   const netProfit = grossProfit - commission;
   const grossPct = revenue > 0 ? Math.round((grossProfit / revenue) * 1000) / 10 : 0;
   const netPct = revenue > 0 ? Math.round((netProfit / revenue) * 1000) / 10 : 0;
   const { current, next, fillPct } = tierProgress(billingForTier, tiers);
 
-  const monthlySalesGoal = defaultMonthlySalesGoalGbp();
   const periodGoal = periodSalesGoalGbp(bounds, monthlySalesGoal);
   const salesGoalFillPct =
     periodGoal != null && periodGoal > 0 ? Math.min(100, (revenue / periodGoal) * 100) : 0;
+  const allTimeFillPct =
+    monthlySalesGoal > 0 ? Math.min(100, (revenue / monthlySalesGoal) * 100) : 0;
 
   return (
     <div className="space-y-5">
@@ -419,7 +434,7 @@ export function OverviewExecutiveBundle() {
             <div>
               <CardTitle className="text-base">Sales goal</CardTitle>
               <p className="text-xs text-text-tertiary mt-0.5">
-                Pipeline value vs period target (monthly baseline {formatCurrency(monthlySalesGoal)} scaled to your date range)
+                Pipeline vs monthly baseline {formatCurrency(monthlySalesGoal)} (Settings → System). With a date range, the target scales like Tier vs Revenue.
               </p>
             </div>
           </div>
@@ -428,15 +443,33 @@ export function OverviewExecutiveBundle() {
           {loading ? (
             <div className="h-16 animate-pulse rounded-xl bg-surface-hover" />
           ) : !bounds ? (
-            <div className="space-y-2">
+            <>
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <span className="text-lg font-bold text-text-primary tabular-nums">{formatCurrency(revenue)}</span>
-                <span className="text-sm text-text-tertiary">pipeline billable (all time)</span>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-lg font-bold text-text-primary tabular-nums">{formatCurrency(revenue)}</span>
+                  <span className="text-sm text-text-tertiary">pipeline billable (all time)</span>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200">
+                    {monthlySalesGoal > 0 && revenue >= monthlySalesGoal
+                      ? "Baseline met"
+                      : monthlySalesGoal > 0
+                        ? `${Math.round(allTimeFillPct)}% of monthly baseline`
+                        : "—"}
+                  </span>
+                </div>
+                <span className="text-xs text-text-tertiary">
+                  Monthly baseline: <strong className="text-text-secondary">{formatCurrency(monthlySalesGoal)}</strong>
+                </span>
+              </div>
+              <div className="h-3 rounded-full overflow-hidden bg-surface-hover ring-1 ring-inset ring-border-light/60">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-400 transition-all duration-500"
+                  style={{ width: `${allTimeFillPct}%` }}
+                />
               </div>
               <p className="text-[11px] text-text-tertiary">
-                Pick a date range in the toolbar (7d, MTD, custom…) to compare progress against a sales goal.
+                All-time pipeline vs one month of target. Use the date toolbar for a period-scaled goal bar (same style as Tier vs Revenue).
               </p>
-            </div>
+            </>
           ) : periodGoal != null && periodGoal > 0 ? (
             <>
               <div className="flex flex-wrap items-baseline justify-between gap-2">

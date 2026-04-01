@@ -52,11 +52,18 @@ export async function fetchPipelineJobsForDashboard(
   });
 }
 
-/** Default monthly sales target for the progress bar (scaled to the selected period). */
+/** Default monthly sales target when DB and env are unset (scaled to the selected period). */
 export function defaultMonthlySalesGoalGbp(): number {
   const raw = process.env.NEXT_PUBLIC_DASHBOARD_SALES_GOAL_MONTHLY_GBP;
   const n = raw != null && raw !== "" ? Number(raw) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 35_000;
+}
+
+/** Prefer company_settings; fallback to env default. */
+export function resolveMonthlySalesGoalFromCompany(settings: { dashboard_sales_goal_monthly?: number | null } | null): number {
+  const db = settings?.dashboard_sales_goal_monthly;
+  if (db != null && Number.isFinite(Number(db)) && Number(db) > 0) return Number(db);
+  return defaultMonthlySalesGoalGbp();
 }
 
 export function periodSalesGoalGbp(bounds: { fromIso: string; toIso: string } | null, monthlyGoal: number): number | null {
