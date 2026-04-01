@@ -989,15 +989,22 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     (form.job_type === "hourly" ? (selectedCatalogService?.name ?? form.title) : form.title).trim();
   const filteredPartners = useMemo(() => {
     const q = partnerSearch.trim().toLowerCase();
-    if (!q) return partners;
-    return partners.filter((p) => {
+    const base = !q
+      ? partners
+      : partners.filter((p) => {
       const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
       const trade = (p.trade ?? "").toLowerCase();
       const location = (p.location ?? "").toLowerCase();
       const tradesFlat = (p.trades ?? []).join(" ").toLowerCase();
       return name.includes(q) || trade.includes(q) || location.includes(q) || tradesFlat.includes(q);
     });
-  }, [partnerSearch, partners]);
+    return [...base].sort((a, b) => {
+      const aMatch = targetWorkType ? safePartnerMatchesTypeOfWork(a, targetWorkType) : false;
+      const bMatch = targetWorkType ? safePartnerMatchesTypeOfWork(b, targetWorkType) : false;
+      if (aMatch !== bMatch) return aMatch ? -1 : 1;
+      return (a.company_name ?? a.contact_name ?? "").localeCompare(b.company_name ?? b.contact_name ?? "");
+    });
+  }, [partnerSearch, partners, targetWorkType]);
 
   useEffect(() => {
     if (!open) return;

@@ -1545,13 +1545,19 @@ function InvitePartnerToQuote({
   const filtered = useMemo(() => {
     if (!request) return [];
     const q = searchTerm.trim().toLowerCase();
-    return partners.filter((p) => {
+    const base = partners.filter((p) => {
       if (!q) return true;
       const name = (p.company_name ?? "").toLowerCase();
       const trade = (p.trade ?? "").toLowerCase();
       const tradesFlat = (p.trades ?? []).filter((t): t is string => typeof t === "string").join(" ").toLowerCase();
       const loc = (p.location ?? "").toLowerCase();
       return name.includes(q) || trade.includes(q) || tradesFlat.includes(q) || loc.includes(q);
+    });
+    return [...base].sort((a, b) => {
+      const aMatch = safePartnerMatchesTypeOfWork(a, request.service_type);
+      const bMatch = safePartnerMatchesTypeOfWork(b, request.service_type);
+      if (aMatch !== bMatch) return aMatch ? -1 : 1;
+      return (a.company_name ?? "").localeCompare(b.company_name ?? "");
     });
   }, [request, partners, searchTerm]);
 
@@ -1977,15 +1983,22 @@ function ConvertToJobModal({
   const targetWorkType = (selectedCatalogService?.name ?? request?.service_type ?? "").trim();
   const filteredPartners = useMemo(() => {
     const q = partnerSearch.trim().toLowerCase();
-    if (!q) return partners;
-    return partners.filter((p) => {
+    const base = !q
+      ? partners
+      : partners.filter((p) => {
       const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
       const trade = (p.trade ?? "").toLowerCase();
       const location = (p.location ?? "").toLowerCase();
       const tradesFlat = (p.trades ?? []).join(" ").toLowerCase();
       return name.includes(q) || trade.includes(q) || location.includes(q) || tradesFlat.includes(q);
     });
-  }, [partnerSearch, partners]);
+    return [...base].sort((a, b) => {
+      const aMatch = targetWorkType ? safePartnerMatchesTypeOfWork(a, targetWorkType) : false;
+      const bMatch = targetWorkType ? safePartnerMatchesTypeOfWork(b, targetWorkType) : false;
+      if (aMatch !== bMatch) return aMatch ? -1 : 1;
+      return (a.company_name ?? a.contact_name ?? "").localeCompare(b.company_name ?? b.contact_name ?? "");
+    });
+  }, [partnerSearch, partners, targetWorkType]);
 
   useEffect(() => {
     const inCcz = isLikelyCczAddress(clientAddress.property_address);
