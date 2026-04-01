@@ -517,7 +517,17 @@ export default function RequestsPage() {
           const refreshed = await getRequest(result.id);
           const r = refreshed ?? result;
           setSelectedRequest(r);
-          setConvertChoiceOpen(r);
+          const kind =
+            r.request_kind === "work" || r.request_kind === "quote"
+              ? r.request_kind
+              : formData.request_kind === "work" || formData.request_kind === "quote"
+                ? formData.request_kind
+                : "quote";
+          if (kind === "work") {
+            setConvertToJobOpen(r);
+          } else {
+            setConvertChoiceOpen(r);
+          }
         }
         refresh();
         void loadCounts();
