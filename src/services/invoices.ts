@@ -63,8 +63,24 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<Invoice>
     .insert({ ...legacyRow, reference: ref })
     .select()
     .single();
-  if (legacyErr) throw legacyErr;
-  return legacyData as Invoice;
+  if (!legacyErr) return legacyData as Invoice;
+
+  // Older installations may also lack amount_paid / invoice_kind.
+  const minimalRow = {
+    client_name: input.client_name,
+    job_reference: input.job_reference,
+    amount: input.amount,
+    status: input.status,
+    due_date: input.due_date,
+    paid_date: input.paid_date,
+  };
+  const { data: minimalData, error: minimalErr } = await supabase
+    .from("invoices")
+    .insert({ ...minimalRow, reference: ref })
+    .select()
+    .single();
+  if (minimalErr) throw minimalErr;
+  return minimalData as Invoice;
 }
 
 /** Invoices tied to a job (by reference on the invoice + optional primary invoice id on the job). */
