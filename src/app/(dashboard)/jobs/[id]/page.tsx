@@ -1449,6 +1449,21 @@ export default function JobDetailPage() {
       );
       if (approvedPatch) current = approvedPatch;
 
+      const r2 = (s: string) => Math.round((parseFloat(s) || 0) * 100) / 100;
+      const extrasFromForm = r2(finForm.extras_amount);
+      const materialsFromForm = r2(finForm.materials_cost);
+      const depositFromForm = r2(finForm.customer_deposit);
+      const withFinanceFromForm = await handleJobUpdate(
+        current.id,
+        {
+          extras_amount: extrasFromForm,
+          materials_cost: materialsFromForm,
+          customer_deposit: depositFromForm,
+        },
+        { notifyPartner: false },
+      );
+      if (withFinanceFromForm) current = withFinanceFromForm;
+
       if (current.job_type === "hourly") {
         const { clientRate, partnerRate } = resolveJobHourlyRates(current);
         const typedHours = Math.max(0, Number(approvalBilledHoursInput) || 0);
@@ -1590,6 +1605,9 @@ export default function JobDetailPage() {
     approvalBilledHoursInput,
     officeTimerDisplaySeconds,
     refreshJobFinance,
+    finForm.extras_amount,
+    finForm.materials_cost,
+    finForm.customer_deposit,
   ]);
 
   const billableRevenueForApproval = job ? Math.max(jobBillableRevenue(job), customerScheduledTotal(job)) : 0;
@@ -1675,7 +1693,14 @@ export default function JobDetailPage() {
   const customerPaidTotal = customerDepositPaid + customerFinalPaidSum;
   const amountDue = Math.max(0, billableRevenue - customerPaidTotal);
   const finalBalanceTotal = Math.max(0, Number(job.customer_final_payment ?? 0));
-  const finalCczParking = Math.min(finalBalanceTotal, Math.max(0, Number(job.extras_amount ?? 0)));
+  /** Explicit CCZ/parking from job row, or implied from schedule identity (final + deposit − labour) when extras were not persisted. */
+  const explicitExtras = Math.max(0, Number(job.extras_amount ?? 0));
+  const scheduleExtras = Math.max(
+    0,
+    Number(job.customer_final_payment ?? 0) + Number(job.customer_deposit ?? 0) - Number(job.client_price ?? 0),
+  );
+  const extrasForCczLine = explicitExtras > 0.02 ? explicitExtras : scheduleExtras;
+  const finalCczParking = Math.min(finalBalanceTotal, extrasForCczLine);
   const finalMaterials = Math.min(
     Math.max(0, finalBalanceTotal - finalCczParking),
     Math.max(0, Number(job.materials_cost ?? 0)),
