@@ -200,6 +200,8 @@ export default function PartnersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalTab, setCreateModalTab] = useState<"info" | "documents">("info");
   const [pendingCreateDocs, setPendingCreateDocs] = useState<PendingCreatePartnerDoc[]>([]);
+  const [createAvatarFile, setCreateAvatarFile] = useState<File | null>(null);
+  const createAvatarInputRef = useRef<HTMLInputElement>(null);
   const [createQueueDocOpen, setCreateQueueDocOpen] = useState(false);
   const [createDocPreset, setCreateDocPreset] = useState<{ docType: string; name: string } | null>(null);
   const [createCustomCertName, setCreateCustomCertName] = useState("");
@@ -252,8 +254,21 @@ export default function PartnersPage() {
   useEffect(() => { loadCounts(); }, [loadCounts]);
   useEffect(() => { refresh(); }, [tradeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const createAvatarPreviewUrl = useMemo(
+    () => (createAvatarFile ? URL.createObjectURL(createAvatarFile) : null),
+    [createAvatarFile],
+  );
   useEffect(() => {
-    if (!createOpen) return;
+    return () => {
+      if (createAvatarPreviewUrl) URL.revokeObjectURL(createAvatarPreviewUrl);
+    };
+  }, [createAvatarPreviewUrl]);
+
+  useEffect(() => {
+    if (!createOpen) {
+      setCreateAvatarFile(null);
+      return;
+    }
     setCreateModalTab("info");
     setPendingCreateDocs([]);
     setCreateQueueDocOpen(false);
@@ -344,6 +359,15 @@ export default function PartnersPage() {
         partner_address: form.partner_address.trim() || null,
         verified: false,
       });
+      let partnerToShow: Partner = created;
+      if (createAvatarFile) {
+        try {
+          const url = await uploadPartnerAvatar(created.id, createAvatarFile);
+          partnerToShow = await updatePartner(created.id, { avatar_url: url });
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Photo upload failed");
+        }
+      }
       let docUploadFailed = 0;
       for (const d of pendingCreateDocs) {
         try {
@@ -362,7 +386,7 @@ export default function PartnersPage() {
         }
       }
       setPartnerDrawerInitialTab(undefined);
-      setSelectedPartner(created);
+      setSelectedPartner(partnerToShow);
       setCreateOpen(false);
       setForm(emptyForm);
       setPendingCreateDocs([]);
@@ -717,6 +741,59 @@ export default function PartnersPage() {
         <div className="p-6 space-y-4">
           {createModalTab === "info" ? (
             <>
+          <div className="flex flex-col sm:flex-row items-start gap-4 pb-1">
+            <div className="flex flex-col items-center gap-2 shrink-0">
+              <Avatar
+                name={form.company_name.trim() || "Partner"}
+                size="xl"
+                src={createAvatarPreviewUrl ?? undefined}
+              />
+              <input
+                ref={createAvatarInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!f) return;
+                  const type = (f.type || "").toLowerCase();
+                  if (!["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"].includes(type)) {
+                    toast.error("Use JPEG, PNG, WebP or GIF.");
+                    return;
+                  }
+                  if (f.size > 5 * 1024 * 1024) {
+                    toast.error("Image must be 5 MB or less.");
+                    return;
+                  }
+                  setCreateAvatarFile(f);
+                }}
+              />
+              <div className="flex flex-col items-center gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-[11px] h-8"
+                  onClick={() => createAvatarInputRef.current?.click()}
+                >
+                  Photo
+                </Button>
+                {createAvatarFile ? (
+                  <button
+                    type="button"
+                    className="text-[10px] text-text-tertiary hover:text-text-secondary underline"
+                    onClick={() => setCreateAvatarFile(null)}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <p className="text-xs text-text-tertiary pt-1 sm:pt-0">
+              Optional profile photo. JPEG, PNG, WebP or GIF, up to 5 MB. Saved when you create the partner.
+            </p>
+          </div>
           <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
             <label className="text-xs font-medium text-text-secondary">Partner type *</label>
             <div className="flex flex-wrap gap-2">
