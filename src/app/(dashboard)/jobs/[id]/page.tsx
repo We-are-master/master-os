@@ -38,6 +38,7 @@ import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob } from "@/
 import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
+import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { uploadManualJobReport } from "@/services/job-report-storage";
 import {
   createSignedJobReportAssetUrl,
@@ -674,8 +675,9 @@ export default function JobDetailPage() {
 
   const partnersFilteredForPicker = useMemo(() => {
     const q = partnerPickerSearch.trim().toLowerCase();
-    if (!q) return partners;
-    return partners.filter((p) => {
+    const eligible = partners.filter((p) => isPartnerEligibleForWork(p));
+    if (!q) return eligible;
+    return eligible.filter((p) => {
       const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
       const trade = (p.trade ?? "").toLowerCase();
       const loc = (p.location ?? "").toLowerCase();

@@ -38,7 +38,14 @@ export type JobStatus =
   | "completed"
   | "cancelled";
 export type JobFinanceStatus = "unpaid" | "partial" | "paid";
-export type PartnerStatus = "active" | "inactive" | "on_break" | "onboarding";
+/** Directory lifecycle: only `active` partners are eligible for invites / job assignment. */
+export type PartnerStatus =
+  | "active"
+  | "inactive"
+  | "onboarding"
+  | "needs_attention"
+  /** @deprecated Use `inactive` + reason `on_break` in partner_status_reasons */
+  | "on_break";
 export type InvoiceStatus = "paid" | "pending" | "partially_paid" | "overdue" | "cancelled";
 
 /** Customer collection lifecycle for job-linked invoices (synced from job flags unless locked). */
@@ -345,6 +352,8 @@ export interface Partner {
   /** Multi-category support. Kept in sync with `trade` (first element). */
   trades?: string[] | null;
   status: PartnerStatus;
+  /** Compliance / ops reason codes (e.g. missing_documents, expired_docs). */
+  partner_status_reasons?: string[] | null;
   rating: number;
   jobs_completed: number;
   total_earnings: number;

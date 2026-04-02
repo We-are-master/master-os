@@ -15,7 +15,12 @@ export async function listPartners(params: PartnerListParams): Promise<ListResul
   let query = supabase.from("partners").select("*", { count: "exact" });
 
   if (params.status && params.status !== "all") {
-    query = query.eq("status", params.status);
+    /** Inactive stage includes legacy `on_break` rows (same lifecycle as inactive + reason). */
+    if (params.status === "inactive") {
+      query = query.in("status", ["inactive", "on_break"]);
+    } else {
+      query = query.eq("status", params.status);
+    }
   }
   if (params.trade && params.trade !== "all") {
     // Match against either legacy `trade` or `trades` array (when available).
@@ -34,7 +39,13 @@ export async function listPartners(params: PartnerListParams): Promise<ListResul
   if (error && params.trade && params.trade !== "all") {
     // Fallback for environments where `trades` column is not available yet.
     let fallback = supabase.from("partners").select("*", { count: "exact" });
-    if (params.status && params.status !== "all") fallback = fallback.eq("status", params.status);
+    if (params.status && params.status !== "all") {
+      if (params.status === "inactive") {
+        fallback = fallback.in("status", ["inactive", "on_break"]);
+      } else {
+        fallback = fallback.eq("status", params.status);
+      }
+    }
     fallback = fallback.eq("trade", params.trade);
     if (params.search) {
       fallback = fallback.or(

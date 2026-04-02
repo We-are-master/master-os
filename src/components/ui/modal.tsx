@@ -50,7 +50,7 @@ export function Modal({
             animate="visible"
             exit="exit"
             className={cn(
-              "relative w-full max-h-[min(90vh,100dvh-1rem)] flex flex-col bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden",
+              "relative w-full h-fit max-h-[min(90vh,100dvh-1rem)] flex flex-col bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden",
               sizeStyles[size],
               className
             )}
