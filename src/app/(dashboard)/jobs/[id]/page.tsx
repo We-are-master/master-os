@@ -17,6 +17,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  Search,
   Copy,
   FileText,
   Upload,
@@ -244,7 +245,9 @@ export default function JobDetailPage() {
   const [selectedPartnerId, setSelectedPartnerId] = useState("");
   const [savingPartner, setSavingPartner] = useState(false);
   const [partnerPickerOpen, setPartnerPickerOpen] = useState(false);
+  const [partnerPickerSearch, setPartnerPickerSearch] = useState("");
   const partnerPickerRef = useRef<HTMLDivElement>(null);
+  const partnerPickerSearchInputRef = useRef<HTMLInputElement>(null);
   const [finForm, setFinForm] = useState({
     client_price: "",
     extras_amount: "",
@@ -341,8 +344,16 @@ export default function JobDetailPage() {
 
   const hourlyAutoBilling = useMemo(() => {
     if (!job || job.job_type !== "hourly") return null;
-    const elapsedSeconds = officeTimerDisplaySeconds ?? (Number(job.timer_elapsed_seconds ?? 0) || 0);
     const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+    const billedH = Number(job.billed_hours ?? 0);
+    const approvedStage =
+      job.internal_invoice_approved ||
+      job.status === "awaiting_payment" ||
+      job.status === "completed";
+    const elapsedSeconds =
+      billedH > 0 && approvedStage
+        ? Math.round(billedH * 3600)
+        : officeTimerDisplaySeconds ?? (Number(job.timer_elapsed_seconds ?? 0) || 0);
     const totals = computeHourlyTotals({
       elapsedSeconds,
       clientHourlyRate: clientRate,
@@ -653,6 +664,27 @@ export default function JobDetailPage() {
   }, [partnerPickerOpen]);
 
   useEffect(() => {
+    if (!partnerModalOpen) setPartnerPickerSearch("");
+  }, [partnerModalOpen]);
+
+  useEffect(() => {
+    if (!partnerPickerOpen) return;
+    queueMicrotask(() => partnerPickerSearchInputRef.current?.focus());
+  }, [partnerPickerOpen]);
+
+  const partnersFilteredForPicker = useMemo(() => {
+    const q = partnerPickerSearch.trim().toLowerCase();
+    if (!q) return partners;
+    return partners.filter((p) => {
+      const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
+      const trade = (p.trade ?? "").toLowerCase();
+      const loc = (p.location ?? "").toLowerCase();
+      const tradesFlat = (p.trades ?? []).filter((t): t is string => typeof t === "string").join(" ").toLowerCase();
+      return name.includes(q) || trade.includes(q) || loc.includes(q) || tradesFlat.includes(q);
+    });
+  }, [partners, partnerPickerSearch]);
+
+  useEffect(() => {
     if (!job) return;
     const r2 = (v: unknown) => String(Math.round(Number(v ?? 0) * 100) / 100);
     setFinForm({
@@ -819,17 +851,42 @@ export default function JobDetailPage() {
       let customer_final_payment = r2(finForm.customer_final_payment);
       let billed_hours: number | undefined;
       if (job.job_type === "hourly") {
-        const elapsedSeconds = computeOfficeTimerElapsedSeconds(job);
+        const billedH = Number(job.billed_hours ?? 0);
+        const approvedStage =
+          job.internal_invoice_approved ||
+          job.status === "awaiting_payment" ||
+          job.status === "completed";
+        const useBilledHoursSeconds = billedH > 0 && approvedStage;
         const { clientRate, partnerRate } = resolveJobHourlyRates(job);
-        const totals = computeHourlyTotals({
-          elapsedSeconds,
-          clientHourlyRate: clientRate,
-          partnerHourlyRate: partnerRate,
-        });
-        client_price = totals.clientTotal;
-        partner_cost = totals.partnerTotal;
-        customer_final_payment = Math.round(Math.max(0, client_price + extras_amount - customer_deposit) * 100) / 100;
-        billed_hours = totals.billedHours;
+        if (useBilledHoursSeconds) {
+          const elapsedSeconds = Math.round(billedH * 3600);
+          const totals = computeHourlyTotals({
+            elapsedSeconds,
+            clientHourlyRate: clientRate,
+            partnerHourlyRate: partnerRate,
+          });
+          client_price = totals.clientTotal;
+          partner_cost = totals.partnerTotal;
+          customer_final_payment = Math.round(Math.max(0, client_price + extras_amount - customer_deposit) * 100) / 100;
+          billed_hours = totals.billedHours;
+        } else if (approvedStage && !useBilledHoursSeconds) {
+          // Post-approval: do not overwrite stored totals with the office timer (e.g. legacy DB without billed_hours).
+          client_price = r2(finForm.client_price);
+          partner_cost = r2(finForm.partner_cost);
+          customer_final_payment = r2(finForm.customer_final_payment);
+          billed_hours = billedH > 0 ? billedH : undefined;
+        } else {
+          const elapsedSeconds = computeOfficeTimerElapsedSeconds(job);
+          const totals = computeHourlyTotals({
+            elapsedSeconds,
+            clientHourlyRate: clientRate,
+            partnerHourlyRate: partnerRate,
+          });
+          client_price = totals.clientTotal;
+          partner_cost = totals.partnerTotal;
+          customer_final_payment = Math.round(Math.max(0, client_price + extras_amount - customer_deposit) * 100) / 100;
+          billed_hours = totals.billedHours;
+        }
       }
       const newFields = {
         client_price,
@@ -931,7 +988,8 @@ export default function JobDetailPage() {
     }
   }, [job, cancelPresetId, cancelDetail, profile?.id, profile?.full_name]);
 
-  const handleStatusChange = useCallback(async (j: Job, newStatus: Job["status"]): Promise<Job | null> => {
+  const handleStatusChange = useCallback(
+    async (j: Job, newStatus: Job["status"], opts?: { skipHourlyRecalc?: boolean }): Promise<Job | null> => {
     const forceCloseFromAwaitingPayment = j.status === "awaiting_payment" && newStatus === "completed";
     if (!forceCloseFromAwaitingPayment) {
       const check = canAdvanceJob(j, newStatus, {
@@ -974,7 +1032,7 @@ export default function JobDetailPage() {
         }
       }
       const hourlyPatch: Partial<Job> = {};
-      if (j.job_type === "hourly") {
+      if (j.job_type === "hourly" && !opts?.skipHourlyRecalc) {
         const billedH = Number(j.billed_hours ?? 0);
         /**
          * Review & approve already persists client/partner totals from the modal. If `billed_hours` is missing
@@ -990,10 +1048,14 @@ export default function JobDetailPage() {
           const { clientRate, partnerRate } = resolveJobHourlyRates(j);
           // After approval, `billed_hours` is the confirmed total — do not overwrite with raw timer seconds
           // (timer can disagree with "Final billed hours" in the modal and would desync job vs invoice).
-          const elapsedSeconds =
-            j.internal_invoice_approved && billedH > 0
-              ? Math.round(billedH * 3600)
-              : computeOfficeTimerElapsedSeconds(j);
+          const useBilledHoursSeconds =
+            billedH > 0 &&
+            (j.internal_invoice_approved ||
+              j.status === "awaiting_payment" ||
+              j.status === "completed");
+          const elapsedSeconds = useBilledHoursSeconds
+            ? Math.round(billedH * 3600)
+            : computeOfficeTimerElapsedSeconds(j);
           const totals = computeHourlyTotals({
             elapsedSeconds,
             clientHourlyRate: clientRate,
@@ -1493,7 +1555,10 @@ export default function JobDetailPage() {
           ...deriveStoredJobFinancials(mergedForDerived),
         };
         const withHourly = await handleJobUpdate(current.id, hourlyPatch, { notifyPartner: false });
-        if (withHourly) current = withHourly;
+        if (!withHourly) {
+          throw new Error("Could not save hourly billing totals on the job.");
+        }
+        current = withHourly;
       }
 
       const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
@@ -1579,12 +1644,15 @@ export default function JobDetailPage() {
         toast.info("Partner self-bill could not be linked automatically; you can attach it later from Finance or this job.");
       }
 
+      // Never re-derive hourly totals from the office timer here — this flow already applied modal hours + rates,
+      // and timer-based recalc would overwrite approved amounts (and desync the finance summary from the invoice).
+      const statusOpts = { skipHourlyRecalc: current.job_type === "hourly" };
       if (customerDue > 0.02 || partnerDue > 0.02) {
-        const next = await handleStatusChange(current, "awaiting_payment");
+        const next = await handleStatusChange(current, "awaiting_payment", statusOpts);
         if (next) current = next;
         toast.success("Approved. Job moved to Awaiting payment.");
       } else {
-        const next = await handleStatusChange(current, "completed");
+        const next = await handleStatusChange(current, "completed", statusOpts);
         if (next) current = next;
         toast.success("Approved. Job marked Completed & paid.");
       }
@@ -1735,7 +1803,8 @@ export default function JobDetailPage() {
     : partnerLiveActiveMs != null
       ? formatPartnerLiveTimer(partnerLiveActiveMs)
       : formatOfficeTimer(Number(job.timer_elapsed_seconds ?? 0) || 0);
-  const ownerAttestationText = `I, ${job.owner_name?.trim() || "job owner"}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
+  const attestationDisplayName = profile?.full_name?.trim() || job.owner_name?.trim() || "Victor";
+  const ownerAttestationText = `I, ${attestationDisplayName}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
   const mandatoryChecksOk = reportsUploaded && reportsApproved && ownerApprovalChecked;
   const canSubmitApproval = mandatoryChecksOk || forceApprovalChecked;
@@ -1845,7 +1914,7 @@ export default function JobDetailPage() {
                   }
                   if (action.special === "send_report_invoice") {
                     setApprovalMode("review_approve");
-                    setOwnerApprovalChecked(false);
+                    setOwnerApprovalChecked(true);
                     setForceApprovalChecked(false);
                     setValidateCompleteOpen(true);
                     return;
@@ -3039,19 +3108,21 @@ export default function JobDetailPage() {
               <span className="text-xs text-text-secondary">{ownerAttestationText}</span>
             </label>
           </div>
-          <div className="rounded-xl border border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/10 p-3">
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4"
-                checked={forceApprovalChecked}
-                onChange={(e) => setForceApprovalChecked(e.target.checked)}
-              />
-              <span className="text-xs text-amber-700 dark:text-amber-300">
-                Force approve: allow Review & approve even when mandatory checks are incomplete.
-              </span>
-            </label>
-          </div>
+          {!mandatoryChecksOk && (
+            <div className="rounded-xl border border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/10 p-3">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4"
+                  checked={forceApprovalChecked}
+                  onChange={(e) => setForceApprovalChecked(e.target.checked)}
+                />
+                <span className="text-xs text-amber-700 dark:text-amber-300">
+                  Force approve: allow Review & approve even when mandatory checks are incomplete.
+                </span>
+              </label>
+            </div>
+          )}
           <p className="text-xs text-text-tertiary">
             Approve updates the client invoice first, then attempts partner self-bill linkage, then moves the job to Awaiting payment or Completed &amp; paid.
           </p>
@@ -3315,7 +3386,11 @@ export default function JobDetailPage() {
 
       <Modal
         open={partnerModalOpen}
-        onClose={() => { setPartnerModalOpen(false); setPartnerPickerOpen(false); }}
+        onClose={() => {
+          setPartnerModalOpen(false);
+          setPartnerPickerOpen(false);
+          setPartnerPickerSearch("");
+        }}
         title={job.partner_id ? "Change partner" : "Assign partner"}
         scrollBody
       >
@@ -3349,38 +3424,68 @@ export default function JobDetailPage() {
             </button>
             {partnerPickerOpen && (
               <div
-                className="mt-1.5 w-full max-h-[min(50vh,320px)] min-h-0 overflow-y-auto overscroll-contain rounded-xl border border-border bg-card py-1 shadow-lg ring-1 ring-black/5 dark:ring-white/10 [-webkit-overflow-scrolling:touch]"
+                className="mt-1.5 w-full max-h-[min(50vh,360px)] min-h-0 flex flex-col rounded-xl border border-border bg-card shadow-lg ring-1 ring-black/5 dark:ring-white/10 overflow-hidden"
                 role="listbox"
                 aria-label="Partners"
               >
-              <button
-                type="button"
-                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${!selectedPartnerId ? "bg-primary/8" : ""}`}
-                onClick={() => { setSelectedPartnerId(""); setPartnerPickerOpen(false); }}
-              >
-                <span className="flex-1 text-text-secondary font-medium">No partner</span>
-                {!selectedPartnerId && <Check className="h-4 w-4 text-primary shrink-0" />}
-              </button>
-              <div className="mx-2 h-px bg-border-light" />
-              {partners.map((p) => {
-                const name = p.company_name?.trim() || p.contact_name || "Partner";
-                const isSel = selectedPartnerId === p.id;
-                return (
+                <div className="shrink-0 p-2 border-b border-border-light bg-surface-hover/40">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-tertiary pointer-events-none" aria-hidden />
+                    <input
+                      ref={partnerPickerSearchInputRef}
+                      type="search"
+                      value={partnerPickerSearch}
+                      onChange={(e) => setPartnerPickerSearch(e.target.value)}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      placeholder="Search name, trade, location…"
+                      className="w-full h-9 pl-8 pr-3 rounded-lg border border-border bg-card text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                      autoComplete="off"
+                      aria-label="Filter partners"
+                    />
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1 [-webkit-overflow-scrolling:touch]">
                   <button
-                    key={p.id}
                     type="button"
-                    className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${isSel ? "bg-primary/8" : ""}`}
-                    onClick={() => { setSelectedPartnerId(p.id); setPartnerPickerOpen(false); }}
+                    className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${!selectedPartnerId ? "bg-primary/8" : ""}`}
+                    onClick={() => {
+                      setSelectedPartnerId("");
+                      setPartnerPickerOpen(false);
+                    }}
                   >
-                    <Avatar name={name} size="sm" className="shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-text-primary truncate">{name}</p>
-                      {p.trade ? <p className="text-[11px] text-text-tertiary truncate">{p.trade}</p> : null}
-                    </div>
-                    {isSel && <Check className="h-4 w-4 text-primary shrink-0" />}
+                    <span className="flex-1 text-text-secondary font-medium">No partner</span>
+                    {!selectedPartnerId && <Check className="h-4 w-4 text-primary shrink-0" />}
                   </button>
-                );
-              })}
+                  <div className="mx-2 h-px bg-border-light" />
+                  {partnersFilteredForPicker.length === 0 ? (
+                    <p className="px-3 py-6 text-center text-sm text-text-tertiary">
+                      {partnerPickerSearch.trim() ? "No partners match your search." : "No partners loaded."}
+                    </p>
+                  ) : (
+                    partnersFilteredForPicker.map((p) => {
+                      const name = p.company_name?.trim() || p.contact_name || "Partner";
+                      const isSel = selectedPartnerId === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover ${isSel ? "bg-primary/8" : ""}`}
+                          onClick={() => {
+                            setSelectedPartnerId(p.id);
+                            setPartnerPickerOpen(false);
+                          }}
+                        >
+                          <Avatar name={name} size="sm" className="shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-text-primary truncate">{name}</p>
+                            {p.trade ? <p className="text-[11px] text-text-tertiary truncate">{p.trade}</p> : null}
+                          </div>
+                          {isSel && <Check className="h-4 w-4 text-primary shrink-0" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             )}
           </div>

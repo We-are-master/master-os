@@ -19,7 +19,7 @@ import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon,
   ArrowRight, Briefcase, Receipt,
   MapPin, Building2, TrendingUp,
-  AlertTriangle, XCircle, PoundSterling,
+  AlertTriangle, XCircle, PoundSterling, Undo2,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -36,7 +36,7 @@ import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { KanbanBoard } from "@/components/shared/kanban-board";
-import { canAdvanceJob, isJobOnSiteWorkStatus, normalizeTotalPhases } from "@/lib/job-phases";
+import { canAdvanceJob, getPreviousJobStatus, isJobOnSiteWorkStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
@@ -926,6 +926,8 @@ function JobsPageContent() {
                   renderCard={(j) => {
                     const sc = statusConfig[j.status] ?? { label: j.status };
                     const sched = formatJobScheduleLine(j);
+                    const previousStatus = getPreviousJobStatus(j);
+                    const prevLabel = previousStatus ? (statusConfig[previousStatus]?.label ?? previousStatus) : null;
                     return (
                       <div className="rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors cursor-pointer overflow-hidden flex flex-col">
                         {j.property_address?.trim() ? (
@@ -940,6 +942,21 @@ function JobsPageContent() {
                           {sched ? <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug">{sched}</p> : null}
                           <p className="text-[11px] text-text-secondary mt-0.5 truncate">{j.client_name}</p>
                           <JobCardFinanceRow job={j} />
+                          {previousStatus && prevLabel ? (
+                            <div className="mt-2.5" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="w-full h-8 text-[11px] shrink-0"
+                                icon={<Undo2 className="h-3.5 w-3.5" />}
+                                title={`Move to ${prevLabel}`}
+                                onClick={() => void handleStatusChange(j, previousStatus)}
+                              >
+                                Back to {prevLabel}
+                              </Button>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -1001,24 +1018,27 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const isHousekeepJob = isHousekeepWorkLabel(selectedCatalogService?.name) || isHousekeepWorkLabel(form.title);
   const targetWorkType =
     (form.job_type === "hourly" ? (selectedCatalogService?.name ?? form.title) : form.title).trim();
-  const filteredPartners = useMemo(() => {
-    const q = partnerSearch.trim().toLowerCase();
-    const base = !q
-      ? partners
-      : partners.filter((p) => {
-      const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
-      const trade = (p.trade ?? "").toLowerCase();
-      const location = (p.location ?? "").toLowerCase();
-      const tradesFlat = (p.trades ?? []).join(" ").toLowerCase();
-      return name.includes(q) || trade.includes(q) || location.includes(q) || tradesFlat.includes(q);
-    });
-    return [...base].sort((a, b) => {
-      const aMatch = targetWorkType ? safePartnerMatchesTypeOfWork(a, targetWorkType) : false;
-      const bMatch = targetWorkType ? safePartnerMatchesTypeOfWork(b, targetWorkType) : false;
-      if (aMatch !== bMatch) return aMatch ? -1 : 1;
-      return (a.company_name ?? a.contact_name ?? "").localeCompare(b.company_name ?? b.contact_name ?? "");
-    });
-  }, [partnerSearch, partners, targetWorkType]);
+  const partnerSearchQ = partnerSearch.trim().toLowerCase();
+  const filteredPartnersBase = !partnerSearchQ
+    ? partners
+    : partners.filter((p) => {
+        const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
+        const trade = (p.trade ?? "").toLowerCase();
+        const location = (p.location ?? "").toLowerCase();
+        const tradesFlat = (p.trades ?? []).join(" ").toLowerCase();
+        return (
+          name.includes(partnerSearchQ) ||
+          trade.includes(partnerSearchQ) ||
+          location.includes(partnerSearchQ) ||
+          tradesFlat.includes(partnerSearchQ)
+        );
+      });
+  const filteredPartners = [...filteredPartnersBase].sort((a, b) => {
+    const aMatch = targetWorkType ? safePartnerMatchesTypeOfWork(a, targetWorkType) : false;
+    const bMatch = targetWorkType ? safePartnerMatchesTypeOfWork(b, targetWorkType) : false;
+    if (aMatch !== bMatch) return aMatch ? -1 : 1;
+    return (a.company_name ?? a.contact_name ?? "").localeCompare(b.company_name ?? b.contact_name ?? "");
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -1038,7 +1058,11 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
 
   useEffect(() => {
     if (!isHousekeepJob) return;
-    setForm((prev) => (prev.in_ccz || !prev.has_free_parking ? { ...prev, in_ccz: false, has_free_parking: true } : prev));
+    queueMicrotask(() => {
+      setForm((prev) =>
+        prev.in_ccz || !prev.has_free_parking ? { ...prev, in_ccz: false, has_free_parking: true } : prev,
+      );
+    });
   }, [isHousekeepJob]);
 
   const handleSubmit = (e: React.FormEvent) => {

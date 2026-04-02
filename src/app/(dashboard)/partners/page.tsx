@@ -89,6 +89,9 @@ const tradeColors: Record<string, string> = {
 const TRADES = [...TYPE_OF_WORK_OPTIONS];
 const KNOWN_TRADES = new Set<string>(TRADES);
 
+/** Minimum blended compliance score (0–100) to activate without explicit authorization. */
+const ACTIVATION_COMPLIANCE_MIN_SCORE = 95;
+
 const LEGACY_TRADE_ALIASES: Record<string, string> = {
   electrical: "Electrician",
   plumbing: "Plumber",
@@ -1060,6 +1063,24 @@ export default function PartnersPage() {
                   </div>
                 </div>
               )}
+              <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Other optional</p>
+                <p className="text-[11px] text-text-tertiary leading-snug">
+                  DBS (Disclosure and Barring Service) — upload if required for your contracts. Optional; not part of the compliance score.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="border-dashed"
+                  onClick={() => {
+                    setCreateDocPreset({ docType: "dbs", name: "DBS certificate" });
+                    setCreateQueueDocOpen(true);
+                  }}
+                >
+                  DBS
+                </Button>
+              </div>
               <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Required documents</p>
@@ -1305,6 +1326,8 @@ const DOC_TYPES_NO_EXPIRY = new Set([
   "self_bill_agreement",
   "proof_of_address",
   "right_to_work",
+  /** Optional UK basic DBS — issue date only; no fixed expiry in product */
+  "dbs",
 ]);
 
 const DOC_TYPES_EXPIRY_ONE_YEAR_FROM_UPLOAD = new Set(["poa"]);
@@ -1402,6 +1425,7 @@ const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = 
   proof_of_address: { label: "Proof of Address", icon: FileText },
   right_to_work: { label: "Right to Work", icon: FileText },
   poa: { label: "Power of Attorney (POA)", icon: FileText },
+  dbs: { label: "DBS (Disclosure & Barring)", icon: ShieldCheck },
   other: { label: "Other", icon: FileText },
 };
 
@@ -1571,6 +1595,15 @@ function getRequiredDocComplianceStatus(
   if (hasValid) return "valid";
   if (matches.length > 0) return "expired";
   return "missing";
+}
+
+function getOptionalDbsStatus(docs: PartnerDoc[]): "valid" | "expired" | "missing" {
+  const dbsDocs = docs.filter((d) => d.doc_type === "dbs");
+  if (dbsDocs.length === 0) return "missing";
+  const now = new Date();
+  const hasValid = dbsDocs.some((d) => !d.expires_at || new Date(d.expires_at) >= now);
+  if (hasValid) return "valid";
+  return "expired";
 }
 
 /** Map create-partner queue to PartnerDoc shape for the same compliance matching as the profile Documents tab. */
@@ -2008,6 +2041,12 @@ function PartnerDetailDrawer({
   /** Only apply initialTab when switching to a different partner (avoid resetting tab on realtime updates). */
   const lastPartnerIdForTabRef = useRef<string | null>(null);
 
+  const [forceActivateDespiteLowCompliance, setForceActivateDespiteLowCompliance] = useState(false);
+
+  useEffect(() => {
+    setForceActivateDespiteLowCompliance(false);
+  }, [partner?.id]);
+
   useEffect(() => {
     if (teamMember) {
       setLoadingApp(true);
@@ -2337,6 +2376,8 @@ function PartnerDetailDrawer({
       ? requiredDocuments.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid")
       : [];
 
+  const dbsOptionalStatus = getOptionalDbsStatus(documents);
+
   useEffect(() => {
     if (!partner || teamMember) return;
     if (Number(partner.compliance_score ?? 0) === computedCompliance) return;
@@ -2493,6 +2534,9 @@ function PartnerDetailDrawer({
 
   const config = statusConfig[partner.status];
   const statusActions = getPartnerStatusActions(partner.status);
+  const activationRequiresComplianceAck =
+    computedCompliance < ACTIVATION_COMPLIANCE_MIN_SCORE &&
+    statusActions.some((a) => a.status === "active");
 
   const realJobsCount = partnerJobs.length;
   const completedJobs = partnerJobs.filter((j) => j.status === "completed").length;
@@ -3087,12 +3131,44 @@ function PartnerDetailDrawer({
               </div>
             )}
 
-            <div className="flex gap-2 pt-4 border-t border-border-light">
-              {statusActions.map((action) => (
-                <Button key={action.status} variant={action.primary ? "primary" : "outline"} className="flex-1" size="sm" icon={<action.icon className="h-3.5 w-3.5" />} onClick={() => onStatusChange(partner, action.status)}>
-                  {action.label}
-                </Button>
-              ))}
+            <div className="flex flex-col gap-2 pt-4 border-t border-border-light">
+              {activationRequiresComplianceAck && (
+                <label className="flex items-start gap-2.5 rounded-lg border border-red-300/90 bg-red-50/90 dark:border-red-900/55 dark:bg-red-950/35 px-3 py-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-red-400 text-red-600 focus:ring-red-500"
+                    checked={forceActivateDespiteLowCompliance}
+                    onChange={(e) => setForceActivateDespiteLowCompliance(e.target.checked)}
+                  />
+                  <span className="text-xs text-red-800 dark:text-red-200 leading-snug">
+                    I authorize activating this partner despite compliance below {ACTIVATION_COMPLIANCE_MIN_SCORE}% (current{" "}
+                    <span className="font-semibold tabular-nums">{computedCompliance}%</span>).
+                  </span>
+                </label>
+              )}
+              <div className="flex gap-2">
+                {statusActions.map((action) => {
+                  const needsAck =
+                    action.status === "active" && computedCompliance < ACTIVATION_COMPLIANCE_MIN_SCORE;
+                  return (
+                    <Button
+                      key={action.status}
+                      variant={action.primary ? "primary" : "outline"}
+                      className="flex-1"
+                      size="sm"
+                      icon={<action.icon className="h-3.5 w-3.5" />}
+                      disabled={needsAck && !forceActivateDespiteLowCompliance}
+                      onClick={() => {
+                        if (needsAck && !forceActivateDespiteLowCompliance) return;
+                        onStatusChange(partner, action.status);
+                        if (needsAck) setForceActivateDespiteLowCompliance(false);
+                      }}
+                    >
+                      {action.label}
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
@@ -3321,6 +3397,62 @@ function PartnerDetailDrawer({
                     </li>
                   );
                 })}
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-text-primary">Optional documents</h3>
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setTab("documents")}>
+                  Upload / replace
+                </Button>
+              </div>
+              <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
+                <li className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 flex items-start gap-2">
+                    {dbsOptionalStatus === "valid" ? (
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+                    ) : dbsOptionalStatus === "expired" ? (
+                      <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden />
+                    ) : (
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                    )}
+                    <div>
+                      <p className="text-sm font-medium text-text-primary">DBS (Disclosure &amp; Barring)</p>
+                      <p className="text-[11px] text-text-tertiary">Optional — not included in compliance score</p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 pl-6 sm:pl-0">
+                    <Badge
+                      variant={
+                        dbsOptionalStatus === "valid"
+                          ? "success"
+                          : dbsOptionalStatus === "expired"
+                            ? "danger"
+                            : "warning"
+                      }
+                      size="sm"
+                    >
+                      {dbsOptionalStatus === "valid"
+                        ? "On file"
+                        : dbsOptionalStatus === "expired"
+                          ? "Expired"
+                          : "Not uploaded"}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="whitespace-nowrap"
+                      onClick={() => {
+                        setDocPreset({ docType: "dbs", name: "DBS certificate" });
+                        setAddDocOpen(true);
+                        setTab("documents");
+                      }}
+                    >
+                      {dbsOptionalStatus === "valid" ? "Update" : "Add"}
+                    </Button>
+                  </div>
+                </li>
               </ul>
             </div>
 
@@ -3597,6 +3729,23 @@ function PartnerDetailDrawer({
                 </div>
               </div>
             )}
+            <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Other optional</p>
+              <p className="text-[11px] text-text-tertiary leading-snug">
+                DBS (Disclosure and Barring Service) — optional; not part of the compliance score.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-dashed"
+                onClick={() => {
+                  setDocPreset({ docType: "dbs", name: "DBS certificate" });
+                  setAddDocOpen(true);
+                }}
+              >
+                DBS
+              </Button>
+            </div>
             <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Required documents</p>

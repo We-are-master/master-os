@@ -155,12 +155,60 @@ export type JobAdvanceFinancialContext = {
   partnerPayments: JobCompletionPaymentRow[];
 };
 
+/**
+ * Previous step in the main office workflow (for Rewind / Back on job cards).
+ * Returns null when there is no earlier step (e.g. unassigned, cancelled).
+ */
+export function getPreviousJobStatus(job: Job): Job["status"] | null {
+  const tp = normalizeTotalPhases(job.total_phases);
+  const last = lastInProgressStatusForTotal(tp);
+  switch (job.status) {
+    case "cancelled":
+    case "unassigned":
+      return null;
+    case "auto_assigning":
+      return "unassigned";
+    case "completed":
+      return "awaiting_payment";
+    case "awaiting_payment":
+      return "final_check";
+    case "need_attention":
+      return last;
+    case "final_check":
+      return last;
+    case "in_progress_phase3":
+      if (tp >= 3) return "in_progress_phase2";
+      if (tp === 2) return "in_progress_phase1";
+      return "scheduled";
+    case "in_progress_phase2":
+      if (tp >= 2) return "in_progress_phase1";
+      return "scheduled";
+    case "in_progress_phase1":
+      return "scheduled";
+    case "late":
+      return "scheduled";
+    case "scheduled":
+      return "unassigned";
+    default:
+      return null;
+  }
+}
+
+export function isRewindTransition(job: Job, nextStatus: string): boolean {
+  const prev = getPreviousJobStatus(job);
+  return prev !== null && nextStatus === prev;
+}
+
 export function canAdvanceJob(
   job: Job,
   nextStatus: string,
   financialCtx?: JobAdvanceFinancialContext,
 ): { ok: boolean; message?: string } {
   const tp = normalizeTotalPhases(job.total_phases);
+
+  if (isRewindTransition(job, nextStatus)) {
+    return { ok: true };
+  }
 
   if (nextStatus === "cancelled") {
     return { ok: true };
