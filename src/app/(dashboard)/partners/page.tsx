@@ -20,10 +20,10 @@ import {
   ArrowRight, Mail, Phone, Calendar, DollarSign,
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye,
-  Play, Pause, RotateCcw, KeyRound, MailPlus,
-  Home,
+  Play, KeyRound, MailPlus,
+  Home, Sparkles,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -63,14 +63,31 @@ import {
   inferPartnerLegal,
   mergePartnerComplianceScore,
 } from "@/lib/partner-compliance";
+import {
+  computeAutoReasonCodes,
+  deriveAutoStatusAndReasons,
+  isPartnerInactiveStage,
+  mergeUniqueReasons,
+  partnerReasonLabel,
+  shouldForceActivateAck,
+} from "@/lib/partner-status";
 import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
-  on_break: { label: "On Break", variant: "warning", color: "bg-amber-50 dark:bg-amber-950/300" },
-  inactive: { label: "Inactive", variant: "default", color: "bg-stone-400" },
-  onboarding: { label: "Onboarding", variant: "info", color: "bg-blue-50 dark:bg-blue-950/300" },
+  needs_attention: { label: "Needs Attention", variant: "danger", color: "bg-red-50 dark:bg-red-950/300" },
+  inactive: { label: "Inactive", variant: "default", color: "bg-stone-600 dark:bg-stone-800" },
+  onboarding: { label: "Onboarding", variant: "warning", color: "bg-amber-50 dark:bg-amber-950/300" },
+  /** @deprecated DB value — shown as Inactive + “On break” badge */
+  on_break: { label: "Inactive", variant: "default", color: "bg-stone-600 dark:bg-stone-800" },
 };
+
+const PARTNER_STAGE_PILLS: { id: string; label: string; icon: typeof Clock }[] = [
+  { id: "onboarding", label: "Onboarding", icon: Clock },
+  { id: "needs_attention", label: "Needs Attention", icon: AlertTriangle },
+  { id: "active", label: "Active", icon: CheckCircle2 },
+  { id: "inactive", label: "Inactive", icon: XCircle },
+];
 
 const tradeColors: Record<string, string> = {
   HVAC: "bg-blue-50 dark:bg-blue-950/30 text-blue-700 ring-blue-200/50",
@@ -182,7 +199,8 @@ const emptyForm = {
   trades: ["HVAC"] as string[],
   uk_coverage_regions: defaultUkCoverage(),
   partner_address: "",
-  status: "active" as PartnerStatus,
+  /** New directory partners start in Onboarding until compliance + activation. */
+  status: "onboarding" as PartnerStatus,
 };
 
 type PendingCreatePartnerDoc = {
@@ -245,7 +263,7 @@ export default function PartnersPage() {
   const loadCounts = useCallback(async () => {
     try {
       const [counts, complianceAgg] = await Promise.all([
-        getStatusCounts("partners", ["active", "inactive", "on_break", "paused", "offboarded", "onboarding"]),
+        getStatusCounts("partners", ["active", "inactive", "onboarding", "needs_attention", "on_break"]),
         getAggregates("partners", "compliance_score"),
       ]);
       setStatusCounts(counts);
@@ -316,9 +334,9 @@ export default function PartnersPage() {
 
   const totalPartners = statusCounts["all"] ?? 0;
   const activeCount = statusCounts["active"] ?? 0;
-  const pausedCount = (statusCounts["on_break"] ?? 0) + (statusCounts["paused"] ?? 0);
-  const offboardedCount = statusCounts["offboarded"] ?? 0;
-  const inactiveCount = Math.max(0, totalPartners - activeCount - pausedCount - offboardedCount);
+  const onboardingCount = statusCounts["onboarding"] ?? 0;
+  const needsAttentionCount = statusCounts["needs_attention"] ?? 0;
+  const inactiveStageCount = (statusCounts["inactive"] ?? 0) + (statusCounts["on_break"] ?? 0);
 
   async function handleCreate() {
     if (!form.company_name.trim() || !form.contact_name.trim() || !form.email.trim()) {
@@ -436,11 +454,24 @@ export default function PartnersPage() {
     [],
   );
 
+  const handlePartnerPatch = useCallback(async (patch: Partial<Partner>) => {
+    if (!selectedPartner) return;
+    try {
+      const updated = await updatePartner(selectedPartner.id, patch);
+      setSelectedPartner(updated);
+      toast.success("Partner updated");
+      refresh();
+      loadCounts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update");
+    }
+  }, [selectedPartner, refresh, loadCounts]);
+
   const handleStatusChange = useCallback(async (partner: Partner, newStatus: PartnerStatus) => {
     try {
       const updated = await updatePartner(partner.id, { status: newStatus });
       setSelectedPartner(updated);
-      toast.success(`Partner moved to ${statusConfig[newStatus].label}`);
+      toast.success(`Partner moved to ${statusConfig[newStatus]?.label ?? newStatus}`);
       refresh();
       loadCounts();
     } catch (err) {
@@ -535,7 +566,41 @@ export default function PartnersPage() {
     },
     {
       key: "status", label: "Status",
-      render: (item) => <Badge variant={statusConfig[item.status].variant} dot>{statusConfig[item.status].label}</Badge>,
+      render: (item) => {
+        const cfg = statusConfig[item.status] ?? statusConfig.active;
+        const reasons = item.partner_status_reasons ?? [];
+        const reasonRows =
+          item.status === "on_break"
+            ? reasons.filter((r) => r !== "on_break")
+            : reasons;
+        const showReasons =
+          (item.status === "needs_attention" && reasonRows.length > 0) ||
+          (item.status === "on_break" && reasonRows.length > 0);
+        return (
+          <div className="flex flex-col gap-1 min-w-[8rem]">
+            <Badge variant={cfg.variant} dot>
+              {item.status === "on_break" ? "Inactive" : cfg.label}
+            </Badge>
+            {item.status === "on_break" ? (
+              <span className="inline-flex w-fit items-center rounded-md border border-stone-400/50 bg-stone-500/10 px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                On break
+              </span>
+            ) : null}
+            {showReasons ? (
+              <div className="flex flex-wrap gap-0.5">
+                {reasonRows.map((r) => (
+                  <span
+                    key={r}
+                    className="inline-flex items-center rounded-md border border-border-light bg-surface-hover px-1.5 py-0.5 text-[10px] font-medium text-text-secondary"
+                  >
+                    {partnerReasonLabel(r)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       key: "jobs_completed", label: "Jobs", align: "center",
@@ -601,8 +666,8 @@ export default function PartnersPage() {
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Total Partners" value={totalPartners} format="number" icon={Users} accent="blue" />
-          <KpiCard title="Active Partner" value={activeCount} format="number" icon={Briefcase} accent="emerald" />
-          <KpiCard title="Inactive Partner" value={inactiveCount} format="number" icon={Users} accent="amber" />
+          <KpiCard title="Active" value={activeCount} format="number" icon={Briefcase} accent="emerald" />
+          <KpiCard title="Needs Attention" value={needsAttentionCount} format="number" icon={AlertTriangle} accent="amber" />
           <KpiCard
             title="Avg compliance"
             value={complianceAvg == null ? "—" : Math.round(complianceAvg)}
@@ -653,20 +718,93 @@ export default function PartnersPage() {
 
         {viewMode === "directory" && (
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={selectClasses}>
-                <option value="all">All Status</option>
-                <option value="active">Active</option>
-                <option value="on_break">On Break</option>
-                <option value="inactive">Inactive</option>
-                <option value="onboarding">Onboarding</option>
-              </select>
-              <select value={tradeFilter} onChange={(e) => { setTradeFilter(e.target.value); setPage(1); }} className={selectClasses}>
-                <option value="all">All Trades</option>
-                {TRADES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
+          <div className="rounded-2xl border border-border-light bg-card/70 p-4 mb-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <Sparkles className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-text-primary">Pick a stage to focus the list</p>
+                <p className="text-[11px] text-text-tertiary mt-0.5">
+                  Only <strong className="text-text-secondary">Active</strong> partners can be invited or assigned on jobs and quotes.
+                </p>
+              </div>
             </div>
+            <div className="flex flex-wrap gap-2">
+              {PARTNER_STAGE_PILLS.map((s) => {
+                const c =
+                  s.id === "onboarding"
+                    ? onboardingCount
+                    : s.id === "needs_attention"
+                      ? needsAttentionCount
+                      : s.id === "active"
+                        ? activeCount
+                        : inactiveStageCount;
+                const active = statusFilter === s.id;
+                const Icon = s.icon;
+                const selectedRing =
+                  s.id === "onboarding"
+                    ? "border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-200"
+                    : s.id === "needs_attention"
+                      ? "border-red-500 bg-red-500/10 text-red-800 dark:text-red-200"
+                      : s.id === "active"
+                        ? "border-emerald-500 bg-emerald-500/12 text-emerald-800 dark:text-emerald-200"
+                        : "border-stone-700 bg-stone-800/20 text-stone-900 dark:text-stone-100";
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter(s.id);
+                      setPage(1);
+                    }}
+                    className={cn(
+                      "inline-flex items-center gap-2 rounded-xl border px-3 py-2 transition-all min-w-[7rem]",
+                      active
+                        ? selectedRing
+                        : "border-border-light bg-card hover:border-primary/30 text-text-secondary",
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                    <span className="text-xs font-semibold truncate">{s.label}</span>
+                    <span
+                      className={cn(
+                        "ml-auto text-[11px] font-bold tabular-nums",
+                        active ? "opacity-90" : "text-text-tertiary",
+                      )}
+                    >
+                      {c}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 border-t border-border-light/80">
+              <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">More</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter("all");
+                  setPage(1);
+                }}
+                className={cn(
+                  "text-xs font-medium rounded-lg px-2 py-1 transition-colors",
+                  statusFilter === "all" ? "bg-surface-tertiary text-text-primary" : "text-text-tertiary hover:text-primary",
+                )}
+              >
+                All partners
+                <span className="text-[10px] text-text-tertiary ml-1 tabular-nums">({totalPartners})</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <select value={tradeFilter} onChange={(e) => { setTradeFilter(e.target.value); setPage(1); }} className={selectClasses}>
+              <option value="all">All Trades</option>
+              {TRADES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
             <SearchInput placeholder="Search partners..." className="w-56" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
 
@@ -691,7 +829,7 @@ export default function PartnersPage() {
               <>
                 <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
                 <BulkActionBtn label="Deactivate" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
-                <BulkActionBtn label="On Break" onClick={() => handleBulkStatusChange("on_break")} variant="warning" />
+                <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                 <div className="h-4 w-px bg-border" />
                 <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
                 <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
@@ -711,7 +849,7 @@ export default function PartnersPage() {
           setSelectedTeamMember(null);
           setPartnerDrawerInitialTab(undefined);
         }}
-        onStatusChange={handleStatusChange}
+        onPartnerPatch={handlePartnerPatch}
         onVerify={handleVerify}
         onPartnerUpdate={setSelectedPartner}
         onTeamChanged={loadTeam}
@@ -1974,7 +2112,7 @@ function PartnerDetailDrawer({
   teamMember,
   initialTab,
   onClose,
-  onStatusChange,
+  onPartnerPatch,
   onVerify,
   onPartnerUpdate,
   onTeamChanged,
@@ -1984,7 +2122,7 @@ function PartnerDetailDrawer({
   /** When opening the drawer (e.g. after create), start on this tab. */
   initialTab?: string;
   onClose: () => void;
-  onStatusChange: (partner: Partner, status: PartnerStatus) => void;
+  onPartnerPatch: (patch: Partial<Partner>) => Promise<void>;
   onVerify: (partner: Partner) => void;
   onPartnerUpdate?: (updated: Partner) => void;
   onTeamChanged?: () => void;
@@ -2041,11 +2179,11 @@ function PartnerDetailDrawer({
   /** Only apply initialTab when switching to a different partner (avoid resetting tab on realtime updates). */
   const lastPartnerIdForTabRef = useRef<string | null>(null);
 
-  const [forceActivateDespiteLowCompliance, setForceActivateDespiteLowCompliance] = useState(false);
-
-  useEffect(() => {
-    setForceActivateDespiteLowCompliance(false);
-  }, [partner?.id]);
+  const [activateForceOpen, setActivateForceOpen] = useState(false);
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [deactivatePreset, setDeactivatePreset] = useState<"" | "missing_docs" | "low_score" | "on_break" | "other">("");
+  const [deactivateOtherText, setDeactivateOtherText] = useState("");
+  const [deactivateOtherStage, setDeactivateOtherStage] = useState<PartnerStatus>("needs_attention");
 
   useEffect(() => {
     if (teamMember) {
@@ -2386,6 +2524,80 @@ function PartnerDetailDrawer({
       .catch(() => {});
   }, [partner, teamMember, computedCompliance, onPartnerUpdate]);
 
+  const runActivate = useCallback(
+    async (force: boolean) => {
+      if (!partner) return;
+      if (!force && shouldForceActivateAck(computedCompliance)) {
+        setActivateForceOpen(true);
+        return;
+      }
+      await onPartnerPatch({ status: "active", partner_status_reasons: [] });
+      setActivateForceOpen(false);
+    },
+    [partner, computedCompliance, onPartnerPatch],
+  );
+
+  const submitDeactivate = useCallback(async () => {
+    if (!partner || !deactivatePreset) return;
+    try {
+      if (deactivatePreset === "missing_docs") {
+        await onPartnerPatch({
+          status: "needs_attention",
+          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, ["missing_documents"]),
+        });
+      } else if (deactivatePreset === "low_score") {
+        await onPartnerPatch({
+          status: "needs_attention",
+          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, ["low_compliance_score"]),
+        });
+      } else if (deactivatePreset === "on_break") {
+        await onPartnerPatch({
+          status: "inactive",
+          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, ["on_break"]),
+        });
+      } else if (deactivatePreset === "other") {
+        const tail = deactivateOtherText.trim();
+        const reason = tail ? `other:${tail}` : "other:";
+        await onPartnerPatch({
+          status: deactivateOtherStage,
+          partner_status_reasons: mergeUniqueReasons(partner.partner_status_reasons, [reason]),
+        });
+      }
+      setDeactivateOpen(false);
+      setDeactivatePreset("");
+      setDeactivateOtherText("");
+    } catch {
+      /* toast handled by parent */
+    }
+  }, [partner, deactivatePreset, deactivateOtherText, deactivateOtherStage, onPartnerPatch]);
+
+  useEffect(() => {
+    if (!partner || teamMember) return;
+    if (isPartnerInactiveStage(partner)) return;
+    const auto = computeAutoReasonCodes({
+      missingMandatoryDocs: missingRequiredDocs.length > 0,
+      hasExpiredDocs: expiredDocCount > 0,
+      complianceBelowThreshold: computedCompliance < ACTIVATION_COMPLIANCE_MIN_SCORE,
+    });
+    const { status: nextStatus, partner_status_reasons: nextReasons } = deriveAutoStatusAndReasons(partner, auto);
+    const curR = [...(partner.partner_status_reasons ?? [])].sort().join("|");
+    const nextR = [...nextReasons].sort().join("|");
+    if (nextStatus === partner.status && curR === nextR) return;
+    const t = window.setTimeout(() => {
+      void onPartnerPatch({ status: nextStatus, partner_status_reasons: nextReasons });
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [
+    partner?.id,
+    partner?.status,
+    partner?.partner_status_reasons,
+    teamMember,
+    missingRequiredDocs.length,
+    expiredDocCount,
+    computedCompliance,
+    onPartnerPatch,
+  ]);
+
   if (!partner && !teamMember) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
   if (teamMember) {
@@ -2532,11 +2744,7 @@ function PartnerDetailDrawer({
 
   if (!partner) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
-  const config = statusConfig[partner.status];
-  const statusActions = getPartnerStatusActions(partner.status);
-  const activationRequiresComplianceAck =
-    computedCompliance < ACTIVATION_COMPLIANCE_MIN_SCORE &&
-    statusActions.some((a) => a.status === "active");
+  const config = statusConfig[partner.status] ?? statusConfig.active;
 
   const realJobsCount = partnerJobs.length;
   const completedJobs = partnerJobs.filter((j) => j.status === "completed").length;
@@ -2752,7 +2960,33 @@ function PartnerDetailDrawer({
                   <p className="text-sm text-text-tertiary">{partner.contact_name}</p>
                 )}
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <Badge variant={config.variant} dot size="md">{config.label}</Badge>
+                  <Badge variant={config.variant} dot size="md">
+                    {partner.status === "on_break" ? "Inactive" : config.label}
+                  </Badge>
+                  {partner.status === "on_break" ? (
+                    <span className="inline-flex items-center rounded-md border border-stone-400/60 bg-stone-500/10 px-2 py-0.5 text-[10px] font-semibold text-text-secondary">
+                      On break
+                    </span>
+                  ) : null}
+                  {(() => {
+                    const raw = partner.partner_status_reasons ?? [];
+                    const reasonsForDisplay =
+                      partner.status === "on_break" ? raw.filter((r) => r !== "on_break") : raw;
+                    if (reasonsForDisplay.length === 0) return null;
+                    if (partner.status !== "needs_attention" && partner.status !== "on_break") return null;
+                    const chip =
+                      partner.status === "needs_attention"
+                        ? "border-red-200/80 bg-red-50/80 dark:bg-red-950/40 text-red-800 dark:text-red-200"
+                        : "border-stone-400/60 bg-stone-500/10 text-text-secondary";
+                    return reasonsForDisplay.map((r) => (
+                      <span
+                        key={r}
+                        className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold ${chip}`}
+                      >
+                        {partnerReasonLabel(r)}
+                      </span>
+                    ));
+                  })()}
                   {(editingOverview ? overviewForm.trades : (partner.trades?.length ? partner.trades : [partner.trade])).map((t) => (
                     <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
                       {t}
@@ -3132,43 +3366,35 @@ function PartnerDetailDrawer({
             )}
 
             <div className="flex flex-col gap-2 pt-4 border-t border-border-light">
-              {activationRequiresComplianceAck && (
-                <label className="flex items-start gap-2.5 rounded-lg border border-red-300/90 bg-red-50/90 dark:border-red-900/55 dark:bg-red-950/35 px-3 py-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-red-400 text-red-600 focus:ring-red-500"
-                    checked={forceActivateDespiteLowCompliance}
-                    onChange={(e) => setForceActivateDespiteLowCompliance(e.target.checked)}
-                  />
-                  <span className="text-xs text-red-800 dark:text-red-200 leading-snug">
-                    I authorize activating this partner despite compliance below {ACTIVATION_COMPLIANCE_MIN_SCORE}% (current{" "}
-                    <span className="font-semibold tabular-nums">{computedCompliance}%</span>).
-                  </span>
-                </label>
-              )}
-              <div className="flex gap-2">
-                {statusActions.map((action) => {
-                  const needsAck =
-                    action.status === "active" && computedCompliance < ACTIVATION_COMPLIANCE_MIN_SCORE;
-                  return (
+              {isAdmin && (
+                <div className="flex flex-wrap gap-2">
+                  {partner.status !== "active" && (
                     <Button
-                      key={action.status}
-                      variant={action.primary ? "primary" : "outline"}
-                      className="flex-1"
                       size="sm"
-                      icon={<action.icon className="h-3.5 w-3.5" />}
-                      disabled={needsAck && !forceActivateDespiteLowCompliance}
+                      variant="primary"
+                      icon={<Play className="h-3.5 w-3.5" />}
+                      onClick={() => void runActivate(false)}
+                    >
+                      Activate
+                    </Button>
+                  )}
+                  {!isPartnerInactiveStage(partner) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      icon={<XCircle className="h-3.5 w-3.5" />}
                       onClick={() => {
-                        if (needsAck && !forceActivateDespiteLowCompliance) return;
-                        onStatusChange(partner, action.status);
-                        if (needsAck) setForceActivateDespiteLowCompliance(false);
+                        setDeactivatePreset("");
+                        setDeactivateOtherText("");
+                        setDeactivateOtherStage("needs_attention");
+                        setDeactivateOpen(true);
                       }}
                     >
-                      {action.label}
+                      Deactivate
                     </Button>
-                  );
-                })}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -3984,6 +4210,89 @@ function PartnerDetailDrawer({
           </div>
         )}
       </div>
+
+      <Modal
+        open={deactivateOpen}
+        onClose={() => setDeactivateOpen(false)}
+        title="Why are you deactivating this partner?"
+        subtitle="This records the reason and stage for compliance and reporting."
+        size="md"
+      >
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason</label>
+            <select
+              value={deactivatePreset}
+              onChange={(e) => setDeactivatePreset(e.target.value as typeof deactivatePreset)}
+              className="w-full h-10 rounded-lg border border-border bg-card text-sm px-3 text-text-primary"
+            >
+              <option value="">Select…</option>
+              <option value="missing_docs">Missing Documents</option>
+              <option value="low_score">Low Score</option>
+              <option value="on_break">On Break</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          {deactivatePreset === "other" && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Details</label>
+                <textarea
+                  value={deactivateOtherText}
+                  onChange={(e) => setDeactivateOtherText(e.target.value)}
+                  rows={3}
+                  placeholder="Describe the reason…"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Set stage</label>
+                <select
+                  value={deactivateOtherStage}
+                  onChange={(e) => setDeactivateOtherStage(e.target.value as PartnerStatus)}
+                  className="w-full h-10 rounded-lg border border-border bg-card text-sm px-3"
+                >
+                  <option value="needs_attention">Needs attention</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="onboarding">Onboarding</option>
+                </select>
+              </div>
+            </>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" type="button" onClick={() => setDeactivateOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" disabled={!deactivatePreset} onClick={() => void submitDeactivate()}>
+              Confirm
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={activateForceOpen}
+        onClose={() => setActivateForceOpen(false)}
+        title="Compliance below minimum"
+        subtitle="Activation usually requires 95% compliance."
+        size="sm"
+      >
+        <div className="p-6 space-y-4">
+          <p className="text-sm text-text-secondary">
+            This partner does not meet the minimum compliance score ({ACTIVATION_COMPLIANCE_MIN_SCORE}%). Current score:{" "}
+            <span className="font-semibold tabular-nums text-text-primary">{computedCompliance}%</span>. Do you want to force
+            activation?
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" type="button" onClick={() => setActivateForceOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="primary" onClick={() => void runActivate(true)}>
+              Force activate
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </Drawer>
   );
 }
@@ -4055,28 +4364,3 @@ function InternalProfileTab({ partner, onUpdate }: { partner: Partner; onUpdate:
   );
 }
 
-function getPartnerStatusActions(currentStatus: string) {
-  switch (currentStatus) {
-    case "onboarding":
-      return [
-        { label: "Activate", status: "active" as PartnerStatus, icon: Play, primary: true },
-        { label: "Deactivate", status: "inactive" as PartnerStatus, icon: XCircle, primary: false },
-      ];
-    case "active":
-      return [
-        { label: "Put On Break", status: "on_break" as PartnerStatus, icon: Pause, primary: false },
-        { label: "Deactivate", status: "inactive" as PartnerStatus, icon: XCircle, primary: false },
-      ];
-    case "on_break":
-      return [
-        { label: "Reactivate", status: "active" as PartnerStatus, icon: Play, primary: true },
-        { label: "Deactivate", status: "inactive" as PartnerStatus, icon: XCircle, primary: false },
-      ];
-    case "inactive":
-      return [
-        { label: "Reactivate", status: "active" as PartnerStatus, icon: RotateCcw, primary: true },
-      ];
-    default:
-      return [];
-  }
-}

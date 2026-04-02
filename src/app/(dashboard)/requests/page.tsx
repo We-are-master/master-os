@@ -34,6 +34,7 @@ import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { useRouter } from "next/navigation";
 import { listPartners, listPartnersAll } from "@/services/partners";
+import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { createClientAddress, listAddressesByClient } from "@/services/client-addresses";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { extractUkPostcode } from "@/lib/uk-postcode";
@@ -782,7 +783,9 @@ export default function RequestsPage() {
                 <BulkBtn label="Accept" onClick={() => handleBulkStatusChange("approved")} variant="success" />
                 <BulkBtn label="Decline" onClick={() => handleBulkStatusChange("declined")} variant="danger" />
                 <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
-                <BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" />
+                {selectedIds.size === 1 ? (
+                  <BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" />
+                ) : null}
               </div>
             }
           />
@@ -1532,7 +1535,9 @@ function InvitePartnerToQuote({
         .then((list) => {
           if (cancelled) return;
           setPartners(list);
-          const matched = list.filter((p) => safePartnerMatchesTypeOfWork(p, serviceType));
+          const matched = list.filter(
+            (p) => isPartnerEligibleForWork(p) && safePartnerMatchesTypeOfWork(p, serviceType),
+          );
           setSelectedIds(new Set(matched.map((p) => p.id)));
         })
         .catch((err) => {
@@ -1560,6 +1565,7 @@ function InvitePartnerToQuote({
     if (!request) return [];
     const q = searchTerm.trim().toLowerCase();
     const base = partners.filter((p) => {
+      if (!isPartnerEligibleForWork(p)) return false;
       if (!q) return true;
       const name = (p.company_name ?? "").toLowerCase();
       const trade = (p.trade ?? "").toLowerCase();
@@ -2027,9 +2033,9 @@ function ConvertToJobModal({
   const targetWorkType = (selectedCatalogService?.name ?? request?.service_type ?? "").trim();
   const filteredPartners = useMemo(() => {
     const q = partnerSearch.trim().toLowerCase();
-    const base = !q
-      ? partners
-      : partners.filter((p) => {
+    const base = partners.filter((p) => {
+      if (!isPartnerEligibleForWork(p)) return false;
+      if (!q) return true;
       const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
       const trade = (p.trade ?? "").toLowerCase();
       const location = (p.location ?? "").toLowerCase();

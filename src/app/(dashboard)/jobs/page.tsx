@@ -32,6 +32,7 @@ import { softDeleteInvoicesForArchivedJobs } from "@/services/invoices";
 import { useProfile } from "@/hooks/use-profile";
 import type { Job, Partner } from "@/types/database";
 import { listPartners } from "@/services/partners";
+import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -1019,9 +1020,10 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const targetWorkType =
     (form.job_type === "hourly" ? (selectedCatalogService?.name ?? form.title) : form.title).trim();
   const partnerSearchQ = partnerSearch.trim().toLowerCase();
+  const eligiblePartners = useMemo(() => partners.filter((p) => isPartnerEligibleForWork(p)), [partners]);
   const filteredPartnersBase = !partnerSearchQ
-    ? partners
-    : partners.filter((p) => {
+    ? eligiblePartners
+    : eligiblePartners.filter((p) => {
         const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
         const trade = (p.trade ?? "").toLowerCase();
         const location = (p.location ?? "").toLowerCase();

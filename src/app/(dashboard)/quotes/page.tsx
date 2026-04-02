@@ -36,6 +36,7 @@ import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quote
 import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
 import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
 import { listPartners } from "@/services/partners";
+import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
@@ -905,7 +906,9 @@ function QuotesPageContent() {
                   <BulkBtn label="Accept" onClick={() => handleBulkStatusChange("accepted")} variant="success" />
                   <BulkBtn label="Reject" onClick={() => handleBulkStatusChange("rejected")} variant="danger" />
                   <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
-                  <BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" />
+                  {selectedIds.size === 1 ? (
+                    <BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" />
+                  ) : null}
                 </div>
               }
             />
@@ -952,7 +955,14 @@ function QuotesPageContent() {
           onSubmit={handleConfirmCreateJob}
         />
       ) : null}
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create Quote" subtitle="Add line items and optionally request partner bids" size="lg">
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Create Quote"
+        subtitle="Add line items and optionally request partner bids"
+        size="lg"
+        scrollBody={false}
+      >
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
     </PageTransition>
@@ -1108,6 +1118,11 @@ function QuoteDetailDrawer({
     if (st) return st;
     return proposalFirstLineLabel(quote);
   }, [quote]);
+
+  const partnersEligibleForInvite = useMemo(
+    () => partners.filter((p) => isPartnerEligibleForWork(p)),
+    [partners],
+  );
 
   const loadBids = useCallback(async (quoteId: string) => {
     setBidsLoading(true);
@@ -2302,7 +2317,9 @@ function QuoteDetailDrawer({
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <button
                 type="button"
-                onClick={() => setSelectedPartnerIds(partners.length ? new Set(partners.map((p) => p.id)) : new Set())}
+                onClick={() =>
+                  setSelectedPartnerIds(partnersEligibleForInvite.length ? new Set(partnersEligibleForInvite.map((p) => p.id)) : new Set())
+                }
                 className="text-xs font-medium text-primary hover:underline"
               >
                 Select all
@@ -2316,7 +2333,7 @@ function QuoteDetailDrawer({
                 onClick={() =>
                   setSelectedPartnerIds((prev) => {
                     const next = new Set(prev);
-                    for (const p of partners) {
+                    for (const p of partnersEligibleForInvite) {
                       if (p.id && safePartnerMatchesTypeOfWork(p, invitePartnerTypeOfWork)) next.delete(p.id);
                     }
                     return next;
@@ -2329,8 +2346,10 @@ function QuoteDetailDrawer({
             </div>
           </div>
           <div className="space-y-2 overflow-y-auto flex-1 min-h-0 pr-1 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2">
-            {partners.length === 0 && <p className="text-sm text-text-tertiary text-center py-8">No partners found</p>}
-            {partners.map((p) => {
+            {partnersEligibleForInvite.length === 0 && (
+              <p className="text-sm text-text-tertiary text-center py-8">No active partners found</p>
+            )}
+            {partnersEligibleForInvite.map((p) => {
               const isSelected = selectedPartnerIds.has(p.id);
               const isTradeMatch =
                 !!invitePartnerTypeOfWork.trim() && safePartnerMatchesTypeOfWork(p, invitePartnerTypeOfWork);
@@ -3027,7 +3046,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const partnersForTrade = useMemo(() => {
     const t = form.title.trim();
     if (!t) return [];
-    return partners.filter((p) => partnerMatchesTypeOfWork(p, t));
+    return partners.filter((p) => isPartnerEligibleForWork(p) && partnerMatchesTypeOfWork(p, t));
   }, [partners, form.title]);
 
   useEffect(() => {
@@ -3133,7 +3152,9 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   };
 
   return (
-    <form onSubmit={handleSubmit} className="p-6 space-y-4">
+    <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
+      <div className="max-h-[min(65dvh,520px)] overflow-y-auto overscroll-contain px-4 py-4 sm:max-h-[min(72dvh,580px)] sm:px-6 sm:py-5">
+        <div className="space-y-4">
       <Select
         label="Quote type"
         value={quoteType}
@@ -3325,21 +3346,21 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                   </button>
                 </div>
               </div>
-              <div className="flex flex-col items-center justify-center text-center gap-2 rounded-xl border border-border-light bg-surface-hover/50 px-3 py-3 sm:px-4 sm:py-3.5">
+              <div className="flex items-start gap-2 rounded-lg border border-border-light bg-surface-hover/50 px-2.5 py-2 sm:gap-2 sm:px-3 sm:py-2">
                 <span
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-inset ring-primary/15 mt-0.5"
                   aria-hidden
                 >
-                  <Sparkles className="h-4 w-4" />
+                  <Sparkles className="h-3.5 w-3.5" />
                 </span>
-                <p className="text-[11px] sm:text-xs text-text-tertiary leading-relaxed max-w-md mx-auto [text-wrap:pretty]">
+                <p className="text-[10px] sm:text-[11px] text-text-tertiary leading-snug min-w-0 flex-1 [text-wrap:pretty]">
                   {form.title.trim()
-                    ? "AI matched the partners below to your type of work."
-                    : "Adicione o tipo de trabalho — a IA faz o match com todos os parceiros do diretório para você."}
+                    ? "Partners below are matched to your type of work."
+                    : "Add a type of work — we’ll match directory partners for you."}
                 </p>
               </div>
             </div>
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2">
+            <div className="space-y-2 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2">
               {partnersLoading && partners.length === 0 ? (
                 <p className="text-sm text-text-tertiary text-center py-6">Loading partners...</p>
               ) : !partnersLoading && partners.length === 0 ? (
@@ -3403,9 +3424,17 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
           </div>
         </>
       )}
-      <div className="flex justify-end gap-2 pt-2">
-        <Button variant="outline" onClick={onCancel} type="button" disabled={uploadingPhotos}>Cancel</Button>
-        <Button type="submit" loading={uploadingPhotos} disabled={uploadingPhotos}>Create Quote</Button>
+        </div>
+      </div>
+      <div className="shrink-0 border-t border-border-light bg-card px-4 py-3 sm:px-6">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={onCancel} type="button" disabled={uploadingPhotos} className="w-full sm:w-auto">
+            Cancel
+          </Button>
+          <Button type="submit" loading={uploadingPhotos} disabled={uploadingPhotos} className="w-full sm:w-auto">
+            Create Quote
+          </Button>
+        </div>
       </div>
     </form>
   );
