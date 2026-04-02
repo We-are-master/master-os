@@ -2294,17 +2294,52 @@ function QuoteDetailDrawer({
             <button type="button" onClick={() => setSelectedPartnerIds(partners.length ? new Set(partners.map((p) => p.id)) : new Set())} className="text-xs font-medium text-primary hover:underline">Select all</button>
             <button type="button" onClick={() => setSelectedPartnerIds(new Set())} className="text-xs font-medium text-text-tertiary hover:underline">Clear</button>
           </div>
-          <div className="space-y-2 overflow-y-auto flex-1 min-h-0 pr-1">
+          <div className="space-y-2 overflow-y-auto flex-1 min-h-0 pr-1 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2">
             {partners.length === 0 && <p className="text-sm text-text-tertiary text-center py-8">No partners found</p>}
             {partners.map((p) => {
               const isSelected = selectedPartnerIds.has(p.id);
               return (
-                <label key={p.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? "border-primary bg-primary/5" : "border-border hover:border-primary/30 hover:bg-surface-hover"}`}>
-                  <input type="checkbox" checked={isSelected} onChange={(e) => { setSelectedPartnerIds((prev) => { const next = new Set(prev); if (e.target.checked) next.add(p.id); else next.delete(p.id); return next; }); }} className="h-4 w-4 rounded border-border text-primary" />
-                  <Avatar name={p.company_name} size="md" />
+                <label
+                  key={p.id}
+                  className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                    isSelected
+                      ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
+                      : "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={(e) => {
+                      setSelectedPartnerIds((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(p.id);
+                        else next.delete(p.id);
+                        return next;
+                      });
+                    }}
+                    className="sr-only"
+                  />
+                  <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-text-primary truncate">{p.company_name}</p>
-                    <p className="text-xs text-text-tertiary">{p.trade} — {p.location}</p>
+                    <p className="text-xs text-text-tertiary mt-0.5 truncate">
+                      {p.trade}
+                      {p.location?.trim() ? <> · {p.location}</> : null}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                      Match
+                    </span>
+                    <span
+                      aria-hidden
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                        isSelected ? "border-primary bg-primary" : "border-amber-400/80 dark:border-amber-600 bg-white dark:bg-card"
+                      }`}
+                    >
+                      {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
+                    </span>
                   </div>
                 </label>
               );
@@ -3238,19 +3273,21 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                   </button>
                 </div>
               </div>
-              <div className="flex gap-2.5 items-start rounded-xl border border-border-light bg-surface-hover/50 px-3 py-2.5 sm:gap-3 sm:px-3.5">
+              <div className="flex flex-col items-center justify-center text-center gap-2 rounded-xl border border-border-light bg-surface-hover/50 px-3 py-3 sm:px-4 sm:py-3.5">
                 <span
-                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-inset ring-primary/15 mt-0.5"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
                   aria-hidden
                 >
-                  <Sparkles className="h-3.5 w-3.5" />
+                  <Sparkles className="h-4 w-4" />
                 </span>
-                <p className="text-[11px] sm:text-xs text-text-tertiary leading-relaxed min-w-0 flex-1 [text-wrap:pretty]">
-                  AI matched the partners below to your type of work.
+                <p className="text-[11px] sm:text-xs text-text-tertiary leading-relaxed max-w-md mx-auto [text-wrap:pretty]">
+                  {form.title.trim()
+                    ? "AI matched the partners below to your type of work."
+                    : "Adicione o tipo de trabalho — a IA faz o match com todos os parceiros do diretório para você."}
                 </p>
               </div>
             </div>
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2">
               {partnersLoading && partners.length === 0 ? (
                 <p className="text-sm text-text-tertiary text-center py-6">Loading partners...</p>
               ) : !partnersLoading && partners.length === 0 ? (
@@ -3268,7 +3305,9 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                     <label
                       key={p.id}
                       className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                        isSelected ? "border-primary bg-primary/5" : "border-border hover:border-primary/30 hover:bg-surface-hover"
+                        isSelected
+                          ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
+                          : "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
                       }`}
                     >
                       <input
@@ -3280,16 +3319,28 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                           else next.delete(p.id);
                           setSelectedPartnerIds(next);
                         }}
-                        className="h-4 w-4 rounded border-border text-primary"
+                        className="sr-only"
                       />
-                      <Avatar name={p.company_name} size="md" />
+                      <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
-                        <p className="text-xs text-text-tertiary mt-0.5">
-                          <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Match</span>
-                          <span className="text-text-secondary"> · {p.trade}</span>
-                          {p.location?.trim() ? <span> — {p.location}</span> : null}
+                        <p className="text-xs text-text-tertiary mt-0.5 truncate">
+                          {p.trade}
+                          {p.location?.trim() ? <> · {p.location}</> : null}
                         </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                          Match
+                        </span>
+                        <span
+                          aria-hidden
+                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                            isSelected ? "border-primary bg-primary" : "border-amber-400/80 dark:border-amber-600 bg-white dark:bg-card"
+                          }`}
+                        >
+                          {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
+                        </span>
                       </div>
                     </label>
                   );

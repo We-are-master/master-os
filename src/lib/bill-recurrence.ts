@@ -8,6 +8,18 @@ export const RECURRENCE_GENERATION_COUNTS: Record<BillRecurrence, number> = {
   yearly: 2,
 };
 
+/** Human-readable cadence for UI (e.g. bill cards). */
+export function recurrenceLabel(interval: BillRecurrence | null | undefined): string {
+  if (!interval) return "—";
+  const labels: Record<BillRecurrence, string> = {
+    weekly: "Weekly",
+    monthly: "Monthly",
+    quarterly: "Quarterly",
+    yearly: "Yearly",
+  };
+  return labels[interval] ?? interval;
+}
+
 export function addInterval(d: Date, interval: BillRecurrence): Date {
   const next = new Date(d.getTime());
   switch (interval) {

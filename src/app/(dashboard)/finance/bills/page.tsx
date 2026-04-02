@@ -32,14 +32,16 @@ import {
   updateBill,
   markBillPaid,
   approveBillOrSeries,
+  approveAllSubmittedInScope,
   archiveBillsByIds,
+  listBillsInSameSeries,
 } from "@/services/bills";
 import { useProfile } from "@/hooks/use-profile";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
 import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
 import { BILL_CATEGORY_OPTIONS, billCategoryLabel } from "@/lib/bill-categories";
-import { RECURRENCE_GENERATION_COUNTS } from "@/lib/bill-recurrence";
+import { RECURRENCE_GENERATION_COUNTS, recurrenceLabel } from "@/lib/bill-recurrence";
 import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
 
 const BILL_STATUSES: BillStatus[] = ["submitted", "approved", "paid", "rejected", "needs_attention"];
@@ -86,6 +88,7 @@ export default function BillsPage() {
     null
   );
   const [archiveSeriesBusy, setArchiveSeriesBusy] = useState(false);
+  const [approveAllBusy, setApproveAllBusy] = useState(false);
 
   const archiveSeriesMonthLabel = useMemo(
     () => new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" }),
@@ -135,6 +138,11 @@ export default function BillsPage() {
     [periodMode, weekAnchor, rangeFrom, rangeTo]
   );
 
+  const submittedInScopeCount = useMemo(
+    () => scopedBills.filter((b) => b.status === "submitted").length,
+    [scopedBills]
+  );
+
   const kpis = useMemo(() => {
     const base = !periodBounds
       ? bills.filter((b) => kpiEligible(b))
@@ -163,6 +171,30 @@ export default function BillsPage() {
       totalAmount: totalAmt,
     };
   }, [bills, periodBounds]);
+
+  const handleApproveAllSubmitted = async () => {
+    if (submittedInScopeCount === 0) {
+      toast.error("No submitted bills in this period.");
+      return;
+    }
+    if (
+      !confirm(
+        `Approve all ${submittedInScopeCount} submitted bill line(s) visible for this period? Recurring series are approved in one step each.`
+      )
+    ) {
+      return;
+    }
+    setApproveAllBusy(true);
+    try {
+      const { totalApproved } = await approveAllSubmittedInScope(scopedBills);
+      toast.success(totalApproved > 0 ? `Approved ${totalApproved} line(s).` : "Nothing to approve.");
+      load();
+    } catch {
+      toast.error("Failed to approve all");
+    } finally {
+      setApproveAllBusy(false);
+    }
+  };
 
   const handleApprove = async (bill: Bill) => {
     try {
@@ -470,20 +502,35 @@ export default function BillsPage() {
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
             {BILL_FILTER_ORDER.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  statusFilter === s
-                    ? "bg-primary text-white shadow-sm"
-                    : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
-                }`}
-              >
-                {s === "all" ? "All" : s === "archived" ? "Archived" : statusConfig[s as BillStatus]?.label ?? s}
-              </button>
+              <span key={s} className="inline-flex items-center gap-2">
+                {s === "submitted" ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-[11px] font-semibold border-primary/40 text-primary hover:bg-primary/10"
+                    disabled={approveAllBusy || submittedInScopeCount === 0}
+                    loading={approveAllBusy}
+                    onClick={() => void handleApproveAllSubmitted()}
+                    title="Approve every submitted bill in the current date filter (e.g. All periods = whole list)"
+                  >
+                    Approve all
+                  </Button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter(s)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    statusFilter === s
+                      ? "bg-primary text-white shadow-sm"
+                      : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
+                  }`}
+                >
+                  {s === "all" ? "All" : s === "archived" ? "Archived" : statusConfig[s as BillStatus]?.label ?? s}
+                </button>
+              </span>
             ))}
           </div>
           {loading ? (
@@ -501,7 +548,7 @@ export default function BillsPage() {
                   const head = item.all[0];
                   const expanded = expandedSeries[item.key] ?? false;
                   const summary = formatStatusSummary(item.visible);
-                  const cadence = head.recurrence_interval ?? "—";
+                  const cadence = recurrenceLabel(head.recurrence_interval as BillRecurrence | undefined);
                   return (
                     <div
                       key={item.key}
@@ -528,18 +575,24 @@ export default function BillsPage() {
                           onClick={() =>
                             setExpandedSeries((s) => ({ ...s, [item.key]: !expanded }))
                           }
-                          className="flex-1 min-w-0 space-y-1 text-left"
+                          className="flex-1 min-w-0 space-y-1.5 text-left"
                         >
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-semibold text-text-primary">{head.description}</p>
-                            <Badge variant="info" size="sm">
-                              Recurring · {cadence}
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="text-lg font-bold tabular-nums text-text-primary shrink-0">
+                              {formatCurrency(head.amount)}
+                            </span>
+                            <Badge variant="primary" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
+                              {cadence}
                             </Badge>
+                            <Badge variant="info" size="sm" className="shrink-0">
+                              Recurring
+                            </Badge>
+                            <p className="text-sm font-semibold text-text-primary min-w-0 w-full sm:w-auto sm:inline sm:ml-0">
+                              {head.description}
+                            </p>
                           </div>
                           <p className="text-xs text-text-tertiary">{billCategoryLabel(head.category)}</p>
                           <p className="text-xs text-text-secondary">
-                            <span className="font-medium tabular-nums">{formatCurrency(head.amount)}</span>
-                            <span className="text-text-tertiary"> · </span>
                             {item.visible.length} occurrence{item.visible.length === 1 ? "" : "s"} in view
                             {item.all.length !== item.visible.length && (
                               <span className="text-text-tertiary">
@@ -617,17 +670,29 @@ export default function BillsPage() {
                     className="rounded-xl border border-border-light bg-card shadow-sm px-4 py-3 space-y-3"
                   >
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-text-primary">{r.description}</p>
-                        <p className="text-xs text-text-tertiary">{billCategoryLabel(r.category)}</p>
-                        {r.is_recurring && (
-                          <Badge variant="info" size="sm" className="mt-1">
-                            Recurring · {r.recurrence_interval ?? "—"}
-                          </Badge>
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        {r.is_recurring ? (
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="text-lg font-bold tabular-nums text-text-primary shrink-0">
+                              {formatCurrency(r.amount)}
+                            </span>
+                            <Badge variant="primary" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
+                              {recurrenceLabel(r.recurrence_interval)}
+                            </Badge>
+                            <Badge variant="info" size="sm" className="shrink-0">
+                              Recurring
+                            </Badge>
+                            <p className="text-sm font-semibold text-text-primary min-w-0 w-full sm:w-auto">{r.description}</p>
+                          </div>
+                        ) : (
+                          <p className="text-sm font-medium text-text-primary">{r.description}</p>
                         )}
+                        <p className="text-xs text-text-tertiary">{billCategoryLabel(r.category)}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm shrink-0">
-                        <span className="font-medium tabular-nums">{formatCurrency(r.amount)}</span>
+                        {!r.is_recurring ? (
+                          <span className="font-medium tabular-nums">{formatCurrency(r.amount)}</span>
+                        ) : null}
                         <span className="text-text-secondary tabular-nums whitespace-nowrap">
                           Due {formatDate(r.due_date)}
                         </span>
@@ -701,15 +766,27 @@ export default function BillsPage() {
             setSaving(true);
             try {
               if (editing) {
-                await updateBill(editing.id, {
-                  description: form.description ?? "",
-                  category: form.category,
-                  amount: form.amount ?? 0,
-                  due_date: form.due_date ?? "",
-                  is_recurring: form.is_recurring ?? false,
-                  recurrence_interval: form.is_recurring ? form.recurrence_interval : null,
-                });
-                toast.success("Bill updated");
+                if (form.installmentAmounts && Object.keys(form.installmentAmounts).length > 0) {
+                  const entries = Object.entries(form.installmentAmounts);
+                  for (const [id, amt] of entries) {
+                    await updateBill(id, {
+                      description: form.description ?? "",
+                      category: form.category,
+                      amount: amt,
+                    });
+                  }
+                  toast.success(`Updated ${entries.length} installment(s).`);
+                } else {
+                  await updateBill(editing.id, {
+                    description: form.description ?? "",
+                    category: form.category,
+                    amount: form.amount ?? 0,
+                    due_date: form.due_date ?? "",
+                    is_recurring: form.is_recurring ?? false,
+                    recurrence_interval: form.is_recurring ? form.recurrence_interval : null,
+                  });
+                  toast.success("Bill updated");
+                }
               } else {
                 const interval = form.recurrence_interval ?? "monthly";
                 await createBill({
@@ -746,6 +823,11 @@ export default function BillsPage() {
   );
 }
 
+type BillModalSavePayload = Partial<Bill> & {
+  /** When set, updates each bill id with its amount (recurring edit). */
+  installmentAmounts?: Record<string, number>;
+};
+
 function BillModal({
   open,
   onClose,
@@ -758,7 +840,7 @@ function BillModal({
   open: boolean;
   onClose: () => void;
   initial: Bill | null;
-  onSave: (form: Partial<Bill>) => Promise<void>;
+  onSave: (form: BillModalSavePayload) => Promise<void>;
   onArchive?: () => Promise<void>;
   onRestore?: () => Promise<void>;
   saving: boolean;
@@ -769,6 +851,9 @@ function BillModal({
   const [due_date, setDueDate] = useState("");
   const [is_recurring, setIsRecurring] = useState(false);
   const [recurrence_interval, setRecurrenceInterval] = useState<BillRecurrence>("monthly");
+  const [seriesSiblings, setSeriesSiblings] = useState<Bill[] | null>(null);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  const [amountById, setAmountById] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open) return;
@@ -780,8 +865,40 @@ function BillModal({
       setDueDate(initial?.due_date ?? "");
       setIsRecurring(initial?.is_recurring ?? false);
       setRecurrenceInterval((initial?.recurrence_interval as BillRecurrence) ?? "monthly");
+      setSeriesSiblings(null);
+      setAmountById({});
     });
   }, [open, initial]);
+
+  useEffect(() => {
+    if (!open || !initial?.is_recurring || !initial.id) {
+      return;
+    }
+    let cancelled = false;
+    setSeriesLoading(true);
+    listBillsInSameSeries(initial)
+      .then((rows) => {
+        if (cancelled) return;
+        setSeriesSiblings(rows);
+        const m: Record<string, string> = {};
+        for (const b of rows) m[b.id] = String(b.amount);
+        setAmountById(m);
+      })
+      .catch(() => {
+        if (!cancelled) setSeriesSiblings(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSeriesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, initial?.id, initial?.is_recurring]);
+
+  const showInstallmentList = Boolean(
+    initial?.is_recurring && !seriesLoading && seriesSiblings && seriesSiblings.length > 0
+  );
+  const hideTopAmountWhileLoading = Boolean(initial?.is_recurring && seriesLoading);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -791,6 +908,27 @@ function BillModal({
     }
     if (!category || !BILL_CATEGORY_OPTIONS.some((o) => o.value === category)) {
       toast.error("Category is required");
+      return;
+    }
+    if (showInstallmentList && seriesSiblings) {
+      const installmentAmounts: Record<string, number> = {};
+      for (const b of seriesSiblings) {
+        const raw = amountById[b.id] ?? "0";
+        const n = parseFloat(String(raw).replace(",", "."));
+        if (Number.isNaN(n) || n < 0) {
+          toast.error("Valid amount required for each installment");
+          return;
+        }
+        installmentAmounts[b.id] = n;
+      }
+      onSave({
+        description: description.trim(),
+        category,
+        due_date: seriesSiblings[0]?.due_date ?? due_date,
+        is_recurring: true,
+        recurrence_interval: is_recurring ? recurrence_interval : undefined,
+        installmentAmounts,
+      });
       return;
     }
     const num = parseFloat(amount);
@@ -852,20 +990,57 @@ function BillModal({
           options={[{ value: "", label: "Select category…" }, ...BILL_CATEGORY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]}
           required
         />
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount (£)</label>
-          <Input type="number" step="0.01" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} required />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">First due date</label>
-          <Input type="date" value={due_date} onChange={(e) => setDueDate(e.target.value)} required />
-        </div>
+        {initial?.is_recurring && seriesLoading ? (
+          <div className="flex items-center gap-2 text-sm text-text-tertiary py-2">
+            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+            Loading installments…
+          </div>
+        ) : null}
+        {showInstallmentList && seriesSiblings ? (
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-text-secondary">Amount per installment (£)</label>
+            <p className="text-[11px] text-text-tertiary leading-snug">
+              Each line is one scheduled occurrence. Change a row if that period differs from the others.
+            </p>
+            <div className="rounded-lg border border-border-light bg-surface-hover/30 max-h-60 overflow-y-auto divide-y divide-border-light">
+              {seriesSiblings.map((b) => (
+                <div key={b.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+                  <span className="text-xs font-medium text-text-secondary w-[7.5rem] shrink-0 tabular-nums">
+                    {formatDate(b.due_date)}
+                  </span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    className="flex-1 min-w-[5rem] max-w-[10rem]"
+                    value={amountById[b.id] ?? ""}
+                    onChange={(e) => setAmountById((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                    aria-label={`Amount due ${b.due_date}`}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {!showInstallmentList && !hideTopAmountWhileLoading ? (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount (£)</label>
+            <Input type="number" step="0.01" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          </div>
+        ) : null}
+        {!showInstallmentList ? (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">First due date</label>
+            <Input type="date" value={due_date} onChange={(e) => setDueDate(e.target.value)} required />
+          </div>
+        ) : null}
         <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-2">
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
               id="recurring"
               checked={is_recurring}
+              disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
               onChange={(e) => setIsRecurring(e.target.checked)}
               className="rounded border-border"
             />
@@ -886,6 +1061,7 @@ function BillModal({
             label="Cadence"
             value={recurrence_interval}
             onChange={(e) => setRecurrenceInterval(e.target.value as BillRecurrence)}
+            disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
             options={[
               { value: "weekly", label: "Weekly" },
               { value: "monthly", label: "Monthly" },
@@ -914,7 +1090,11 @@ function BillModal({
               Restore
             </Button>
           )}
-          <Button type="submit" disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}>
+          <Button
+            type="submit"
+            disabled={saving || Boolean(initial?.is_recurring && seriesLoading)}
+            icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+          >
             {saving ? "Saving…" : initial ? "Save changes" : "Submit"}
           </Button>
         </div>

@@ -14,6 +14,33 @@ export async function listBills(params?: { status?: string; from?: string; to?: 
   return (data ?? []) as Bill[];
 }
 
+/** All non-archived rows in the same recurring batch (series id or fingerprint match). */
+export async function listBillsInSameSeries(bill: Bill): Promise<Bill[]> {
+  const supabase = getSupabase();
+  if (!bill.is_recurring) return [bill];
+
+  if (bill.recurring_series_id) {
+    const { data, error } = await supabase
+      .from("bills")
+      .select("*")
+      .eq("recurring_series_id", bill.recurring_series_id)
+      .is("archived_at", null)
+      .order("due_date", { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Bill[];
+  }
+
+  const key = recurringGroupKey(bill);
+  if (!key) return [bill];
+
+  const { data: candidates, error: cErr } = await supabase.from("bills").select("*").eq("is_recurring", true).is("archived_at", null);
+  if (cErr) throw cErr;
+  const match = (candidates ?? [])
+    .filter((b) => recurringGroupKey(b as Bill) === key)
+    .sort((a, b) => (a as Bill).due_date.localeCompare((b as Bill).due_date));
+  return match as Bill[];
+}
+
 export type CreateBillPayload = Omit<Bill, "id" | "created_at" | "updated_at">;
 
 export async function createBill(payload: CreateBillPayload): Promise<Bill> {
@@ -160,6 +187,31 @@ export async function approveBillOrSeries(billId: string): Promise<{ approvedCou
   const { data: again, error: fErr } = await supabase.from("bills").select("*").eq("id", billId).single();
   if (fErr) throw fErr;
   return { approvedCount: matchIds.length, bill: again as Bill };
+}
+
+/**
+ * Approve every submitted bill in scope, deduping recurring series (one approve per series / one-off).
+ * Respects the same period as `bills` (caller passes already filtered rows).
+ */
+export async function approveAllSubmittedInScope(bills: Bill[]): Promise<{ totalApproved: number }> {
+  const submitted = bills.filter((b) => b.status === "submitted" && !b.archived_at);
+  if (submitted.length === 0) return { totalApproved: 0 };
+
+  const byKey = new Map<string, Bill>();
+  for (const b of submitted) {
+    let key: string;
+    if (b.recurring_series_id) key = `series:${b.recurring_series_id}`;
+    else if (b.is_recurring && recurringGroupKey(b)) key = `fp:${recurringGroupKey(b)}`;
+    else key = `one:${b.id}`;
+    if (!byKey.has(key)) byKey.set(key, b);
+  }
+
+  let totalApproved = 0;
+  for (const b of byKey.values()) {
+    const { approvedCount } = await approveBillOrSeries(b.id);
+    totalApproved += approvedCount;
+  }
+  return { totalApproved };
 }
 
 /** Mark paid only — recurring bills are pre-generated; we do not chain the next row from payment. */
