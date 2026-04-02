@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -201,6 +201,8 @@ export default function PartnersPage() {
   const [createModalTab, setCreateModalTab] = useState<"info" | "documents">("info");
   const [pendingCreateDocs, setPendingCreateDocs] = useState<PendingCreatePartnerDoc[]>([]);
   const [createQueueDocOpen, setCreateQueueDocOpen] = useState(false);
+  const [createDocPreset, setCreateDocPreset] = useState<{ docType: string; name: string } | null>(null);
+  const [createCustomCertName, setCreateCustomCertName] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
@@ -255,7 +257,44 @@ export default function PartnersPage() {
     setCreateModalTab("info");
     setPendingCreateDocs([]);
     setCreateQueueDocOpen(false);
+    setCreateDocPreset(null);
+    setCreateCustomCertName("");
   }, [createOpen]);
+
+  const partnerTradesForCreate = useMemo(
+    () => (form.trades?.length ? form.trades : [TRADES[0]]),
+    [form.trades],
+  );
+  const syntheticPartnerForCreateDocs = useMemo(
+    (): Partner =>
+      ({
+        id: "__create__",
+        partner_legal_type: form.partner_legal_type,
+        trades: form.trades,
+        trade: form.trades[0] ?? TRADES[0],
+        crn: form.crn?.trim() || null,
+      } as Partner),
+    [form.partner_legal_type, form.trades, form.crn],
+  );
+  const requiredDocumentsCreate = useMemo(
+    () => buildRequiredDocumentChecklist(partnerTradesForCreate, syntheticPartnerForCreateDocs),
+    [partnerTradesForCreate, syntheticPartnerForCreateDocs],
+  );
+  const pendingDocsForCompliancePreview = useMemo(
+    () => pendingCreateDocsAsPartnerDocs(pendingCreateDocs),
+    [pendingCreateDocs],
+  );
+  const documentCompliancePreviewCreate = useMemo(
+    () => computeComplianceScore(pendingDocsForCompliancePreview, requiredDocumentsCreate),
+    [pendingDocsForCompliancePreview, requiredDocumentsCreate],
+  );
+  const missingRequiredDocsCreate = useMemo(
+    () =>
+      requiredDocumentsCreate.filter(
+        (req) => getRequiredDocComplianceStatus(pendingDocsForCompliancePreview, req) !== "valid",
+      ),
+    [requiredDocumentsCreate, pendingDocsForCompliancePreview],
+  );
 
   const totalPartners = statusCounts["all"] ?? 0;
   const activeCount = statusCounts["active"] ?? 0;
@@ -842,51 +881,245 @@ export default function PartnersPage() {
             </div>
             </>
           ) : (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-border-light bg-surface-hover/30 px-4 py-3">
-                <p className="text-sm font-medium text-text-primary">Compliance documents</p>
-                <p className="text-xs text-text-tertiary mt-1 leading-relaxed">
-                  Add files here to upload automatically when you create the partner — same rules as in the partner profile (expiry dates, types). You can skip this and add documents later.
-                </p>
-              </div>
-              <Button type="button" variant="outline" size="sm" className="w-full sm:w-auto" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => setCreateQueueDocOpen(true)}>
-                Add document
-              </Button>
-              {pendingCreateDocs.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-border-light bg-card/50 px-4 py-10 text-center">
-                  <FileText className="h-9 w-9 text-text-tertiary mx-auto mb-2 opacity-80" />
-                  <p className="text-sm text-text-secondary">No documents in queue</p>
-                  <p className="text-xs text-text-tertiary mt-1 max-w-sm mx-auto">Insurance, certifications, UTR proof, ID — add as many as you need before creating.</p>
+            <div className="space-y-4 max-h-[min(70vh,32rem)] overflow-y-auto overscroll-contain pr-1 -mr-1">
+              <p className="text-xs text-text-tertiary leading-relaxed">
+                Same checklist and document types as <span className="font-medium text-text-secondary">Partner profile → Documents</span>. Files upload when you create the partner. You can skip and add later.
+              </p>
+              <div className="rounded-xl border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-text-secondary">Checklist preview</p>
+                  <span className="text-xs font-bold tabular-nums text-text-primary">{documentCompliancePreviewCreate}%</span>
                 </div>
-              ) : (
-                <ul className="space-y-2">
-                  {pendingCreateDocs.map((d) => {
-                    const tl = docTypeLabels[d.docType] || docTypeLabels.other;
-                    const TypeIcon = tl.icon;
-                    return (
-                      <li
-                        key={d.id}
-                        className="flex items-start gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5"
-                      >
-                        <div className="h-9 w-9 rounded-lg bg-surface-hover flex items-center justify-center shrink-0">
-                          <TypeIcon className="h-4 w-4 text-text-secondary" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-text-primary truncate">{d.name}</p>
-                          <p className="text-[11px] text-text-tertiary">{tl.label} · {d.file.name}</p>
-                        </div>
-                        <button
+                <Progress
+                  value={documentCompliancePreviewCreate}
+                  size="sm"
+                  color={documentCompliancePreviewCreate >= 90 ? "emerald" : documentCompliancePreviewCreate >= 50 ? "primary" : "amber"}
+                />
+              </div>
+              {missingRequiredDocsCreate.length > 0 && (
+                <div
+                  role="alert"
+                  className="flex gap-3 rounded-xl border border-amber-300/80 bg-amber-50/60 px-4 py-3 dark:border-amber-800/50 dark:bg-amber-950/25"
+                >
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-text-primary">Still missing for full checklist</p>
+                    <p className="mt-0.5 text-xs text-text-secondary">
+                      {missingRequiredDocsCreate.length} requirement{missingRequiredDocsCreate.length === 1 ? "" : "s"} not yet satisfied in your queue — add below or after creating.
+                    </p>
+                  </div>
+                </div>
+              )}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm font-semibold text-text-primary">{pendingCreateDocs.length} in queue</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  icon={<Upload className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    setCreateDocPreset(null);
+                    setCreateQueueDocOpen(true);
+                  }}
+                >
+                  Add document
+                </Button>
+              </div>
+              <div className="rounded-xl border border-border-light bg-card/60 p-3 space-y-2">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agreements</p>
+                <p className="text-[11px] text-text-tertiary leading-snug">
+                  No expiry date required. In-app submission can be wired later; upload files here for the record.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setCreateDocPreset({ docType: "service_agreement", name: "Service Agreement" });
+                      setCreateQueueDocOpen(true);
+                    }}
+                  >
+                    Service Agreement
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setCreateDocPreset({ docType: "self_bill_agreement", name: "Self Bill Agreement" });
+                      setCreateQueueDocOpen(true);
+                    }}
+                  >
+                    Self Bill Agreement
+                  </Button>
+                </div>
+              </div>
+              {partnerTradesForCreate.some((t) => (OPTIONAL_TRADE_CERTS_BY_TRADE[t] ?? []).length > 0) && (
+                <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Optional certificates</p>
+                  <p className="text-[11px] text-text-tertiary leading-snug">
+                    Recommended but not required for the compliance score.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {partnerTradesForCreate.flatMap((t) =>
+                      (OPTIONAL_TRADE_CERTS_BY_TRADE[t] ?? []).map((certName) => (
+                        <Button
+                          key={`create-opt-${t}-${certName}`}
                           type="button"
-                          className="shrink-0 p-1.5 rounded-lg text-text-tertiary hover:text-red-600 hover:bg-red-500/10"
-                          aria-label="Remove from queue"
-                          onClick={() => setPendingCreateDocs((prev) => prev.filter((x) => x.id !== d.id))}
+                          size="sm"
+                          variant="outline"
+                          className="border-dashed"
+                          onClick={() => {
+                            setCreateDocPreset({ docType: "certification", name: certName });
+                            setCreateQueueDocOpen(true);
+                          }}
                         >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </li>
+                          {certName}
+                          <span className="ml-1 text-[10px] font-normal text-text-tertiary">({t})</span>
+                        </Button>
+                      )),
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Required documents</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      value={createCustomCertName}
+                      onChange={(e) => setCreateCustomCertName(e.target.value)}
+                      placeholder="Add custom certificate requirement"
+                      className="h-8 w-full min-[420px]:w-64"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!createCustomCertName.trim()}
+                      onClick={() => {
+                        setCreateDocPreset({ docType: "certification", name: createCustomCertName.trim() });
+                        setCreateQueueDocOpen(true);
+                      }}
+                    >
+                      Add cert
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {requiredDocumentsCreate.map((req) => {
+                    const matchedDocs = pickRequiredDocMatches(pendingDocsForCompliancePreview, req);
+                    const doc = matchedDocs[0] ?? null;
+                    const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
+                    const now = new Date();
+                    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+                    const isExpired = !!(expiresAt && expiresAt < now);
+                    const isExpiringSoon = !!(expiresAt && expiresAt >= now && expiresAt <= in30Days);
+                    const certDocs = req.docType === "certification" ? matchedDocs : [];
+                    const certValidCount = certDocs.filter((d) => {
+                      if (!d.expires_at) return true;
+                      return new Date(d.expires_at) >= now;
+                    }).length;
+                    const certExpiringSoonCount = certDocs.filter((d) => {
+                      if (!d.expires_at) return false;
+                      const dt = new Date(d.expires_at);
+                      return dt >= now && dt <= in30Days;
+                    }).length;
+                    const certExpiredCount = certDocs.filter((d) => !!(d.expires_at && new Date(d.expires_at) < now)).length;
+                    const statusLabel = req.docType === "certification"
+                      ? certDocs.length === 0
+                        ? "Missing"
+                        : certValidCount > 0
+                          ? certExpiringSoonCount > 0 ? "Valid (some expiring soon)" : "Valid"
+                          : certExpiredCount > 0 ? "Expired" : "Pending"
+                      : !doc
+                        ? "Missing"
+                        : isExpired ? "Expired" : isExpiringSoon ? "Expiring soon" : "Valid";
+                    const statusVariant = req.docType === "certification"
+                      ? certDocs.length === 0
+                        ? "default"
+                        : certValidCount > 0
+                          ? certExpiringSoonCount > 0 ? "warning" : "success"
+                          : certExpiredCount > 0 ? "danger" : "default"
+                      : !doc
+                        ? "default"
+                        : isExpired ? "danger" : isExpiringSoon ? "warning" : "success";
+
+                    return (
+                      <div key={req.id} className="rounded-lg border border-border-light bg-card p-3 space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-text-primary">{req.name}</p>
+                            <p className="text-[11px] text-text-tertiary">{req.description}</p>
+                          </div>
+                          <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                        </div>
+                        {doc?.expires_at && (
+                          <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
+                            Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                          </p>
+                        )}
+                        {req.docType === "certification" && matchedDocs.length > 0 && (
+                          <p className="text-[11px] text-text-tertiary">
+                            In queue: {matchedDocs.length}
+                          </p>
+                        )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => {
+                            setCreateDocPreset({ docType: req.docType, name: req.name });
+                            setCreateQueueDocOpen(true);
+                          }}
+                        >
+                          {req.docType === "certification" ? "Add another certificate" : doc ? "Replace / update" : "Add document"}
+                        </Button>
+                      </div>
                     );
                   })}
-                </ul>
+                </div>
+              </div>
+              {pendingCreateDocs.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border-light bg-card/50 px-4 py-8 text-center">
+                  <FileText className="h-8 w-8 text-text-tertiary mx-auto mb-2 opacity-80" />
+                  <p className="text-sm text-text-secondary">Nothing in queue yet</p>
+                  <p className="text-xs text-text-tertiary mt-1 max-w-sm mx-auto">Use the checklist above or Add document.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Queued uploads</p>
+                  <ul className="space-y-2">
+                    {pendingCreateDocs.map((d) => {
+                      const tl = docTypeLabels[d.docType] || docTypeLabels.other;
+                      const TypeIcon = tl.icon;
+                      return (
+                        <li
+                          key={d.id}
+                          className="flex items-start gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5"
+                        >
+                          <div className="h-9 w-9 rounded-lg bg-surface-hover flex items-center justify-center shrink-0">
+                            <TypeIcon className="h-4 w-4 text-text-secondary" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-text-primary truncate">{d.name}</p>
+                            <p className="text-[11px] text-text-tertiary">{tl.label} · {d.file.name}</p>
+                          </div>
+                          <button
+                            type="button"
+                            className="shrink-0 p-1.5 rounded-lg text-text-tertiary hover:text-red-600 hover:bg-red-500/10"
+                            aria-label="Remove from queue"
+                            onClick={() => setPendingCreateDocs((prev) => prev.filter((x) => x.id !== d.id))}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               )}
             </div>
           )}
@@ -904,9 +1137,15 @@ export default function PartnersPage() {
 
       <AddPartnerDocumentModal
         open={createQueueDocOpen}
-        onClose={() => setCreateQueueDocOpen(false)}
+        onClose={() => {
+          setCreateQueueDocOpen(false);
+          setCreateDocPreset(null);
+          setCreateCustomCertName("");
+        }}
         submitting={false}
         onSubmit={handleQueueDocForCreate}
+        initialDocType={createDocPreset?.docType}
+        initialName={createDocPreset?.name}
       />
     </PageTransition>
   );
@@ -1225,6 +1464,19 @@ function getRequiredDocComplianceStatus(
   if (hasValid) return "valid";
   if (matches.length > 0) return "expired";
   return "missing";
+}
+
+/** Map create-partner queue to PartnerDoc shape for the same compliance matching as the profile Documents tab. */
+function pendingCreateDocsAsPartnerDocs(queue: PendingCreatePartnerDoc[]): PartnerDoc[] {
+  return queue.map((d) => ({
+    id: d.id,
+    name: d.name,
+    doc_type: d.docType,
+    status: "pending",
+    created_at: new Date().toISOString(),
+    expires_at: d.expiresAt?.trim() ? new Date(d.expiresAt).toISOString() : undefined,
+    notes: d.certificateNumber ? `certificate_number: ${d.certificateNumber}` : undefined,
+  }));
 }
 
 function PartnerDocPreviewThumb({ path }: { path: string }) {

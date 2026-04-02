@@ -200,7 +200,7 @@ const STAGE_META: { id: string; label: string; short: string; icon: typeof Clipb
   { id: "draft", label: "Draft", short: "Draft", icon: ClipboardList },
   { id: "in_survey", label: "Survey", short: "Survey", icon: MapPin },
   { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
-  { id: "awaiting_customer", label: "Customer", short: "Customer", icon: UserRound },
+  { id: "awaiting_customer", label: "Awaiting customer", short: "Awaiting customer", icon: UserRound },
   { id: "accepted", label: "Accepted", short: "Won", icon: CheckCircle2 },
 ];
 
@@ -746,7 +746,7 @@ function QuotesPageContent() {
       <div className="space-y-5">
         <PageHeader
           title="Quotes"
-          subtitle="Work one stage at a time: Draft → Survey → Bidding → Customer → Accepted. Use Active pipeline to see open quotes only."
+          subtitle="Work one stage at a time: Draft → Survey → Bidding → Awaiting customer → Accepted. Use Active pipeline to see open quotes only."
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>Export</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={handleNewQuoteClick}>New Quote</Button>
@@ -3217,18 +3217,10 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
             />
           </div>
           <div>
-            <div className="mb-2 space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span
-                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
-                    aria-hidden
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                  </span>
-                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Partners *</p>
-                </div>
-                <div className="flex gap-2 shrink-0">
+            <div className="mb-2 space-y-2">
+              <div className="flex flex-col gap-2 min-[400px]:flex-row min-[400px]:items-center min-[400px]:justify-between">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide shrink-0">Partners *</p>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <button
                     type="button"
                     className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
@@ -3246,9 +3238,17 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                   </button>
                 </div>
               </div>
-              <p className="text-[10px] text-text-tertiary leading-snug pl-9">
-                AI matched the partners below to your type of work.
-              </p>
+              <div className="flex gap-2.5 items-start rounded-xl border border-border-light bg-surface-hover/50 px-3 py-2.5 sm:gap-3 sm:px-3.5">
+                <span
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-inset ring-primary/15 mt-0.5"
+                  aria-hidden
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                </span>
+                <p className="text-[11px] sm:text-xs text-text-tertiary leading-relaxed min-w-0 flex-1 [text-wrap:pretty]">
+                  AI matched the partners below to your type of work.
+                </p>
+              </div>
             </div>
             <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
               {partnersLoading && partners.length === 0 ? (
