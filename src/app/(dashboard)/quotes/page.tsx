@@ -3311,10 +3311,12 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
             />
           </div>
           <div>
-            <div className="mb-2 space-y-2">
-              <div className="flex flex-col gap-2 min-[400px]:flex-row min-[400px]:items-center min-[400px]:justify-between">
-                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide shrink-0">Partners *</p>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <div className="mb-2 space-y-2 flex flex-col items-center">
+              <div className="flex w-full max-w-lg flex-col items-center gap-2">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide text-center">
+                  Partners *
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
                   <button
                     type="button"
                     className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
@@ -3346,14 +3348,14 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                   </button>
                 </div>
               </div>
-              <div className="flex items-start gap-2 rounded-lg border border-border-light bg-surface-hover/50 px-2.5 py-2 sm:gap-2 sm:px-3 sm:py-2">
+              <div className="flex w-full max-w-lg flex-col items-center justify-center gap-2 rounded-lg border border-border-light bg-surface-hover/50 px-2.5 py-2 text-center sm:flex-row sm:gap-2 sm:px-3 sm:py-2">
                 <span
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-inset ring-primary/15 mt-0.5"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
                   aria-hidden
                 >
                   <Sparkles className="h-3.5 w-3.5" />
                 </span>
-                <p className="text-[10px] sm:text-[11px] text-text-tertiary leading-snug min-w-0 flex-1 [text-wrap:pretty]">
+                <p className="text-[10px] sm:text-[11px] text-text-tertiary leading-snug min-w-0 [text-wrap:pretty]">
                   {form.title.trim()
                     ? "Partners below are matched to your type of work."
                     : "Add a type of work — we’ll match directory partners for you."}
