@@ -348,6 +348,8 @@ export interface Partner {
   total_earnings: number;
   compliance_score: number;
   location: string;
+  /** UK areas covered (multi-select); `__whole_uk__` alone means nationwide. */
+  uk_coverage_regions?: string[] | null;
   verified: boolean;
   internal_notes?: string;
   role?: string;

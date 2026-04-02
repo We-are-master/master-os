@@ -48,6 +48,13 @@ import {
   type TeamMember,
 } from "@/services/partner-detail";
 import { LocationMiniMapByCoords } from "@/components/ui/location-picker";
+import { UkCoveragePicker } from "@/components/partners/uk-coverage-picker";
+import {
+  defaultUkCoverage,
+  formatUkCoverageLabel,
+  normalizeUkCoverageRegions,
+  partnerCoverageToForm,
+} from "@/lib/partner-uk-coverage";
 import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
@@ -160,7 +167,7 @@ const emptyForm = {
   utr: "",
   partner_legal_type: "self_employed" as PartnerLegalType,
   trades: ["HVAC"] as string[],
-  location: "",
+  uk_coverage_regions: defaultUkCoverage(),
   status: "active" as PartnerStatus,
 };
 
@@ -233,6 +240,7 @@ export default function PartnersPage() {
     setSubmitting(true);
     try {
       const primaryTrade = form.trades[0] ?? TRADES[0];
+      const regions = normalizeUkCoverageRegions(form.uk_coverage_regions);
       const created = await createPartner({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
@@ -245,7 +253,8 @@ export default function PartnersPage() {
         trade: primaryTrade,
         trades: form.trades,
         status: form.status,
-        location: form.location.trim(),
+        location: formatUkCoverageLabel(regions, null),
+        uk_coverage_regions: regions,
         verified: false,
       });
       setPartnerDrawerInitialTab("documents");
@@ -352,10 +361,11 @@ export default function PartnersPage() {
       ),
     },
     {
-      key: "location", label: "Location",
+      key: "location", label: "Coverage",
       render: (item) => (
         <div className="flex items-center gap-1.5 text-sm text-text-secondary">
-          <MapPin className="h-3.5 w-3.5 text-text-tertiary" />{item.location}
+          <MapPin className="h-3.5 w-3.5 text-text-tertiary" />
+          {formatUkCoverageLabel(item.uk_coverage_regions, item.location) || "—"}
         </div>
       ),
     },
@@ -575,27 +585,32 @@ export default function PartnersPage() {
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-secondary">CRN (Companies House)</label>
-                <Input
-                  value={form.crn}
-                  onChange={(e) => setForm({ ...form, crn: e.target.value })}
-                  placeholder="Optional — e.g. 12345678"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-secondary">UTR (HMRC)</label>
-                <Input
-                  value={form.utr}
-                  onChange={(e) => setForm({ ...form, utr: e.target.value })}
-                  placeholder="Optional — 10-digit UTR"
-                  autoComplete="off"
-                />
-              </div>
+            <div className="pt-1">
+              {form.partner_legal_type === "limited_company" ? (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-secondary">CRN (Companies House)</label>
+                  <Input
+                    value={form.crn}
+                    onChange={(e) => setForm({ ...form, crn: e.target.value })}
+                    placeholder="Optional — e.g. 12345678"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-secondary">UTR (HMRC)</label>
+                  <Input
+                    value={form.utr}
+                    onChange={(e) => setForm({ ...form, utr: e.target.value })}
+                    placeholder="Optional — 10-digit UTR"
+                    autoComplete="off"
+                  />
+                </div>
+              )}
             </div>
             <p className="text-[10px] text-text-tertiary pt-0.5">
-              Optional for now. You can add or upload UTR proof later under Documents.
+              {form.partner_legal_type === "limited_company"
+                ? "Optional. You can add Companies House proof later under Documents."
+                : "Optional for now. You can add or upload UTR proof later under Documents."}
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -622,7 +637,11 @@ export default function PartnersPage() {
               <Input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+1 555-000-0000" />
             </div>
           </div>
-            <div className="grid grid-cols-2 gap-4">
+            <UkCoveragePicker
+              value={form.uk_coverage_regions}
+              onChange={(next) => setForm((f) => ({ ...f, uk_coverage_regions: next }))}
+              idPrefix="create-partner"
+            />
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-secondary">Trades <span className="text-text-tertiary font-normal">(select all that apply)</span></label>
               <div className="flex flex-wrap gap-1.5">
@@ -641,11 +660,6 @@ export default function PartnersPage() {
                 })}
               </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-secondary">Location</label>
-              <Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Manhattan, NY" />
-            </div>
-          </div>
         </div>
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border-light">
           <Button variant="outline" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -1137,6 +1151,22 @@ function PartnerDocumentDetailModal({
   );
 }
 
+function overviewFormFromPartner(partner: Partner) {
+  return {
+    company_name: partner.company_name ?? "",
+    vat_number: partner.vat_number ?? "",
+    crn: partner.crn ?? "",
+    utr: partner.utr ?? "",
+    partner_legal_type: partner.partner_legal_type ?? "self_employed",
+    contact_name: partner.contact_name ?? "",
+    email: partner.email ?? "",
+    phone: partner.phone ?? "",
+    trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
+    uk_coverage_regions: partnerCoverageToForm(partner),
+    rating: String(partner.rating ?? 0),
+  };
+}
+
 function PartnerDetailDrawer({
   partner,
   teamMember,
@@ -1201,7 +1231,7 @@ function PartnerDetailDrawer({
     email: "",
     phone: "",
     trades: [TRADES[0]] as string[],
-    location: "",
+    uk_coverage_regions: defaultUkCoverage(),
     rating: "",
   });
   /** Only apply initialTab when switching to a different partner (avoid resetting tab on realtime updates). */
@@ -1287,19 +1317,7 @@ function PartnerDetailDrawer({
     setLinkEmail(partner.email ?? "");
     loadAll(partner);
     setEditingOverview(false);
-    setOverviewForm({
-      company_name: partner.company_name ?? "",
-      vat_number: partner.vat_number ?? "",
-      crn: partner.crn ?? "",
-      utr: partner.utr ?? "",
-      partner_legal_type: partner.partner_legal_type ?? "self_employed",
-      contact_name: partner.contact_name ?? "",
-      email: partner.email ?? "",
-      phone: partner.phone ?? "",
-      trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
-      location: partner.location ?? "",
-      rating: String(partner.rating ?? 0),
-    });
+    setOverviewForm(overviewFormFromPartner(partner));
   }, [partner, loadAll, initialTab]);
 
   const syncAppUserRow = useCallback(async (userId: string, partnerRowId: string) => {
@@ -1405,6 +1423,7 @@ function PartnerDetailDrawer({
     }
     try {
       const primaryTrade = overviewForm.trades[0] ?? TRADES[0];
+      const regions = normalizeUkCoverageRegions(overviewForm.uk_coverage_regions);
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         vat_number: overviewForm.vat_number.trim() || null,
@@ -1416,7 +1435,8 @@ function PartnerDetailDrawer({
         phone: overviewForm.phone.trim() || undefined,
         trade: primaryTrade,
         trades: overviewForm.trades,
-        location: overviewForm.location.trim(),
+        location: formatUkCoverageLabel(regions, null),
+        uk_coverage_regions: regions,
         rating,
       });
       onPartnerUpdate?.(updated);
@@ -1776,8 +1796,19 @@ function PartnerDetailDrawer({
     ...(partner.auth_user_id ? [{ id: "location" as const, label: "Location" }] : []),
   ];
 
+  const inferredPartnerLegal: PartnerLegalType =
+    partner.partner_legal_type ?? (partner.crn?.trim() ? "limited_company" : "self_employed");
+
   return (
-    <Drawer open={!!partner} onClose={onClose} title={partner.company_name} subtitle={partner.trade + " — " + partner.location} width="w-[580px]">
+    <Drawer
+      open={!!partner}
+      onClose={onClose}
+      title={partner.company_name}
+      subtitle={
+        partner.trade + " — " + (formatUkCoverageLabel(partner.uk_coverage_regions, partner.location) || "—")
+      }
+      width="w-[580px]"
+    >
       <div className="px-6 pt-3 pb-0 border-b border-border-light">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} />
       </div>
@@ -1857,19 +1888,7 @@ function PartnerDetailDrawer({
                       onClick={() => {
                         if (editingOverview) {
                           setEditingOverview(false);
-                          setOverviewForm({
-                            company_name: partner.company_name ?? "",
-                            vat_number: partner.vat_number ?? "",
-                            crn: partner.crn ?? "",
-                            utr: partner.utr ?? "",
-                            partner_legal_type: partner.partner_legal_type ?? "self_employed",
-                            contact_name: partner.contact_name ?? "",
-                            email: partner.email ?? "",
-                            phone: partner.phone ?? "",
-                            trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
-                            location: partner.location ?? "",
-                            rating: String(partner.rating ?? 0),
-                          });
+                          setOverviewForm(overviewFormFromPartner(partner));
                         } else {
                           setEditingOverview(true);
                         }
@@ -1961,40 +1980,40 @@ function PartnerDetailDrawer({
                       </button>
                     ))}
                   </div>
-                  <div className="grid grid-cols-1 gap-2">
+                  {overviewForm.partner_legal_type === "limited_company" ? (
                     <Input
                       value={overviewForm.crn}
                       onChange={(e) => setOverviewForm((p) => ({ ...p, crn: e.target.value }))}
                       placeholder="CRN (optional)"
                       className="h-8"
                     />
+                  ) : (
                     <Input
                       value={overviewForm.utr}
                       onChange={(e) => setOverviewForm((p) => ({ ...p, utr: e.target.value }))}
                       placeholder="UTR (optional)"
                       className="h-8"
                     />
-                  </div>
+                  )}
                 </div>
               ) : (
                 <>
                   <div className="flex items-center gap-2 text-sm text-text-secondary">
                     <Briefcase className="h-4 w-4 text-text-tertiary" />
-                    <span>
-                      {partner.partner_legal_type === "limited_company" ||
-                      (!partner.partner_legal_type && partner.crn?.trim())
-                        ? "Limited company"
-                        : "Self-employed"}
-                    </span>
+                    <span>{inferredPartnerLegal === "limited_company" ? "Limited company" : "Self-employed"}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
-                    <span>CRN: {partner.crn?.trim() || "—"}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
-                    <span>UTR: {partner.utr?.trim() || "—"}</span>
-                  </div>
+                  {inferredPartnerLegal === "limited_company" && (
+                    <div className="flex items-center gap-2 text-sm text-text-secondary">
+                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
+                      <span>CRN: {partner.crn?.trim() || "—"}</span>
+                    </div>
+                  )}
+                  {inferredPartnerLegal === "self_employed" && (
+                    <div className="flex items-center gap-2 text-sm text-text-secondary">
+                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
+                      <span>UTR: {partner.utr?.trim() || "—"}</span>
+                    </div>
+                  )}
                 </>
               )}
               <div className="flex items-center gap-2 text-sm text-text-secondary">
@@ -2009,15 +2028,23 @@ function PartnerDetailDrawer({
                   />
                 ) : (partner.phone || "—")}
               </div>
-              <div className="flex items-center gap-2 text-sm text-text-secondary">
-                <MapPin className="h-4 w-4 text-text-tertiary" />
-                {editingOverview ? (
-                  <Input
-                    value={overviewForm.location}
-                    onChange={(e) => setOverviewForm((p) => ({ ...p, location: e.target.value }))}
-                    className="h-8"
-                  />
-                ) : partner.location}
+              <div className="flex flex-col gap-2 text-sm text-text-secondary">
+                <div className="flex items-start gap-2">
+                  <MapPin className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" />
+                  {editingOverview ? (
+                    <div className="flex-1 min-w-0">
+                      <UkCoveragePicker
+                        value={overviewForm.uk_coverage_regions}
+                        onChange={(next) => setOverviewForm((p) => ({ ...p, uk_coverage_regions: next }))}
+                        idPrefix="drawer-partner"
+                      />
+                    </div>
+                  ) : (
+                    <span>
+                      {formatUkCoverageLabel(partner.uk_coverage_regions, partner.location) || "—"}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-2 text-sm text-text-secondary"><Calendar className="h-4 w-4 text-text-tertiary" />Joined {new Date(partner.joined_at).toLocaleDateString()}</div>
             </div>
@@ -2084,19 +2111,7 @@ function PartnerDetailDrawer({
                   className="flex-1"
                   onClick={() => {
                     setEditingOverview(false);
-                    setOverviewForm({
-                      company_name: partner.company_name ?? "",
-                      vat_number: partner.vat_number ?? "",
-                      crn: partner.crn ?? "",
-                      utr: partner.utr ?? "",
-                      partner_legal_type: partner.partner_legal_type ?? "self_employed",
-                      contact_name: partner.contact_name ?? "",
-                      email: partner.email ?? "",
-                      phone: partner.phone ?? "",
-                      trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
-                      location: partner.location ?? "",
-                      rating: String(partner.rating ?? 0),
-                    });
+                    setOverviewForm(overviewFormFromPartner(partner));
                   }}
                 >
                   Discard
