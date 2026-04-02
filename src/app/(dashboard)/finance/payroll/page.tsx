@@ -15,6 +15,7 @@ import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Download, CircleDollarSign, DollarSign, Repeat, Calendar, Loader, Play, CheckCircle2, FileText,
+  AlertTriangle, UserX,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -25,12 +26,20 @@ import type {
   RecurringBillFrequency,
   RecurringBillStatus,
   PayrollInternalEmploymentType,
+  PayrollInternalPayFrequency,
+  PayrollInternalLifecycleStage,
+  PayrollInternalProfile,
 } from "@/types/database";
 import {
-  PAYROLL_DOC_LABELS,
-  payrollDocKeysForType,
-  payrollDocsCompletion,
+  PAYROLL_UPLOAD_LABELS,
+  PAYROLL_FREQUENCY_OPTIONS,
+  PAYROLL_COST_CATEGORIES,
+  payrollUploadKeysForRow,
+  payrollDocsRowCompletion,
+  type PayrollDocumentFileMeta,
+  type PayrollPayFrequency,
 } from "@/lib/payroll-doc-checklist";
+import { uploadPayrollDocumentFile, getPayrollDocumentSignedUrl } from "@/services/payroll-documents-storage";
 import { getSupabase } from "@/services/base";
 import { createCommissionRun, listCommissionRuns, getCommissionRunWithItems, updateCommissionRunItem, approveCommissionRun } from "@/services/commission-runs";
 import type { CommissionRun, CommissionRunItem } from "@/types/database";
@@ -41,6 +50,22 @@ import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from 
 
 const INTERNAL_COST_STATUSES: InternalCostStatus[] = ["pending", "paid"];
 const RECURRING_FREQUENCIES: RecurringBillFrequency[] = ["monthly", "quarterly", "yearly"];
+
+function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocumentFileMeta> {
+  if (!raw || typeof raw !== "object") return {};
+  const o = raw as Record<string, unknown>;
+  const out: Record<string, PayrollDocumentFileMeta> = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (v && typeof v === "object" && v !== null && "path" in v) {
+      const p = (v as { path?: unknown }).path;
+      const fn = (v as { file_name?: unknown }).file_name;
+      if (typeof p === "string" && p.length > 0) {
+        out[k] = { path: p, file_name: typeof fn === "string" ? fn : "" };
+      }
+    }
+  }
+  return out;
+}
 const RECURRING_STATUSES: RecurringBillStatus[] = ["active", "paused"];
 
 const internalCostStatusConfig: Record<string, { label: string; variant: "default" | "success" | "warning" }> = {
@@ -53,6 +78,37 @@ const recurringStatusConfig: Record<string, { label: string; variant: "default" 
   paused: { label: "Paused", variant: "default" },
 };
 
+function lifecycleStageOf(c: InternalCost): PayrollInternalLifecycleStage {
+  const s = c.lifecycle_stage;
+  if (s === "onboarding" || s === "active" || s === "needs_attention" || s === "offboard") return s;
+  return "active";
+}
+
+const lifecycleStageConfig: Record<
+  PayrollInternalLifecycleStage,
+  { label: string; variant: "default" | "success" | "warning" | "info" }
+> = {
+  onboarding: { label: "Onboarding", variant: "info" },
+  active: { label: "Active", variant: "success" },
+  needs_attention: { label: "Needs attention", variant: "warning" },
+  offboard: { label: "Offboard", variant: "default" },
+};
+
+function parsePayrollProfile(raw: unknown): PayrollInternalProfile {
+  if (!raw || typeof raw !== "object") return {};
+  const o = raw as Record<string, unknown>;
+  const str = (k: string) => (typeof o[k] === "string" ? (o[k] as string) : undefined);
+  return {
+    utr: str("utr"),
+    ni_number: str("ni_number"),
+    tax_code: str("tax_code"),
+    position: str("position"),
+    phone: str("phone"),
+    address: str("address"),
+    vat_number: str("vat_number"),
+  };
+}
+
 export default function PayrollPage() {
   const { profile } = useProfile();
   const [section, setSection] = useState<"internal" | "recurring" | "commission">("internal");
@@ -63,6 +119,12 @@ export default function PayrollPage() {
   const [search, setSearch] = useState("");
   const [internalFilter, setInternalFilter] = useState<string>("all");
   const [recurringFilter, setRecurringFilter] = useState<string>("all");
+  const [staffTab, setStaffTab] = useState<"employed" | "self_employed" | "other">("employed");
+  const [staffSubTab, setStaffSubTab] = useState<"overview" | "documents" | "payments" | "compliance">("overview");
+  const [showArchivedOffboard, setShowArchivedOffboard] = useState(false);
+  const [offboardModalRow, setOffboardModalRow] = useState<InternalCost | null>(null);
+  const [offboardReason, setOffboardReason] = useState("");
+  const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
 
   const [internalModalOpen, setInternalModalOpen] = useState(false);
   const [recurringModalOpen, setRecurringModalOpen] = useState(false);
@@ -135,12 +197,21 @@ export default function PayrollPage() {
     loadData();
   }, [loadData]);
 
-  const scopedInternal = useMemo(() => {
-    if (!periodBounds) return internalCosts;
-    return internalCosts.filter(
-      (c) => c.due_date && c.due_date >= periodBounds.from && c.due_date <= periodBounds.to
-    );
-  }, [internalCosts, periodBounds]);
+  const internalByStaffTab = useMemo(() => {
+    return internalCosts.filter((c) => {
+      if (staffTab === "employed") return c.employment_type === "employee";
+      if (staffTab === "self_employed") return c.employment_type === "self_employed";
+      return c.employment_type !== "employee" && c.employment_type !== "self_employed";
+    });
+  }, [internalCosts, staffTab]);
+
+  const scopedForStaffKpi = useMemo(() => {
+    let list = internalByStaffTab;
+    if (periodBounds) {
+      list = list.filter((c) => c.due_date && c.due_date >= periodBounds.from && c.due_date <= periodBounds.to);
+    }
+    return list;
+  }, [internalByStaffTab, periodBounds]);
 
   const scopedRecurring = useMemo(() => {
     if (!periodBounds) return recurringBills;
@@ -165,8 +236,30 @@ export default function PayrollPage() {
     };
   }, [filteredCommissionRuns]);
 
-  const filteredInternal = useMemo(() => {
-    let list = scopedInternal;
+  const filteredStaffTable = useMemo(() => {
+    let list = internalByStaffTab;
+    if (!showArchivedOffboard) list = list.filter((c) => lifecycleStageOf(c) !== "offboard");
+
+    if (staffSubTab === "documents") {
+      list = list.filter((c) => {
+        const files = parsePayrollDocumentFiles(c.payroll_document_files);
+        const { done, total } = payrollDocsRowCompletion(
+          c.employment_type ?? null,
+          files,
+          c.documents_on_file ?? null,
+          c.has_equity ?? false,
+        );
+        return total > 0 && done < total;
+      });
+    } else if (staffSubTab === "payments") {
+      list = list.filter((c) => c.status === "pending" || !!c.due_date);
+    } else if (staffSubTab === "compliance") {
+      list = list.filter((c) => {
+        const st = lifecycleStageOf(c);
+        return st === "onboarding" || st === "needs_attention";
+      });
+    }
+
     if (internalFilter !== "all") list = list.filter((c) => c.status === internalFilter);
     if (search) {
       const q = search.toLowerCase();
@@ -179,7 +272,7 @@ export default function PayrollPage() {
       );
     }
     return list;
-  }, [scopedInternal, internalFilter, search]);
+  }, [internalByStaffTab, showArchivedOffboard, staffSubTab, internalFilter, search]);
 
   const filteredRecurring = useMemo(() => {
     let list = scopedRecurring;
@@ -197,15 +290,15 @@ export default function PayrollPage() {
   }, [scopedRecurring, recurringFilter, search]);
 
   const internalTotals = useMemo(() => {
-    const pending = scopedInternal.filter((c) => c.status === "pending");
-    const paid = scopedInternal.filter((c) => c.status === "paid");
+    const pending = scopedForStaffKpi.filter((c) => c.status === "pending");
+    const paid = scopedForStaffKpi.filter((c) => c.status === "paid");
     return {
       totalPending: pending.reduce((s, c) => s + Number(c.amount), 0),
       totalPaid: paid.reduce((s, c) => s + Number(c.amount), 0),
       pendingCount: pending.length,
       paidCount: paid.length,
     };
-  }, [scopedInternal]);
+  }, [scopedForStaffKpi]);
 
   const recurringTotals = useMemo(() => {
     const active = scopedRecurring.filter((b) => b.status === "active");
@@ -244,12 +337,32 @@ export default function PayrollPage() {
     setRecurringModalOpen(true);
   };
 
-  const saveInternal = async (form: Partial<InternalCost>) => {
+  const saveInternal = async (
+    form: Partial<InternalCost>,
+    extra?: { pendingFiles: Record<string, File> },
+  ) => {
     setSaving(true);
     const supabase = getSupabase();
     const now = new Date().toISOString();
+    const pendingFiles = extra?.pendingFiles ?? {};
+
+    const mergeUploaded = async (
+      costId: string,
+      base: Record<string, PayrollDocumentFileMeta>,
+    ): Promise<Record<string, PayrollDocumentFileMeta>> => {
+      const out = { ...base };
+      for (const [docKey, file] of Object.entries(pendingFiles)) {
+        if (!file) continue;
+        const up = await uploadPayrollDocumentFile(costId, docKey, file);
+        out[docKey] = { path: up.path, file_name: up.file_name };
+      }
+      return out;
+    };
+
     try {
       if (editingInternal) {
+        const baseFiles = parsePayrollDocumentFiles(editingInternal.payroll_document_files);
+        const mergedFiles = await mergeUploaded(editingInternal.id, baseFiles);
         const updates: Record<string, unknown> = {
           description: form.description!,
           amount: Number(form.amount),
@@ -257,9 +370,15 @@ export default function PayrollPage() {
           due_date: form.due_date || null,
           payee_name: form.payee_name?.trim() || null,
           employment_type: form.employment_type ?? null,
+          pay_frequency: form.pay_frequency ?? null,
           payment_day_of_month: form.payment_day_of_month ?? null,
-          documents_on_file: form.documents_on_file ?? {},
+          payroll_document_files: mergedFiles,
           status: form.status ?? editingInternal.status,
+          has_equity: form.has_equity ?? false,
+          equity_percent: form.equity_percent != null && !Number.isNaN(Number(form.equity_percent)) ? Number(form.equity_percent) : null,
+          equity_vesting_notes: form.equity_vesting_notes?.trim() || null,
+          equity_start_date: form.equity_start_date || null,
+          payroll_profile: form.payroll_profile ?? {},
           updated_at: now,
         };
         if (form.status === "paid") updates.paid_at = now.split("T")[0];
@@ -277,15 +396,38 @@ export default function PayrollPage() {
           due_date: form.due_date || null,
           payee_name: form.payee_name?.trim() || null,
           employment_type: form.employment_type ?? null,
+          pay_frequency: form.pay_frequency ?? null,
           payment_day_of_month: form.payment_day_of_month ?? null,
-          documents_on_file: form.documents_on_file ?? {},
+          payroll_document_files: {} as Record<string, PayrollDocumentFileMeta>,
           status: (form.status as InternalCostStatus) ?? "pending",
           paid_at: form.status === "paid" ? now.split("T")[0] : null,
+          lifecycle_stage:
+            form.employment_type === "employee" || form.employment_type === "self_employed"
+              ? "onboarding"
+              : "active",
+          has_equity: form.has_equity ?? false,
+          equity_percent: form.equity_percent != null && !Number.isNaN(Number(form.equity_percent)) ? Number(form.equity_percent) : null,
+          equity_vesting_notes: form.equity_vesting_notes?.trim() || null,
+          equity_start_date: form.equity_start_date || null,
+          payroll_profile: form.payroll_profile ?? {},
           created_at: now,
           updated_at: now,
         };
-        const { error } = await supabase.from("payroll_internal_costs").insert(row);
-        if (error) throw error;
+        const { data: inserted, error: insErr } = await supabase
+          .from("payroll_internal_costs")
+          .insert(row)
+          .select("id")
+          .single();
+        if (insErr) throw insErr;
+        const newId = inserted?.id as string;
+        if (Object.keys(pendingFiles).length > 0 && newId) {
+          const mergedFiles = await mergeUploaded(newId, {});
+          const { error: upErr } = await supabase
+            .from("payroll_internal_costs")
+            .update({ payroll_document_files: mergedFiles, updated_at: now })
+            .eq("id", newId);
+          if (upErr) throw upErr;
+        }
         toast.success("Internal cost added");
       }
       setInternalModalOpen(false);
@@ -377,10 +519,72 @@ export default function PayrollPage() {
   };
 
   const sectionTabs = [
-    { id: "internal", label: "Salaries & internal costs", count: scopedInternal.length },
+    { id: "internal", label: "Payroll staff", count: internalCosts.length },
     { id: "recurring", label: "Recurring bills", count: scopedRecurring.length },
     { id: "commission", label: "Run Commission", count: filteredCommissionRuns.length },
   ];
+
+  const patchInternalLifecycle = useCallback(
+    async (id: string, patch: Record<string, unknown>): Promise<boolean> => {
+      const supabase = getSupabase();
+      const now = new Date().toISOString();
+      setLifecycleBusyId(id);
+      try {
+        const { error } = await supabase.from("payroll_internal_costs").update({ ...patch, updated_at: now }).eq("id", id);
+        if (error) throw error;
+        await loadInternal();
+        return true;
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Update failed");
+        return false;
+      } finally {
+        setLifecycleBusyId(null);
+      }
+    },
+    [loadInternal],
+  );
+
+  const handleApproveRecurring = useCallback(
+    async (row: InternalCost) => {
+      if (!row.employment_type) return;
+      const files = parsePayrollDocumentFiles(row.payroll_document_files);
+      const { done, total } = payrollDocsRowCompletion(
+        row.employment_type,
+        files,
+        row.documents_on_file ?? null,
+        row.has_equity ?? false,
+      );
+      if (total > 0 && done < total) {
+        toast.error("Upload all required documents before approving recurring pay");
+        return;
+      }
+      const ok = await patchInternalLifecycle(row.id, {
+        lifecycle_stage: "active",
+        recurring_approved_at: new Date().toISOString(),
+      });
+      if (ok) toast.success("Approved once — recurring until offboard. Included in Pay Run when due in the week.");
+    },
+    [patchInternalLifecycle],
+  );
+
+  const handleConfirmOffboard = useCallback(async () => {
+    if (!offboardModalRow) return;
+    const reason = offboardReason.trim();
+    if (reason.length < 3) {
+      toast.error("Enter an offboard reason (min. 3 characters)");
+      return;
+    }
+    const ok = await patchInternalLifecycle(offboardModalRow.id, {
+      lifecycle_stage: "offboard",
+      offboard_reason: reason,
+      offboard_at: new Date().toISOString(),
+    });
+    if (ok) {
+      toast.success("Person offboarded and archived with reason on file.");
+      setOffboardModalRow(null);
+      setOffboardReason("");
+    }
+  }, [offboardModalRow, offboardReason, patchInternalLifecycle]);
 
   const internalColumns: Column<InternalCost>[] = [
     {
@@ -404,24 +608,45 @@ export default function PayrollPage() {
         return <span className="text-sm text-text-tertiary">—</span>;
       },
     },
+    {
+      key: "lifecycle",
+      label: "Stage",
+      width: "132px",
+      render: (r) => {
+        const st = lifecycleStageOf(r);
+        const cfg = lifecycleStageConfig[st] ?? lifecycleStageConfig.active;
+        return (
+          <Badge variant={cfg.variant} size="sm">
+            {cfg.label}
+          </Badge>
+        );
+      },
+    },
     { key: "description", label: "Description", render: (r) => <span className="text-sm text-text-primary">{r.description}</span> },
     { key: "category", label: "Category", render: (r) => <span className="text-sm text-text-secondary">{r.category ?? "—"}</span> },
     {
       key: "pay_schedule",
       label: "Pay schedule",
-      minWidth: "130px",
+      minWidth: "150px",
       render: (r) => {
+        const freq = r.pay_frequency as PayrollPayFrequency | null | undefined;
+        const freqLabel = PAYROLL_FREQUENCY_OPTIONS.find((o) => o.value === freq)?.label ?? (freq ? freq : null);
         const day = r.payment_day_of_month;
-        const dayPart =
-          day != null && day >= 1 && day <= 28 ? (
-            <span className="text-xs font-medium text-text-secondary">Day {day} each month</span>
+        const monthlyDay =
+          freq === "monthly" && day != null && day >= 1 && day <= 28 ? (
+            <span className="text-[11px] text-text-secondary block">Day {day} of month</span>
           ) : null;
         const due = r.due_date ? (
           <span className="text-[11px] text-text-tertiary block">Next: {formatDate(r.due_date)}</span>
         ) : null;
         return (
           <div className="space-y-0.5">
-            {dayPart ?? <span className="text-xs text-text-tertiary">—</span>}
+            {freqLabel ? (
+              <span className="text-xs font-medium text-text-primary leading-tight block">{freqLabel}</span>
+            ) : (
+              <span className="text-xs text-text-tertiary">—</span>
+            )}
+            {monthlyDay}
             {due}
           </div>
         );
@@ -433,7 +658,13 @@ export default function PayrollPage() {
       width: "72px",
       align: "center",
       render: (r) => {
-        const { done, total } = payrollDocsCompletion(r.employment_type ?? null, r.documents_on_file ?? null);
+        const files = parsePayrollDocumentFiles(r.payroll_document_files);
+        const { done, total } = payrollDocsRowCompletion(
+          r.employment_type ?? null,
+          files,
+          r.documents_on_file ?? null,
+          r.has_equity ?? false,
+        );
         if (!total) return <span className="text-sm text-text-tertiary">—</span>;
         const complete = done === total;
         return (
@@ -456,9 +687,69 @@ export default function PayrollPage() {
     {
       key: "actions",
       label: "",
-      render: (r) => (
-        <Button variant="ghost" size="sm" onClick={() => openEditInternal(r)}>Edit</Button>
-      ),
+      minWidth: "220px",
+      render: (r) => {
+        const st = lifecycleStageOf(r);
+        const busy = lifecycleBusyId === r.id;
+        const isStaff = r.employment_type === "employee" || r.employment_type === "self_employed";
+        return (
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            <Button variant="ghost" size="sm" className="h-8 text-xs" disabled={busy} onClick={() => openEditInternal(r)}>
+              Edit
+            </Button>
+            {isStaff && st === "onboarding" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={busy}
+                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                onClick={() => void handleApproveRecurring(r)}
+              >
+                Approve
+              </Button>
+            )}
+            {isStaff && st === "active" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={busy}
+                icon={<AlertTriangle className="h-3.5 w-3.5" />}
+                onClick={() => void patchInternalLifecycle(r.id, { lifecycle_stage: "needs_attention" })}
+              >
+                Attention
+              </Button>
+            )}
+            {isStaff && st === "needs_attention" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={busy}
+                onClick={() => void patchInternalLifecycle(r.id, { lifecycle_stage: "active" })}
+              >
+                Active
+              </Button>
+            )}
+            {st !== "offboard" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs text-text-tertiary"
+                disabled={busy}
+                icon={<UserX className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  setOffboardModalRow(r);
+                  setOffboardReason("");
+                }}
+              >
+                Offboard
+              </Button>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -490,7 +781,7 @@ export default function PayrollPage() {
       <div className="space-y-5">
         <PageHeader
           title="Payroll & costs"
-          subtitle="Company salaries (Employee / Self-employed, pay days, documents) plus other internal costs, recurring bills, and commission runs."
+          subtitle="Pay-run model: Employed vs Self-employed, stages (onboarding → active → needs attention → offboard). Approve once to make recurring until offboard. Only Active + due in week appear in Pay Run. Recurring bills and commission runs below."
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>Export CSV</Button>
           {section === "internal" && (
@@ -517,6 +808,61 @@ export default function PayrollPage() {
 
         {section === "internal" && (
           <>
+            <div className="flex flex-col gap-3 rounded-xl border border-border-light bg-card/50 p-3 sm:p-4">
+              <p className="text-[11px] font-medium text-text-secondary uppercase tracking-wide">Staff group</p>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    { id: "employed" as const, label: "Employed" },
+                    { id: "self_employed" as const, label: "Self-employed" },
+                    { id: "other" as const, label: "Other internal" },
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setStaffTab(t.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      staffTab === t.id ? "bg-primary text-white" : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] font-medium text-text-secondary uppercase tracking-wide pt-1">View</p>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    { id: "overview" as const, label: "Overview" },
+                    { id: "documents" as const, label: "Documents" },
+                    { id: "payments" as const, label: "Payments" },
+                    { id: "compliance" as const, label: "Compliance" },
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setStaffSubTab(t.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      staffSubTab === t.id ? "bg-text-primary text-white dark:bg-surface-tertiary" : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showArchivedOffboard}
+                  onChange={(e) => setShowArchivedOffboard(e.target.checked)}
+                  className="rounded border-border"
+                />
+                Show offboard (archived)
+              </label>
+            </div>
+
             <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <KpiCard
                 title="Pending total"
@@ -570,13 +916,13 @@ export default function PayrollPage() {
               </div>
               <DataTable
                 columns={internalColumns}
-                data={filteredInternal}
+                data={filteredStaffTable}
                 getRowId={(r) => r.id}
                 loading={loading}
                 page={1}
                 totalPages={1}
-                totalItems={filteredInternal.length}
-                tableClassName="min-w-[1180px]"
+                totalItems={filteredStaffTable.length}
+                tableClassName="min-w-[1280px]"
               />
             </motion.div>
           </>
@@ -693,6 +1039,51 @@ export default function PayrollPage() {
           </motion.div>
         )}
 
+        <Modal
+          open={!!offboardModalRow}
+          onClose={() => {
+            setOffboardModalRow(null);
+            setOffboardReason("");
+          }}
+          title="Offboard"
+          subtitle="The reason is stored on this record permanently (audit / archive)."
+          size="md"
+        >
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-text-secondary">
+              Offboard{" "}
+              <span className="font-medium text-text-primary">
+                {offboardModalRow?.payee_name?.trim() || offboardModalRow?.description || "—"}
+              </span>
+              . They will leave Pay Run and Active lists (toggle &quot;Show offboard&quot; to see archived rows).
+            </p>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason *</label>
+              <textarea
+                className="w-full min-h-[100px] rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                value={offboardReason}
+                onChange={(e) => setOffboardReason(e.target.value)}
+                placeholder="e.g. End of contract, resignation, project completed…"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setOffboardModalRow(null);
+                  setOffboardReason("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={() => void handleConfirmOffboard()} icon={<UserX className="h-3.5 w-3.5" />}>
+                Confirm offboard
+              </Button>
+            </div>
+          </div>
+        </Modal>
+
         <InternalCostModal
           open={internalModalOpen}
           onClose={() => { setInternalModalOpen(false); setEditingInternal(null); }}
@@ -774,18 +1165,31 @@ function InternalCostModal({
   open: boolean;
   onClose: () => void;
   initial: InternalCost | null;
-  onSave: (form: Partial<InternalCost>) => Promise<void>;
+  onSave: (form: Partial<InternalCost>, extra?: { pendingFiles: Record<string, File> }) => Promise<void>;
   saving: boolean;
 }) {
   const [payeeName, setPayeeName] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState("Salary");
   const [employmentType, setEmploymentType] = useState<"" | PayrollInternalEmploymentType>("");
+  const [payFrequency, setPayFrequency] = useState<"" | PayrollPayFrequency>("");
   const [paymentDay, setPaymentDay] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [status, setStatus] = useState<InternalCostStatus>("pending");
-  const [documentsOnFile, setDocumentsOnFile] = useState<Record<string, boolean>>({});
+  const [existingFiles, setExistingFiles] = useState<Record<string, PayrollDocumentFileMeta>>({});
+  const [pendingFiles, setPendingFiles] = useState<Record<string, File | null>>({});
+  const [hasEquity, setHasEquity] = useState(false);
+  const [equityPercent, setEquityPercent] = useState("");
+  const [equityVesting, setEquityVesting] = useState("");
+  const [equityStartDate, setEquityStartDate] = useState("");
+  const [profileUtr, setProfileUtr] = useState("");
+  const [profileNi, setProfileNi] = useState("");
+  const [profileTaxCode, setProfileTaxCode] = useState("");
+  const [profilePosition, setProfilePosition] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
+  const [profileAddress, setProfileAddress] = useState("");
+  const [profileVat, setProfileVat] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -793,8 +1197,9 @@ function InternalCostModal({
       setPayeeName(initial?.payee_name ?? "");
       setDescription(initial?.description ?? "");
       setAmount(initial?.amount != null ? String(initial.amount) : "");
-      setCategory(initial?.category ?? "");
+      setCategory(initial?.category ?? "Salary");
       setEmploymentType((initial?.employment_type as PayrollInternalEmploymentType) ?? "");
+      setPayFrequency((initial?.pay_frequency as PayrollPayFrequency) ?? "");
       setPaymentDay(
         initial?.payment_day_of_month != null && initial.payment_day_of_month >= 1
           ? String(initial.payment_day_of_month)
@@ -802,18 +1207,41 @@ function InternalCostModal({
       );
       setDueDate(initial?.due_date ?? "");
       setStatus(initial?.status ?? "pending");
-      setDocumentsOnFile({ ...(initial?.documents_on_file ?? {}) });
+      setExistingFiles(parsePayrollDocumentFiles(initial?.payroll_document_files));
+      setPendingFiles({});
+      setHasEquity(!!initial?.has_equity);
+      setEquityPercent(initial?.equity_percent != null ? String(initial.equity_percent) : "");
+      setEquityVesting(initial?.equity_vesting_notes ?? "");
+      setEquityStartDate(initial?.equity_start_date ?? "");
+      const prof = parsePayrollProfile(initial?.payroll_profile);
+      setProfileUtr(prof.utr ?? "");
+      setProfileNi(prof.ni_number ?? "");
+      setProfileTaxCode(prof.tax_code ?? "");
+      setProfilePosition(prof.position ?? "");
+      setProfilePhone(prof.phone ?? "");
+      setProfileAddress(prof.address ?? "");
+      setProfileVat(prof.vat_number ?? "");
     });
   }, [open, initial]);
 
-  const docKeys = payrollDocKeysForType(employmentType || null);
+  const isOffboard = initial?.lifecycle_stage === "offboard";
+  const docKeys = payrollUploadKeysForRow(employmentType || null, hasEquity);
 
-  const toggleDoc = (key: string) => {
-    setDocumentsOnFile((prev) => ({ ...prev, [key]: !prev[key] }));
+  const openSigned = async (path: string) => {
+    try {
+      const url = await getPayrollDocumentSignedUrl(path, 3600);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch {
+      toast.error("Could not open file");
+    }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isOffboard) {
+      toast.error("This person is offboard (read-only).");
+      return;
+    }
     if (!description.trim()) {
       toast.error("Description is required");
       return;
@@ -823,31 +1251,116 @@ function InternalCostModal({
       toast.error("Valid amount is required");
       return;
     }
+    const emp = employmentType || null;
     let paymentDayNum: number | null = null;
-    if (paymentDay.trim()) {
+    if (payFrequency === "monthly") {
+      if (!paymentDay.trim()) {
+        toast.error("Pay day of month (1–28) is required for monthly payroll");
+        return;
+      }
       const d = parseInt(paymentDay, 10);
       if (Number.isNaN(d) || d < 1 || d > 28) {
         toast.error("Pay day must be between 1 and 28");
         return;
       }
       paymentDayNum = d;
+    } else {
+      paymentDayNum = null;
     }
-    const emp = employmentType || null;
-    const filteredDocs: Record<string, boolean> = {};
-    for (const k of payrollDocKeysForType(emp)) {
-      if (documentsOnFile[k]) filteredDocs[k] = true;
+
+    const payrollProfilePayload: PayrollInternalProfile = {
+      ...(profileUtr.trim() ? { utr: profileUtr.trim() } : {}),
+      ...(profileNi.trim() ? { ni_number: profileNi.trim() } : {}),
+      ...(profileTaxCode.trim() ? { tax_code: profileTaxCode.trim() } : {}),
+      ...(profilePosition.trim() ? { position: profilePosition.trim() } : {}),
+      ...(profilePhone.trim() ? { phone: profilePhone.trim() } : {}),
+      ...(profileAddress.trim() ? { address: profileAddress.trim() } : {}),
+      ...(profileVat.trim() ? { vat_number: profileVat.trim() } : {}),
+    };
+
+    const equityPercentNum =
+      hasEquity && equityPercent.trim() ? parseFloat(equityPercent) : undefined;
+    if (hasEquity && equityPercent.trim() && (Number.isNaN(equityPercentNum!) || equityPercentNum! < 0)) {
+      toast.error("Equity % must be a valid number");
+      return;
     }
-    onSave({
-      payee_name: payeeName.trim() || undefined,
-      description: description.trim(),
-      amount: num,
-      category: category.trim() || undefined,
-      employment_type: emp ?? undefined,
-      payment_day_of_month: paymentDayNum ?? undefined,
-      due_date: dueDate || undefined,
-      documents_on_file: emp ? filteredDocs : {},
-      status,
-    });
+
+    const pendingPayload = Object.fromEntries(Object.entries(pendingFiles).filter(([, f]) => f != null)) as Record<string, File>;
+
+    if (emp) {
+      if (!payFrequency) {
+        toast.error("Select pay frequency");
+        return;
+      }
+      if (!dueDate.trim()) {
+        toast.error("Next payment date is required");
+        return;
+      }
+      for (const k of docKeys) {
+        const hasExisting = !!existingFiles[k]?.path;
+        const hasPending = !!pendingFiles[k];
+        if (!hasExisting && !hasPending) {
+          toast.error(`Upload required: ${PAYROLL_UPLOAD_LABELS[k] ?? k}`);
+          return;
+        }
+      }
+      await onSave(
+        {
+          payee_name: payeeName.trim() || undefined,
+          description: description.trim(),
+          amount: num,
+          category: category.trim() || undefined,
+          employment_type: emp,
+          pay_frequency: payFrequency as PayrollInternalPayFrequency,
+          payment_day_of_month: paymentDayNum ?? undefined,
+          due_date: dueDate || undefined,
+          status,
+          has_equity: hasEquity,
+          equity_percent: equityPercentNum,
+          equity_vesting_notes: hasEquity ? equityVesting.trim() || undefined : undefined,
+          equity_start_date: hasEquity ? equityStartDate || undefined : undefined,
+          payroll_profile: payrollProfilePayload,
+        },
+        { pendingFiles: pendingPayload },
+      );
+      return;
+    }
+
+    if (hasEquity) {
+      for (const k of payrollUploadKeysForRow(null, true)) {
+        const hasExisting = !!existingFiles[k]?.path;
+        const hasPending = !!pendingFiles[k];
+        if (!hasExisting && !hasPending) {
+          toast.error(`Upload required: ${PAYROLL_UPLOAD_LABELS[k] ?? k}`);
+          return;
+        }
+      }
+    }
+
+    let otherMonthlyDay: number | null = null;
+    if (payFrequency === "monthly" && paymentDay.trim()) {
+      const d = parseInt(paymentDay, 10);
+      if (!Number.isNaN(d) && d >= 1 && d <= 28) otherMonthlyDay = d;
+    }
+    await onSave(
+      {
+        payee_name: payeeName.trim() || undefined,
+        description: description.trim(),
+        amount: num,
+        category: category.trim() || undefined,
+        employment_type: undefined,
+        pay_frequency: payFrequency ? (payFrequency as PayrollInternalPayFrequency) : undefined,
+        payment_day_of_month: otherMonthlyDay ?? undefined,
+        due_date: dueDate || undefined,
+        status,
+        has_equity: hasEquity,
+        equity_percent: equityPercentNum,
+        equity_vesting_notes: hasEquity ? equityVesting.trim() || undefined : undefined,
+        equity_start_date: hasEquity ? equityStartDate || undefined : undefined,
+        payroll_profile: payrollProfilePayload,
+      },
+      Object.keys(pendingPayload).length > 0 ? { pendingFiles: pendingPayload } : undefined,
+    );
   };
 
   return (
@@ -855,10 +1368,19 @@ function InternalCostModal({
       open={open}
       onClose={onClose}
       title={initial ? "Edit salary or cost" : "Add salary or cost"}
-      subtitle="Like a bill line: amount, next payment date, and recurring pay day. For staff, set Employee or Self-employed to track required documents (including service agreement)."
+      subtitle="Stages: new staff start in Onboarding; Approve once on the list moves them to Active (recurring in Pay Run until offboard). Upload documents, optional UK profile and equity."
       size="lg"
     >
-      <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[min(78vh,720px)] overflow-y-auto">
+      <form onSubmit={(e) => void handleSubmit(e)} className="p-6 space-y-4 max-h-[min(78vh,720px)] overflow-y-auto">
+        {isOffboard && (
+          <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 dark:bg-amber-950/25 p-3 text-sm text-text-secondary">
+            <p className="font-medium text-text-primary">Offboard (archived)</p>
+            {initial?.offboard_reason && <p className="mt-1">Reason on file: {initial.offboard_reason}</p>}
+            {initial?.offboard_at && (
+              <p className="text-xs text-text-tertiary mt-1">{formatDate(initial.offboard_at.split("T")[0])}</p>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Person / payee</label>
@@ -866,19 +1388,56 @@ function InternalCostModal({
               value={payeeName}
               onChange={(e) => setPayeeName(e.target.value)}
               placeholder="Full name as on payroll or contract"
+              disabled={isOffboard}
             />
           </div>
           <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Description *</label>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Monthly salary April" required />
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="e.g. Monthly salary April"
+              required
+              disabled={isOffboard}
+            />
           </div>
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount *</label>
-            <Input type="number" step="0.01" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" required />
+            <Input
+              type="number"
+              step="0.01"
+              min={0}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              required
+              disabled={isOffboard}
+            />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Category (optional)</label>
-            <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Salary, Payroll, Ops" />
+            <Select
+              label="Category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              options={PAYROLL_COST_CATEGORIES.map((c) => ({ value: c.value, label: c.label }))}
+              disabled={isOffboard}
+            />
+          </div>
+          <div className="sm:col-span-2 rounded-xl border border-border-light bg-surface-hover/30 p-4 space-y-3">
+            <p className="text-xs font-semibold text-text-primary">Profile (UK — optional)</p>
+            <p className="text-[11px] text-text-tertiary">UTR / VAT for contractors; NI, tax code, role for employees. Stored as structured fields for future payslips and self-bills.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input value={profileUtr} onChange={(e) => setProfileUtr(e.target.value)} placeholder="UTR" disabled={isOffboard} />
+              <Input value={profileVat} onChange={(e) => setProfileVat(e.target.value)} placeholder="VAT number" disabled={isOffboard} />
+              <Input value={profileNi} onChange={(e) => setProfileNi(e.target.value)} placeholder="NI number" disabled={isOffboard} />
+              <Input value={profileTaxCode} onChange={(e) => setProfileTaxCode(e.target.value)} placeholder="Tax code (e.g. 1257L)" disabled={isOffboard} />
+              <Input value={profilePosition} onChange={(e) => setProfilePosition(e.target.value)} placeholder="Position / role" disabled={isOffboard} />
+              <Input value={profilePhone} onChange={(e) => setProfilePhone(e.target.value)} placeholder="Phone" disabled={isOffboard} />
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Address</label>
+                <Input value={profileAddress} onChange={(e) => setProfileAddress(e.target.value)} placeholder="Address" disabled={isOffboard} />
+              </div>
+            </div>
           </div>
           <div className="sm:col-span-2">
             <Select
@@ -886,49 +1445,152 @@ function InternalCostModal({
               value={employmentType}
               onChange={(e) => setEmploymentType(e.target.value as "" | PayrollInternalEmploymentType)}
               options={[
-                { value: "", label: "Other / one-off cost (no HR checklist)" },
+                { value: "", label: "Other / one-off cost (no uploads)" },
                 { value: "employee", label: "Employee (PAYE)" },
                 { value: "self_employed", label: "Self-employed (contractor)" },
               ]}
+              disabled={isOffboard}
             />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Pay day of month (1–28)</label>
-            <Input
-              type="number"
-              min={1}
-              max={28}
-              value={paymentDay}
-              onChange={(e) => setPaymentDay(e.target.value)}
-              placeholder="e.g. 25"
+          <div className="sm:col-span-2">
+            <Select
+              label="Pay frequency"
+              value={payFrequency}
+              onChange={(e) => setPayFrequency(e.target.value as "" | PayrollPayFrequency)}
+              options={[
+                { value: "", label: "—" },
+                ...PAYROLL_FREQUENCY_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+              ]}
+              disabled={isOffboard}
             />
-            <p className="text-[10px] text-text-tertiary mt-1">Typical day salaries are paid each month (like a recurring bill).</p>
           </div>
-          <div>
+          {payFrequency === "monthly" && (
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Pay day of month (1–28)</label>
+              <Input
+                type="number"
+                min={1}
+                max={28}
+                value={paymentDay}
+                onChange={(e) => setPaymentDay(e.target.value)}
+                placeholder="e.g. 25"
+                disabled={isOffboard}
+              />
+              <p className="text-[10px] text-text-tertiary mt-1">Calendar day each month (like a recurring bill).</p>
+            </div>
+          )}
+          <div className={payFrequency === "monthly" ? "" : "sm:col-span-2"}>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Next payment date</label>
-            <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-            <p className="text-[10px] text-text-tertiary mt-1">Next run due in the ledger (pending / paid).</p>
+            <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={isOffboard} />
+            <p className="text-[10px] text-text-tertiary mt-1">Next run in the ledger (pending / paid).</p>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-border-light p-4 space-y-3">
+          <label className="flex items-center gap-2 text-sm font-medium text-text-primary cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={hasEquity}
+              disabled={isOffboard}
+              onChange={(e) => {
+                setHasEquity(e.target.checked);
+                if (!e.target.checked) setPendingFiles((p) => ({ ...p, equity_agreement: null }));
+              }}
+              className="rounded border-border"
+            />
+            Equity participation
+          </label>
+          {hasEquity && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Equity %</label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={equityPercent}
+                  onChange={(e) => setEquityPercent(e.target.value)}
+                  placeholder="e.g. 0.5"
+                  disabled={isOffboard}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Vesting (optional)</label>
+                <Input
+                  value={equityVesting}
+                  onChange={(e) => setEquityVesting(e.target.value)}
+                  placeholder="e.g. 4-year vest, 1-year cliff"
+                  disabled={isOffboard}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Equity start date</label>
+                <Input type="date" value={equityStartDate} onChange={(e) => setEquityStartDate(e.target.value)} disabled={isOffboard} />
+              </div>
+            </div>
+          )}
         </div>
 
         {docKeys.length > 0 && (
           <div className="rounded-xl border border-border-light bg-surface-hover/40 p-4 space-y-3">
-            <p className="text-xs font-semibold text-text-primary">Documents on file</p>
+            <p className="text-xs font-semibold text-text-primary">Required documents (upload)</p>
             <p className="text-[11px] text-text-tertiary leading-snug">
-              Tick what you have filed for this person. Service agreement is included for both Employee and Self-employed.
+              PDF, Word, or image. Each line must have a file before saving. Self-employed: passport, service agreement, self-bill agreement. Employee: passport, contract, right to work, PAYE setup, service agreement.
             </p>
-            <ul className="space-y-2.5">
+            <ul className="space-y-4">
               {docKeys.map((key) => (
-                <li key={key}>
-                  <label className="flex items-start gap-2.5 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/20"
-                      checked={!!documentsOnFile[key]}
-                      onChange={() => toggleDoc(key)}
-                    />
-                    <span className="text-sm text-text-primary leading-snug">{PAYROLL_DOC_LABELS[key] ?? key}</span>
-                  </label>
+                <li key={key} className="space-y-1.5">
+                  <p className="text-sm font-medium text-text-primary">{PAYROLL_UPLOAD_LABELS[key] ?? key}</p>
+                  {existingFiles[key]?.path && !pendingFiles[key] ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-text-secondary truncate max-w-[200px]">{existingFiles[key].file_name}</span>
+                      <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => void openSigned(existingFiles[key].path)}>
+                        View
+                      </Button>
+                      {!isOffboard && (
+                        <label className="text-xs font-medium text-primary cursor-pointer hover:underline">
+                          Replace
+                          <input
+                            type="file"
+                            className="sr-only"
+                            accept=".pdf,.doc,.docx,image/*"
+                            onChange={(ev) => {
+                              const f = ev.target.files?.[0];
+                              if (f) setPendingFiles((p) => ({ ...p, [key]: f }));
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  ) : pendingFiles[key] ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-emerald-700 dark:text-emerald-400">Selected: {pendingFiles[key]!.name}</span>
+                      {!isOffboard && (
+                        <button type="button" className="text-xs text-text-tertiary hover:text-text-secondary" onClick={() => setPendingFiles((p) => ({ ...p, [key]: null }))}>
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <label
+                      className={`inline-flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs font-medium text-text-secondary ${
+                        isOffboard ? "opacity-50 cursor-not-allowed" : "hover:bg-surface-hover cursor-pointer"
+                      }`}
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      Choose file
+                      <input
+                        type="file"
+                        className="sr-only"
+                        accept=".pdf,.doc,.docx,image/*"
+                        disabled={isOffboard}
+                        onChange={(ev) => {
+                          const f = ev.target.files?.[0];
+                          if (f) setPendingFiles((p) => ({ ...p, [key]: f }));
+                        }}
+                      />
+                    </label>
+                  )}
                 </li>
               ))}
             </ul>
@@ -940,12 +1602,17 @@ function InternalCostModal({
           value={status}
           onChange={(e) => setStatus(e.target.value as InternalCostStatus)}
           options={INTERNAL_COST_STATUSES.map((s) => ({ value: s, label: s === "paid" ? "Paid" : "Pending" }))}
+          disabled={isOffboard}
         />
         <div className="flex justify-end gap-2 pt-2 border-t border-border-light">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={saving} icon={saving ? <Loader className="h-3.5 w-3.5 animate-spin" /> : undefined}>
+          <Button
+            type="submit"
+            disabled={saving || isOffboard}
+            icon={saving ? <Loader className="h-3.5 w-3.5 animate-spin" /> : undefined}
+          >
             {saving ? "Saving..." : initial ? "Update" : "Add"}
           </Button>
         </div>

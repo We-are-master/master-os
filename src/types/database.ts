@@ -458,6 +458,28 @@ export interface SelfBill {
 export type InternalCostStatus = "pending" | "paid";
 /** Office payroll row: salary line with optional employment type + doc checklist. */
 export type PayrollInternalEmploymentType = "employee" | "self_employed";
+/** Staff / cost lifecycle — Pay Run includes only `active` with due_date in week. */
+export type PayrollInternalLifecycleStage = "onboarding" | "active" | "needs_attention" | "offboard";
+/** How often this payroll line runs (weekly / quinzenal / monthly). */
+export type PayrollInternalPayFrequency = "weekly" | "biweekly" | "monthly";
+
+/** Optional UK / HR fields stored in `payroll_internal_costs.payroll_profile` (JSON). */
+export type PayrollInternalProfile = {
+  utr?: string;
+  ni_number?: string;
+  tax_code?: string;
+  position?: string;
+  phone?: string;
+  address?: string;
+  vat_number?: string;
+  vat_registered?: boolean;
+};
+
+export interface PayrollInternalDocumentFile {
+  path: string;
+  file_name: string;
+}
+
 export interface InternalCost {
   id: string;
   reference?: string;
@@ -471,10 +493,24 @@ export interface InternalCost {
   payee_name?: string | null;
   /** Drives required document checklist in UI. */
   employment_type?: PayrollInternalEmploymentType | null;
-  /** Typical monthly pay day (1–28). */
+  /** weekly | biweekly | monthly */
+  pay_frequency?: PayrollInternalPayFrequency | null;
+  /** Typical monthly pay day (1–28); used when pay_frequency is monthly. */
   payment_day_of_month?: number | null;
-  /** Keys from payroll-doc-checklist; values = on file. */
+  /** Uploaded HR docs: doc_key -> storage path (bucket payroll-internal-documents). */
+  payroll_document_files?: Record<string, PayrollInternalDocumentFile> | null;
+  /** @deprecated Legacy checkbox map; prefer payroll_document_files. */
   documents_on_file?: Record<string, boolean> | null;
+  lifecycle_stage?: PayrollInternalLifecycleStage;
+  offboard_reason?: string | null;
+  offboard_at?: string | null;
+  /** When operator approved once — recurring until offboard. */
+  recurring_approved_at?: string | null;
+  has_equity?: boolean;
+  equity_percent?: number | null;
+  equity_vesting_notes?: string | null;
+  equity_start_date?: string | null;
+  payroll_profile?: PayrollInternalProfile | null;
   created_at: string;
   updated_at: string;
 }
@@ -607,7 +643,7 @@ export interface PayRun {
   updated_at: string;
 }
 
-export type PayRunItemType = "payroll" | "self_bill" | "bill";
+export type PayRunItemType = "payroll" | "self_bill" | "bill" | "internal_cost";
 
 export interface PayRunItem {
   id: string;

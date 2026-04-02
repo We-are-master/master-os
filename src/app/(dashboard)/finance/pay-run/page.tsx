@@ -138,7 +138,7 @@ export default function PayRunPage() {
       <div className="space-y-5">
         <PageHeader
           title="Pay Run"
-          subtitle="Weekly payment hub. Payroll (commissions) + Self-bills + Bills."
+          subtitle="Weekly payment hub. Commissions + internal salary (active staff, due this week) + self-bills + bills."
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>
             Export CSV (Xero)
