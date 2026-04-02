@@ -317,9 +317,17 @@ export default function SelfBillPage() {
   const columns: Column<SelfBill>[] = [
     {
       key: "reference",
-      label: "Self-bill",
-      width: "132px",
-      render: (item) => <p className="text-sm font-semibold text-text-primary tabular-nums">{item.reference}</p>,
+      label: "Self fill",
+      minWidth: "200px",
+      cellClassName: "!whitespace-nowrap max-w-[min(260px,36vw)] overflow-hidden align-top",
+      render: (item) => (
+        <p
+          className="text-sm font-semibold text-text-primary font-mono truncate min-w-0 max-w-full"
+          title={item.reference}
+        >
+          {item.reference}
+        </p>
+      ),
     },
     {
       key: "partner_name",
