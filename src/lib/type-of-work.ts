@@ -9,6 +9,8 @@ export const TYPE_OF_WORK_OPTIONS = [
   "Builder",
   "Carpenter",
   "Cleaning",
+  "Gardener",
+  "Boiler Service",
   "EICR",
   "PAT EICR",
   "PAT Testing",
@@ -23,6 +25,10 @@ export const TYPE_OF_WORK_OPTIONS = [
 const TYPE_OF_WORK_ALIASES: Record<string, string> = {
   "general maintenance": GENERAL_MAINTENANCE_LABEL,
   handyman: GENERAL_MAINTENANCE_LABEL,
+  gardener: "Gardener",
+  garderner: "Gardener",
+  boiler: "Boiler Service",
+  "boiler service": "Boiler Service",
 };
 
 /**

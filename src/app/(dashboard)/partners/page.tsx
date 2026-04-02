@@ -65,6 +65,8 @@ const tradeColors: Record<string, string> = {
   Carpentry: "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 ring-emerald-200/50",
   "General Maintenance": "bg-orange-50 dark:bg-orange-950/30 text-orange-700 ring-orange-200/50",
   Cleaning: "bg-cyan-50 dark:bg-cyan-950/30 text-cyan-700 ring-cyan-200/50",
+  Gardener: "bg-green-50 dark:bg-green-950/30 text-green-800 ring-green-200/50",
+  "Boiler Service": "bg-rose-50 dark:bg-rose-950/30 text-rose-800 ring-rose-200/50",
   Builder: "bg-stone-50 dark:bg-stone-950/30 text-stone-700 ring-stone-200/50",
   Painter: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 ring-yellow-200/50",
 };
