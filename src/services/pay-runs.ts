@@ -135,27 +135,7 @@ export async function markPayRunItemsPaid(itemIds: string[]): Promise<void> {
     if (item.item_type === "self_bill") {
       await supabase.from("self_bills").update({ status: "paid" }).eq("id", item.source_id);
     } else if (item.item_type === "bill") {
-      const { data: bill } = await supabase.from("bills").select("id, is_recurring, recurrence_interval, due_date, description, category, amount, submitted_by_id, submitted_by_name").eq("id", item.source_id).single();
-      if (bill) {
-        await supabase.from("bills").update({ status: "paid", paid_at: now }).eq("id", item.source_id);
-        if (bill.is_recurring && bill.recurrence_interval) {
-          const next = new Date(bill.due_date);
-          if (bill.recurrence_interval === "monthly") next.setMonth(next.getMonth() + 1);
-          else if (bill.recurrence_interval === "quarterly") next.setMonth(next.getMonth() + 3);
-          else next.setFullYear(next.getFullYear() + 1);
-          await supabase.from("bills").insert({
-            description: bill.description,
-            category: bill.category,
-            amount: bill.amount,
-            due_date: next.toISOString().split("T")[0],
-            is_recurring: true,
-            recurrence_interval: bill.recurrence_interval,
-            submitted_by_id: bill.submitted_by_id,
-            submitted_by_name: bill.submitted_by_name,
-            status: "submitted",
-          });
-        }
-      }
+      await supabase.from("bills").update({ status: "paid", paid_at: now }).eq("id", item.source_id);
     }
   }
 }

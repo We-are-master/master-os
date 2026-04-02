@@ -511,9 +511,9 @@ export interface CommissionPoolShare {
   updated_at: string;
 }
 
-/** Unified company bills: recurring + one-off, workflow Submitted → Approved → Paid/Rejected */
-export type BillStatus = "submitted" | "approved" | "paid" | "rejected";
-export type BillRecurrence = "monthly" | "quarterly" | "yearly";
+/** Unified company bills: recurring + one-off, workflow Submitted → Approved → Paid/Rejected; optional flag Needs attention */
+export type BillStatus = "submitted" | "approved" | "paid" | "rejected" | "needs_attention";
+export type BillRecurrence = "weekly" | "monthly" | "quarterly" | "yearly";
 
 export interface Bill {
   id: string;
