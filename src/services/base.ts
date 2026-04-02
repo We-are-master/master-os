@@ -145,7 +145,8 @@ export async function getStatusCounts(
         const rowTotal = Number(row.total ?? 0) || 0;
         if (rowTotal > totalFromRpc) totalFromRpc = rowTotal;
       }
-      counts["all"] = totalFromRpc;
+      const sumByStatus = statuses.reduce((acc, st) => acc + (counts[st] ?? 0), 0);
+      counts["all"] = totalFromRpc > 0 ? totalFromRpc : sumByStatus;
       for (const st of statuses) {
         if (counts[st] == null) counts[st] = 0;
       }
@@ -153,10 +154,15 @@ export async function getStatusCounts(
     }
   }
 
-  let totalQuery = supabase
-    .from(table)
-    .select("*", { count: "exact", head: true })
-    .is("deleted_at", null);
+  /** Matches `getAggregates`: some tables (e.g. `partners`) have no `deleted_at` column. */
+  let useDeletedFilter = true;
+  const deletedProbe = await supabase.from(table).select("*", { count: "exact", head: true }).is("deleted_at", null);
+  if (deletedProbe.error) {
+    useDeletedFilter = false;
+  }
+
+  let totalQuery = supabase.from(table).select("*", { count: "exact", head: true });
+  if (useDeletedFilter) totalQuery = totalQuery.is("deleted_at", null);
   if (options?.scheduleRange && table === "jobs") {
     totalQuery = applyJobsScheduleRangeToQuery(totalQuery, options.scheduleRange);
   } else if (options?.dateColumn) {
@@ -168,11 +174,8 @@ export async function getStatusCounts(
 
   await Promise.all(
     statuses.map(async (s) => {
-      let statusQuery = supabase
-        .from(table)
-        .select("*", { count: "exact", head: true })
-        .is("deleted_at", null)
-        .eq(statusColumn, s);
+      let statusQuery = supabase.from(table).select("*", { count: "exact", head: true }).eq(statusColumn, s);
+      if (useDeletedFilter) statusQuery = statusQuery.is("deleted_at", null);
       if (options?.scheduleRange && table === "jobs") {
         statusQuery = applyJobsScheduleRangeToQuery(statusQuery, options.scheduleRange);
       } else if (options?.dateColumn) {
