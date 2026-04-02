@@ -28,7 +28,7 @@ import {
   Pencil,
   XCircle,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
@@ -74,7 +74,7 @@ function countByStatus(rows: SelfBill[]): Record<string, number> {
 
 export default function SelfBillPage() {
   const [activeTab, setActiveTab] = useState<SelfBillTab>("accumulating");
-  const [layoutMode, setLayoutMode] = useState<"cards" | "table">("cards");
+  const [layoutMode, setLayoutMode] = useState<"cards" | "table">("table");
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -315,60 +315,77 @@ export default function SelfBillPage() {
 
   const columns: Column<SelfBill>[] = [
     {
+      key: "reference",
+      label: "Self-bill",
+      width: "132px",
+      render: (item) => <p className="text-sm font-semibold text-text-primary tabular-nums">{item.reference}</p>,
+    },
+    {
       key: "partner_name",
       label: "Partner",
       render: (item) => (
-        <div className="flex items-center gap-2.5">
-          <Avatar name={item.partner_name} size="sm" />
-          <div>
-            <p className="text-sm font-medium text-text-primary">{item.partner_name}</p>
-            <p className="text-[11px] text-text-tertiary">
-              {item.reference}
-              {item.week_label ? ` · ${item.week_label}` : ` · ${item.period}`}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Avatar name={item.partner_name} size="sm" className="shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-text-primary truncate">{item.partner_name}</p>
+            <p className="text-[11px] text-text-tertiary truncate">
+              {item.week_label ?? item.period}
             </p>
           </div>
         </div>
       ),
     },
     {
+      key: "created_at",
+      label: "Created",
+      width: "108px",
+      render: (item) => <span className="text-sm text-text-secondary whitespace-nowrap">{formatDate(item.created_at)}</span>,
+    },
+    {
+      key: "job_value",
+      label: "Labour",
+      align: "right",
+      render: (item) => <span className="text-sm tabular-nums text-text-primary">{formatCurrency(item.job_value)}</span>,
+    },
+    {
+      key: "materials",
+      label: "Materials",
+      align: "right",
+      render: (item) => <span className="text-sm tabular-nums text-text-secondary">{formatCurrency(item.materials)}</span>,
+    },
+    {
       key: "jobs_count",
       label: "Jobs",
       align: "center",
+      width: "72px",
       render: (item) => (
         <button
           type="button"
-          className="text-sm font-semibold text-primary hover:underline"
-          onClick={() => void openJobsModal(item)}
+          className="text-sm font-semibold text-primary hover:underline tabular-nums"
+          onClick={(e) => {
+            e.stopPropagation();
+            void openJobsModal(item);
+          }}
         >
           {item.jobs_count}
         </button>
       ),
     },
     {
-      key: "job_value",
-      label: "Labour",
-      align: "right",
-      render: (item) => <span className="text-sm text-text-primary">{formatCurrency(item.job_value)}</span>,
-    },
-    {
-      key: "materials",
-      label: "Materials",
-      align: "right",
-      render: (item) => <span className="text-sm text-text-secondary">{formatCurrency(item.materials)}</span>,
-    },
-    {
       key: "net_payout",
       label: "Net payout",
       align: "right",
-      render: (item) => <span className="text-sm font-bold text-text-primary">{formatCurrency(item.net_payout)}</span>,
+      width: "100px",
+      render: (item) => <span className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(item.net_payout)}</span>,
     },
     {
       key: "status",
       label: "Status",
+      minWidth: "140px",
       render: (item) => {
         const config = statusConfig[item.status] ?? { label: item.status, variant: "default" as const };
         return (
-          <Badge variant={config.variant} dot>
+          <Badge variant={config.variant} dot size="sm">
             {config.label}
           </Badge>
         );
@@ -377,8 +394,13 @@ export default function SelfBillPage() {
     {
       key: "actions",
       label: "",
+      width: "200px",
+      cellClassName: "!align-middle",
       render: (item) => (
-        <div className="flex flex-wrap items-center gap-1.5 justify-end">
+        <div
+          className="flex flex-wrap items-center gap-1.5 justify-end"
+          onClick={(e) => e.stopPropagation()}
+        >
           {item.status === "pending_review" ? (
             <>
               <Button type="button" size="sm" variant="outline" className="h-8 text-[11px]" onClick={() => void handleApprove(item)}>
@@ -480,11 +502,11 @@ export default function SelfBillPage() {
         </div>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex flex-col gap-3 mb-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
             <Tabs tabs={tabs} activeTab={activeTab} onChange={(id) => setActiveTab(id as SelfBillTab)} />
-            <div className="flex items-center gap-2 flex-wrap justify-between">
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
               <SearchInput placeholder="Search partner, ref, week…" className="w-52 max-w-full" value={search} onChange={(e) => setSearch(e.target.value)} />
-              <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-hover">
+              <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-hover" title="Layout">
                 <button
                   type="button"
                   className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold ${layoutMode === "cards" ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary"}`}
@@ -534,9 +556,12 @@ export default function SelfBillPage() {
               page={1}
               totalPages={1}
               totalItems={filtered.length}
+              emptyMessage="No self-bills in this view."
+              onRowClick={(item) => void openJobsModal(item)}
               selectable
               selectedIds={selectedIds}
               onSelectionChange={setSelectedIds}
+              tableClassName="min-w-[1100px]"
               bulkActions={
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
