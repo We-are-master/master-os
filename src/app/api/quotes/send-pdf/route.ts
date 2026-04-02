@@ -366,6 +366,9 @@ export async function GET(req: NextRequest) {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `inline; filename="${quote.reference.replace(/\//g, "-")}_quote.pdf"`,
+        // Allow dashboard iframe preview (middleware uses SAMEORIGIN for /api; this reinforces for merged responses).
+        "X-Frame-Options": "SAMEORIGIN",
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (err) {

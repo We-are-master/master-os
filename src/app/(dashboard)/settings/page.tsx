@@ -1326,6 +1326,7 @@ function SystemTab() {
     favicon_url: "",
     quote_footer_notes: "",
     currency: "GBP",
+    job_auto_assign_offer_minutes: "5",
     dashboard_sales_goal_monthly: "35000",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
@@ -1353,6 +1354,9 @@ function SystemTab() {
           favicon_url: (data as { favicon_url?: string | null }).favicon_url ?? "",
           quote_footer_notes: data.quote_footer_notes ?? "",
           currency: row.currency && ["GBP", "USD", "EUR", "BRL"].includes(row.currency) ? row.currency : "GBP",
+          job_auto_assign_offer_minutes: String(
+            (data as { job_auto_assign_offer_minutes?: number | null }).job_auto_assign_offer_minutes ?? 5,
+          ),
           dashboard_sales_goal_monthly: (() => {
             const v = (data as { dashboard_sales_goal_monthly?: number | null }).dashboard_sales_goal_monthly;
             return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "35000";
@@ -1369,6 +1373,7 @@ function SystemTab() {
     setSaving(true);
     try {
       const supabase = getSupabase();
+      const jam = Math.max(1, Math.min(240, Math.floor(Number(form.job_auto_assign_offer_minutes) || 5)));
       const payload = {
         ...form,
         vat_percent: Number(form.vat_percent) || 20,
@@ -1376,6 +1381,7 @@ function SystemTab() {
         logo_light_theme_url: form.logo_light_theme_url.trim() || null,
         logo_dark_theme_url: form.logo_dark_theme_url.trim() || null,
         favicon_url: form.favicon_url.trim() || null,
+        job_auto_assign_offer_minutes: jam,
         dashboard_sales_goal_monthly: Math.max(0, Number(form.dashboard_sales_goal_monthly) || 35000),
       };
       if (settingsId) {
@@ -1658,12 +1664,24 @@ function SystemTab() {
               </div>
               <ToggleSwitch defaultChecked />
             </div>
-            <div className="flex items-center justify-between p-3 rounded-xl bg-surface-hover">
+            <div className="rounded-xl border border-border-light bg-card p-3 space-y-2">
               <div>
-                <p className="text-sm font-medium text-text-primary">Auto-assign Jobs</p>
-                <p className="text-xs text-text-tertiary">Automatically assign jobs to available partners</p>
+                <p className="text-sm font-medium text-text-primary">Auto-assign offer window</p>
+                <p className="text-xs text-text-tertiary">
+                  Default minutes partners have to accept a job when you choose Auto assign (overridable per job).
+                </p>
               </div>
-              <ToggleSwitch />
+              <div className="flex items-center gap-3">
+                <Input
+                  type="number"
+                  min={1}
+                  max={240}
+                  className="max-w-[100px]"
+                  value={form.job_auto_assign_offer_minutes}
+                  onChange={(e) => update("job_auto_assign_offer_minutes", e.target.value)}
+                />
+                <span className="text-xs text-text-tertiary">minutes</span>
+              </div>
             </div>
           </div>
         </Card>

@@ -37,6 +37,8 @@ export interface CompanySettings {
   currency?: string | null;
   /** Fee applied when a partner cancels a job from the app (GBP). */
   partner_cancellation_fee_gbp?: number | null;
+  /** Default minutes for auto-assign job offers (partner app). */
+  job_auto_assign_offer_minutes?: number | null;
   /** Overview dashboard: monthly pipeline target (GBP), scaled to the selected period. */
   dashboard_sales_goal_monthly?: number | null;
   updated_at: string;

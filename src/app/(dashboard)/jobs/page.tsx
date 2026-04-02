@@ -56,6 +56,7 @@ import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { jobBillableRevenue, jobMarginPercent, jobProfit } from "@/lib/job-financials";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { getCompanySettings } from "@/services/company";
 import type { CatalogService } from "@/types/database";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import {
@@ -392,7 +393,9 @@ function JobsPageContent() {
     return () => { cancelled = true; };
   }, [data]);
 
-  const handleCreate = useCallback(async (formData: Partial<Job>) => {
+  type CreateJobForm = Partial<Job> & { auto_assign_offer_minutes?: number };
+
+  const handleCreate = useCallback(async (formData: CreateJobForm) => {
     const cp = formData.client_price ?? 0;
     const pc = formData.partner_cost ?? 0;
     const mc = formData.materials_cost ?? 0;
@@ -484,6 +487,26 @@ function JobsPageContent() {
             data: { type: "job_assigned", jobId: result.id },
           }),
         }).catch(() => {});
+      }
+      if (result.status === "auto_assigning") {
+        const raw = formData.auto_assign_offer_minutes;
+        const minutes =
+          typeof raw === "number" && Number.isFinite(raw) && raw >= 1 && raw <= 240 ? Math.floor(raw) : undefined;
+        try {
+          const br = await fetch("/api/jobs/broadcast-auto-assign", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jobId: result.id, minutes }),
+          });
+          const payload = (await br.json()) as { invited?: number; error?: string; message?: string };
+          if (!br.ok) {
+            toast.error(payload.error ?? "Could not send offers to partners");
+          } else if ((payload.invited ?? 0) === 0) {
+            toast.warning(payload.message ?? "No partners matched this type of work. Assign manually or adjust partner trades.");
+          }
+        } catch {
+          toast.error("Could not notify partners");
+        }
       }
       router.push(`/jobs/${result.id}`);
     } catch (err) {
@@ -965,7 +988,15 @@ function isHousekeepWorkLabel(value: string | null | undefined): boolean {
 }
 
 /* ========== CREATE JOB MODAL ========== */
-function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
+function CreateJobModal({
+  open,
+  onClose,
+  onCreate,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreate: (data: Partial<Job> & { auto_assign_offer_minutes?: number }) => void;
+}) {
   const requiredFieldClass = "border-red-300 focus:border-red-400 focus:ring-red-100 hover:border-red-300";
   const [form, setForm] = useState({
     title: "",
@@ -987,6 +1018,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     in_ccz: false,
     has_free_parking: true,
     assignment_mode: "manual",
+    auto_assign_offer_minutes: "5",
   });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
@@ -1021,9 +1053,14 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     Promise.all([
       listPartners({ pageSize: 200, status: "all" }).then((r) => r.data ?? []).catch(() => []),
       listCatalogServicesForPicker().catch(() => []),
-    ]).then(([ps, catalog]) => {
+      getCompanySettings().catch(() => null),
+    ]).then(([ps, catalog, settings]) => {
       setPartners(ps);
       setCatalogServices(catalog);
+      const m = settings?.job_auto_assign_offer_minutes;
+      if (typeof m === "number" && m >= 1 && m <= 240) {
+        setForm((prev) => ({ ...prev, auto_assign_offer_minutes: String(m) }));
+      }
     });
   }, [open]);
 
@@ -1080,6 +1117,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     const clientPriceOut = isHourly ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
     const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
 
+    const offerMins = Math.max(1, Math.min(240, Math.floor(Number(form.auto_assign_offer_minutes) || 5)));
     onCreate({
       title: form.job_type === "hourly"
         ? (selectedCatalogService?.name ? (normalizeTypeOfWork(selectedCatalogService.name) || selectedCatalogService.name) : (normalizeTypeOfWork(form.title.trim()) || form.title.trim()))
@@ -1093,6 +1131,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       partner_ids: undefined,
       partner_name: isAutoAssign ? null : (selectedPartner ? (selectedPartner.company_name?.trim() || selectedPartner.contact_name) : undefined),
       status: isAutoAssign ? "auto_assigning" : undefined,
+      auto_assign_offer_minutes: isAutoAssign ? offerMins : undefined,
       job_type: (form.job_type as Job["job_type"]) ?? "fixed",
       hourly_client_rate: isHourly ? hourlyClientRate : null,
       hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
@@ -1130,6 +1169,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       in_ccz: false,
       has_free_parking: true,
       assignment_mode: "manual",
+      auto_assign_offer_minutes: "5",
     });
     setClientAddress({ client_name: "", property_address: "" });
   };
@@ -1278,9 +1318,25 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
               )}
             >
               <p className="font-medium">Auto assign</p>
-              <p className="text-xs opacity-80">System will assign after creation</p>
+              <p className="text-xs opacity-80">Notify partners by trade — first to accept wins</p>
             </button>
           </div>
+          {form.assignment_mode === "auto" && (
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Offer window (minutes)</label>
+              <Input
+                type="number"
+                min={1}
+                max={240}
+                value={form.auto_assign_offer_minutes}
+                onChange={(e) => setForm((prev) => ({ ...prev, auto_assign_offer_minutes: e.target.value }))}
+                className="max-w-[120px]"
+              />
+              <p className="text-xs text-text-tertiary mt-1">
+                Partners matching this job&apos;s type of work get a push; the job stays open until someone accepts or time runs out.
+              </p>
+            </div>
+          )}
           {form.assignment_mode === "manual" && (
             <div className="space-y-2">
               <Input
