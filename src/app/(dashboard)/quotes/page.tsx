@@ -30,7 +30,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Quote, Partner, Job, CatalogService } from "@/types/database";
+import type { Quote, Partner, Job } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
@@ -46,9 +46,6 @@ import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
-import { listCatalogServicesForPicker } from "@/services/catalog-services";
-import { estimatedValueFromCatalog } from "@/lib/catalog-service-defaults";
-import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { getErrorMessage, isUuid, isValidIsoDateTime, parseIsoDateOnly } from "@/lib/utils";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
@@ -2916,14 +2913,26 @@ function MarginCalculator({
   );
 }
 
+/** Partners whose primary trade or trades list matches the selected type of work. */
+function partnerMatchesTypeOfWork(partner: Partner, typeOfWork: string): boolean {
+  const t = typeOfWork.trim();
+  if (!t) return false;
+  const trades = partner.trades?.length ? partner.trades : [partner.trade].filter(Boolean);
+  const nt = normalizeTypeOfWork(t);
+  return trades.some((tr) => {
+    const r = String(tr).trim();
+    return r === t || normalizeTypeOfWork(r) === nt;
+  });
+}
+
 /* ========== CREATE QUOTE FORM ========== */
 function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>) => void; onCancel: () => void }) {
-  const [quoteType, setQuoteType] = useState<"internal" | "partner">("internal");
-  const [form, setForm] = useState({ title: "", total_value: "", catalog_service_id: "" });
+  const [quoteType, setQuoteType] = useState<"internal" | "partner">("partner");
+  const [form, setForm] = useState({ title: "", total_value: "" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0" }]);
-  const [catalogList, setCatalogList] = useState<CatalogService[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [partnersLoading, setPartnersLoading] = useState(false);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
   const [partnerDescription, setPartnerDescription] = useState("");
   const [invitePhotos, setInvitePhotos] = useState<File[]>([]);
@@ -2935,34 +2944,54 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const lineSellTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const [marginPct, setMarginPct] = useState(0);
   const typeOfWorkOptions = useMemo(
-    () => mergeTypeOfWorkOptions([...TYPE_OF_WORK_OPTIONS, ...catalogList.map((c) => c.name)])
-      .sort((a, b) => a.localeCompare(b))
-      .map((name) => ({ value: name, label: name })),
-    [catalogList]
+    () =>
+      mergeTypeOfWorkOptions([...TYPE_OF_WORK_OPTIONS])
+        .sort((a, b) => a.localeCompare(b))
+        .map((name) => ({ value: name, label: name })),
+    [],
   );
 
-  useEffect(() => {
-    listCatalogServicesForPicker().then(setCatalogList).catch(() => setCatalogList([]));
-  }, []);
+  const partnersForTrade = useMemo(() => {
+    const t = form.title.trim();
+    if (!t) return [];
+    return partners.filter((p) => partnerMatchesTypeOfWork(p, t));
+  }, [partners, form.title]);
 
   useEffect(() => {
     if (quoteType !== "partner") return;
+    setPartnersLoading(true);
     listPartners({ pageSize: 200, status: "all" })
       .then((r) => setPartners(r.data ?? []))
-      .catch(() => setPartners([]));
+      .catch(() => setPartners([]))
+      .finally(() => setPartnersLoading(false));
   }, [quoteType]);
+
+  useEffect(() => {
+    if (quoteType !== "partner") return;
+    if (!form.title.trim()) {
+      setSelectedPartnerIds(new Set());
+      return;
+    }
+    setSelectedPartnerIds((prev) => {
+      const allowed = new Set(partnersForTrade.map((p) => p.id));
+      return new Set([...prev].filter((id) => allowed.has(id)));
+    });
+  }, [quoteType, form.title, partnersForTrade]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Title is required"); return; }
     if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
-    const cid = form.catalog_service_id.trim();
     const scopeFromLineItems = lineItems
       .map((li) => li.description.trim())
       .filter(Boolean)
       .join("\n");
 
     if (quoteType === "partner") {
+      if (partnersForTrade.length === 0) {
+        toast.error("No partners match this type of work yet — add partners in Directory or choose another trade.");
+        return;
+      }
       if (selectedPartnerIds.size === 0) {
         toast.error("Please select at least one partner");
         return;
@@ -2997,7 +3026,7 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       client_name: clientAddress.client_name,
       client_email: clientAddress.client_email,
       property_address: clientAddress.property_address,
-      catalog_service_id: quoteType === "internal" ? (cid && isUuid(cid) ? cid : null) : null,
+      catalog_service_id: null,
       total_value: quoteType === "internal" ? (lineSellTotal > 0 ? lineSellTotal : linePartnerTotal) : 0,
       cost: quoteType === "internal" ? linePartnerTotal : 0,
       partner_cost: quoteType === "internal" ? linePartnerTotal : undefined,
@@ -3016,10 +3045,10 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
     };
     onSubmit(payload);
     inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
-    setForm({ title: "", total_value: "", catalog_service_id: "" });
+    setForm({ title: "", total_value: "" });
     setClientAddress({ client_name: "", property_address: "" });
     setLineItems([{ description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0" }]);
-    setQuoteType("internal");
+    setQuoteType("partner");
     setPartners([]);
     setSelectedPartnerIds(new Set());
     setPartnerDescription("");
@@ -3037,69 +3066,11 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
         value={quoteType}
         onChange={(e) => setQuoteType(e.target.value as "internal" | "partner")}
         options={[
-          { value: "internal", label: "Manual quote" },
-          { value: "partner", label: "Bid for partner" },
+          { value: "internal", label: "Manual Quote" },
+          { value: "partner", label: "Invite Partner to Bid" },
         ]}
       />
-      {quoteType === "partner" && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Partners *</p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="text-[11px] font-medium text-primary hover:underline"
-                onClick={() => setSelectedPartnerIds(new Set(partners.map((p) => p.id)))}
-              >
-                Select all
-              </button>
-              <button
-                type="button"
-                className="text-[11px] font-medium text-text-tertiary hover:underline"
-                onClick={() => setSelectedPartnerIds(new Set())}
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-            {partners.length === 0 ? (
-              <p className="text-sm text-text-tertiary text-center py-6">Loading partners...</p>
-            ) : (
-              partners.map((p) => {
-                const isSelected = selectedPartnerIds.has(p.id);
-                return (
-                  <label
-                    key={p.id}
-                    className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                      isSelected ? "border-primary bg-primary/5" : "border-border hover:border-primary/30 hover:bg-surface-hover"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={(e) => {
-                        const next = new Set(selectedPartnerIds);
-                        if (e.target.checked) next.add(p.id);
-                        else next.delete(p.id);
-                        setSelectedPartnerIds(next);
-                      }}
-                      className="h-4 w-4 rounded border-border text-primary"
-                    />
-                    <Avatar name={p.company_name} size="md" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
-                      <p className="text-xs text-text-tertiary">{p.trade} — {p.location}</p>
-                    </div>
-                  </label>
-                );
-              })
-            )}
-          </div>
-          <p className="text-[11px] text-text-tertiary mt-2">{selectedPartnerIds.size} selected</p>
-        </div>
-      )}
-
+      <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
       <Select
         label="Type of work *"
         value={form.title}
@@ -3109,97 +3080,66 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
           ...typeOfWorkOptions,
         ]}
       />
-      <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-      <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3 space-y-2">
-        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos for partners (optional)</p>
-        <p className="text-[11px] text-text-tertiary">
-          Up to 8 images (5 MB each). Shown in the partner app on the job invitation when this quote is in bidding.
-        </p>
-        <div className="flex flex-wrap gap-2 items-center">
-          <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
-            <ImagePlus className="h-3.5 w-3.5" />
-            Add photos
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              multiple
-              className="sr-only"
-              disabled={invitePhotos.length >= 8 || uploadingPhotos}
-              onChange={(e) => {
-                const list = e.target.files;
-                if (!list?.length) return;
-                const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
-                setInvitePhotos(next);
-                setInvitePhotoPreviews((prev) => {
-                  prev.forEach((u) => URL.revokeObjectURL(u));
-                  return next.map((f) => URL.createObjectURL(f));
-                });
-                e.target.value = "";
-              }}
-            />
-          </label>
-        </div>
-        {invitePhotoPreviews.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {invitePhotoPreviews.map((src, i) => (
-              <div key={src} className="relative h-16 w-16 rounded-lg overflow-hidden border border-border-light bg-surface-hover shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={src} alt="" className="h-full w-full object-cover" />
-                <button
-                  type="button"
-                  className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
-                  onClick={() => {
-                    const idx = i;
-                    setInvitePhotoPreviews((prev) => {
-                      const u = prev[idx];
-                      if (u) URL.revokeObjectURL(u);
-                      return prev.filter((_, j) => j !== idx);
-                    });
-                    setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
-                  }}
-                  aria-label="Remove photo"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
+      {quoteType === "partner" && (
+        <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3 space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos (optional)</p>
+          <p className="text-[11px] text-text-tertiary">
+            Up to 8 images (5 MB each). Shown in the partner app on the job invitation when this quote is in bidding.
+          </p>
+          <div className="flex flex-wrap gap-2 items-center">
+            <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
+              <ImagePlus className="h-3.5 w-3.5" />
+              Add photos
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple
+                className="sr-only"
+                disabled={invitePhotos.length >= 8 || uploadingPhotos}
+                onChange={(e) => {
+                  const list = e.target.files;
+                  if (!list?.length) return;
+                  const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
+                  setInvitePhotos(next);
+                  setInvitePhotoPreviews((prev) => {
+                    prev.forEach((u) => URL.revokeObjectURL(u));
+                    return next.map((f) => URL.createObjectURL(f));
+                  });
+                  e.target.value = "";
+                }}
+              />
+            </label>
           </div>
-        )}
-      </div>
+          {invitePhotoPreviews.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {invitePhotoPreviews.map((src, i) => (
+                <div key={src} className="relative h-16 w-16 rounded-lg overflow-hidden border border-border-light bg-surface-hover shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt="" className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                    onClick={() => {
+                      const idx = i;
+                      setInvitePhotoPreviews((prev) => {
+                        const u = prev[idx];
+                        if (u) URL.revokeObjectURL(u);
+                        return prev.filter((_, j) => j !== idx);
+                      });
+                      setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
+                    }}
+                    aria-label="Remove photo"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {quoteType === "internal" ? (
         <>
-          <ServiceCatalogSelect
-            catalog={catalogList}
-            value={form.catalog_service_id}
-            onChange={(id, svc) => {
-              setForm((p) => {
-                const next = { ...p, catalog_service_id: id };
-                if (svc && !p.title.trim()) next.title = `${svc.name} quote`;
-                return next;
-              });
-              if (!svc) return;
-              const partnerCostTotalRaw = Number(svc.partner_cost ?? 0);
-              const sellTotal = estimatedValueFromCatalog(svc);
-              const partnerCostTotal = partnerCostTotalRaw > 0 ? partnerCostTotalRaw : sellTotal;
-
-              const isFixed = svc.pricing_mode === "fixed";
-              const qty = isFixed ? 1 : Math.max(0.25, Number(svc.default_hours) || 1);
-              const unitPartner = qty > 0 ? partnerCostTotal / qty : 0;
-              const unitSell = qty > 0 ? sellTotal / qty : 0;
-              const description = svc.default_description?.trim() || (isFixed ? svc.name : `${svc.name} (labour)`);
-
-              setLineItems((prev) => {
-                const rest = prev.slice(1);
-                return [{ description, quantity: String(qty), partnerUnitCost: String(unitPartner), unitPrice: String(unitSell) }, ...rest];
-              });
-              if (sellTotal > 0 && partnerCostTotal > 0) {
-                setMarginPct(Math.round(((sellTotal - partnerCostTotal) / sellTotal) * 1000) / 10);
-              } else {
-                setMarginPct(40);
-              }
-            }}
-          />
-          <p className="text-[10px] text-text-tertiary -mt-2">Line items stay fully editable after applying a template.</p>
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Line Items</label>
@@ -3265,16 +3205,83 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
           )}
         </>
       ) : (
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description *</label>
-          <textarea
-            value={partnerDescription}
-            onChange={(e) => setPartnerDescription(e.target.value)}
-            placeholder="Describe scope, inclusions and exclusions... (used for partner bids)"
-            rows={5}
-            className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none"
-          />
-        </div>
+        <>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description *</label>
+            <textarea
+              value={partnerDescription}
+              onChange={(e) => setPartnerDescription(e.target.value)}
+              placeholder="Describe scope, inclusions and exclusions... (used for partner bids)"
+              rows={5}
+              className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none"
+            />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Partners *</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                  disabled={partnersForTrade.length === 0}
+                  onClick={() => setSelectedPartnerIds(new Set(partnersForTrade.map((p) => p.id)))}
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  className="text-[11px] font-medium text-text-tertiary hover:underline"
+                  onClick={() => setSelectedPartnerIds(new Set())}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              {partnersLoading && partners.length === 0 ? (
+                <p className="text-sm text-text-tertiary text-center py-6">Loading partners...</p>
+              ) : !partnersLoading && partners.length === 0 ? (
+                <p className="text-sm text-text-tertiary text-center py-6">No partners in Directory yet.</p>
+              ) : !form.title.trim() ? (
+                <p className="text-sm text-text-tertiary text-center py-6">Select a type of work to see matching partners.</p>
+              ) : partnersForTrade.length === 0 ? (
+                <p className="text-sm text-text-tertiary text-center py-6">
+                  No partners match this type of work yet — add partners in Directory or choose another trade.
+                </p>
+              ) : (
+                partnersForTrade.map((p) => {
+                  const isSelected = selectedPartnerIds.has(p.id);
+                  return (
+                    <label
+                      key={p.id}
+                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        isSelected ? "border-primary bg-primary/5" : "border-border hover:border-primary/30 hover:bg-surface-hover"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => {
+                          const next = new Set(selectedPartnerIds);
+                          if (e.target.checked) next.add(p.id);
+                          else next.delete(p.id);
+                          setSelectedPartnerIds(next);
+                        }}
+                        className="h-4 w-4 rounded border-border text-primary"
+                      />
+                      <Avatar name={p.company_name} size="md" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
+                        <p className="text-xs text-text-tertiary">{p.trade} — {p.location}</p>
+                      </div>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <p className="text-[11px] text-text-tertiary mt-2">{selectedPartnerIds.size} selected</p>
+          </div>
+        </>
       )}
       <div className="flex justify-end gap-2 pt-2">
         <Button variant="outline" onClick={onCancel} type="button" disabled={uploadingPhotos}>Cancel</Button>
