@@ -28,6 +28,7 @@ import { listJobs, createJob, updateJob, getJob, fetchAllJobsFinancialKpiRows } 
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById, type ListParams } from "@/services/base";
+import { softDeleteInvoicesForArchivedJobs } from "@/services/invoices";
 import { useProfile } from "@/hooks/use-profile";
 import type { Job, Partner } from "@/types/database";
 import { listPartners } from "@/services/partners";
@@ -620,9 +621,25 @@ function JobsPageContent() {
 
   const handleBulkArchive = useCallback(async () => {
     if (selectedIds.size === 0) return;
+    const n = selectedIds.size;
+    const msg =
+      n === 1
+        ? "Archive this job? Linked invoices will be cancelled and hidden from the Invoices list."
+        : `Archive ${n} selected jobs? Linked invoices will be cancelled and hidden from the Invoices list.`;
+    if (typeof window !== "undefined" && !window.confirm(msg)) return;
     try {
-      await Promise.all(Array.from(selectedIds).map((id) => softDeleteById("jobs", id, profile?.id)));
-      await logBulkAction("job", Array.from(selectedIds), "deleted", "deleted_at", "archived", profile?.id, profile?.full_name);
+      const ids = Array.from(selectedIds);
+      const supabase = getSupabase();
+      const { data: jobRows, error: jobFetchErr } = await supabase
+        .from("jobs")
+        .select("reference, invoice_id")
+        .in("id", ids)
+        .is("deleted_at", null);
+      if (jobFetchErr) throw jobFetchErr;
+      const forInvoices = (jobRows ?? []) as { reference: string; invoice_id?: string | null }[];
+      await softDeleteInvoicesForArchivedJobs(forInvoices, profile?.id);
+      await Promise.all(ids.map((id) => softDeleteById("jobs", id, profile?.id)));
+      await logBulkAction("job", ids, "deleted", "deleted_at", "archived", profile?.id, profile?.full_name);
       toast.success(`${selectedIds.size} jobs archived`);
       setSelectedIds(new Set());
       refresh();

@@ -145,3 +145,33 @@ export async function updateInvoice(id: string, input: Partial<Invoice>): Promis
   if (!legacyErr) return legacyData as Invoice;
   throw legacyErr;
 }
+
+/**
+ * When jobs are archived (soft-deleted), drop linked invoices from the Invoices tab:
+ * soft-delete by `job_reference`, and any primary `invoice_id` on the job (in case reference drift).
+ * Status is set to `cancelled` for accounting clarity.
+ */
+export async function softDeleteInvoicesForArchivedJobs(
+  jobs: { reference: string; invoice_id?: string | null }[],
+  deletedBy?: string
+): Promise<void> {
+  const supabase = getSupabase();
+  const refs = [...new Set(jobs.map((j) => j.reference).filter((r) => r != null && String(r).trim() !== ""))];
+  const ts = new Date().toISOString();
+  const payload: { deleted_at: string; deleted_by?: string; status: Invoice["status"] } = {
+    deleted_at: ts,
+    status: "cancelled",
+  };
+  if (deletedBy) payload.deleted_by = deletedBy;
+
+  if (refs.length > 0) {
+    const { error } = await supabase.from("invoices").update(payload).in("job_reference", refs).is("deleted_at", null);
+    if (error) throw error;
+  }
+
+  const primaryIds = [...new Set(jobs.map((j) => j.invoice_id).filter((id): id is string => id != null && String(id).trim() !== ""))];
+  for (const id of primaryIds) {
+    const { error } = await supabase.from("invoices").update(payload).eq("id", id).is("deleted_at", null);
+    if (error) throw error;
+  }
+}
