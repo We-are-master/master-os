@@ -25,7 +25,9 @@ export function PageHeader({ title, subtitle, children, className }: PageHeaderP
           <p className="text-sm text-text-secondary mt-0.5">{subtitle}</p>
         )}
       </div>
-      {children && <div className="flex items-center gap-2">{children}</div>}
+      {children && (
+        <div className="flex min-w-0 flex-nowrap items-center justify-end gap-2 shrink-0">{children}</div>
+      )}
     </motion.div>
   );
 }

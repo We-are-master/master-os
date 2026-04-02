@@ -173,3 +173,13 @@ export async function markBillPaid(id: string, paidAt?: string): Promise<Bill> {
   if (error) throw error;
   return data as Bill;
 }
+
+export async function archiveBillsByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const now = new Date().toISOString();
+  const { error } = await getSupabase()
+    .from("bills")
+    .update({ archived_at: now, updated_at: now })
+    .in("id", ids);
+  if (error) throw error;
+}

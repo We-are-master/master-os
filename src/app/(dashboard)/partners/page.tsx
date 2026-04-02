@@ -175,6 +175,8 @@ export default function PartnersPage() {
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [complianceAvg, setComplianceAvg] = useState<number | null>(null);
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
+  /** When set (e.g. after Add Partner), drawer opens on this tab once. Cleared when picking another row or closing. */
+  const [partnerDrawerInitialTab, setPartnerDrawerInitialTab] = useState<string | undefined>(undefined);
   const [selectedTeamMember, setSelectedTeamMember] = useState<TeamMember | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -228,32 +230,26 @@ export default function PartnersPage() {
       toast.error("Please fill in company name, contact name, and email.");
       return;
     }
-    if (form.partner_legal_type === "limited_company" && !form.crn.trim()) {
-      toast.error("Company registration number (CRN) is required for a limited company.");
-      return;
-    }
-    if (form.partner_legal_type === "self_employed" && !form.utr.trim()) {
-      toast.error("UTR is required for self-employed partners.");
-      return;
-    }
     setSubmitting(true);
     try {
       const primaryTrade = form.trades[0] ?? TRADES[0];
-      await createPartner({
+      const created = await createPartner({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
         email: form.email.trim(),
         phone: form.phone.trim() || undefined,
         vat_number: form.vat_number.trim() || undefined,
         partner_legal_type: form.partner_legal_type,
-        crn: form.partner_legal_type === "limited_company" ? form.crn.trim() : null,
-        utr: form.partner_legal_type === "self_employed" ? form.utr.trim() : null,
+        crn: form.crn.trim() || null,
+        utr: form.utr.trim() || null,
         trade: primaryTrade,
         trades: form.trades,
         status: form.status,
         location: form.location.trim(),
         verified: false,
       });
+      setPartnerDrawerInitialTab("documents");
+      setSelectedPartner(created);
       setCreateOpen(false);
       setForm(emptyForm);
       refresh();
@@ -396,17 +392,36 @@ export default function PartnersPage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Partners" subtitle="Manage your partner network and performance.">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-nowrap items-center gap-2">
             <Tabs
               tabs={[
                 { id: "directory", label: "Directory" },
                 { id: "team", label: "Team (App)" },
               ]}
               activeTab={viewMode}
-              onChange={(id) => { setViewMode(id as ViewMode); setSelectedPartner(null); setSelectedTeamMember(null); }}
+              onChange={(id) => {
+                setViewMode(id as ViewMode);
+                setSelectedPartner(null);
+                setSelectedTeamMember(null);
+                setPartnerDrawerInitialTab(undefined);
+              }}
             />
-            <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
-            <Button size="sm" icon={<UserPlus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>Add Partner</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0 whitespace-nowrap"
+              icon={<Filter className="h-3.5 w-3.5 shrink-0" />}
+            >
+              Filter
+            </Button>
+            <Button
+              size="sm"
+              className="shrink-0 whitespace-nowrap"
+              icon={<UserPlus className="h-3.5 w-3.5 shrink-0" />}
+              onClick={() => setCreateOpen(true)}
+            >
+              Add Partner
+            </Button>
           </div>
         </PageHeader>
 
@@ -484,7 +499,10 @@ export default function PartnersPage() {
             data={partners}
             getRowId={(item) => item.id}
             selectedId={selectedPartner?.id}
-            onRowClick={setSelectedPartner}
+            onRowClick={(p) => {
+              setPartnerDrawerInitialTab(undefined);
+              setSelectedPartner(p);
+            }}
             page={page}
             totalPages={totalPages}
             totalItems={totalItems}
@@ -511,7 +529,12 @@ export default function PartnersPage() {
       <PartnerDetailDrawer
         partner={selectedPartner}
         teamMember={selectedTeamMember}
-        onClose={() => { setSelectedPartner(null); setSelectedTeamMember(null); }}
+        initialTab={partnerDrawerInitialTab}
+        onClose={() => {
+          setSelectedPartner(null);
+          setSelectedTeamMember(null);
+          setPartnerDrawerInitialTab(undefined);
+        }}
         onStatusChange={handleStatusChange}
         onVerify={handleVerify}
         onPartnerUpdate={setSelectedPartner}
@@ -541,14 +564,7 @@ export default function PartnersPage() {
                 <button
                   key={opt.value}
                   type="button"
-                  onClick={() =>
-                    setForm((f) => ({
-                      ...f,
-                      partner_legal_type: opt.value,
-                      crn: opt.value === "limited_company" ? f.crn : "",
-                      utr: opt.value === "self_employed" ? f.utr : "",
-                    }))
-                  }
+                  onClick={() => setForm((f) => ({ ...f, partner_legal_type: opt.value }))}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
                     form.partner_legal_type === opt.value
                       ? "border-primary bg-primary/10 text-primary"
@@ -559,27 +575,28 @@ export default function PartnersPage() {
                 </button>
               ))}
             </div>
-            {form.partner_legal_type === "limited_company" ? (
-              <div className="space-y-1.5 pt-1">
-                <label className="text-xs font-medium text-text-secondary">Company registration number (CRN) *</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-text-secondary">CRN (Companies House)</label>
                 <Input
                   value={form.crn}
                   onChange={(e) => setForm({ ...form, crn: e.target.value })}
-                  placeholder="e.g. 12345678"
+                  placeholder="Optional — e.g. 12345678"
                 />
               </div>
-            ) : (
-              <div className="space-y-1.5 pt-1">
-                <label className="text-xs font-medium text-text-secondary">UTR (Unique Taxpayer Reference) *</label>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-text-secondary">UTR (HMRC)</label>
                 <Input
                   value={form.utr}
                   onChange={(e) => setForm({ ...form, utr: e.target.value })}
-                  placeholder="10-digit HMRC UTR"
+                  placeholder="Optional — 10-digit UTR"
                   autoComplete="off"
                 />
-                <p className="text-[10px] text-text-tertiary">Required for self-employed. You can upload a UTR document later in the partner profile.</p>
               </div>
-            )}
+            </div>
+            <p className="text-[10px] text-text-tertiary pt-0.5">
+              Optional for now. You can add or upload UTR proof later under Documents.
+            </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -1123,6 +1140,7 @@ function PartnerDocumentDetailModal({
 function PartnerDetailDrawer({
   partner,
   teamMember,
+  initialTab,
   onClose,
   onStatusChange,
   onVerify,
@@ -1131,6 +1149,8 @@ function PartnerDetailDrawer({
 }: {
   partner: Partner | null;
   teamMember: TeamMember | null;
+  /** When opening the drawer (e.g. after create), start on this tab. */
+  initialTab?: string;
   onClose: () => void;
   onStatusChange: (partner: Partner, status: PartnerStatus) => void;
   onVerify: (partner: Partner) => void;
@@ -1184,6 +1204,8 @@ function PartnerDetailDrawer({
     location: "",
     rating: "",
   });
+  /** Only apply initialTab when switching to a different partner (avoid resetting tab on realtime updates). */
+  const lastPartnerIdForTabRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (teamMember) {
@@ -1252,27 +1274,33 @@ function PartnerDetailDrawer({
   }, [partner?.auth_user_id, partner?.id]);
 
   useEffect(() => {
-    if (partner) {
-      setTab("overview");
-      setSelectedDoc(null);
-      setLinkEmail(partner.email ?? "");
-      loadAll(partner);
-      setEditingOverview(false);
-      setOverviewForm({
-        company_name: partner.company_name ?? "",
-        vat_number: partner.vat_number ?? "",
-        crn: partner.crn ?? "",
-        utr: partner.utr ?? "",
-        partner_legal_type: partner.partner_legal_type ?? "self_employed",
-        contact_name: partner.contact_name ?? "",
-        email: partner.email ?? "",
-        phone: partner.phone ?? "",
-        trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
-        location: partner.location ?? "",
-        rating: String(partner.rating ?? 0),
-      });
+    if (!partner) {
+      lastPartnerIdForTabRef.current = null;
+      return;
     }
-  }, [partner, loadAll]);
+    const idChanged = lastPartnerIdForTabRef.current !== partner.id;
+    if (idChanged) {
+      lastPartnerIdForTabRef.current = partner.id;
+      setTab(initialTab ?? "overview");
+    }
+    setSelectedDoc(null);
+    setLinkEmail(partner.email ?? "");
+    loadAll(partner);
+    setEditingOverview(false);
+    setOverviewForm({
+      company_name: partner.company_name ?? "",
+      vat_number: partner.vat_number ?? "",
+      crn: partner.crn ?? "",
+      utr: partner.utr ?? "",
+      partner_legal_type: partner.partner_legal_type ?? "self_employed",
+      contact_name: partner.contact_name ?? "",
+      email: partner.email ?? "",
+      phone: partner.phone ?? "",
+      trades: partner.trades?.length ? partner.trades : [partner.trade ?? TRADES[0]],
+      location: partner.location ?? "",
+      rating: String(partner.rating ?? 0),
+    });
+  }, [partner, loadAll, initialTab]);
 
   const syncAppUserRow = useCallback(async (userId: string, partnerRowId: string) => {
     const res = await fetch("/api/admin/partner/sync-app-user", {
@@ -1370,14 +1398,6 @@ function PartnerDetailDrawer({
       toast.error("Company name, contact name and email are required.");
       return;
     }
-    if (overviewForm.partner_legal_type === "limited_company" && !overviewForm.crn.trim()) {
-      toast.error("CRN is required for a limited company.");
-      return;
-    }
-    if (overviewForm.partner_legal_type === "self_employed" && !overviewForm.utr.trim()) {
-      toast.error("UTR is required for self-employed partners.");
-      return;
-    }
     const rating = Number(overviewForm.rating || "0");
     if (Number.isNaN(rating) || rating < 0 || rating > 5) {
       toast.error("Rating must be between 0 and 5.");
@@ -1389,8 +1409,8 @@ function PartnerDetailDrawer({
         company_name: overviewForm.company_name.trim(),
         vat_number: overviewForm.vat_number.trim() || null,
         partner_legal_type: overviewForm.partner_legal_type,
-        crn: overviewForm.partner_legal_type === "limited_company" ? overviewForm.crn.trim() || null : null,
-        utr: overviewForm.partner_legal_type === "self_employed" ? overviewForm.utr.trim() || null : null,
+        crn: overviewForm.crn.trim() || null,
+        utr: overviewForm.utr.trim() || null,
         contact_name: overviewForm.contact_name.trim(),
         email: overviewForm.email.trim(),
         phone: overviewForm.phone.trim() || undefined,
@@ -1930,14 +1950,7 @@ function PartnerDetailDrawer({
                       <button
                         key={opt}
                         type="button"
-                        onClick={() =>
-                          setOverviewForm((p) => ({
-                            ...p,
-                            partner_legal_type: opt,
-                            crn: opt === "limited_company" ? p.crn : "",
-                            utr: opt === "self_employed" ? p.utr : "",
-                          }))
-                        }
+                        onClick={() => setOverviewForm((p) => ({ ...p, partner_legal_type: opt }))}
                         className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
                           overviewForm.partner_legal_type === opt
                             ? "border-primary bg-primary/10 text-primary"
@@ -1948,21 +1961,20 @@ function PartnerDetailDrawer({
                       </button>
                     ))}
                   </div>
-                  {overviewForm.partner_legal_type === "limited_company" ? (
+                  <div className="grid grid-cols-1 gap-2">
                     <Input
                       value={overviewForm.crn}
                       onChange={(e) => setOverviewForm((p) => ({ ...p, crn: e.target.value }))}
-                      placeholder="CRN (Companies House) *"
+                      placeholder="CRN (optional)"
                       className="h-8"
                     />
-                  ) : (
                     <Input
                       value={overviewForm.utr}
                       onChange={(e) => setOverviewForm((p) => ({ ...p, utr: e.target.value }))}
-                      placeholder="UTR *"
+                      placeholder="UTR (optional)"
                       className="h-8"
                     />
-                  )}
+                  </div>
                 </div>
               ) : (
                 <>
@@ -1976,13 +1988,12 @@ function PartnerDetailDrawer({
                     </span>
                   </div>
                   <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <FileText className="h-4 w-4 text-text-tertiary" />
-                    <span>
-                      {partner.partner_legal_type === "limited_company" ||
-                      (!partner.partner_legal_type && partner.crn?.trim())
-                        ? `CRN: ${partner.crn || "—"}`
-                        : `UTR: ${partner.utr || "—"}`}
-                    </span>
+                    <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
+                    <span>CRN: {partner.crn?.trim() || "—"}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-text-secondary">
+                    <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
+                    <span>UTR: {partner.utr?.trim() || "—"}</span>
                   </div>
                 </>
               )}
