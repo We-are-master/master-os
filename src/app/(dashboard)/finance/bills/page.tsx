@@ -103,7 +103,9 @@ export default function BillsPage() {
     const pendingAmt = pending.reduce((s, b) => s + Number(b.amount), 0);
     const approvedAmt = approved.reduce((s, b) => s + Number(b.amount), 0);
     const paidAmt = paid.reduce((s, b) => s + Number(b.amount), 0);
-    const totalAmt = scopedBills.reduce((s, b) => s + Number(b.amount), 0);
+    /** Rejected bills are not operating cost — exclude from totals. */
+    const costBills = scopedBills.filter((b) => b.status !== "rejected");
+    const totalAmt = costBills.reduce((s, b) => s + Number(b.amount), 0);
     return {
       pendingCount: pending.length,
       pendingAmount: pendingAmt,
@@ -111,7 +113,7 @@ export default function BillsPage() {
       approvedAmount: approvedAmt,
       paidCount: paid.length,
       paidAmount: paidAmt,
-      totalCount: scopedBills.length,
+      totalCount: costBills.length,
       totalAmount: totalAmt,
     };
   }, [scopedBills]);
@@ -299,7 +301,7 @@ export default function BillsPage() {
             title="Total bills (period)"
             value={kpis.totalAmount}
             format="currency"
-            description={`${kpis.totalCount} line${kpis.totalCount === 1 ? "" : "s"} · All statuses · ${kpiPeriodDesc}`}
+            description={`${kpis.totalCount} line${kpis.totalCount === 1 ? "" : "s"} · Excl. rejected · ${kpiPeriodDesc}`}
             icon={Layers}
             accent="blue"
           />
