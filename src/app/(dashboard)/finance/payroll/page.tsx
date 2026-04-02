@@ -18,7 +18,19 @@ import {
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { InternalCost, RecurringBill, InternalCostStatus, RecurringBillFrequency, RecurringBillStatus } from "@/types/database";
+import type {
+  InternalCost,
+  RecurringBill,
+  InternalCostStatus,
+  RecurringBillFrequency,
+  RecurringBillStatus,
+  PayrollInternalEmploymentType,
+} from "@/types/database";
+import {
+  PAYROLL_DOC_LABELS,
+  payrollDocKeysForType,
+  payrollDocsCompletion,
+} from "@/lib/payroll-doc-checklist";
 import { getSupabase } from "@/services/base";
 import { createCommissionRun, listCommissionRuns, getCommissionRunWithItems, updateCommissionRunItem, approveCommissionRun } from "@/services/commission-runs";
 import type { CommissionRun, CommissionRunItem } from "@/types/database";
@@ -162,7 +174,8 @@ export default function PayrollPage() {
         (c) =>
           (c.description && c.description.toLowerCase().includes(q)) ||
           (c.reference && c.reference.toLowerCase().includes(q)) ||
-          (c.category && c.category.toLowerCase().includes(q))
+          (c.category && c.category.toLowerCase().includes(q)) ||
+          (c.payee_name && c.payee_name.toLowerCase().includes(q))
       );
     }
     return list;
@@ -237,11 +250,15 @@ export default function PayrollPage() {
     const now = new Date().toISOString();
     try {
       if (editingInternal) {
-        const updates: Partial<InternalCost> = {
+        const updates: Record<string, unknown> = {
           description: form.description!,
           amount: Number(form.amount),
-          category: form.category || undefined,
-          due_date: form.due_date || undefined,
+          category: form.category || null,
+          due_date: form.due_date || null,
+          payee_name: form.payee_name?.trim() || null,
+          employment_type: form.employment_type ?? null,
+          payment_day_of_month: form.payment_day_of_month ?? null,
+          documents_on_file: form.documents_on_file ?? {},
           status: form.status ?? editingInternal.status,
           updated_at: now,
         };
@@ -256,8 +273,12 @@ export default function PayrollPage() {
         const row = {
           description: form.description!,
           amount: Number(form.amount),
-          category: form.category || undefined,
-          due_date: form.due_date || undefined,
+          category: form.category || null,
+          due_date: form.due_date || null,
+          payee_name: form.payee_name?.trim() || null,
+          employment_type: form.employment_type ?? null,
+          payment_day_of_month: form.payment_day_of_month ?? null,
+          documents_on_file: form.documents_on_file ?? {},
           status: (form.status as InternalCostStatus) ?? "pending",
           paid_at: form.status === "paid" ? now.split("T")[0] : null,
           created_at: now,
@@ -356,16 +377,74 @@ export default function PayrollPage() {
   };
 
   const sectionTabs = [
-    { id: "internal", label: "Internal costs", count: scopedInternal.length },
+    { id: "internal", label: "Salaries & internal costs", count: scopedInternal.length },
     { id: "recurring", label: "Recurring bills", count: scopedRecurring.length },
     { id: "commission", label: "Run Commission", count: filteredCommissionRuns.length },
   ];
 
   const internalColumns: Column<InternalCost>[] = [
-    { key: "description", label: "Description", render: (r) => <span className="text-sm font-medium text-text-primary">{r.description}</span> },
+    {
+      key: "payee_name",
+      label: "Person",
+      render: (r) => (
+        <span className="text-sm font-medium text-text-primary">{r.payee_name?.trim() || "—"}</span>
+      ),
+    },
+    {
+      key: "employment_type",
+      label: "Type",
+      width: "120px",
+      render: (r) => {
+        if (r.employment_type === "employee") {
+          return <Badge variant="info" size="sm">Employee</Badge>;
+        }
+        if (r.employment_type === "self_employed") {
+          return <Badge variant="warning" size="sm">Self-employed</Badge>;
+        }
+        return <span className="text-sm text-text-tertiary">—</span>;
+      },
+    },
+    { key: "description", label: "Description", render: (r) => <span className="text-sm text-text-primary">{r.description}</span> },
     { key: "category", label: "Category", render: (r) => <span className="text-sm text-text-secondary">{r.category ?? "—"}</span> },
-    { key: "amount", label: "Amount", align: "right", render: (r) => <span className="text-sm font-medium text-text-primary">{formatCurrency(r.amount)}</span> },
-    { key: "due_date", label: "Due date", render: (r) => <span className="text-sm text-text-secondary">{r.due_date ? formatDate(r.due_date) : "—"}</span> },
+    {
+      key: "pay_schedule",
+      label: "Pay schedule",
+      minWidth: "130px",
+      render: (r) => {
+        const day = r.payment_day_of_month;
+        const dayPart =
+          day != null && day >= 1 && day <= 28 ? (
+            <span className="text-xs font-medium text-text-secondary">Day {day} each month</span>
+          ) : null;
+        const due = r.due_date ? (
+          <span className="text-[11px] text-text-tertiary block">Next: {formatDate(r.due_date)}</span>
+        ) : null;
+        return (
+          <div className="space-y-0.5">
+            {dayPart ?? <span className="text-xs text-text-tertiary">—</span>}
+            {due}
+          </div>
+        );
+      },
+    },
+    {
+      key: "docs",
+      label: "Docs",
+      width: "72px",
+      align: "center",
+      render: (r) => {
+        const { done, total } = payrollDocsCompletion(r.employment_type ?? null, r.documents_on_file ?? null);
+        if (!total) return <span className="text-sm text-text-tertiary">—</span>;
+        const complete = done === total;
+        return (
+          <Badge variant={complete ? "success" : "warning"} size="sm">
+            {done}/{total}
+          </Badge>
+        );
+      },
+    },
+    { key: "amount", label: "Amount", align: "right", render: (r) => <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(r.amount)}</span> },
+    { key: "due_date", label: "Due date", render: (r) => <span className="text-sm text-text-secondary whitespace-nowrap">{r.due_date ? formatDate(r.due_date) : "—"}</span> },
     {
       key: "status",
       label: "Status",
@@ -411,10 +490,14 @@ export default function PayrollPage() {
       <div className="space-y-5">
         <PageHeader
           title="Payroll & costs"
-          subtitle="Internal costs, recurring bills, and commission runs (salaries + tiers)."
+          subtitle="Company salaries (Employee / Self-employed, pay days, documents) plus other internal costs, recurring bills, and commission runs."
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>Export CSV</Button>
-          {section === "internal" && <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={openAddInternal}>Add cost</Button>}
+          {section === "internal" && (
+            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={openAddInternal}>
+              Add salary or cost
+            </Button>
+          )}
           {section === "recurring" && <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={openAddRecurring}>Add recurring bill</Button>}
           {section === "commission" && <Button size="sm" icon={<Play className="h-3.5 w-3.5" />} onClick={() => { setRunCommissionDraft(null); setRunCommissionOpen(true); }}>Run Commission</Button>}
         </PageHeader>
@@ -483,7 +566,7 @@ export default function PayrollPage() {
                     </button>
                   ))}
                 </div>
-                <SearchInput placeholder="Search costs..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <SearchInput placeholder="Search person, description, category…" className="w-56 max-w-full" value={search} onChange={(e) => setSearch(e.target.value)} />
               </div>
               <DataTable
                 columns={internalColumns}
@@ -493,6 +576,7 @@ export default function PayrollPage() {
                 page={1}
                 totalPages={1}
                 totalItems={filteredInternal.length}
+                tableClassName="min-w-[1180px]"
               />
             </motion.div>
           </>
@@ -693,22 +777,40 @@ function InternalCostModal({
   onSave: (form: Partial<InternalCost>) => Promise<void>;
   saving: boolean;
 }) {
+  const [payeeName, setPayeeName] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("");
+  const [employmentType, setEmploymentType] = useState<"" | PayrollInternalEmploymentType>("");
+  const [paymentDay, setPaymentDay] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [status, setStatus] = useState<InternalCostStatus>("pending");
+  const [documentsOnFile, setDocumentsOnFile] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!open) return;
     queueMicrotask(() => {
+      setPayeeName(initial?.payee_name ?? "");
       setDescription(initial?.description ?? "");
       setAmount(initial?.amount != null ? String(initial.amount) : "");
       setCategory(initial?.category ?? "");
+      setEmploymentType((initial?.employment_type as PayrollInternalEmploymentType) ?? "");
+      setPaymentDay(
+        initial?.payment_day_of_month != null && initial.payment_day_of_month >= 1
+          ? String(initial.payment_day_of_month)
+          : ""
+      );
       setDueDate(initial?.due_date ?? "");
       setStatus(initial?.status ?? "pending");
+      setDocumentsOnFile({ ...(initial?.documents_on_file ?? {}) });
     });
   }, [open, initial]);
+
+  const docKeys = payrollDocKeysForType(employmentType || null);
+
+  const toggleDoc = (key: string) => {
+    setDocumentsOnFile((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -721,36 +823,128 @@ function InternalCostModal({
       toast.error("Valid amount is required");
       return;
     }
-    onSave({ description: description.trim(), amount: num, category: category.trim() || undefined, due_date: dueDate || undefined, status });
+    let paymentDayNum: number | null = null;
+    if (paymentDay.trim()) {
+      const d = parseInt(paymentDay, 10);
+      if (Number.isNaN(d) || d < 1 || d > 28) {
+        toast.error("Pay day must be between 1 and 28");
+        return;
+      }
+      paymentDayNum = d;
+    }
+    const emp = employmentType || null;
+    const filteredDocs: Record<string, boolean> = {};
+    for (const k of payrollDocKeysForType(emp)) {
+      if (documentsOnFile[k]) filteredDocs[k] = true;
+    }
+    onSave({
+      payee_name: payeeName.trim() || undefined,
+      description: description.trim(),
+      amount: num,
+      category: category.trim() || undefined,
+      employment_type: emp ?? undefined,
+      payment_day_of_month: paymentDayNum ?? undefined,
+      due_date: dueDate || undefined,
+      documents_on_file: emp ? filteredDocs : {},
+      status,
+    });
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={initial ? "Edit internal cost" : "Add internal cost"} size="md">
-      <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
-          <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Office supplies March" required />
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={initial ? "Edit salary or cost" : "Add salary or cost"}
+      subtitle="Like a bill line: amount, next payment date, and recurring pay day. For staff, set Employee or Self-employed to track required documents (including service agreement)."
+      size="lg"
+    >
+      <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[min(78vh,720px)] overflow-y-auto">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Person / payee</label>
+            <Input
+              value={payeeName}
+              onChange={(e) => setPayeeName(e.target.value)}
+              placeholder="Full name as on payroll or contract"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Description *</label>
+            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Monthly salary April" required />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount *</label>
+            <Input type="number" step="0.01" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" required />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Category (optional)</label>
+            <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Salary, Payroll, Ops" />
+          </div>
+          <div className="sm:col-span-2">
+            <Select
+              label="Employment type"
+              value={employmentType}
+              onChange={(e) => setEmploymentType(e.target.value as "" | PayrollInternalEmploymentType)}
+              options={[
+                { value: "", label: "Other / one-off cost (no HR checklist)" },
+                { value: "employee", label: "Employee (PAYE)" },
+                { value: "self_employed", label: "Self-employed (contractor)" },
+              ]}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Pay day of month (1–28)</label>
+            <Input
+              type="number"
+              min={1}
+              max={28}
+              value={paymentDay}
+              onChange={(e) => setPaymentDay(e.target.value)}
+              placeholder="e.g. 25"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">Typical day salaries are paid each month (like a recurring bill).</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Next payment date</label>
+            <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            <p className="text-[10px] text-text-tertiary mt-1">Next run due in the ledger (pending / paid).</p>
+          </div>
         </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
-          <Input type="number" step="0.01" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" required />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Category (optional)</label>
-          <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. payroll, rent, utilities" />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Due date (optional)</label>
-          <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-        </div>
+
+        {docKeys.length > 0 && (
+          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-4 space-y-3">
+            <p className="text-xs font-semibold text-text-primary">Documents on file</p>
+            <p className="text-[11px] text-text-tertiary leading-snug">
+              Tick what you have filed for this person. Service agreement is included for both Employee and Self-employed.
+            </p>
+            <ul className="space-y-2.5">
+              {docKeys.map((key) => (
+                <li key={key}>
+                  <label className="flex items-start gap-2.5 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/20"
+                      checked={!!documentsOnFile[key]}
+                      onChange={() => toggleDoc(key)}
+                    />
+                    <span className="text-sm text-text-primary leading-snug">{PAYROLL_DOC_LABELS[key] ?? key}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <Select
           label="Status"
           value={status}
           onChange={(e) => setStatus(e.target.value as InternalCostStatus)}
           options={INTERNAL_COST_STATUSES.map((s) => ({ value: s, label: s === "paid" ? "Paid" : "Pending" }))}
         />
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <div className="flex justify-end gap-2 pt-2 border-t border-border-light">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
           <Button type="submit" disabled={saving} icon={saving ? <Loader className="h-3.5 w-3.5 animate-spin" /> : undefined}>
             {saving ? "Saving..." : initial ? "Update" : "Add"}
           </Button>

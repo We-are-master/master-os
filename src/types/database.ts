@@ -456,6 +456,8 @@ export interface SelfBill {
 
 /** Custos internos (payroll, despesas operacionais pontuais) */
 export type InternalCostStatus = "pending" | "paid";
+/** Office payroll row: salary line with optional employment type + doc checklist. */
+export type PayrollInternalEmploymentType = "employee" | "self_employed";
 export interface InternalCost {
   id: string;
   reference?: string;
@@ -465,6 +467,14 @@ export interface InternalCost {
   due_date?: string;
   status: InternalCostStatus;
   paid_at?: string;
+  /** Person paid (salary / contractor). */
+  payee_name?: string | null;
+  /** Drives required document checklist in UI. */
+  employment_type?: PayrollInternalEmploymentType | null;
+  /** Typical monthly pay day (1–28). */
+  payment_day_of_month?: number | null;
+  /** Keys from payroll-doc-checklist; values = on file. */
+  documents_on_file?: Record<string, boolean> | null;
   created_at: string;
   updated_at: string;
 }
