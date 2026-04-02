@@ -182,12 +182,25 @@ const emptyForm = {
   status: "active" as PartnerStatus,
 };
 
+type PendingCreatePartnerDoc = {
+  id: string;
+  docType: string;
+  name: string;
+  file: File;
+  previewFile: File | null;
+  expiresAt?: string;
+  certificateNumber?: string;
+};
+
 type ViewMode = "directory" | "team";
 
 export default function PartnersPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("directory");
   const [tradeFilter, setTradeFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [createModalTab, setCreateModalTab] = useState<"info" | "documents">("info");
+  const [pendingCreateDocs, setPendingCreateDocs] = useState<PendingCreatePartnerDoc[]>([]);
+  const [createQueueDocOpen, setCreateQueueDocOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
@@ -237,6 +250,13 @@ export default function PartnersPage() {
   useEffect(() => { loadCounts(); }, [loadCounts]);
   useEffect(() => { refresh(); }, [tradeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!createOpen) return;
+    setCreateModalTab("info");
+    setPendingCreateDocs([]);
+    setCreateQueueDocOpen(false);
+  }, [createOpen]);
+
   const totalPartners = statusCounts["all"] ?? 0;
   const activeCount = statusCounts["active"] ?? 0;
   const pausedCount = (statusCounts["on_break"] ?? 0) + (statusCounts["paused"] ?? 0);
@@ -285,20 +305,70 @@ export default function PartnersPage() {
         partner_address: form.partner_address.trim() || null,
         verified: false,
       });
-      setPartnerDrawerInitialTab("documents");
+      let docUploadFailed = 0;
+      for (const d of pendingCreateDocs) {
+        try {
+          await insertAndUploadPartnerDocument({
+            partnerId: created.id,
+            uploadedByName: profile?.full_name,
+            docType: d.docType,
+            name: d.name,
+            file: d.file,
+            previewFile: d.previewFile,
+            expiresAt: d.expiresAt,
+            certificateNumber: d.certificateNumber,
+          });
+        } catch {
+          docUploadFailed += 1;
+        }
+      }
+      setPartnerDrawerInitialTab(undefined);
       setSelectedPartner(created);
       setCreateOpen(false);
       setForm(emptyForm);
+      setPendingCreateDocs([]);
       refresh();
       await loadCounts();
       if (viewMode === "team") loadTeam();
-      toast.success("Partner created successfully.");
+      if (docUploadFailed > 0) {
+        toast.success(
+          `Partner created. ${pendingCreateDocs.length - docUploadFailed} document(s) uploaded; ${docUploadFailed} failed — add them from the Documents tab.`,
+        );
+      } else {
+        toast.success(
+          pendingCreateDocs.length > 0
+            ? `Partner created with ${pendingCreateDocs.length} document(s).`
+            : "Partner created successfully.",
+        );
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create partner.");
     } finally {
       setSubmitting(false);
     }
   }
+
+  const handleQueueDocForCreate = useCallback(
+    async (
+      docType: string,
+      name: string,
+      file: File,
+      preview: File | null,
+      expiresAt?: string,
+      certificateNumber?: string,
+    ) => {
+      const id =
+        typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setPendingCreateDocs((prev) => [
+        ...prev,
+        { id, docType, name, file, previewFile: preview, expiresAt, certificateNumber },
+      ]);
+      setCreateQueueDocOpen(false);
+      setCreateModalTab("documents");
+      toast.success("Added to queue — uploads when you create the partner.");
+    },
+    [],
+  );
 
   const handleStatusChange = useCallback(async (partner: Partner, newStatus: PartnerStatus) => {
     try {
@@ -590,8 +660,24 @@ export default function PartnersPage() {
             ? "Saves to Directory. To show them under Team (App), open the partner and link their app login email, or assign them on a job."
             : "Create a new partner in your network."
         }
+        size="lg"
+        className="max-w-3xl"
       >
+        <div className="px-6 pt-3 pb-3 border-b border-border-light">
+          <Tabs
+            variant="pills"
+            tabs={[
+              { id: "info", label: "Partner info" },
+              { id: "documents", label: "Documents", count: pendingCreateDocs.length },
+            ]}
+            activeTab={createModalTab}
+            onChange={(id) => setCreateModalTab(id as "info" | "documents")}
+            className="w-full sm:w-auto"
+          />
+        </div>
         <div className="p-6 space-y-4">
+          {createModalTab === "info" ? (
+            <>
           <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
             <label className="text-xs font-medium text-text-secondary">Partner type *</label>
             <div className="flex flex-wrap gap-2">
@@ -722,11 +808,6 @@ export default function PartnersPage() {
               <Input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+1 555-000-0000" />
             </div>
           </div>
-            <UkCoveragePicker
-              value={form.uk_coverage_regions}
-              onChange={(next) => setForm((f) => ({ ...f, uk_coverage_regions: next }))}
-              idPrefix="create-partner"
-            />
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-secondary">Home / business address</label>
               <Input
@@ -736,6 +817,11 @@ export default function PartnersPage() {
                 className="text-sm"
               />
             </div>
+            <UkCoveragePicker
+              value={form.uk_coverage_regions}
+              onChange={(next) => setForm((f) => ({ ...f, uk_coverage_regions: next }))}
+              idPrefix="create-partner"
+            />
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-secondary">Trades <span className="text-text-tertiary font-normal">(select all that apply)</span></label>
               <div className="flex flex-wrap gap-1.5">
@@ -754,12 +840,74 @@ export default function PartnersPage() {
                 })}
               </div>
             </div>
+            </>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-border-light bg-surface-hover/30 px-4 py-3">
+                <p className="text-sm font-medium text-text-primary">Compliance documents</p>
+                <p className="text-xs text-text-tertiary mt-1 leading-relaxed">
+                  Add files here to upload automatically when you create the partner — same rules as in the partner profile (expiry dates, types). You can skip this and add documents later.
+                </p>
+              </div>
+              <Button type="button" variant="outline" size="sm" className="w-full sm:w-auto" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => setCreateQueueDocOpen(true)}>
+                Add document
+              </Button>
+              {pendingCreateDocs.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border-light bg-card/50 px-4 py-10 text-center">
+                  <FileText className="h-9 w-9 text-text-tertiary mx-auto mb-2 opacity-80" />
+                  <p className="text-sm text-text-secondary">No documents in queue</p>
+                  <p className="text-xs text-text-tertiary mt-1 max-w-sm mx-auto">Insurance, certifications, UTR proof, ID — add as many as you need before creating.</p>
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {pendingCreateDocs.map((d) => {
+                    const tl = docTypeLabels[d.docType] || docTypeLabels.other;
+                    const TypeIcon = tl.icon;
+                    return (
+                      <li
+                        key={d.id}
+                        className="flex items-start gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5"
+                      >
+                        <div className="h-9 w-9 rounded-lg bg-surface-hover flex items-center justify-center shrink-0">
+                          <TypeIcon className="h-4 w-4 text-text-secondary" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-text-primary truncate">{d.name}</p>
+                          <p className="text-[11px] text-text-tertiary">{tl.label} · {d.file.name}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="shrink-0 p-1.5 rounded-lg text-text-tertiary hover:text-red-600 hover:bg-red-500/10"
+                          aria-label="Remove from queue"
+                          onClick={() => setPendingCreateDocs((prev) => prev.filter((x) => x.id !== d.id))}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border-light">
-          <Button variant="outline" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
-          <Button size="sm" onClick={handleCreate} disabled={submitting}>{submitting ? "Creating…" : "Create Partner"}</Button>
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 px-6 py-4 border-t border-border-light">
+          <p className="text-[11px] text-text-tertiary hidden sm:block">
+            {createModalTab === "documents" ? "Switch to Partner info to edit details, or create when ready." : null}
+          </p>
+          <div className="flex items-center justify-end gap-3 w-full sm:w-auto">
+            <Button variant="outline" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button size="sm" onClick={handleCreate} disabled={submitting}>{submitting ? "Creating…" : "Create Partner"}</Button>
+          </div>
         </div>
       </Modal>
+
+      <AddPartnerDocumentModal
+        open={createQueueDocOpen}
+        onClose={() => setCreateQueueDocOpen(false)}
+        submitting={false}
+        onSubmit={handleQueueDocForCreate}
+      />
     </PageTransition>
   );
 }
@@ -833,6 +981,66 @@ interface PartnerNote {
   content: string;
   author_name?: string;
   created_at: string;
+}
+
+/** Shared insert + storage upload for partner_documents (drawer upload + create-partner queue). */
+async function insertAndUploadPartnerDocument(opts: {
+  partnerId: string;
+  uploadedByName?: string | null;
+  docType: string;
+  name: string;
+  file: File;
+  previewFile: File | null;
+  expiresAt?: string;
+  certificateNumber?: string;
+}): Promise<void> {
+  const supabase = getSupabase();
+  const { partnerId, uploadedByName, docType, name, file, previewFile, expiresAt, certificateNumber } = opts;
+  const expiresIso = expiresAt && expiresAt.trim() ? new Date(expiresAt).toISOString() : null;
+  const { data: row, error: insErr } = await supabase
+    .from("partner_documents")
+    .insert({
+      partner_id: partnerId,
+      name,
+      doc_type: docType,
+      status: "pending",
+      uploaded_by: uploadedByName ?? undefined,
+      expires_at: expiresIso,
+      notes: docType === "certification" && certificateNumber ? `certificate_number: ${certificateNumber}` : null,
+    })
+    .select()
+    .single();
+  if (insErr) throw new Error(insErr.message);
+  if (!row?.id) throw new Error("No document row");
+
+  try {
+    const main = await uploadPartnerDocumentFile(partnerId, row.id, file);
+    let previewPath: string | null = null;
+    if (previewFile) {
+      const prev = await uploadPartnerDocumentPreview(partnerId, row.id, previewFile);
+      previewPath = prev.path;
+    }
+    const { error: upErr } = await supabase
+      .from("partner_documents")
+      .update({
+        file_path: main.path,
+        file_name: main.fileName,
+        preview_image_path: previewPath,
+      })
+      .eq("id", row.id);
+    if (upErr) throw new Error(upErr.message);
+  } catch (uploadErr) {
+    try {
+      const folder = `${partnerId}/${row.id}`;
+      const { data: list } = await supabase.storage.from("partner-documents").list(folder);
+      const paths = (list ?? []).map((f) => `${folder}/${f.name}`);
+      if (paths.length > 0) await removeStorageObjects(paths);
+    } catch {
+      /* ignore */
+    }
+    await supabase.from("partner_documents").delete().eq("id", row.id);
+    throw uploadErr;
+  }
 }
 
 const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = {
@@ -1668,57 +1876,21 @@ function PartnerDetailDrawer({
     certificateNumber?: string,
   ) => {
     if (!partner) return;
-    const supabase = getSupabase();
     setAddDocSubmitting(true);
     try {
-      const expiresIso = expiresAt && expiresAt.trim() ? new Date(expiresAt).toISOString() : null;
-      const { data: row, error: insErr } = await supabase
-        .from("partner_documents")
-        .insert({
-          partner_id: partner.id,
-          name,
-          doc_type: docType,
-          status: "pending",
-          uploaded_by: profile?.full_name,
-          expires_at: expiresIso,
-          notes: docType === "certification" && certificateNumber ? `certificate_number: ${certificateNumber}` : null,
-        })
-        .select()
-        .single();
-      if (insErr) throw new Error(insErr.message);
-      if (!row?.id) throw new Error("No document row");
-
-      try {
-        const main = await uploadPartnerDocumentFile(partner.id, row.id, file);
-        let previewPath: string | null = null;
-        if (previewFile) {
-          const prev = await uploadPartnerDocumentPreview(partner.id, row.id, previewFile);
-          previewPath = prev.path;
-        }
-        const { error: upErr } = await supabase
-          .from("partner_documents")
-          .update({
-            file_path: main.path,
-            file_name: main.fileName,
-            preview_image_path: previewPath,
-          })
-          .eq("id", row.id);
-        if (upErr) throw new Error(upErr.message);
-      } catch (uploadErr) {
-        try {
-          const folder = `${partner.id}/${row.id}`;
-          const { data: list } = await supabase.storage.from("partner-documents").list(folder);
-          const paths = (list ?? []).map((f) => `${folder}/${f.name}`);
-          if (paths.length > 0) await removeStorageObjects(paths);
-        } catch {
-          /* ignore */
-        }
-        await supabase.from("partner_documents").delete().eq("id", row.id);
-        throw uploadErr;
-      }
-
+      await insertAndUploadPartnerDocument({
+        partnerId: partner.id,
+        uploadedByName: profile?.full_name,
+        docType,
+        name,
+        file,
+        previewFile,
+        expiresAt,
+        certificateNumber,
+      });
       toast.success("Document uploaded");
       setAddDocOpen(false);
+      const supabase = getSupabase();
       supabase.from("partner_documents").select("*").eq("partner_id", partner.id).order("created_at", { ascending: false }).then(({ data }) => setDocuments((data ?? []) as PartnerDoc[]));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
