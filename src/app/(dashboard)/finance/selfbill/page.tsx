@@ -12,6 +12,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { Drawer } from "@/components/ui/drawer";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
@@ -581,25 +582,25 @@ export default function SelfBillPage() {
         </motion.div>
       </div>
 
-      <Modal
+      <Drawer
         open={!!jobsModal}
         onClose={() => setJobsModal(null)}
-        title={jobsModal ? `Jobs — ${jobsModal.selfBill.reference}` : ""}
-        subtitle={jobsModal ? `${jobsModal.selfBill.partner_name} · ${jobsModal.selfBill.week_label ?? jobsModal.selfBill.period}` : undefined}
-        size="lg"
+        title={jobsModal?.selfBill.reference ?? ""}
+        subtitle={
+          jobsModal
+            ? `${jobsModal.selfBill.partner_name} · ${jobsModal.selfBill.week_label ?? jobsModal.selfBill.period}`
+            : undefined
+        }
+        width="w-[580px]"
       >
-        {jobsModal && (
-          <div className="p-6 max-h-[70vh] overflow-y-auto space-y-2">
-            {loadingJobs ? (
-              <p className="text-sm text-text-tertiary">Loading…</p>
-            ) : jobsModal.jobs.length === 0 ? (
-              <p className="text-sm text-text-tertiary">No jobs linked.</p>
-            ) : (
-              jobsModal.jobs.map((j) => <JobRow key={j.id} j={j} />)
-            )}
-          </div>
-        )}
-      </Modal>
+        {jobsModal ? (
+          <SelfBillLinkedJobsPanel
+            sb={jobsModal.selfBill}
+            jobs={jobsModal.jobs}
+            loadingJobs={loadingJobs}
+          />
+        ) : null}
+      </Drawer>
 
       <Modal
         open={!!editSelfBill}
@@ -774,6 +775,89 @@ function SelfBillCard({
           <FileText className="h-3.5 w-3.5" />
           PDF
         </a>
+      </div>
+    </div>
+  );
+}
+
+function SelfBillLinkedJobsPanel({
+  sb,
+  jobs,
+  loadingJobs,
+}: {
+  sb: SelfBill;
+  jobs: Awaited<ReturnType<typeof listJobsForSelfBill>>;
+  loadingJobs: boolean;
+}) {
+  const cfg = statusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
+
+  return (
+    <div className="p-6">
+      <div className="rounded-xl border border-border-light bg-card shadow-soft overflow-hidden">
+        <div className="px-4 py-3 border-b border-border-light bg-surface-hover/50 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <Avatar name={sb.partner_name} size="md" className="shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-text-primary truncate">{sb.partner_name}</p>
+              <p className="text-[11px] text-text-tertiary">
+                Created {formatDate(sb.created_at)}
+                {sb.week_label ? ` · ${sb.week_label}` : null}
+              </p>
+            </div>
+          </div>
+          <Badge variant={cfg.variant} dot size="sm">
+            {cfg.label}
+          </Badge>
+        </div>
+
+        <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-border-light/80 text-center sm:text-left">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Labour</p>
+            <p className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(sb.job_value)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Materials</p>
+            <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(sb.materials)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Jobs</p>
+            <p className="text-sm font-semibold tabular-nums text-text-primary">{sb.jobs_count}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Net payout</p>
+            <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(sb.net_payout)}</p>
+          </div>
+        </div>
+
+        <div className="px-4 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-3">Linked jobs</p>
+          {loadingJobs ? (
+            <div className="space-y-2">
+              <div className="h-16 rounded-xl bg-surface-hover animate-pulse" />
+              <div className="h-16 rounded-xl bg-surface-hover animate-pulse" />
+            </div>
+          ) : jobs.length === 0 ? (
+            <p className="text-sm text-text-tertiary py-2">No jobs linked to this self-bill.</p>
+          ) : (
+            <div className="space-y-2">
+              {jobs.map((j) => (
+                <JobRow key={j.id} j={j} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 py-3 border-t border-border-light bg-surface-hover/30 flex justify-end">
+          <a
+            href={`/api/self-bills/${encodeURIComponent(sb.id)}/pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Open PDF
+          </a>
+        </div>
       </div>
     </div>
   );
