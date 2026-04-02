@@ -14,6 +14,33 @@ export async function listBills(params?: { status?: string; from?: string; to?: 
   return (data ?? []) as Bill[];
 }
 
+/** All non-archived rows in the same recurring batch (series id or fingerprint match). */
+export async function listBillsInSameSeries(bill: Bill): Promise<Bill[]> {
+  const supabase = getSupabase();
+  if (!bill.is_recurring) return [bill];
+
+  if (bill.recurring_series_id) {
+    const { data, error } = await supabase
+      .from("bills")
+      .select("*")
+      .eq("recurring_series_id", bill.recurring_series_id)
+      .is("archived_at", null)
+      .order("due_date", { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Bill[];
+  }
+
+  const key = recurringGroupKey(bill);
+  if (!key) return [bill];
+
+  const { data: candidates, error: cErr } = await supabase.from("bills").select("*").eq("is_recurring", true).is("archived_at", null);
+  if (cErr) throw cErr;
+  const match = (candidates ?? [])
+    .filter((b) => recurringGroupKey(b as Bill) === key)
+    .sort((a, b) => (a as Bill).due_date.localeCompare((b as Bill).due_date));
+  return match as Bill[];
+}
+
 export type CreateBillPayload = Omit<Bill, "id" | "created_at" | "updated_at">;
 
 export async function createBill(payload: CreateBillPayload): Promise<Bill> {

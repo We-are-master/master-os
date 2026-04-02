@@ -34,6 +34,7 @@ import {
   approveBillOrSeries,
   approveAllSubmittedInScope,
   archiveBillsByIds,
+  listBillsInSameSeries,
 } from "@/services/bills";
 import { useProfile } from "@/hooks/use-profile";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
@@ -765,15 +766,27 @@ export default function BillsPage() {
             setSaving(true);
             try {
               if (editing) {
-                await updateBill(editing.id, {
-                  description: form.description ?? "",
-                  category: form.category,
-                  amount: form.amount ?? 0,
-                  due_date: form.due_date ?? "",
-                  is_recurring: form.is_recurring ?? false,
-                  recurrence_interval: form.is_recurring ? form.recurrence_interval : null,
-                });
-                toast.success("Bill updated");
+                if (form.installmentAmounts && Object.keys(form.installmentAmounts).length > 0) {
+                  const entries = Object.entries(form.installmentAmounts);
+                  for (const [id, amt] of entries) {
+                    await updateBill(id, {
+                      description: form.description ?? "",
+                      category: form.category,
+                      amount: amt,
+                    });
+                  }
+                  toast.success(`Updated ${entries.length} installment(s).`);
+                } else {
+                  await updateBill(editing.id, {
+                    description: form.description ?? "",
+                    category: form.category,
+                    amount: form.amount ?? 0,
+                    due_date: form.due_date ?? "",
+                    is_recurring: form.is_recurring ?? false,
+                    recurrence_interval: form.is_recurring ? form.recurrence_interval : null,
+                  });
+                  toast.success("Bill updated");
+                }
               } else {
                 const interval = form.recurrence_interval ?? "monthly";
                 await createBill({
@@ -810,6 +823,11 @@ export default function BillsPage() {
   );
 }
 
+type BillModalSavePayload = Partial<Bill> & {
+  /** When set, updates each bill id with its amount (recurring edit). */
+  installmentAmounts?: Record<string, number>;
+};
+
 function BillModal({
   open,
   onClose,
@@ -822,7 +840,7 @@ function BillModal({
   open: boolean;
   onClose: () => void;
   initial: Bill | null;
-  onSave: (form: Partial<Bill>) => Promise<void>;
+  onSave: (form: BillModalSavePayload) => Promise<void>;
   onArchive?: () => Promise<void>;
   onRestore?: () => Promise<void>;
   saving: boolean;
@@ -833,6 +851,9 @@ function BillModal({
   const [due_date, setDueDate] = useState("");
   const [is_recurring, setIsRecurring] = useState(false);
   const [recurrence_interval, setRecurrenceInterval] = useState<BillRecurrence>("monthly");
+  const [seriesSiblings, setSeriesSiblings] = useState<Bill[] | null>(null);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  const [amountById, setAmountById] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open) return;
@@ -844,8 +865,40 @@ function BillModal({
       setDueDate(initial?.due_date ?? "");
       setIsRecurring(initial?.is_recurring ?? false);
       setRecurrenceInterval((initial?.recurrence_interval as BillRecurrence) ?? "monthly");
+      setSeriesSiblings(null);
+      setAmountById({});
     });
   }, [open, initial]);
+
+  useEffect(() => {
+    if (!open || !initial?.is_recurring || !initial.id) {
+      return;
+    }
+    let cancelled = false;
+    setSeriesLoading(true);
+    listBillsInSameSeries(initial)
+      .then((rows) => {
+        if (cancelled) return;
+        setSeriesSiblings(rows);
+        const m: Record<string, string> = {};
+        for (const b of rows) m[b.id] = String(b.amount);
+        setAmountById(m);
+      })
+      .catch(() => {
+        if (!cancelled) setSeriesSiblings(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSeriesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, initial?.id, initial?.is_recurring]);
+
+  const showInstallmentList = Boolean(
+    initial?.is_recurring && !seriesLoading && seriesSiblings && seriesSiblings.length > 0
+  );
+  const hideTopAmountWhileLoading = Boolean(initial?.is_recurring && seriesLoading);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -855,6 +908,27 @@ function BillModal({
     }
     if (!category || !BILL_CATEGORY_OPTIONS.some((o) => o.value === category)) {
       toast.error("Category is required");
+      return;
+    }
+    if (showInstallmentList && seriesSiblings) {
+      const installmentAmounts: Record<string, number> = {};
+      for (const b of seriesSiblings) {
+        const raw = amountById[b.id] ?? "0";
+        const n = parseFloat(String(raw).replace(",", "."));
+        if (Number.isNaN(n) || n < 0) {
+          toast.error("Valid amount required for each installment");
+          return;
+        }
+        installmentAmounts[b.id] = n;
+      }
+      onSave({
+        description: description.trim(),
+        category,
+        due_date: seriesSiblings[0]?.due_date ?? due_date,
+        is_recurring: true,
+        recurrence_interval: is_recurring ? recurrence_interval : undefined,
+        installmentAmounts,
+      });
       return;
     }
     const num = parseFloat(amount);
@@ -916,20 +990,57 @@ function BillModal({
           options={[{ value: "", label: "Select category…" }, ...BILL_CATEGORY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]}
           required
         />
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount (£)</label>
-          <Input type="number" step="0.01" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} required />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">First due date</label>
-          <Input type="date" value={due_date} onChange={(e) => setDueDate(e.target.value)} required />
-        </div>
+        {initial?.is_recurring && seriesLoading ? (
+          <div className="flex items-center gap-2 text-sm text-text-tertiary py-2">
+            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+            Loading installments…
+          </div>
+        ) : null}
+        {showInstallmentList && seriesSiblings ? (
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-text-secondary">Amount per installment (£)</label>
+            <p className="text-[11px] text-text-tertiary leading-snug">
+              Each line is one scheduled occurrence. Change a row if that period differs from the others.
+            </p>
+            <div className="rounded-lg border border-border-light bg-surface-hover/30 max-h-60 overflow-y-auto divide-y divide-border-light">
+              {seriesSiblings.map((b) => (
+                <div key={b.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+                  <span className="text-xs font-medium text-text-secondary w-[7.5rem] shrink-0 tabular-nums">
+                    {formatDate(b.due_date)}
+                  </span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    className="flex-1 min-w-[5rem] max-w-[10rem]"
+                    value={amountById[b.id] ?? ""}
+                    onChange={(e) => setAmountById((prev) => ({ ...prev, [b.id]: e.target.value }))}
+                    aria-label={`Amount due ${b.due_date}`}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {!showInstallmentList && !hideTopAmountWhileLoading ? (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount (£)</label>
+            <Input type="number" step="0.01" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          </div>
+        ) : null}
+        {!showInstallmentList ? (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">First due date</label>
+            <Input type="date" value={due_date} onChange={(e) => setDueDate(e.target.value)} required />
+          </div>
+        ) : null}
         <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-2">
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
               id="recurring"
               checked={is_recurring}
+              disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
               onChange={(e) => setIsRecurring(e.target.checked)}
               className="rounded border-border"
             />
@@ -950,6 +1061,7 @@ function BillModal({
             label="Cadence"
             value={recurrence_interval}
             onChange={(e) => setRecurrenceInterval(e.target.value as BillRecurrence)}
+            disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
             options={[
               { value: "weekly", label: "Weekly" },
               { value: "monthly", label: "Monthly" },
@@ -978,7 +1090,11 @@ function BillModal({
               Restore
             </Button>
           )}
-          <Button type="submit" disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}>
+          <Button
+            type="submit"
+            disabled={saving || Boolean(initial?.is_recurring && seriesLoading)}
+            icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+          >
             {saving ? "Saving…" : initial ? "Save changes" : "Submit"}
           </Button>
         </div>

@@ -1299,6 +1299,36 @@ interface PartnerNote {
   created_at: string;
 }
 
+const DOC_TYPES_NO_EXPIRY = new Set([
+  "utr",
+  "service_agreement",
+  "self_bill_agreement",
+  "proof_of_address",
+  "right_to_work",
+]);
+
+const DOC_TYPES_EXPIRY_ONE_YEAR_FROM_UPLOAD = new Set(["poa"]);
+
+type PartnerDocExpiryPolicy = "none" | "one_year_from_upload" | "manual";
+
+function partnerDocExpiryPolicy(docType: string): PartnerDocExpiryPolicy {
+  if (DOC_TYPES_NO_EXPIRY.has(docType)) return "none";
+  if (DOC_TYPES_EXPIRY_ONE_YEAR_FROM_UPLOAD.has(docType)) return "one_year_from_upload";
+  return "manual";
+}
+
+/** Resolves DB `expires_at` from doc type + optional date from the form (at upload time). */
+function resolvePartnerDocExpiresAt(docType: string, expiresAt?: string): string | null {
+  if (DOC_TYPES_NO_EXPIRY.has(docType)) return null;
+  if (DOC_TYPES_EXPIRY_ONE_YEAR_FROM_UPLOAD.has(docType)) {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    return d.toISOString();
+  }
+  if (expiresAt?.trim()) return new Date(expiresAt.trim()).toISOString();
+  return null;
+}
+
 /** Shared insert + storage upload for partner_documents (drawer upload + create-partner queue). */
 async function insertAndUploadPartnerDocument(opts: {
   partnerId: string;
@@ -1312,7 +1342,7 @@ async function insertAndUploadPartnerDocument(opts: {
 }): Promise<void> {
   const supabase = getSupabase();
   const { partnerId, uploadedByName, docType, name, file, previewFile, expiresAt, certificateNumber } = opts;
-  const expiresIso = expiresAt && expiresAt.trim() ? new Date(expiresAt).toISOString() : null;
+  const expiresIso = resolvePartnerDocExpiresAt(docType, expiresAt);
   const { data: row, error: insErr } = await supabase
     .from("partner_documents")
     .insert({
@@ -1369,11 +1399,11 @@ const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = 
   service_agreement: { label: "Service Agreement", icon: FileText },
   self_bill_agreement: { label: "Self Bill Agreement", icon: FileText },
   id_proof: { label: "ID Proof", icon: Users },
+  proof_of_address: { label: "Proof of Address", icon: FileText },
+  right_to_work: { label: "Right to Work", icon: FileText },
+  poa: { label: "Power of Attorney (POA)", icon: FileText },
   other: { label: "Other", icon: FileText },
 };
-
-/** Document types that skip expiry date in the upload modal (agreements, UTR file). */
-const DOC_TYPES_NO_EXPIRY = new Set(["utr", "service_agreement", "self_bill_agreement"]);
 
 const REQUIRED_PARTNER_DOCS = [
   {
@@ -1387,14 +1417,14 @@ const REQUIRED_PARTNER_DOCS = [
     id: "proof_of_address",
     name: "Proof of Address",
     description: "Utility bill or bank statement",
-    docType: "other",
+    docType: "proof_of_address",
     aliases: ["proof of address", "utility bill", "bank statement", "address proof"],
   },
   {
     id: "right_to_work",
     name: "Right to Work",
     description: "Share code, birth certificate, or passport",
-    docType: "other",
+    docType: "right_to_work",
     aliases: ["right to work", "share code", "birth certificate", "british passport", "passport"],
   },
   {
@@ -1551,7 +1581,7 @@ function pendingCreateDocsAsPartnerDocs(queue: PendingCreatePartnerDoc[]): Partn
     doc_type: d.docType,
     status: "pending",
     created_at: new Date().toISOString(),
-    expires_at: d.expiresAt?.trim() ? new Date(d.expiresAt).toISOString() : undefined,
+    expires_at: resolvePartnerDocExpiresAt(d.docType, d.expiresAt) ?? undefined,
     notes: d.certificateNumber ? `certificate_number: ${d.certificateNumber}` : undefined,
   }));
 }
@@ -1620,7 +1650,7 @@ function AddPartnerDocumentModal({
     });
   }, [open, initialDocType, initialName]);
 
-  const needsExpiryDate = !DOC_TYPES_NO_EXPIRY.has(docType);
+  const expiryPol = partnerDocExpiryPolicy(docType);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1636,8 +1666,7 @@ function AddPartnerDocumentModal({
       toast.error("Enter certificate number");
       return;
     }
-    const noExpiry = DOC_TYPES_NO_EXPIRY.has(docType);
-    if (!noExpiry && !expiresAt.trim()) {
+    if (expiryPol === "manual" && !expiresAt.trim()) {
       toast.error("Enter the expiry date (required), or use Detect expiry (AI) on an image.");
       return;
     }
@@ -1646,7 +1675,7 @@ function AddPartnerDocumentModal({
       name.trim(),
       file,
       preview,
-      noExpiry ? undefined : expiresAt.trim() ? expiresAt.trim() : undefined,
+      expiryPol === "manual" && expiresAt.trim() ? expiresAt.trim() : undefined,
       certificateNumber.trim() || undefined,
     );
   };
@@ -1686,7 +1715,13 @@ function AddPartnerDocumentModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Add document" subtitle="Expiry dates are required for compliance (except agreements / UTR file)." size="md">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Add document"
+      subtitle="Insurance & certificates need an expiry date. Agreements, UTR, proof of address & right to work skip it. POA: valid 1 year from upload."
+      size="md"
+    >
       <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
@@ -1736,7 +1771,18 @@ function AddPartnerDocumentModal({
           />
           <p className="text-[10px] text-text-tertiary mt-1">Thumbnail shown in the list — JPEG, PNG, WebP, GIF.</p>
         </div>
-        {needsExpiryDate && (
+        {expiryPol === "none" && (
+          <p className="text-[11px] text-text-tertiary rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2">
+            No expiry date for this document type.
+          </p>
+        )}
+        {expiryPol === "one_year_from_upload" && (
+          <div className="rounded-lg border border-blue-200/60 bg-blue-50/60 dark:bg-blue-950/25 px-3 py-2.5 text-xs text-text-secondary">
+            <span className="font-semibold text-text-primary">Expiry:</span> automatically set to{" "}
+            <strong>one year from the upload date</strong> (when you save).
+          </div>
+        )}
+        {expiryPol === "manual" && (
           <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <label className="block text-xs font-medium text-text-secondary">Expiry date *</label>
@@ -1750,7 +1796,7 @@ function AddPartnerDocumentModal({
                 {aiExpiryLoading ? "Detecting…" : "Detect expiry (AI)"}
               </Button>
             </div>
-            <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} required={needsExpiryDate} />
+            <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} required />
             <p className="text-[10px] text-text-tertiary">
               Required for compliance tracking. AI works on <span className="font-medium text-text-secondary">images</span> only — for PDFs, type the date. If
               OPENAI_API_KEY is not set, enter the date manually.
