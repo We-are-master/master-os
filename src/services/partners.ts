@@ -112,6 +112,12 @@ export async function createPartner(
     data = fallback.data;
     error = fallback.error;
   }
+  if (error && "vat_registered" in input) {
+    const { vat_registered: _vr, ...legacyInput } = input as typeof input & { vat_registered?: unknown };
+    const fallback = await supabase.from("partners").insert(legacyInput).select().single();
+    data = fallback.data;
+    error = fallback.error;
+  }
   if (error) throw error;
   return data as Partner;
 }
@@ -154,6 +160,17 @@ export async function updatePartner(id: string, input: Partial<Partner>): Promis
       uk_coverage_regions?: unknown;
       partner_address?: unknown;
     };
+    const fallback = await supabase
+      .from("partners")
+      .update(legacyInput)
+      .eq("id", id)
+      .select()
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
+  if (error && "vat_registered" in input) {
+    const { vat_registered: _vr, ...legacyInput } = input as Partial<Partner> & { vat_registered?: unknown };
     const fallback = await supabase
       .from("partners")
       .update(legacyInput)
