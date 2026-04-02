@@ -94,6 +94,15 @@ export async function createPartner(
     data = fallback.data;
     error = fallback.error;
   }
+  if (error && ("partner_legal_type" in input || "utr" in input)) {
+    const { partner_legal_type: _pl, utr: _u, ...legacyInput } = input as typeof input & {
+      partner_legal_type?: unknown;
+      utr?: unknown;
+    };
+    const fallback = await supabase.from("partners").insert(legacyInput).select().single();
+    data = fallback.data;
+    error = fallback.error;
+  }
   if (error) throw error;
   return data as Partner;
 }
@@ -108,6 +117,20 @@ export async function updatePartner(id: string, input: Partial<Partner>): Promis
     .single();
   if (error && "trades" in input) {
     const { trades: _ignored, ...legacyInput } = input as Partial<Partner> & { trades?: string[] | null };
+    const fallback = await supabase
+      .from("partners")
+      .update(legacyInput)
+      .eq("id", id)
+      .select()
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
+  if (error && ("partner_legal_type" in input || "utr" in input)) {
+    const { partner_legal_type: _pl, utr: _u, ...legacyInput } = input as typeof input & {
+      partner_legal_type?: unknown;
+      utr?: unknown;
+    };
     const fallback = await supabase
       .from("partners")
       .update(legacyInput)

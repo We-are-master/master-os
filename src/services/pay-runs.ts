@@ -85,6 +85,7 @@ export async function loadItemsForWeek(weekStart: string, weekEnd: string): Prom
     .from("bills")
     .select("id, description, amount, due_date")
     .eq("status", "approved")
+    .is("archived_at", null)
     .gte("due_date", weekStart)
     .lte("due_date", weekEnd);
   const bills = (billsRows ?? []).map((r: { id: string; description: string; amount: number; due_date: string }) => ({

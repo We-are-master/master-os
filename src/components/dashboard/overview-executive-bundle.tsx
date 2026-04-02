@@ -214,6 +214,7 @@ export function OverviewExecutiveBundle() {
             .from("bills")
             .select("amount, paid_at")
             .eq("status", "paid")
+            .is("archived_at", null)
             .gte("paid_at", fromIso)
             .lte("paid_at", toBound),
         ]);

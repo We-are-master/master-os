@@ -14,6 +14,11 @@ export type BillDisplayItem =
   | { type: "series"; key: string; all: Bill[]; visible: Bill[] }
   | { type: "single"; bill: Bill };
 
+function billMatchesStatusFilter(b: Bill, statusFilter: string): boolean {
+  if (statusFilter === "all" || statusFilter === "archived") return true;
+  return b.status === statusFilter;
+}
+
 export function buildBillDisplayList(scopedBills: Bill[], statusFilter: string): BillDisplayItem[] {
   const byKey = new Map<string, Bill[]>();
   const singles: Bill[] = [];
@@ -32,14 +37,13 @@ export function buildBillDisplayList(scopedBills: Bill[], statusFilter: string):
 
   for (const [key, all] of byKey) {
     const allSorted = [...all].sort((a, b) => a.due_date.localeCompare(b.due_date));
-    const visible =
-      statusFilter === "all" ? allSorted : allSorted.filter((b) => b.status === statusFilter);
+    const visible = allSorted.filter((b) => billMatchesStatusFilter(b, statusFilter));
     if (visible.length === 0) continue;
     items.push({ type: "series", key, all: allSorted, visible });
   }
 
   for (const b of singles) {
-    if (statusFilter !== "all" && b.status !== statusFilter) continue;
+    if (!billMatchesStatusFilter(b, statusFilter)) continue;
     items.push({ type: "single", bill: b });
   }
 

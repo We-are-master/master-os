@@ -1,5 +1,6 @@
 import { getSupabase } from "./base";
 import type { Bill, BillRecurrence, BillStatus } from "@/types/database";
+import { recurringGroupKey } from "@/lib/bill-groups";
 import { generateRecurringDueDates, RECURRENCE_GENERATION_COUNTS } from "@/lib/bill-recurrence";
 
 export async function listBills(params?: { status?: string; from?: string; to?: string }): Promise<Bill[]> {
@@ -65,7 +66,18 @@ export async function createBill(payload: CreateBillPayload): Promise<Bill> {
 }
 
 export type UpdateBillInput = Partial<
-  Pick<Bill, "description" | "category" | "amount" | "due_date" | "status" | "receipt_url" | "paid_at" | "is_recurring">
+  Pick<
+    Bill,
+    | "description"
+    | "category"
+    | "amount"
+    | "due_date"
+    | "status"
+    | "receipt_url"
+    | "paid_at"
+    | "is_recurring"
+    | "archived_at"
+  >
 > & {
   recurrence_interval?: BillRecurrence | null;
 };
@@ -79,6 +91,74 @@ export async function updateBill(id: string, updates: UpdateBillInput): Promise<
     .single();
   if (error) throw error;
   return data as Bill;
+}
+
+/**
+ * Approve this bill; if it belongs to a recurring series, also approves every other
+ * non-archived occurrence still in submitted / needs_attention (same series or fingerprint).
+ */
+export async function approveBillOrSeries(billId: string): Promise<{ approvedCount: number; bill: Bill }> {
+  const supabase = getSupabase();
+  const { data: row, error } = await supabase.from("bills").select("*").eq("id", billId).single();
+  if (error) throw error;
+  const bill = row as Bill;
+  const now = new Date().toISOString();
+
+  if (!bill.is_recurring || !bill.recurrence_interval) {
+    const { data, error: uErr } = await supabase
+      .from("bills")
+      .update({ status: "approved" as BillStatus, updated_at: now })
+      .eq("id", billId)
+      .select()
+      .single();
+    if (uErr) throw uErr;
+    return { approvedCount: 1, bill: data as Bill };
+  }
+
+  if (bill.recurring_series_id) {
+    const { data: updated, error: uErr } = await supabase
+      .from("bills")
+      .update({ status: "approved" as BillStatus, updated_at: now })
+      .eq("recurring_series_id", bill.recurring_series_id)
+      .in("status", ["submitted", "needs_attention"])
+      .is("archived_at", null)
+      .select("id");
+    if (uErr) throw uErr;
+    const { data: again, error: fErr } = await supabase.from("bills").select("*").eq("id", billId).single();
+    if (fErr) throw fErr;
+    return { approvedCount: (updated ?? []).length, bill: again as Bill };
+  }
+
+  const { data: candidates, error: cErr } = await supabase
+    .from("bills")
+    .select("*")
+    .eq("is_recurring", true)
+    .eq("recurrence_interval", bill.recurrence_interval)
+    .is("archived_at", null)
+    .in("status", ["submitted", "needs_attention"]);
+  if (cErr) throw cErr;
+  const key = recurringGroupKey(bill);
+  const matchIds = (candidates ?? [])
+    .filter((b) => recurringGroupKey(b as Bill) === key)
+    .map((b) => (b as Bill).id);
+  if (matchIds.length === 0) {
+    const { data, error: uErr } = await supabase
+      .from("bills")
+      .update({ status: "approved" as BillStatus, updated_at: now })
+      .eq("id", billId)
+      .select()
+      .single();
+    if (uErr) throw uErr;
+    return { approvedCount: 1, bill: data as Bill };
+  }
+  const { error: bulkErr } = await supabase
+    .from("bills")
+    .update({ status: "approved" as BillStatus, updated_at: now })
+    .in("id", matchIds);
+  if (bulkErr) throw bulkErr;
+  const { data: again, error: fErr } = await supabase.from("bills").select("*").eq("id", billId).single();
+  if (fErr) throw fErr;
+  return { approvedCount: matchIds.length, bill: again as Bill };
 }
 
 /** Mark paid only — recurring bills are pre-generated; we do not chain the next row from payment. */
