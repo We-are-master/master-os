@@ -3407,7 +3407,7 @@ export default function JobDetailPage() {
                       : null,
                     partner_ids: selectedPartnerId ? [selectedPartnerId] : [],
                   };
-                  if (selectedPartnerId && job.status === "unassigned") {
+                  if (selectedPartnerId && (job.status === "unassigned" || job.status === "auto_assigning")) {
                     partnerPatch.status = "scheduled";
                   }
                   if (!selectedPartnerId && job.status === "scheduled") {
