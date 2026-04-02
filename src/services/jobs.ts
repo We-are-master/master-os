@@ -165,6 +165,10 @@ export async function createJob(
   if (!jobHasPartnerSet(input as Job) && (input as Job).status !== "auto_assigning") {
     baseRow.status = "unassigned";
   }
+  /** Partner set → leave the auto-assign queue (manual pick or post-create assign). */
+  if (jobHasPartnerSet(input as Job) && (input as Job).status === "auto_assigning") {
+    baseRow.status = "scheduled";
+  }
   const row = prepareJobRowForInsert(baseRow);
   let { data, error } = await supabase.from("jobs").insert(row).select().single();
   if (error && isPostgrestWriteRetryableError(error)) {
