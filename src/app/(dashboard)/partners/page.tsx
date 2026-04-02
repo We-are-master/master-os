@@ -59,6 +59,7 @@ import {
 import {
   computeProfileCompletenessScore,
   countExpiredDocuments,
+  getProfileCompletenessItems,
   inferPartnerLegal,
   mergePartnerComplianceScore,
 } from "@/lib/partner-compliance";
@@ -836,6 +837,15 @@ type RequiredDocDef = {
   aliases: readonly string[];
 };
 
+/** Self-employed only — same card UX as other required docs (doc_type `utr`). */
+const UTR_REQUIRED_DOC: RequiredDocDef = {
+  id: "utr_hmrc",
+  name: "UTR (HMRC)",
+  description: "Proof of Unique Taxpayer Reference (HMRC letter or screenshot)",
+  docType: "utr",
+  aliases: ["utr", "hmrc", "unique taxpayer", "utr (hmrc)", "tax reference"],
+};
+
 function pickRequiredDocMatch(
   docs: PartnerDoc[],
   req: RequiredDocDef,
@@ -894,8 +904,16 @@ function buildTradeCertificateRequirements(trades: string[] | null | undefined):
   return out;
 }
 
-function buildRequiredDocumentChecklist(trades: string[] | null | undefined): RequiredDocDef[] {
-  return [...REQUIRED_PARTNER_DOCS, ...buildTradeCertificateRequirements(trades)];
+function buildRequiredDocumentChecklist(
+  trades: string[] | null | undefined,
+  partner: Partner | null,
+): RequiredDocDef[] {
+  const tradeCerts = buildTradeCertificateRequirements(trades);
+  const core: RequiredDocDef[] = [...REQUIRED_PARTNER_DOCS];
+  if (partner && inferPartnerLegal(partner) === "self_employed") {
+    return [...core, UTR_REQUIRED_DOC, ...tradeCerts];
+  }
+  return [...core, ...tradeCerts];
 }
 
 function computeComplianceScore(docs: PartnerDoc[], requiredDocs: RequiredDocDef[]): number {
@@ -908,6 +926,19 @@ function computeComplianceScore(docs: PartnerDoc[], requiredDocs: RequiredDocDef
     if (hasValidDoc) validCount += 1;
   }
   return Math.round((validCount / requiredDocs.length) * 100);
+}
+
+/** Same rules as `computeComplianceScore` — one row per required checklist item. */
+function getRequiredDocComplianceStatus(
+  docs: PartnerDoc[],
+  req: RequiredDocDef,
+): "valid" | "expired" | "missing" {
+  const matches = pickRequiredDocMatches(docs, req);
+  const now = new Date();
+  const hasValid = matches.some((d) => !d.expires_at || new Date(d.expires_at) >= now);
+  if (hasValid) return "valid";
+  if (matches.length > 0) return "expired";
+  return "missing";
 }
 
 function PartnerDocPreviewThumb({ path }: { path: string }) {
@@ -1593,13 +1624,20 @@ function PartnerDetailDrawer({
   };
 
   const partnerTradesForCompliance = partner ? (partner.trades?.length ? partner.trades : [partner.trade]) : [];
-  const requiredDocuments = buildRequiredDocumentChecklist(partnerTradesForCompliance);
+  const requiredDocuments = buildRequiredDocumentChecklist(partnerTradesForCompliance, partner);
   const documentComplianceScore = partner ? computeComplianceScore(documents, requiredDocuments) : 0;
   const profileCompletenessScore = partner ? computeProfileCompletenessScore(partner) : 0;
   const expiredDocCount = countExpiredDocuments(documents);
   const computedCompliance = partner
     ? mergePartnerComplianceScore(documentComplianceScore, profileCompletenessScore, expiredDocCount)
     : 0;
+
+  const profileCompletenessItems = partner ? getProfileCompletenessItems(partner) : [];
+  const complianceAttentionCount =
+    partner
+      ? profileCompletenessItems.filter((i) => !i.done).length +
+        requiredDocuments.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid").length
+      : 0;
 
   useEffect(() => {
     if (!partner || teamMember) return;
@@ -1831,6 +1869,11 @@ function PartnerDetailDrawer({
     { id: "documents", label: "Documents", count: documents.length },
     { id: "financial", label: "Financial", count: selfBills.length },
     { id: "jobs", label: "Jobs", count: realJobsCount },
+    {
+      id: "compliance",
+      label: "Compliance",
+      count: complianceAttentionCount > 0 ? complianceAttentionCount : undefined,
+    },
     { id: "actions" as const, label: "Privacy & Permissions" },
     { id: "notes", label: "Notes", count: notes.length },
     ...(partner.auth_user_id ? [{ id: "location" as const, label: "Location" }] : []),
@@ -2371,6 +2414,195 @@ function PartnerDetailDrawer({
           </div>
         )}
 
+        {/* ========== COMPLIANCE ========== */}
+        {tab === "compliance" && (
+          <div className="p-6 space-y-5">
+            <div className="rounded-2xl border border-border-light bg-gradient-to-br from-card via-card to-primary/[0.03] p-5 shadow-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Overall score</p>
+                  <p className="mt-1 text-4xl font-bold tabular-nums text-text-primary">
+                    {computedCompliance}
+                    <span className="text-lg font-semibold text-text-tertiary">/100</span>
+                  </p>
+                  {computedCompliance < 100 ? (
+                    <p className="mt-2 max-w-md text-xs text-text-secondary">
+                      About <span className="font-semibold text-text-primary">{100 - computedCompliance}</span> points to go.
+                      The score blends required documents (~52%), profile fields (~33%), and expired files (extra penalty).
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">Fully compliant on current rules.</p>
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setTab("overview")}>
+                    Overview
+                  </Button>
+                  {isAdmin && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setTab("overview");
+                        setEditingOverview(true);
+                      }}
+                    >
+                      Edit profile
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={() => setTab("documents")}>
+                    Documents
+                  </Button>
+                </div>
+              </div>
+              <Progress
+                value={computedCompliance}
+                size="sm"
+                color={computedCompliance >= 90 ? "emerald" : computedCompliance >= 70 ? "primary" : "amber"}
+                className="mt-4"
+              />
+              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="rounded-xl border border-border-light bg-card/90 px-3 py-2.5">
+                  <p className="text-[10px] font-medium text-text-tertiary">Required documents</p>
+                  <p className="text-xl font-bold text-text-primary">{documentComplianceScore}%</p>
+                  <p className="text-[10px] text-text-tertiary">Valid &amp; not expired per checklist</p>
+                </div>
+                <div className="rounded-xl border border-border-light bg-card/90 px-3 py-2.5">
+                  <p className="text-[10px] font-medium text-text-tertiary">Profile</p>
+                  <p className="text-xl font-bold text-text-primary">{profileCompletenessScore}%</p>
+                  <p className="text-[10px] text-text-tertiary">Contact, coverage, address, tax IDs</p>
+                </div>
+                <div className="rounded-xl border border-border-light bg-card/90 px-3 py-2.5">
+                  <p className="text-[10px] font-medium text-text-tertiary">Expired files</p>
+                  <p className="text-xl font-bold text-text-primary">{expiredDocCount}</p>
+                  <p className="text-[10px] text-text-tertiary">Each one hurts the blended score</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-text-primary">Profile checklist</h3>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 text-xs"
+                  onClick={() => {
+                    setTab("overview");
+                    if (isAdmin) setEditingOverview(true);
+                  }}
+                >
+                  {isAdmin ? "Fix in Overview" : "View Overview"}
+                </Button>
+              </div>
+              <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
+                {profileCompletenessItems.map((item) => (
+                  <li key={item.id} className="flex gap-3 px-3 py-2.5 first:rounded-t-xl last:rounded-b-xl">
+                    <span className="mt-0.5 shrink-0">
+                      {item.done ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-amber-500" aria-hidden />
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-sm ${item.done ? "text-text-secondary" : "font-medium text-text-primary"}`}>
+                        {item.label}
+                        {!item.done && <span className="text-text-tertiary font-normal"> · +{item.weight} pts</span>}
+                      </p>
+                      {!item.done && <p className="text-[11px] text-text-tertiary mt-0.5">{item.hint}</p>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-text-primary">Required documents</h3>
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setTab("documents")}>
+                  Upload / replace
+                </Button>
+              </div>
+              <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
+                {requiredDocuments.map((req) => {
+                  const st = getRequiredDocComplianceStatus(documents, req);
+                  return (
+                    <li key={req.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex items-start gap-2">
+                        {st === "valid" ? (
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+                        ) : st === "expired" ? (
+                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden />
+                        ) : (
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                        )}
+                        <div>
+                          <p className="text-sm font-medium text-text-primary">{req.name}</p>
+                          <p className="text-[11px] text-text-tertiary">{req.description}</p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2 pl-6 sm:pl-0">
+                        <Badge
+                          variant={st === "valid" ? "success" : st === "expired" ? "danger" : "warning"}
+                          size="sm"
+                        >
+                          {st === "valid" ? "Valid" : st === "expired" ? "Expired" : "Missing"}
+                        </Badge>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="whitespace-nowrap"
+                          onClick={() => {
+                            setDocPreset({ docType: req.docType, name: req.name });
+                            setAddDocOpen(true);
+                            setTab("documents");
+                          }}
+                        >
+                          {st === "valid" ? "Update" : "Add"}
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            {expiredDocCount > 0 && (
+              <div className="rounded-xl border border-red-200/60 bg-red-50/50 p-4 dark:border-red-900/40 dark:bg-red-950/20">
+                <div className="flex items-start gap-2">
+                  <XCircle className="h-4 w-4 shrink-0 text-red-500 mt-0.5" aria-hidden />
+                  <div>
+                    <p className="text-sm font-semibold text-text-primary">Expired uploads ({expiredDocCount})</p>
+                    <p className="text-xs text-text-secondary mt-0.5">
+                      Replace these in Documents — expired dates reduce the compliance score.
+                    </p>
+                  </div>
+                </div>
+                <ul className="mt-3 space-y-1.5">
+                  {documents
+                    .filter((d) => d.expires_at && new Date(d.expires_at) < new Date())
+                    .map((d) => (
+                      <li key={d.id}>
+                        <button
+                          type="button"
+                          className="w-full rounded-lg border border-border-light bg-card px-3 py-2 text-left text-sm text-text-primary transition-colors hover:bg-surface-hover"
+                          onClick={() => {
+                            setTab("documents");
+                            setSelectedDoc(d);
+                          }}
+                        >
+                          <span className="font-medium">{d.name}</span>
+                          <span className="text-text-tertiary"> · expired {new Date(d.expires_at!).toLocaleDateString()}</span>
+                        </button>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ========== FINANCIAL ========== */}
         {tab === "financial" && (
           <div className="p-6 space-y-4">
@@ -2540,7 +2772,7 @@ function PartnerDetailDrawer({
               </Button>
             </div>
             <div className="rounded-xl border border-border-light bg-card/60 p-3 space-y-2">
-              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agreements &amp; tax</p>
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agreements</p>
               <p className="text-[11px] text-text-tertiary leading-snug">
                 No expiry date required. In-app submission can be wired later; upload files here for the record.
               </p>
@@ -2565,18 +2797,6 @@ function PartnerDetailDrawer({
                 >
                   Self Bill Agreement
                 </Button>
-                {(partner.partner_legal_type ?? "self_employed") === "self_employed" && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setDocPreset({ docType: "utr", name: "UTR (HMRC)" });
-                      setAddDocOpen(true);
-                    }}
-                  >
-                    Upload UTR
-                  </Button>
-                )}
               </div>
             </div>
             <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
