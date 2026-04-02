@@ -58,6 +58,16 @@ function kpiEligible(b: Bill): boolean {
   return !b.archived_at && b.status !== "rejected" && b.status !== "needs_attention";
 }
 
+function toastArchiveError(err: unknown, fallback: string) {
+  const msg =
+    err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string"
+      ? (err as { message: string }).message
+      : err instanceof Error
+        ? err.message
+        : fallback;
+  toast.error(msg);
+}
+
 const statusConfig: Record<
   BillStatus,
   { label: string; variant: "default" | "primary" | "warning" | "success" | "danger" | "info" }
@@ -251,8 +261,8 @@ export default function BillsPage() {
       toast.success(`Archived ${ids.length} bill(s). Removed from pay runs.`);
       setArchiveSeriesTarget(null);
       load();
-    } catch {
-      toast.error("Failed to archive");
+    } catch (err) {
+      toastArchiveError(err, "Failed to archive");
     } finally {
       setArchiveSeriesBusy(false);
     }
@@ -284,8 +294,8 @@ export default function BillsPage() {
       setModalOpen(false);
       setEditing(null);
       load();
-    } catch {
-      toast.error("Failed to archive");
+    } catch (err) {
+      toastArchiveError(err, "Failed to archive");
     } finally {
       setSaving(false);
     }

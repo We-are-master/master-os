@@ -175,13 +175,31 @@ export async function markBillPaid(id: string, paidAt?: string): Promise<Bill> {
   return data as Bill;
 }
 
+/** Dedupe and keep plausible UUID strings (avoids bad ids breaking PostgREST filters). */
+function normalizeBillIdsForArchive(ids: string[]): string[] {
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return [...new Set(ids.map((id) => (typeof id === "string" ? id.trim() : "")).filter((id) => uuidRe.test(id)))];
+}
+
+/**
+ * Archive bills and drop matching pay-run lines.
+ * Uses one PATCH per id — bulk `.in("id", …)` often returns 400 from PostgREST/Kong on long query strings.
+ */
 export async function archiveBillsByIds(ids: string[]): Promise<void> {
-  if (ids.length === 0) return;
+  const unique = normalizeBillIdsForArchive(ids);
+  if (unique.length === 0) return;
   const now = new Date().toISOString();
-  const { error } = await getSupabase()
-    .from("bills")
-    .update({ archived_at: now, updated_at: now })
-    .in("id", ids);
-  if (error) throw error;
-  await removeBillIdsFromPayRunItems(ids);
+  const supabase = getSupabase();
+  for (const id of unique) {
+    const { error } = await supabase
+      .from("bills")
+      .update({ archived_at: now, updated_at: now })
+      .eq("id", id);
+    if (error) throw error;
+  }
+  try {
+    await removeBillIdsFromPayRunItems(unique);
+  } catch {
+    /* Bills are archived; pay_run_items cleanup is best-effort if table/RLS differs per env */
+  }
 }
