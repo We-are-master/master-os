@@ -32,6 +32,7 @@ import {
   updateBill,
   markBillPaid,
   approveBillOrSeries,
+  approveAllSubmittedInScope,
   archiveBillsByIds,
 } from "@/services/bills";
 import { useProfile } from "@/hooks/use-profile";
@@ -39,7 +40,7 @@ import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar
 import type { FinancePeriodMode } from "@/lib/finance-period";
 import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
 import { BILL_CATEGORY_OPTIONS, billCategoryLabel } from "@/lib/bill-categories";
-import { RECURRENCE_GENERATION_COUNTS } from "@/lib/bill-recurrence";
+import { RECURRENCE_GENERATION_COUNTS, recurrenceLabel } from "@/lib/bill-recurrence";
 import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
 
 const BILL_STATUSES: BillStatus[] = ["submitted", "approved", "paid", "rejected", "needs_attention"];
@@ -86,6 +87,7 @@ export default function BillsPage() {
     null
   );
   const [archiveSeriesBusy, setArchiveSeriesBusy] = useState(false);
+  const [approveAllBusy, setApproveAllBusy] = useState(false);
 
   const archiveSeriesMonthLabel = useMemo(
     () => new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" }),
@@ -135,6 +137,11 @@ export default function BillsPage() {
     [periodMode, weekAnchor, rangeFrom, rangeTo]
   );
 
+  const submittedInScopeCount = useMemo(
+    () => scopedBills.filter((b) => b.status === "submitted").length,
+    [scopedBills]
+  );
+
   const kpis = useMemo(() => {
     const base = !periodBounds
       ? bills.filter((b) => kpiEligible(b))
@@ -163,6 +170,30 @@ export default function BillsPage() {
       totalAmount: totalAmt,
     };
   }, [bills, periodBounds]);
+
+  const handleApproveAllSubmitted = async () => {
+    if (submittedInScopeCount === 0) {
+      toast.error("No submitted bills in this period.");
+      return;
+    }
+    if (
+      !confirm(
+        `Approve all ${submittedInScopeCount} submitted bill line(s) visible for this period? Recurring series are approved in one step each.`
+      )
+    ) {
+      return;
+    }
+    setApproveAllBusy(true);
+    try {
+      const { totalApproved } = await approveAllSubmittedInScope(scopedBills);
+      toast.success(totalApproved > 0 ? `Approved ${totalApproved} line(s).` : "Nothing to approve.");
+      load();
+    } catch {
+      toast.error("Failed to approve all");
+    } finally {
+      setApproveAllBusy(false);
+    }
+  };
 
   const handleApprove = async (bill: Bill) => {
     try {
@@ -470,20 +501,35 @@ export default function BillsPage() {
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
             {BILL_FILTER_ORDER.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  statusFilter === s
-                    ? "bg-primary text-white shadow-sm"
-                    : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
-                }`}
-              >
-                {s === "all" ? "All" : s === "archived" ? "Archived" : statusConfig[s as BillStatus]?.label ?? s}
-              </button>
+              <span key={s} className="inline-flex items-center gap-2">
+                {s === "submitted" ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-[11px] font-semibold border-primary/40 text-primary hover:bg-primary/10"
+                    disabled={approveAllBusy || submittedInScopeCount === 0}
+                    loading={approveAllBusy}
+                    onClick={() => void handleApproveAllSubmitted()}
+                    title="Approve every submitted bill in the current date filter (e.g. All periods = whole list)"
+                  >
+                    Approve all
+                  </Button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter(s)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    statusFilter === s
+                      ? "bg-primary text-white shadow-sm"
+                      : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
+                  }`}
+                >
+                  {s === "all" ? "All" : s === "archived" ? "Archived" : statusConfig[s as BillStatus]?.label ?? s}
+                </button>
+              </span>
             ))}
           </div>
           {loading ? (
@@ -501,7 +547,7 @@ export default function BillsPage() {
                   const head = item.all[0];
                   const expanded = expandedSeries[item.key] ?? false;
                   const summary = formatStatusSummary(item.visible);
-                  const cadence = head.recurrence_interval ?? "—";
+                  const cadence = recurrenceLabel(head.recurrence_interval as BillRecurrence | undefined);
                   return (
                     <div
                       key={item.key}
@@ -528,18 +574,24 @@ export default function BillsPage() {
                           onClick={() =>
                             setExpandedSeries((s) => ({ ...s, [item.key]: !expanded }))
                           }
-                          className="flex-1 min-w-0 space-y-1 text-left"
+                          className="flex-1 min-w-0 space-y-1.5 text-left"
                         >
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-semibold text-text-primary">{head.description}</p>
-                            <Badge variant="info" size="sm">
-                              Recurring · {cadence}
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="text-lg font-bold tabular-nums text-text-primary shrink-0">
+                              {formatCurrency(head.amount)}
+                            </span>
+                            <Badge variant="primary" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
+                              {cadence}
                             </Badge>
+                            <Badge variant="info" size="sm" className="shrink-0">
+                              Recurring
+                            </Badge>
+                            <p className="text-sm font-semibold text-text-primary min-w-0 w-full sm:w-auto sm:inline sm:ml-0">
+                              {head.description}
+                            </p>
                           </div>
                           <p className="text-xs text-text-tertiary">{billCategoryLabel(head.category)}</p>
                           <p className="text-xs text-text-secondary">
-                            <span className="font-medium tabular-nums">{formatCurrency(head.amount)}</span>
-                            <span className="text-text-tertiary"> · </span>
                             {item.visible.length} occurrence{item.visible.length === 1 ? "" : "s"} in view
                             {item.all.length !== item.visible.length && (
                               <span className="text-text-tertiary">
@@ -617,17 +669,29 @@ export default function BillsPage() {
                     className="rounded-xl border border-border-light bg-card shadow-sm px-4 py-3 space-y-3"
                   >
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-text-primary">{r.description}</p>
-                        <p className="text-xs text-text-tertiary">{billCategoryLabel(r.category)}</p>
-                        {r.is_recurring && (
-                          <Badge variant="info" size="sm" className="mt-1">
-                            Recurring · {r.recurrence_interval ?? "—"}
-                          </Badge>
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        {r.is_recurring ? (
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="text-lg font-bold tabular-nums text-text-primary shrink-0">
+                              {formatCurrency(r.amount)}
+                            </span>
+                            <Badge variant="primary" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
+                              {recurrenceLabel(r.recurrence_interval)}
+                            </Badge>
+                            <Badge variant="info" size="sm" className="shrink-0">
+                              Recurring
+                            </Badge>
+                            <p className="text-sm font-semibold text-text-primary min-w-0 w-full sm:w-auto">{r.description}</p>
+                          </div>
+                        ) : (
+                          <p className="text-sm font-medium text-text-primary">{r.description}</p>
                         )}
+                        <p className="text-xs text-text-tertiary">{billCategoryLabel(r.category)}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm shrink-0">
-                        <span className="font-medium tabular-nums">{formatCurrency(r.amount)}</span>
+                        {!r.is_recurring ? (
+                          <span className="font-medium tabular-nums">{formatCurrency(r.amount)}</span>
+                        ) : null}
                         <span className="text-text-secondary tabular-nums whitespace-nowrap">
                           Due {formatDate(r.due_date)}
                         </span>

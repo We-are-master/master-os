@@ -162,6 +162,31 @@ export async function approveBillOrSeries(billId: string): Promise<{ approvedCou
   return { approvedCount: matchIds.length, bill: again as Bill };
 }
 
+/**
+ * Approve every submitted bill in scope, deduping recurring series (one approve per series / one-off).
+ * Respects the same period as `bills` (caller passes already filtered rows).
+ */
+export async function approveAllSubmittedInScope(bills: Bill[]): Promise<{ totalApproved: number }> {
+  const submitted = bills.filter((b) => b.status === "submitted" && !b.archived_at);
+  if (submitted.length === 0) return { totalApproved: 0 };
+
+  const byKey = new Map<string, Bill>();
+  for (const b of submitted) {
+    let key: string;
+    if (b.recurring_series_id) key = `series:${b.recurring_series_id}`;
+    else if (b.is_recurring && recurringGroupKey(b)) key = `fp:${recurringGroupKey(b)}`;
+    else key = `one:${b.id}`;
+    if (!byKey.has(key)) byKey.set(key, b);
+  }
+
+  let totalApproved = 0;
+  for (const b of byKey.values()) {
+    const { approvedCount } = await approveBillOrSeries(b.id);
+    totalApproved += approvedCount;
+  }
+  return { totalApproved };
+}
+
 /** Mark paid only — recurring bills are pre-generated; we do not chain the next row from payment. */
 export async function markBillPaid(id: string, paidAt?: string): Promise<Bill> {
   const paidDate = paidAt ?? new Date().toISOString().split("T")[0];
