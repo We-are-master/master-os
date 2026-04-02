@@ -21,11 +21,12 @@ import {
   Layers,
   ChevronDown,
   ChevronRight,
+  Archive,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Bill, BillStatus, BillRecurrence } from "@/types/database";
-import { listBills, createBill, updateBill, markBillPaid } from "@/services/bills";
+import { listBills, createBill, updateBill, markBillPaid, approveBillOrSeries } from "@/services/bills";
 import { useProfile } from "@/hooks/use-profile";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
@@ -83,11 +84,16 @@ export default function BillsPage() {
   }, [load]);
 
   const scopedBills = useMemo(() => {
-    if (!periodBounds) return bills;
-    return bills.filter(
-      (b) => b.due_date && b.due_date >= periodBounds.from && b.due_date <= periodBounds.to
-    );
-  }, [bills, periodBounds]);
+    const inPeriod = !periodBounds
+      ? bills
+      : bills.filter(
+          (b) => b.due_date && b.due_date >= periodBounds.from && b.due_date <= periodBounds.to
+        );
+    if (statusFilter === "archived") {
+      return inPeriod.filter((b) => b.archived_at);
+    }
+    return inPeriod.filter((b) => !b.archived_at);
+  }, [bills, periodBounds, statusFilter]);
 
   const displayList = useMemo(
     () => buildBillDisplayList(scopedBills, statusFilter),
@@ -100,14 +106,23 @@ export default function BillsPage() {
   );
 
   const kpis = useMemo(() => {
-    const pending = scopedBills.filter((b) => b.status === "submitted");
-    const approved = scopedBills.filter((b) => b.status === "approved");
-    const paid = scopedBills.filter((b) => b.status === "paid");
+    const base = !periodBounds
+      ? bills.filter((b) => !b.archived_at)
+      : bills.filter(
+          (b) =>
+            !b.archived_at &&
+            b.due_date &&
+            b.due_date >= periodBounds.from &&
+            b.due_date <= periodBounds.to
+        );
+    const pending = base.filter((b) => b.status === "submitted");
+    const approved = base.filter((b) => b.status === "approved");
+    const paid = base.filter((b) => b.status === "paid");
     const pendingAmt = pending.reduce((s, b) => s + Number(b.amount), 0);
     const approvedAmt = approved.reduce((s, b) => s + Number(b.amount), 0);
     const paidAmt = paid.reduce((s, b) => s + Number(b.amount), 0);
     /** Rejected bills are not operating cost — exclude from totals. */
-    const costBills = scopedBills.filter((b) => b.status !== "rejected");
+    const costBills = base.filter((b) => b.status !== "rejected");
     const totalAmt = costBills.reduce((s, b) => s + Number(b.amount), 0);
     return {
       pendingCount: pending.length,
@@ -119,12 +134,16 @@ export default function BillsPage() {
       totalCount: costBills.length,
       totalAmount: totalAmt,
     };
-  }, [scopedBills]);
+  }, [bills, periodBounds]);
 
   const handleApprove = async (bill: Bill) => {
     try {
-      await updateBill(bill.id, { status: "approved" });
-      toast.success("Bill approved");
+      const { approvedCount } = await approveBillOrSeries(bill.id);
+      if (bill.is_recurring && approvedCount > 1) {
+        toast.success(`Approved ${approvedCount} occurrences in this recurring series.`);
+      } else {
+        toast.success("Bill approved");
+      }
       load();
     } catch {
       toast.error("Failed to approve");
@@ -171,6 +190,55 @@ export default function BillsPage() {
     }
   };
 
+  const handleRestoreFromArchive = async (bill: Bill) => {
+    try {
+      await updateBill(bill.id, { archived_at: null });
+      toast.success("Bill restored to the active list");
+      load();
+    } catch {
+      toast.error("Failed to restore");
+    }
+  };
+
+  const handleArchiveFromModal = async () => {
+    if (!editing) return;
+    if (
+      !confirm(
+        "Archive this bill? It will disappear from the main list and pay runs until you restore it from the Archived filter."
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateBill(editing.id, { archived_at: new Date().toISOString() });
+      toast.success("Bill archived");
+      setModalOpen(false);
+      setEditing(null);
+      load();
+    } catch {
+      toast.error("Failed to archive");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRestoreFromModal = async () => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      await updateBill(editing.id, { archived_at: null });
+      toast.success("Bill restored");
+      setModalOpen(false);
+      setEditing(null);
+      load();
+    } catch {
+      toast.error("Failed to restore");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const formatStatusSummary = (bills: Bill[]) => {
     const order: BillStatus[] = ["submitted", "approved", "paid", "rejected", "needs_attention"];
     const counts = new Map<BillStatus, number>();
@@ -197,7 +265,12 @@ export default function BillsPage() {
       <Button variant="ghost" size="sm" icon={<Pencil className="h-3 w-3" />} onClick={() => { setEditing(r); setModalOpen(true); }}>
         Edit
       </Button>
-      {(r.status === "submitted" || r.status === "needs_attention") && (
+      {r.archived_at ? (
+        <Button variant="ghost" size="sm" onClick={() => handleRestoreFromArchive(r)}>
+          Restore
+        </Button>
+      ) : null}
+      {!r.archived_at && (r.status === "submitted" || r.status === "needs_attention") && (
         <>
           <Button variant="ghost" size="sm" onClick={() => handleApprove(r)}>
             Approve
@@ -207,17 +280,17 @@ export default function BillsPage() {
           </Button>
         </>
       )}
-      {r.status === "approved" && (
+      {!r.archived_at && r.status === "approved" && (
         <Button variant="ghost" size="sm" onClick={() => handleMarkPaid(r)}>
           Mark paid
         </Button>
       )}
-      {(r.status === "submitted" || r.status === "approved") && (
+      {!r.archived_at && (r.status === "submitted" || r.status === "approved") && (
         <Button variant="ghost" size="sm" className="text-amber-700" onClick={() => handleNeedsAttention(r)}>
           Needs attention
         </Button>
       )}
-      {r.status === "needs_attention" && (
+      {!r.archived_at && r.status === "needs_attention" && (
         <Button variant="ghost" size="sm" onClick={() => handleClearAttention(r)}>
           Back to submitted
         </Button>
@@ -295,12 +368,21 @@ export default function BillsPage() {
             <div>
               <p className="text-sm font-semibold text-text-primary">Bills</p>
               <p className="text-xs text-text-tertiary">
-                Filter by workflow stage. Use <span className="font-medium text-text-secondary">Needs attention</span> for follow-up.
+                {statusFilter === "archived" ? (
+                  <>
+                    Archived bills are hidden from the default list and from pay runs. Restore from here or from Edit.
+                  </>
+                ) : (
+                  <>
+                    Filter by workflow stage. Use <span className="font-medium text-text-secondary">Needs attention</span> for
+                    follow-up. <span className="font-medium text-text-secondary">Archived</span> hides bills without deleting them.
+                  </>
+                )}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {["all", ...BILL_STATUSES].map((s) => (
+            {["all", ...BILL_STATUSES, "archived"].map((s) => (
               <button
                 key={s}
                 type="button"
@@ -311,7 +393,7 @@ export default function BillsPage() {
                     : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
                 }`}
               >
-                {s === "all" ? "All" : statusConfig[s as BillStatus]?.label ?? s}
+                {s === "all" ? "All" : s === "archived" ? "Archived" : statusConfig[s as BillStatus]?.label ?? s}
               </button>
             ))}
           </div>
@@ -460,6 +542,8 @@ export default function BillsPage() {
             setEditing(null);
           }}
           initial={editing}
+          onArchive={editing && !editing.archived_at ? handleArchiveFromModal : undefined}
+          onRestore={editing?.archived_at ? handleRestoreFromModal : undefined}
           onSave={async (form) => {
             setSaving(true);
             try {
@@ -514,12 +598,16 @@ function BillModal({
   onClose,
   initial,
   onSave,
+  onArchive,
+  onRestore,
   saving,
 }: {
   open: boolean;
   onClose: () => void;
   initial: Bill | null;
   onSave: (form: Partial<Bill>) => Promise<void>;
+  onArchive?: () => Promise<void>;
+  onRestore?: () => Promise<void>;
   saving: boolean;
 }) {
   const [description, setDescription] = useState("");
@@ -571,9 +659,30 @@ function BillModal({
     });
   };
 
+  const archived = Boolean(initial?.archived_at);
+  const archivedLabel = initial?.archived_at
+    ? formatDate(initial.archived_at.slice(0, 10))
+    : null;
+
   return (
-    <Modal open={open} onClose={onClose} title={initial ? "Edit bill" : "Add bill"} size="md">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={initial ? (archived ? "Edit bill (archived)" : "Edit bill") : "Add bill"}
+      size="md"
+    >
       <form onSubmit={submit} className="p-6 space-y-4">
+        {archived && archivedLabel && (
+          <div className="rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2 text-xs text-text-secondary">
+            <span className="inline-flex items-center gap-1.5 font-medium text-text-primary">
+              <Archive className="h-3.5 w-3.5 shrink-0" />
+              Archived on {archivedLabel}
+            </span>
+            <p className="mt-1 text-text-tertiary leading-snug">
+              Restore to show this bill in the main list and include it in pay runs when approved.
+            </p>
+          </div>
+        )}
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
           <Input
@@ -612,9 +721,11 @@ function BillModal({
             </label>
           </div>
           <p className="text-[11px] text-text-tertiary leading-snug">
-            Not tied to “mark paid”. We pre-create the next {RECURRENCE_GENERATION_COUNTS.weekly} weeks /{" "}
-            {RECURRENCE_GENERATION_COUNTS.monthly} months / {RECURRENCE_GENERATION_COUNTS.quarterly} quarters /{" "}
-            {RECURRENCE_GENERATION_COUNTS.yearly} years of due dates so each period appears as its own line to approve and pay.
+            Not tied to “mark paid”. We pre-create up to {RECURRENCE_GENERATION_COUNTS.weekly} weekly /{" "}
+            {RECURRENCE_GENERATION_COUNTS.monthly} monthly / {RECURRENCE_GENERATION_COUNTS.quarterly} quarterly /{" "}
+            {RECURRENCE_GENERATION_COUNTS.yearly} yearly lines ahead (no automatic extension after that — add a new bill if you need more
+            horizon). <span className="text-text-secondary">Approve once</span> to approve every occurrence still pending in this series;
+            pay each period when due, or skip/exclude in the pay run if you do not pay that month.
           </p>
         </div>
         {is_recurring && (
@@ -630,10 +741,26 @@ function BillModal({
             ]}
           />
         )}
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
+          {initial && onArchive && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={saving}
+              icon={<Archive className="h-3.5 w-3.5" />}
+              onClick={() => void onArchive()}
+            >
+              Archive
+            </Button>
+          )}
+          {initial && onRestore && (
+            <Button type="button" variant="outline" disabled={saving} onClick={() => void onRestore()}>
+              Restore
+            </Button>
+          )}
           <Button type="submit" disabled={saving} icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}>
             {saving ? "Saving…" : initial ? "Save changes" : "Submit"}
           </Button>

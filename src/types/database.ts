@@ -324,11 +324,18 @@ export interface JobPayment {
   created_by?: string;
 }
 
+/** Directory partner: sole trader vs UK limited company (CRN vs UTR). */
+export type PartnerLegalType = "self_employed" | "limited_company";
+
 export interface Partner {
   id: string;
   company_name: string;
   vat_number?: string | null;
   crn?: string | null;
+  /** Self-employed vs limited company — drives which identifier is required. */
+  partner_legal_type?: PartnerLegalType | null;
+  /** UK UTR when self-employed. */
+  utr?: string | null;
   contact_name: string;
   email: string;
   phone?: string;
@@ -533,6 +540,8 @@ export interface Bill {
   parent_bill_id?: string;
   /** Same UUID for all rows inserted in one recurring batch (grouping in UI). */
   recurring_series_id?: string | null;
+  /** When set, bill is archived (hidden from default list and pay-run aggregation). */
+  archived_at?: string | null;
 }
 
 /** Commission run: period, tier calc, manager approves → feeds Pay Run */

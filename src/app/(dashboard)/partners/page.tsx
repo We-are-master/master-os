@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Partner, PartnerStatus } from "@/types/database";
+import type { Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, createPartner, updatePartner } from "@/services/partners";
 import {
@@ -151,10 +151,17 @@ const jobStatusConfig: Record<string, { label: string; variant: "default" | "pri
 };
 
 const emptyForm = {
-  company_name: "", contact_name: "", email: "", phone: "",
+  company_name: "",
+  contact_name: "",
+  email: "",
+  phone: "",
   vat_number: "",
   crn: "",
-  trades: ["HVAC"] as string[], location: "", status: "active" as PartnerStatus,
+  utr: "",
+  partner_legal_type: "self_employed" as PartnerLegalType,
+  trades: ["HVAC"] as string[],
+  location: "",
+  status: "active" as PartnerStatus,
 };
 
 type ViewMode = "directory" | "team";
@@ -221,6 +228,14 @@ export default function PartnersPage() {
       toast.error("Please fill in company name, contact name, and email.");
       return;
     }
+    if (form.partner_legal_type === "limited_company" && !form.crn.trim()) {
+      toast.error("Company registration number (CRN) is required for a limited company.");
+      return;
+    }
+    if (form.partner_legal_type === "self_employed" && !form.utr.trim()) {
+      toast.error("UTR is required for self-employed partners.");
+      return;
+    }
     setSubmitting(true);
     try {
       const primaryTrade = form.trades[0] ?? TRADES[0];
@@ -230,7 +245,9 @@ export default function PartnersPage() {
         email: form.email.trim(),
         phone: form.phone.trim() || undefined,
         vat_number: form.vat_number.trim() || undefined,
-        crn: form.crn.trim() || undefined,
+        partner_legal_type: form.partner_legal_type,
+        crn: form.partner_legal_type === "limited_company" ? form.crn.trim() : null,
+        utr: form.partner_legal_type === "self_employed" ? form.utr.trim() : null,
         trade: primaryTrade,
         trades: form.trades,
         status: form.status,
@@ -512,18 +529,66 @@ export default function PartnersPage() {
         }
       >
         <div className="p-6 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
+            <label className="text-xs font-medium text-text-secondary">Partner type *</label>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  { value: "self_employed" as const, label: "Self-employed" },
+                  { value: "limited_company" as const, label: "Limited company" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      partner_legal_type: opt.value,
+                      crn: opt.value === "limited_company" ? f.crn : "",
+                      utr: opt.value === "self_employed" ? f.utr : "",
+                    }))
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                    form.partner_legal_type === opt.value
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border-light bg-card text-text-secondary hover:border-border"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {form.partner_legal_type === "limited_company" ? (
+              <div className="space-y-1.5 pt-1">
+                <label className="text-xs font-medium text-text-secondary">Company registration number (CRN) *</label>
+                <Input
+                  value={form.crn}
+                  onChange={(e) => setForm({ ...form, crn: e.target.value })}
+                  placeholder="e.g. 12345678"
+                />
+              </div>
+            ) : (
+              <div className="space-y-1.5 pt-1">
+                <label className="text-xs font-medium text-text-secondary">UTR (Unique Taxpayer Reference) *</label>
+                <Input
+                  value={form.utr}
+                  onChange={(e) => setForm({ ...form, utr: e.target.value })}
+                  placeholder="10-digit HMRC UTR"
+                  autoComplete="off"
+                />
+                <p className="text-[10px] text-text-tertiary">Required for self-employed. You can upload a UTR document later in the partner profile.</p>
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-secondary">Company Name *</label>
+              <label className="text-xs font-medium text-text-secondary">Company / trading name *</label>
               <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" />
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-secondary">VAT Number</label>
               <Input value={form.vat_number} onChange={(e) => setForm({ ...form, vat_number: e.target.value })} placeholder="GB123456789" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-secondary">CRN (if company)</label>
-              <Input value={form.crn} onChange={(e) => setForm({ ...form, crn: e.target.value })} placeholder="Company registration number" />
             </div>
           </div>
           <div className="space-y-1.5">
@@ -627,9 +692,15 @@ const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = 
   license: { label: "License", icon: FileText },
   contract: { label: "Contract", icon: FileText },
   tax: { label: "Tax Document", icon: DollarSign },
+  utr: { label: "UTR / HMRC", icon: DollarSign },
+  service_agreement: { label: "Service Agreement", icon: FileText },
+  self_bill_agreement: { label: "Self Bill Agreement", icon: FileText },
   id_proof: { label: "ID Proof", icon: Users },
   other: { label: "Other", icon: FileText },
 };
+
+/** Document types that skip expiry date in the upload modal (agreements, UTR file). */
+const DOC_TYPES_NO_EXPIRY = new Set(["utr", "service_agreement", "self_bill_agreement"]);
 
 const REQUIRED_PARTNER_DOCS = [
   {
@@ -845,12 +916,13 @@ function AddPartnerDocumentModal({
       toast.error("Enter certificate expiry date");
       return;
     }
+    const noExpiry = DOC_TYPES_NO_EXPIRY.has(docType);
     void onSubmit(
       docType,
       name.trim(),
       file,
       preview,
-      expiresAt.trim() ? expiresAt.trim() : undefined,
+      noExpiry ? undefined : expiresAt.trim() ? expiresAt.trim() : undefined,
       certificateNumber.trim() || undefined,
     );
   };
@@ -886,13 +958,15 @@ function AddPartnerDocumentModal({
             />
           </div>
         )}
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Expiration date {docType === "certification" ? "*" : "(optional)"}
-          </label>
-          <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
-          <p className="text-[10px] text-text-tertiary mt-1">Used to mark documents as Expired automatically.</p>
-        </div>
+        {!DOC_TYPES_NO_EXPIRY.has(docType) && (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">
+              Expiration date {docType === "certification" ? "*" : "(optional)"}
+            </label>
+            <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
+            <p className="text-[10px] text-text-tertiary mt-1">Used to mark documents as Expired automatically.</p>
+          </div>
+        )}
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Document file *</label>
           <input
@@ -1101,6 +1175,8 @@ function PartnerDetailDrawer({
     company_name: "",
     vat_number: "",
     crn: "",
+    utr: "",
+    partner_legal_type: "self_employed" as PartnerLegalType,
     contact_name: "",
     email: "",
     phone: "",
@@ -1186,6 +1262,8 @@ function PartnerDetailDrawer({
         company_name: partner.company_name ?? "",
         vat_number: partner.vat_number ?? "",
         crn: partner.crn ?? "",
+        utr: partner.utr ?? "",
+        partner_legal_type: partner.partner_legal_type ?? "self_employed",
         contact_name: partner.contact_name ?? "",
         email: partner.email ?? "",
         phone: partner.phone ?? "",
@@ -1292,6 +1370,14 @@ function PartnerDetailDrawer({
       toast.error("Company name, contact name and email are required.");
       return;
     }
+    if (overviewForm.partner_legal_type === "limited_company" && !overviewForm.crn.trim()) {
+      toast.error("CRN is required for a limited company.");
+      return;
+    }
+    if (overviewForm.partner_legal_type === "self_employed" && !overviewForm.utr.trim()) {
+      toast.error("UTR is required for self-employed partners.");
+      return;
+    }
     const rating = Number(overviewForm.rating || "0");
     if (Number.isNaN(rating) || rating < 0 || rating > 5) {
       toast.error("Rating must be between 0 and 5.");
@@ -1302,7 +1388,9 @@ function PartnerDetailDrawer({
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
         vat_number: overviewForm.vat_number.trim() || null,
-        crn: overviewForm.crn.trim() || null,
+        partner_legal_type: overviewForm.partner_legal_type,
+        crn: overviewForm.partner_legal_type === "limited_company" ? overviewForm.crn.trim() || null : null,
+        utr: overviewForm.partner_legal_type === "self_employed" ? overviewForm.utr.trim() || null : null,
         contact_name: overviewForm.contact_name.trim(),
         email: overviewForm.email.trim(),
         phone: overviewForm.phone.trim() || undefined,
@@ -1660,12 +1748,12 @@ function PartnerDetailDrawer({
 
   const drawerTabs = [
     { id: "overview", label: "Overview" },
-    { id: "jobs", label: "Jobs", count: realJobsCount },
-    ...(partner.auth_user_id ? [{ id: "location" as const, label: "Location" }] : []),
-    { id: "financial", label: "Financial", count: selfBills.length },
-    { id: "actions" as const, label: "Privacy & Permissions" },
     { id: "documents", label: "Documents", count: documents.length },
+    { id: "financial", label: "Financial", count: selfBills.length },
+    { id: "jobs", label: "Jobs", count: realJobsCount },
+    { id: "actions" as const, label: "Privacy & Permissions" },
     { id: "notes", label: "Notes", count: notes.length },
+    ...(partner.auth_user_id ? [{ id: "location" as const, label: "Location" }] : []),
   ];
 
   return (
@@ -1753,6 +1841,8 @@ function PartnerDetailDrawer({
                             company_name: partner.company_name ?? "",
                             vat_number: partner.vat_number ?? "",
                             crn: partner.crn ?? "",
+                            utr: partner.utr ?? "",
+                            partner_legal_type: partner.partner_legal_type ?? "self_employed",
                             contact_name: partner.contact_name ?? "",
                             email: partner.email ?? "",
                             phone: partner.phone ?? "",
@@ -1832,17 +1922,70 @@ function PartnerDetailDrawer({
                   />
                 ) : (partner.vat_number || "—")}
               </div>
-              <div className="flex items-center gap-2 text-sm text-text-secondary">
-                <FileText className="h-4 w-4 text-text-tertiary" />
-                {editingOverview ? (
-                  <Input
-                    value={overviewForm.crn}
-                    onChange={(e) => setOverviewForm((p) => ({ ...p, crn: e.target.value }))}
-                    placeholder="CRN"
-                    className="h-8"
-                  />
-                ) : (partner.crn || "—")}
-              </div>
+              {editingOverview ? (
+                <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
+                  <p className="text-[10px] font-medium text-text-tertiary">Partner type</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(["self_employed", "limited_company"] as const).map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() =>
+                          setOverviewForm((p) => ({
+                            ...p,
+                            partner_legal_type: opt,
+                            crn: opt === "limited_company" ? p.crn : "",
+                            utr: opt === "self_employed" ? p.utr : "",
+                          }))
+                        }
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                          overviewForm.partner_legal_type === opt
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border-light bg-card text-text-secondary hover:border-border"
+                        }`}
+                      >
+                        {opt === "self_employed" ? "Self-employed" : "Limited company"}
+                      </button>
+                    ))}
+                  </div>
+                  {overviewForm.partner_legal_type === "limited_company" ? (
+                    <Input
+                      value={overviewForm.crn}
+                      onChange={(e) => setOverviewForm((p) => ({ ...p, crn: e.target.value }))}
+                      placeholder="CRN (Companies House) *"
+                      className="h-8"
+                    />
+                  ) : (
+                    <Input
+                      value={overviewForm.utr}
+                      onChange={(e) => setOverviewForm((p) => ({ ...p, utr: e.target.value }))}
+                      placeholder="UTR *"
+                      className="h-8"
+                    />
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 text-sm text-text-secondary">
+                    <Briefcase className="h-4 w-4 text-text-tertiary" />
+                    <span>
+                      {partner.partner_legal_type === "limited_company" ||
+                      (!partner.partner_legal_type && partner.crn?.trim())
+                        ? "Limited company"
+                        : "Self-employed"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-text-secondary">
+                    <FileText className="h-4 w-4 text-text-tertiary" />
+                    <span>
+                      {partner.partner_legal_type === "limited_company" ||
+                      (!partner.partner_legal_type && partner.crn?.trim())
+                        ? `CRN: ${partner.crn || "—"}`
+                        : `UTR: ${partner.utr || "—"}`}
+                    </span>
+                  </div>
+                </>
+              )}
               <div className="flex items-center gap-2 text-sm text-text-secondary">
                 <Phone className="h-4 w-4 text-text-tertiary" />
                 {editingOverview ? (
@@ -1934,6 +2077,8 @@ function PartnerDetailDrawer({
                       company_name: partner.company_name ?? "",
                       vat_number: partner.vat_number ?? "",
                       crn: partner.crn ?? "",
+                      utr: partner.utr ?? "",
+                      partner_legal_type: partner.partner_legal_type ?? "self_employed",
                       contact_name: partner.contact_name ?? "",
                       email: partner.email ?? "",
                       phone: partner.phone ?? "",
@@ -2278,6 +2423,46 @@ function PartnerDetailDrawer({
               >
                 Add document
               </Button>
+            </div>
+            <div className="rounded-xl border border-border-light bg-card/60 p-3 space-y-2">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agreements &amp; tax</p>
+              <p className="text-[11px] text-text-tertiary leading-snug">
+                No expiry date required. In-app submission can be wired later; upload files here for the record.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setDocPreset({ docType: "service_agreement", name: "Service Agreement" });
+                    setAddDocOpen(true);
+                  }}
+                >
+                  Service Agreement
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setDocPreset({ docType: "self_bill_agreement", name: "Self Bill Agreement" });
+                    setAddDocOpen(true);
+                  }}
+                >
+                  Self Bill Agreement
+                </Button>
+                {(partner.partner_legal_type ?? "self_employed") === "self_employed" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setDocPreset({ docType: "utr", name: "UTR (HMRC)" });
+                      setAddDocOpen(true);
+                    }}
+                  >
+                    Upload UTR
+                  </Button>
+                )}
+              </div>
             </div>
             <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
