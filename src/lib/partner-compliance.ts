@@ -13,6 +13,18 @@ export type ProfileCompletenessItem = {
   hint: string;
 };
 
+/** Limited: complete when not VAT registered, or registered with number; legacy: number on file. Self-employed: optional VAT number for points. */
+export function isVatProfileComplete(partner: Partner): boolean {
+  const legal = inferPartnerLegal(partner);
+  if (legal === "limited_company") {
+    const vr = partner.vat_registered;
+    if (vr === false) return true;
+    if (vr === true) return !!partner.vat_number?.trim();
+    return !!partner.vat_number?.trim();
+  }
+  return !!partner.vat_number?.trim();
+}
+
 /** Checklist rows for UI — weights match `computeProfileCompletenessScore`. */
 export function getProfileCompletenessItems(partner: Partner): ProfileCompletenessItem[] {
   const legal = inferPartnerLegal(partner);
@@ -34,7 +46,7 @@ export function getProfileCompletenessItems(partner: Partner): ProfileCompletene
       label: "Area coverage (UK)",
       weight: 14,
       done: hasCoverage,
-      hint: "Select Whole UK or regions in Overview.",
+      hint: "Select UK regions in Overview (default London).",
     },
     {
       id: "tax_id",
@@ -45,10 +57,16 @@ export function getProfileCompletenessItems(partner: Partner): ProfileCompletene
     },
     {
       id: "vat",
-      label: "VAT number",
+      label:
+        legal === "limited_company"
+          ? "VAT (registered + number, or not registered)"
+          : "VAT number",
       weight: 8,
-      done: !!partner.vat_number?.trim(),
-      hint: "Optional for some partners — add if VAT registered.",
+      done: isVatProfileComplete(partner),
+      hint:
+        legal === "limited_company"
+          ? "Say if VAT registered; if yes, add the VAT number."
+          : "Optional — add if VAT registered.",
     },
     {
       id: "identity",

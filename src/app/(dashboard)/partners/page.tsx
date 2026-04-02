@@ -171,6 +171,8 @@ const emptyForm = {
   email: "",
   phone: "",
   vat_number: "",
+  /** Limited company only: null until Yes/No chosen */
+  vat_registered: null as boolean | null,
   crn: "",
   utr: "",
   partner_legal_type: "self_employed" as PartnerLegalType,
@@ -246,6 +248,16 @@ export default function PartnersPage() {
       toast.error("Please fill in company name, contact name, and email.");
       return;
     }
+    if (form.partner_legal_type === "limited_company") {
+      if (form.vat_registered === null) {
+        toast.error("Select whether the company is VAT registered.");
+        return;
+      }
+      if (form.vat_registered === true && !form.vat_number.trim()) {
+        toast.error("Enter the VAT number.");
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       const primaryTrade = form.trades[0] ?? TRADES[0];
@@ -255,7 +267,13 @@ export default function PartnersPage() {
         contact_name: form.contact_name.trim(),
         email: form.email.trim(),
         phone: form.phone.trim() || undefined,
-        vat_number: form.vat_number.trim() || undefined,
+        vat_number:
+          form.partner_legal_type === "limited_company"
+            ? form.vat_registered === true
+              ? form.vat_number.trim() || null
+              : null
+            : form.vat_number.trim() || undefined,
+        vat_registered: form.partner_legal_type === "limited_company" ? form.vat_registered : null,
         partner_legal_type: form.partner_legal_type,
         crn: form.partner_legal_type === "limited_company" ? (form.crn.trim() || null) : null,
         utr: form.partner_legal_type === "self_employed" ? (form.utr.trim() || null) : null,
@@ -452,8 +470,8 @@ export default function PartnersPage() {
           <KpiCard
             title="Avg compliance"
             value={complianceAvg == null ? "—" : Math.round(complianceAvg)}
-            format="none"
-            description="0–100 · profile & documents (directory)"
+            format={complianceAvg == null ? "none" : "percent"}
+            description="0–100 scale · profile & documents (directory)"
             icon={ShieldCheck}
             accent="primary"
           />
@@ -590,7 +608,9 @@ export default function PartnersPage() {
                   setForm((f) => ({
                     ...f,
                     partner_legal_type: opt.value,
-                    ...(opt.value === "limited_company" ? { utr: "" } : { crn: "" }),
+                    ...(opt.value === "limited_company"
+                      ? { utr: "", vat_registered: null, vat_number: "" }
+                      : { crn: "", vat_registered: null }),
                   }))
                 }
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
@@ -636,10 +656,57 @@ export default function PartnersPage() {
               <label className="text-xs font-medium text-text-secondary">Company / trading name *</label>
               <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" />
             </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-secondary">VAT Number</label>
-              <Input value={form.vat_number} onChange={(e) => setForm({ ...form, vat_number: e.target.value })} placeholder="GB123456789" />
-            </div>
+            {form.partner_legal_type === "self_employed" ? (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-text-secondary">VAT number (optional)</label>
+                <Input
+                  value={form.vat_number}
+                  onChange={(e) => setForm({ ...form, vat_number: e.target.value })}
+                  placeholder="GB123456789"
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <span className="text-xs font-medium text-text-secondary">VAT registered? *</span>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      { v: true as const, label: "Yes" },
+                      { v: false as const, label: "No" },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={String(opt.v)}
+                      type="button"
+                      onClick={() =>
+                        setForm((f) => ({
+                          ...f,
+                          vat_registered: opt.v,
+                          vat_number: opt.v === false ? "" : f.vat_number,
+                        }))
+                      }
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                        form.vat_registered === opt.v
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border-light bg-card text-text-secondary hover:border-border"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {form.vat_registered === true && (
+                  <div className="space-y-1.5 pt-1">
+                    <label className="text-xs font-medium text-text-secondary">VAT number *</label>
+                    <Input
+                      value={form.vat_number}
+                      onChange={(e) => setForm({ ...form, vat_number: e.target.value })}
+                      placeholder="GB123456789"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-text-secondary">Contact Name *</label>
@@ -718,10 +785,17 @@ function BulkActionBtn({ label, onClick, variant }: {
   );
 }
 
+function inferVatRegisteredForForm(partner: Partner): boolean | null {
+  if (inferPartnerLegal(partner) !== "limited_company") return null;
+  if (partner.vat_registered === true || partner.vat_registered === false) return partner.vat_registered;
+  return partner.vat_number?.trim() ? true : null;
+}
+
 function partnerOverviewFormFromPartner(partner: Partner) {
   return {
     company_name: partner.company_name ?? "",
     vat_number: partner.vat_number ?? "",
+    vat_registered: inferVatRegisteredForForm(partner),
     crn: partner.crn ?? "",
     utr: partner.utr ?? "",
     partner_legal_type: partner.partner_legal_type ?? "self_employed",
@@ -818,6 +892,10 @@ const CERT_REQUIREMENTS_BY_TRADE: Record<string, string[]> = {
   "Fire Alarm Certificate": ["Fire Alarm Certification"],
   "Emergency Lighting Certificate": ["Emergency Lighting Certification"],
   "Fire Extinguisher Service": ["BAFE / extinguisher servicing certificate"],
+};
+
+/** Not counted in compliance score — shown as optional upload prompts per trade. */
+const OPTIONAL_TRADE_CERTS_BY_TRADE: Record<string, string[]> = {
   Builder: ["CSCS Card"],
   Carpenter: ["CSCS Card"],
 };
@@ -990,6 +1068,7 @@ function AddPartnerDocumentModal({
   const [preview, setPreview] = useState<File | null>(null);
   const [expiresAt, setExpiresAt] = useState("");
   const [certificateNumber, setCertificateNumber] = useState("");
+  const [aiExpiryLoading, setAiExpiryLoading] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -1000,8 +1079,11 @@ function AddPartnerDocumentModal({
       setExpiresAt("");
       setCertificateNumber("");
       setDocType(initialDocType ?? "insurance");
+      setAiExpiryLoading(false);
     });
   }, [open, initialDocType, initialName]);
+
+  const needsExpiryDate = !DOC_TYPES_NO_EXPIRY.has(docType);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1017,11 +1099,11 @@ function AddPartnerDocumentModal({
       toast.error("Enter certificate number");
       return;
     }
-    if (docType === "certification" && !expiresAt.trim()) {
-      toast.error("Enter certificate expiry date");
+    const noExpiry = DOC_TYPES_NO_EXPIRY.has(docType);
+    if (!noExpiry && !expiresAt.trim()) {
+      toast.error("Enter the expiry date (required), or use Detect expiry (AI) on an image.");
       return;
     }
-    const noExpiry = DOC_TYPES_NO_EXPIRY.has(docType);
     void onSubmit(
       docType,
       name.trim(),
@@ -1032,8 +1114,42 @@ function AddPartnerDocumentModal({
     );
   };
 
+  async function handleDetectExpiryAi() {
+    if (!file) {
+      toast.error("Choose a document file first");
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      toast.error("AI reads images only — use a photo or screenshot of the document, or type the expiry date.");
+      return;
+    }
+    setAiExpiryLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/partner-documents/suggest-expiry", {
+        method: "POST",
+        body: fd,
+      });
+      const data = (await res.json()) as { expiry_date?: string | null; error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || "Could not detect expiry");
+      }
+      if (data.expiry_date) {
+        setExpiresAt(data.expiry_date);
+        toast.success("Expiry date filled — review and confirm.");
+      } else {
+        toast.info("Could not read an expiry date — enter it manually below.");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "AI detection failed — enter expiry manually.");
+    } finally {
+      setAiExpiryLoading(false);
+    }
+  }
+
   return (
-    <Modal open={open} onClose={onClose} title="Add document" subtitle="Stored in partner-documents — optional preview image" size="md">
+    <Modal open={open} onClose={onClose} title="Add document" subtitle="Expiry dates are required for compliance (except agreements / UTR file)." size="md">
       <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
@@ -1063,15 +1179,6 @@ function AddPartnerDocumentModal({
             />
           </div>
         )}
-        {!DOC_TYPES_NO_EXPIRY.has(docType) && (
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              Expiration date {docType === "certification" ? "*" : "(optional)"}
-            </label>
-            <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
-            <p className="text-[10px] text-text-tertiary mt-1">Used to mark documents as Expired automatically.</p>
-          </div>
-        )}
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Document file *</label>
           <input
@@ -1080,7 +1187,7 @@ function AddPartnerDocumentModal({
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             className="block w-full text-xs text-text-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-medium file:bg-surface-hover file:text-text-primary"
           />
-          <p className="text-[10px] text-text-tertiary mt-1">PDF, Word, or image — max 10 MB.</p>
+          <p className="text-[10px] text-text-tertiary mt-1">PDF, Word, or image — max 10 MB. For AI expiry detection, use an image.</p>
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Preview image (optional)</label>
@@ -1092,6 +1199,27 @@ function AddPartnerDocumentModal({
           />
           <p className="text-[10px] text-text-tertiary mt-1">Thumbnail shown in the list — JPEG, PNG, WebP, GIF.</p>
         </div>
+        {needsExpiryDate && (
+          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="block text-xs font-medium text-text-secondary">Expiry date *</label>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={aiExpiryLoading || submitting || !file || !file.type.startsWith("image/")}
+                onClick={() => void handleDetectExpiryAi()}
+              >
+                {aiExpiryLoading ? "Detecting…" : "Detect expiry (AI)"}
+              </Button>
+            </div>
+            <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} required={needsExpiryDate} />
+            <p className="text-[10px] text-text-tertiary">
+              Required for compliance tracking. AI works on <span className="font-medium text-text-secondary">images</span> only — for PDFs, type the date. If
+              OPENAI_API_KEY is not set, enter the date manually.
+            </p>
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>
             Cancel
@@ -1282,6 +1410,7 @@ function PartnerDetailDrawer({
   const [overviewForm, setOverviewForm] = useState({
     company_name: "",
     vat_number: "",
+    vat_registered: null as boolean | null,
     crn: "",
     utr: "",
     partner_legal_type: "self_employed" as PartnerLegalType,
@@ -1480,12 +1609,29 @@ function PartnerDetailDrawer({
       toast.error("Rating must be between 0 and 5.");
       return;
     }
+    if (overviewForm.partner_legal_type === "limited_company") {
+      if (overviewForm.vat_registered === null) {
+        toast.error("Select whether the company is VAT registered.");
+        return;
+      }
+      if (overviewForm.vat_registered === true && !overviewForm.vat_number.trim()) {
+        toast.error("Enter the VAT number.");
+        return;
+      }
+    }
     try {
       const primaryTrade = overviewForm.trades[0] ?? TRADES[0];
       const regions = normalizeUkCoverageRegions(overviewForm.uk_coverage_regions);
       const updated = await updatePartner(partner.id, {
         company_name: overviewForm.company_name.trim(),
-        vat_number: overviewForm.vat_number.trim() || null,
+        vat_number:
+          overviewForm.partner_legal_type === "limited_company"
+            ? overviewForm.vat_registered === true
+              ? overviewForm.vat_number.trim() || null
+              : null
+            : overviewForm.vat_number.trim() || null,
+        vat_registered:
+          overviewForm.partner_legal_type === "limited_company" ? overviewForm.vat_registered : null,
         partner_legal_type: overviewForm.partner_legal_type,
         crn:
           overviewForm.partner_legal_type === "limited_company"
@@ -1638,6 +1784,11 @@ function PartnerDetailDrawer({
       ? profileCompletenessItems.filter((i) => !i.done).length +
         requiredDocuments.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid").length
       : 0;
+
+  const missingRequiredDocs =
+    partner
+      ? requiredDocuments.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid")
+      : [];
 
   useEffect(() => {
     if (!partner || teamMember) return;
@@ -2032,21 +2183,6 @@ function PartnerDetailDrawer({
                   />
                 ) : partner.email}
               </div>
-              {(editingOverview || partner.vat_number?.trim()) && (
-                <div className="flex items-start gap-2 text-sm text-text-secondary">
-                  <FileText className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" />
-                  {editingOverview ? (
-                    <Input
-                      value={overviewForm.vat_number}
-                      onChange={(e) => setOverviewForm((p) => ({ ...p, vat_number: e.target.value }))}
-                      placeholder="VAT number (optional)"
-                      className="h-8"
-                    />
-                  ) : (
-                    <span>VAT: {partner.vat_number}</span>
-                  )}
-                </div>
-              )}
               {editingOverview ? (
                 <div className="rounded-xl border border-border-light bg-surface-hover/40 px-3 py-3 space-y-3">
                   <p className="text-[10px] font-medium text-text-tertiary uppercase tracking-wide">Partner type</p>
@@ -2059,7 +2195,9 @@ function PartnerDetailDrawer({
                           setOverviewForm((p) => ({
                             ...p,
                             partner_legal_type: opt,
-                            ...(opt === "limited_company" ? { utr: "" } : { crn: "" }),
+                            ...(opt === "limited_company"
+                              ? { utr: "", vat_registered: null, vat_number: "" }
+                              : { crn: "", vat_registered: null }),
                           }))
                         }
                         className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
@@ -2073,20 +2211,71 @@ function PartnerDetailDrawer({
                     ))}
                   </div>
                   {overviewForm.partner_legal_type === "limited_company" ? (
-                    <Input
-                      value={overviewForm.crn}
-                      onChange={(e) => setOverviewForm((p) => ({ ...p, crn: e.target.value }))}
-                      placeholder="CRN (optional)"
-                      className="h-9"
-                    />
+                    <>
+                      <Input
+                        value={overviewForm.crn}
+                        onChange={(e) => setOverviewForm((p) => ({ ...p, crn: e.target.value }))}
+                        placeholder="CRN (optional)"
+                        className="h-9"
+                      />
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-medium text-text-tertiary uppercase tracking-wide">VAT registered</p>
+                        <div className="flex flex-wrap gap-2">
+                          {(
+                            [
+                              { v: true as const, label: "Yes" },
+                              { v: false as const, label: "No" },
+                            ] as const
+                          ).map((opt) => (
+                            <button
+                              key={String(opt.v)}
+                              type="button"
+                              onClick={() =>
+                                setOverviewForm((p) => ({
+                                  ...p,
+                                  vat_registered: opt.v,
+                                  vat_number: opt.v === false ? "" : p.vat_number,
+                                }))
+                              }
+                              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                                overviewForm.vat_registered === opt.v
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-border-light bg-card text-text-secondary hover:border-border"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        {overviewForm.vat_registered === true && (
+                          <Input
+                            value={overviewForm.vat_number}
+                            onChange={(e) => setOverviewForm((p) => ({ ...p, vat_number: e.target.value }))}
+                            placeholder="VAT number *"
+                            className="h-9"
+                          />
+                        )}
+                      </div>
+                    </>
                   ) : (
-                    <Input
-                      value={overviewForm.utr}
-                      onChange={(e) => setOverviewForm((p) => ({ ...p, utr: e.target.value }))}
-                      placeholder="UTR (optional)"
-                      className="h-9"
-                      autoComplete="off"
-                    />
+                    <>
+                      <Input
+                        value={overviewForm.utr}
+                        onChange={(e) => setOverviewForm((p) => ({ ...p, utr: e.target.value }))}
+                        placeholder="UTR (optional)"
+                        className="h-9"
+                        autoComplete="off"
+                      />
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-medium text-text-tertiary">VAT number (optional)</label>
+                        <Input
+                          value={overviewForm.vat_number}
+                          onChange={(e) => setOverviewForm((p) => ({ ...p, vat_number: e.target.value }))}
+                          placeholder="GB123456789"
+                          className="h-9"
+                        />
+                      </div>
+                    </>
                   )}
                 </div>
               ) : (
@@ -2105,6 +2294,26 @@ function PartnerDetailDrawer({
                     <div className="flex items-center gap-2 text-sm text-text-secondary">
                       <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
                       <span>UTR: {partner.utr.trim()}</span>
+                    </div>
+                  ) : null}
+                  {inferPartnerLegal(partner) === "limited_company" && partner.vat_registered === false ? (
+                    <div className="flex items-center gap-2 text-sm text-text-secondary">
+                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
+                      <span>Not VAT registered</span>
+                    </div>
+                  ) : null}
+                  {inferPartnerLegal(partner) === "limited_company" &&
+                  partner.vat_number?.trim() &&
+                  partner.vat_registered !== false ? (
+                    <div className="flex items-center gap-2 text-sm text-text-secondary">
+                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
+                      <span>VAT: {partner.vat_number.trim()}</span>
+                    </div>
+                  ) : null}
+                  {inferPartnerLegal(partner) === "self_employed" && partner.vat_number?.trim() ? (
+                    <div className="flex items-center gap-2 text-sm text-text-secondary">
+                      <FileText className="h-4 w-4 text-text-tertiary shrink-0" />
+                      <span>VAT: {partner.vat_number.trim()}</span>
                     </div>
                   ) : null}
                 </>
@@ -2757,6 +2966,21 @@ function PartnerDetailDrawer({
         {/* ========== DOCUMENTS ========== */}
         {tab === "documents" && (
           <div className="p-6 space-y-4">
+            {missingRequiredDocs.length > 0 && (
+              <div
+                role="alert"
+                className="flex gap-3 rounded-xl border border-red-300/80 bg-red-50 px-4 py-3 dark:border-red-800/60 dark:bg-red-950/40"
+              >
+                <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400" aria-hidden />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-red-900 dark:text-red-100">Missing required documents</p>
+                  <p className="mt-0.5 text-xs text-red-800/95 dark:text-red-200/90">
+                    {missingRequiredDocs.length} requirement{missingRequiredDocs.length === 1 ? "" : "s"} still need a
+                    valid file (upload or replace expired items) to reach full document compliance.
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <p className="text-sm font-semibold text-text-primary">{documents.length} Documents</p>
               <Button
@@ -2799,6 +3023,33 @@ function PartnerDetailDrawer({
                 </Button>
               </div>
             </div>
+            {partnerTradesForCompliance.some((t) => (OPTIONAL_TRADE_CERTS_BY_TRADE[t] ?? []).length > 0) && (
+              <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Optional certificates</p>
+                <p className="text-[11px] text-text-tertiary leading-snug">
+                  Recommended but not required for the compliance score.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {partnerTradesForCompliance.flatMap((t) =>
+                    (OPTIONAL_TRADE_CERTS_BY_TRADE[t] ?? []).map((certName) => (
+                      <Button
+                        key={`${t}-${certName}`}
+                        size="sm"
+                        variant="outline"
+                        className="border-dashed"
+                        onClick={() => {
+                          setDocPreset({ docType: "certification", name: certName });
+                          setAddDocOpen(true);
+                        }}
+                      >
+                        {certName}
+                        <span className="ml-1 text-[10px] font-normal text-text-tertiary">({t})</span>
+                      </Button>
+                    )),
+                  )}
+                </div>
+              </div>
+            )}
             <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Required documents</p>

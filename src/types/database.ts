@@ -331,6 +331,8 @@ export interface Partner {
   id: string;
   company_name: string;
   vat_number?: string | null;
+  /** Limited company: VAT registered? If false, VAT number should be empty. */
+  vat_registered?: boolean | null;
   crn?: string | null;
   /** Self-employed vs limited company — drives which identifier is required. */
   partner_legal_type?: PartnerLegalType | null;
