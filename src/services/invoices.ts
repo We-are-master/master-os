@@ -18,9 +18,18 @@ export async function listInvoices(params: ListParams): Promise<ListResult<Invoi
   });
 }
 
-export async function createInvoice(input: CreateInvoiceInput): Promise<Invoice> {
+/** Pass `reference` when you already fetched `next_invoice_ref` (e.g. parallel with `next_job_ref`). */
+export async function createInvoice(
+  input: CreateInvoiceInput,
+  options?: { reference?: string | null },
+): Promise<Invoice> {
   const supabase = getSupabase();
-  const { data: ref } = await supabase.rpc("next_invoice_ref");
+  let ref = options?.reference;
+  if (ref == null || String(ref).trim() === "") {
+    const { data: r, error: refErr } = await supabase.rpc("next_invoice_ref");
+    if (refErr) throw refErr;
+    ref = r as string;
+  }
   const collection_stage: InvoiceCollectionStage =
     input.collection_stage ??
     (input.invoice_kind === "deposit" ? "awaiting_deposit" : "awaiting_final");
@@ -33,7 +42,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<Invoice>
   };
   const { data, error } = await supabase
     .from("invoices")
-    .insert({ ...row, reference: ref })
+    .insert({ ...row, reference: ref as string })
     .select()
     .single();
   if (!error) return data as Invoice;

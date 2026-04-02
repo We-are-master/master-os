@@ -159,7 +159,32 @@ export async function createJob(
   input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Job> {
   const supabase = getSupabase();
-  const { data: ref } = await supabase.rpc("next_job_ref");
+  const inputFromQuotePre = (() => {
+    const qid = (input as { quote_id?: string | null }).quote_id;
+    return qid != null && String(qid).trim() !== "";
+  })();
+  const billablePre = Number(input.client_price ?? 0) + Number(input.extras_amount ?? 0);
+  const scheduledPre = Number(input.customer_deposit ?? 0) + Number(input.customer_final_payment ?? 0);
+  const invoiceTotalPre = Math.max(0, Math.max(billablePre, scheduledPre));
+  const needInvoice = invoiceTotalPre > 0.01 && !inputFromQuotePre;
+  const [jobRefRes, invRefRes] = await Promise.all([
+    supabase.rpc("next_job_ref"),
+    needInvoice
+      ? supabase.rpc("next_invoice_ref")
+      : Promise.resolve({ data: null as string | null, error: null }),
+  ]);
+  if (jobRefRes.error) throw jobRefRes.error;
+  const ref = jobRefRes.data as string;
+  let invoiceRefPre: string | undefined;
+  if (needInvoice) {
+    if (invRefRes.error) throw invRefRes.error;
+    const ir = invRefRes.data as string | null;
+    if (ir == null || String(ir).trim() === "") {
+      throw new Error("Could not generate invoice reference (next_invoice_ref).");
+    }
+    invoiceRefPre = ir;
+  }
+
   const baseRow = { ...input, reference: ref } as Record<string, unknown>;
   /** No partner → stay in Unassigned (Work Request + Auto assign keeps `auto_assigning`). */
   if (!jobHasPartnerSet(input as Job) && (input as Job).status !== "auto_assigning") {
@@ -177,7 +202,7 @@ export async function createJob(
     error = retry.error;
   }
   if (error) throw error;
-  let job = (await getJob((data as Job).id)) ?? (data as Job);
+  let job = data as Job;
 
   /** Quote → job flow creates its own invoice after insert; `quote_id` may be stripped on legacy DB retry — trust input too. */
   const inputFromQuote = (() => {
@@ -193,23 +218,26 @@ export async function createJob(
     try {
       const due = new Date();
       due.setDate(due.getDate() + 14);
-      const inv = await createInvoice({
-        client_name: job.client_name,
-        job_reference: job.reference,
-        amount: invoiceTotal,
-        status: "pending",
-        due_date: due.toISOString().slice(0, 10),
-        invoice_kind: "final",
-      });
+      const inv = await createInvoice(
+        {
+          client_name: job.client_name,
+          job_reference: job.reference,
+          amount: invoiceTotal,
+          status: "pending",
+          due_date: due.toISOString().slice(0, 10),
+          invoice_kind: "final",
+        },
+        invoiceRefPre ? { reference: invoiceRefPre } : undefined,
+      );
       await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
-      job = (await getJob(job.id)) ?? job;
+      job = { ...job, invoice_id: inv.id };
     } catch {
       /* invoice can be added manually in Finance */
     }
   }
 
-  await syncSelfBillAfterJobChange(job);
-  return (await getJob(job.id)) ?? job;
+  void syncSelfBillAfterJobChange(job).catch(() => {});
+  return job;
 }
 
 /** Use `null` (not `undefined`) on nullable columns you want to clear — `undefined` keys are omitted from the PATCH. */

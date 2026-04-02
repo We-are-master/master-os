@@ -190,7 +190,7 @@ function JobsPageContent() {
     return { scheduleRange };
   }, [scheduleRange]);
 
-  const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh } = useSupabaseList<Job>({
+  const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh, refreshSilent } = useSupabaseList<Job>({
     fetcher: listJobs,
     realtimeTable: "jobs",
     listParams,
@@ -470,9 +470,13 @@ function JobsPageContent() {
         customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
         scope: formData.scope?.trim() || undefined,
       });
-      await logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
+      await Promise.all([
+        logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }),
+        loadDashboardStats(),
+      ]);
       setCreateOpen(false);
-      toast.success("Job created"); refresh(); loadDashboardStats();
+      toast.success("Job created");
+      refreshSilent();
       if (result.partner_id) {
         fetch("/api/push/notify-partner", {
           method: "POST",
@@ -489,7 +493,7 @@ function JobsPageContent() {
     } catch (err) {
       toast.error(getErrorMessage(err, "Failed to create job"));
     }
-  }, [refresh, loadDashboardStats, profile?.id, profile?.full_name, router]);
+  }, [refreshSilent, loadDashboardStats, profile?.id, profile?.full_name, router]);
 
   const handleStatusChange = useCallback(async (job: Job, newStatus: Job["status"]) => {
     const check = canAdvanceJob(job, newStatus);
