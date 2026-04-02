@@ -1,6 +1,7 @@
 import { getSupabase } from "./base";
 import type { Bill, BillRecurrence, BillStatus } from "@/types/database";
 import { recurringGroupKey } from "@/lib/bill-groups";
+import { removeBillIdsFromPayRunItems } from "./pay-runs";
 import { generateRecurringDueDates, RECURRENCE_GENERATION_COUNTS } from "@/lib/bill-recurrence";
 
 export async function listBills(params?: { status?: string; from?: string; to?: string }): Promise<Bill[]> {
@@ -182,4 +183,5 @@ export async function archiveBillsByIds(ids: string[]): Promise<void> {
     .update({ archived_at: now, updated_at: now })
     .in("id", ids);
   if (error) throw error;
+  await removeBillIdsFromPayRunItems(ids);
 }

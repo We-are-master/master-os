@@ -82,6 +82,15 @@ export default function BillsPage() {
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [expandedSeries, setExpandedSeries] = useState<Record<string, boolean>>({});
+  const [archiveSeriesTarget, setArchiveSeriesTarget] = useState<Extract<BillDisplayItem, { type: "series" }> | null>(
+    null
+  );
+  const [archiveSeriesBusy, setArchiveSeriesBusy] = useState(false);
+
+  const archiveSeriesMonthLabel = useMemo(
+    () => new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+    []
+  );
 
   const periodBounds = useMemo(
     () => getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo),
@@ -209,10 +218,9 @@ export default function BillsPage() {
     }
   };
 
-  const handleArchiveSeries = async (item: Extract<BillDisplayItem, { type: "series" }>) => {
-    const archiveAll = window.confirm(
-      "Archive entire series (all non-archived occurrences)?\n\nOK = All occurrences\nCancel = Only due dates in the current calendar month"
-    );
+  const executeArchiveSeriesChoice = async (archiveAll: boolean) => {
+    const item = archiveSeriesTarget;
+    if (!item) return;
     const now = new Date();
     const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     const seriesKey = item.key;
@@ -237,13 +245,16 @@ export default function BillsPage() {
       );
       return;
     }
-    if (!confirm(`Archive ${ids.length} bill(s)?`)) return;
+    setArchiveSeriesBusy(true);
     try {
       await archiveBillsByIds(ids);
-      toast.success(`Archived ${ids.length} bill(s).`);
+      toast.success(`Archived ${ids.length} bill(s). Removed from pay runs.`);
+      setArchiveSeriesTarget(null);
       load();
     } catch {
       toast.error("Failed to archive");
+    } finally {
+      setArchiveSeriesBusy(false);
     }
   };
 
@@ -268,8 +279,8 @@ export default function BillsPage() {
     }
     setSaving(true);
     try {
-      await updateBill(editing.id, { archived_at: new Date().toISOString() });
-      toast.success("Bill archived");
+      await archiveBillsByIds([editing.id]);
+      toast.success("Bill archived — removed from pay runs");
       setModalOpen(false);
       setEditing(null);
       load();
@@ -306,6 +317,27 @@ export default function BillsPage() {
       .filter((s) => (counts.get(s) ?? 0) > 0)
       .map((s) => `${counts.get(s)} ${statusConfig[s].label.toLowerCase()}`)
       .join(" · ");
+  };
+
+  /** One badge for the series row: single status or “Mixed”. */
+  const renderSeriesHeadlineStatusBadge = (visible: Bill[]) => {
+    const statuses = [...new Set(visible.map((b) => b.status))];
+    if (statuses.length === 1) {
+      const s = statuses[0];
+      const c = statusConfig[s];
+      return (
+        <Badge variant={c?.variant ?? "default"} size="sm" dot>
+          {c?.label ?? s}
+        </Badge>
+      );
+    }
+    return (
+      <span className="inline-flex" title="Multiple workflow statuses in this series">
+        <Badge variant="default" size="sm" dot>
+          Mixed
+        </Badge>
+      </span>
+    );
   };
 
   const renderStatusBadge = (r: Bill) => {
@@ -524,17 +556,20 @@ export default function BillsPage() {
                           </p>
                         </button>
                         {statusFilter !== "archived" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="shrink-0"
-                            icon={<Archive className="h-3 w-3" />}
-                            onClick={() => {
-                              void handleArchiveSeries(item);
-                            }}
-                          >
-                            Archive
-                          </Button>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {renderSeriesHeadlineStatusBadge(item.visible)}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="shrink-0"
+                              icon={<Archive className="h-3 w-3" />}
+                              onClick={() => {
+                                setArchiveSeriesTarget(item);
+                              }}
+                            >
+                              Archive
+                            </Button>
+                          </div>
                         )}
                       </div>
                       {expanded && (
@@ -611,6 +646,47 @@ export default function BillsPage() {
             </div>
           )}
         </motion.div>
+
+        <Modal
+          open={!!archiveSeriesTarget}
+          onClose={() => !archiveSeriesBusy && setArchiveSeriesTarget(null)}
+          title="Archive recurring bills"
+          subtitle={
+            archiveSeriesTarget
+              ? `${archiveSeriesTarget.all[0]?.description ?? "Series"} — choose what to archive`
+              : undefined
+          }
+          size="sm"
+        >
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-text-secondary">
+              Archive every bill in this series, or only lines with a due date in the current calendar month (
+              <span className="font-medium text-text-primary">{archiveSeriesMonthLabel}</span>).
+            </p>
+            <div className="flex flex-col gap-2">
+              <Button
+                size="sm"
+                disabled={archiveSeriesBusy}
+                icon={archiveSeriesBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+                onClick={() => {
+                  void executeArchiveSeriesChoice(true);
+                }}
+              >
+                Archive all
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={archiveSeriesBusy}
+                onClick={() => {
+                  void executeArchiveSeriesChoice(false);
+                }}
+              >
+                This month only
+              </Button>
+            </div>
+          </div>
+        </Modal>
 
         <BillModal
           open={modalOpen}

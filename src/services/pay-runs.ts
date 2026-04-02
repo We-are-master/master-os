@@ -98,6 +98,17 @@ export async function loadItemsForWeek(weekStart: string, weekEnd: string): Prom
   return { payroll, selfBills, bills };
 }
 
+/** Remove bill lines from any pay run when those bills are archived (stale rows). */
+export async function removeBillIdsFromPayRunItems(billIds: string[]): Promise<void> {
+  if (billIds.length === 0) return;
+  const { error } = await getSupabase()
+    .from("pay_run_items")
+    .delete()
+    .eq("item_type", "bill")
+    .in("source_id", billIds);
+  if (error) throw error;
+}
+
 /** Create pay_run_items for the week with labels. */
 export async function buildPayRunItems(payRunId: string, weekStart: string, weekEnd: string): Promise<void> {
   const supabase = getSupabase();
