@@ -26,16 +26,37 @@ import {
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Bill, BillStatus, BillRecurrence } from "@/types/database";
-import { listBills, createBill, updateBill, markBillPaid, approveBillOrSeries } from "@/services/bills";
+import {
+  listBills,
+  createBill,
+  updateBill,
+  markBillPaid,
+  approveBillOrSeries,
+  archiveBillsByIds,
+} from "@/services/bills";
 import { useProfile } from "@/hooks/use-profile";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
 import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
 import { BILL_CATEGORY_OPTIONS, billCategoryLabel } from "@/lib/bill-categories";
 import { RECURRENCE_GENERATION_COUNTS } from "@/lib/bill-recurrence";
-import { buildBillDisplayList } from "@/lib/bill-groups";
+import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
 
 const BILL_STATUSES: BillStatus[] = ["submitted", "approved", "paid", "rejected", "needs_attention"];
+
+/** Filter chips (no Paid tab). Order: All → Submitted → Approved → Needs attention → Rejected → Archived */
+const BILL_FILTER_ORDER = [
+  "all",
+  "submitted",
+  "approved",
+  "needs_attention",
+  "rejected",
+  "archived",
+] as const;
+
+function kpiEligible(b: Bill): boolean {
+  return !b.archived_at && b.status !== "rejected" && b.status !== "needs_attention";
+}
 
 const statusConfig: Record<
   BillStatus,
@@ -107,10 +128,10 @@ export default function BillsPage() {
 
   const kpis = useMemo(() => {
     const base = !periodBounds
-      ? bills.filter((b) => !b.archived_at)
+      ? bills.filter((b) => kpiEligible(b))
       : bills.filter(
           (b) =>
-            !b.archived_at &&
+            kpiEligible(b) &&
             b.due_date &&
             b.due_date >= periodBounds.from &&
             b.due_date <= periodBounds.to
@@ -121,9 +142,7 @@ export default function BillsPage() {
     const pendingAmt = pending.reduce((s, b) => s + Number(b.amount), 0);
     const approvedAmt = approved.reduce((s, b) => s + Number(b.amount), 0);
     const paidAmt = paid.reduce((s, b) => s + Number(b.amount), 0);
-    /** Rejected bills are not operating cost — exclude from totals. */
-    const costBills = base.filter((b) => b.status !== "rejected");
-    const totalAmt = costBills.reduce((s, b) => s + Number(b.amount), 0);
+    const totalAmt = base.reduce((s, b) => s + Number(b.amount), 0);
     return {
       pendingCount: pending.length,
       pendingAmount: pendingAmt,
@@ -131,7 +150,7 @@ export default function BillsPage() {
       approvedAmount: approvedAmt,
       paidCount: paid.length,
       paidAmount: paidAmt,
-      totalCount: costBills.length,
+      totalCount: base.length,
       totalAmount: totalAmt,
     };
   }, [bills, periodBounds]);
@@ -187,6 +206,44 @@ export default function BillsPage() {
       load();
     } catch {
       toast.error("Failed to update");
+    }
+  };
+
+  const handleArchiveSeries = async (item: Extract<BillDisplayItem, { type: "series" }>) => {
+    const archiveAll = window.confirm(
+      "Archive entire series (all non-archived occurrences)?\n\nOK = All occurrences\nCancel = Only due dates in the current calendar month"
+    );
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const seriesKey = item.key;
+    const ids = archiveAll
+      ? bills
+          .filter((b) => !b.archived_at && recurringGroupKey(b) === seriesKey)
+          .map((b) => b.id)
+      : bills
+          .filter(
+            (b) =>
+              !b.archived_at &&
+              recurringGroupKey(b) === seriesKey &&
+              b.due_date &&
+              b.due_date.slice(0, 7) === monthKey
+          )
+          .map((b) => b.id);
+    if (ids.length === 0) {
+      toast.error(
+        archiveAll
+          ? "No bills to archive in this series."
+          : "No bill in this series with a due date in the current month."
+      );
+      return;
+    }
+    if (!confirm(`Archive ${ids.length} bill(s)?`)) return;
+    try {
+      await archiveBillsByIds(ids);
+      toast.success(`Archived ${ids.length} bill(s).`);
+      load();
+    } catch {
+      toast.error("Failed to archive");
     }
   };
 
@@ -349,7 +406,7 @@ export default function BillsPage() {
             title="Total bills (period)"
             value={kpis.totalAmount}
             format="currency"
-            description={`${kpis.totalCount} line${kpis.totalCount === 1 ? "" : "s"} · Excl. rejected · ${kpiPeriodDesc}`}
+            description={`${kpis.totalCount} line${kpis.totalCount === 1 ? "" : "s"} · Excl. archived, rejected & needs attention · ${kpiPeriodDesc}`}
             icon={Layers}
             accent="blue"
           />
@@ -382,7 +439,7 @@ export default function BillsPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {["all", ...BILL_STATUSES, "archived"].map((s) => (
+            {BILL_FILTER_ORDER.map((s) => (
               <button
                 key={s}
                 type="button"
@@ -418,22 +475,29 @@ export default function BillsPage() {
                       key={item.key}
                       className="rounded-xl border border-border-light bg-card overflow-hidden shadow-sm"
                     >
-                      <button
-                        type="button"
-                        aria-expanded={expanded}
-                        onClick={() =>
-                          setExpandedSeries((s) => ({ ...s, [item.key]: !expanded }))
-                        }
-                        className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-surface-hover/40 transition-colors"
-                      >
-                        <span className="mt-0.5 text-text-tertiary shrink-0">
+                      <div className="flex items-start gap-2 px-4 py-3 hover:bg-surface-hover/40 transition-colors">
+                        <button
+                          type="button"
+                          aria-expanded={expanded}
+                          aria-label={expanded ? "Collapse series" : "Expand series"}
+                          onClick={() =>
+                            setExpandedSeries((s) => ({ ...s, [item.key]: !expanded }))
+                          }
+                          className="mt-0.5 text-text-tertiary shrink-0 p-0.5 rounded hover:bg-surface-hover"
+                        >
                           {expanded ? (
                             <ChevronDown className="h-4 w-4" />
                           ) : (
                             <ChevronRight className="h-4 w-4" />
                           )}
-                        </span>
-                        <div className="flex-1 min-w-0 space-y-1">
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedSeries((s) => ({ ...s, [item.key]: !expanded }))
+                          }
+                          className="flex-1 min-w-0 space-y-1 text-left"
+                        >
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="text-sm font-semibold text-text-primary">{head.description}</p>
                             <Badge variant="info" size="sm">
@@ -458,8 +522,21 @@ export default function BillsPage() {
                               </>
                             ) : null}
                           </p>
-                        </div>
-                      </button>
+                        </button>
+                        {statusFilter !== "archived" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0"
+                            icon={<Archive className="h-3 w-3" />}
+                            onClick={() => {
+                              void handleArchiveSeries(item);
+                            }}
+                          >
+                            Archive
+                          </Button>
+                        )}
+                      </div>
                       {expanded && (
                         <div className="border-t border-border-light bg-surface-hover/25">
                           <div className="overflow-x-auto">
