@@ -506,20 +506,25 @@ export default function RequestsPage() {
           in_ccz: formData.in_ccz ?? null,
           has_free_parking: formData.has_free_parking ?? null,
         });
-        await logAudit({
-          entityType: "request", entityId: result.id, entityRef: result.reference,
-          action: "created", userId: profile?.id, userName: profile?.full_name,
-        });
-        if (photoFiles?.length) {
-          const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
-          const urls = await uploadQuoteInviteImages(photoFiles, result.id);
-          await updateRequest(result.id, { images: urls });
-        }
+        const photoPromise = photoFiles?.length
+          ? (async () => {
+              const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+              const urls = await uploadQuoteInviteImages(photoFiles, result.id);
+              await updateRequest(result.id, { images: urls });
+            })()
+          : Promise.resolve();
+        const [, , refreshedForDrawer] = await Promise.all([
+          logAudit({
+            entityType: "request", entityId: result.id, entityRef: result.reference,
+            action: "created", userId: profile?.id, userName: profile?.full_name,
+          }),
+          photoPromise,
+          isManualSource ? getRequest(result.id).catch(() => null) : Promise.resolve(null),
+        ]);
         setCreateOpen(false);
         if (isManualSource) {
           setStatus("approved");
-          const refreshed = await getRequest(result.id);
-          const r = refreshed ?? result;
+          const r = refreshedForDrawer ?? result;
           setSelectedRequest(r);
           const kind =
             r.request_kind === "work" || r.request_kind === "quote"
@@ -533,7 +538,7 @@ export default function RequestsPage() {
             setConvertChoiceOpen(r);
           }
         }
-        refresh();
+        refreshSilent();
         void loadCounts();
         toast.success("Request created successfully");
         trackUiPerf("requests.create_request_ms", performance.now() - perfStart, { photos: photoFiles?.length ?? 0 });
@@ -541,7 +546,7 @@ export default function RequestsPage() {
         toast.error(err instanceof Error ? err.message : "Failed to create request");
       }
     },
-    [refresh, loadCounts, profile?.id, profile?.full_name, setStatus]
+    [refreshSilent, loadCounts, profile?.id, profile?.full_name, setStatus]
   );
 
   const columns: Column<ServiceRequest>[] = [
@@ -1150,9 +1155,12 @@ export default function RequestsPage() {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
             }
-            const resolvedAddr = await ensureClientAddressForQuote(clientAddress);
-            const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
-            const freshReq = await getRequest(req.id).catch(() => null);
+            const [resolvedAddr, freshReq, quoteInviteMod] = await Promise.all([
+              ensureClientAddressForQuote(clientAddress),
+              getRequest(req.id).catch(() => null),
+              import("@/services/quote-invite-images"),
+            ]);
+            const { uploadQuoteInviteImages } = quoteInviteMod;
             const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
             let uploaded: string[] = [];
             if (invitePhotoFiles?.length) {
@@ -1279,9 +1287,11 @@ export default function RequestsPage() {
               toast.error("Select a client from the list (click the name) and choose or add a property address.");
               return;
             }
-            const resolvedAddr = await ensureClientAddressForQuote(clientAddress);
+            const [resolvedAddr, freshReq] = await Promise.all([
+              ensureClientAddressForQuote(clientAddress),
+              getRequest(req.id).catch(() => null),
+            ]);
             const total = lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
-            const freshReq = await getRequest(req.id).catch(() => null);
             const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
             const scopeFromRequest = [req.description?.trim(), req.scope?.trim()].filter(Boolean).join("\n\n") || undefined;
             const manualCatalogId = (() => {

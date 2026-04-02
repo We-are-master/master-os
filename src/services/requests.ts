@@ -118,8 +118,8 @@ export async function createRequest(
     error = retry.error;
   }
   if (error) throw new Error(postgrestErrorMessage(error));
-  const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
-  return enriched ?? (data as ServiceRequest);
+  // Skip account-name enrichment (saves 2 round-trips); list/detail refresh loads it.
+  return data as ServiceRequest;
 }
 
 export async function updateRequest(
