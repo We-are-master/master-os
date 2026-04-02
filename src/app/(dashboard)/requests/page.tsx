@@ -1721,6 +1721,36 @@ function InvitePartnerToQuote({
           />
         </div>
 
+        {!partnersLoading && partners.length > 0 && (
+          <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+            <button
+              type="button"
+              className="font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
+              disabled={serviceRelated.length === 0}
+              onClick={() => setSelectedIds(new Set(serviceRelated.map((p) => p.id)))}
+            >
+              Select matched
+            </button>
+            <button
+              type="button"
+              className="font-medium text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-40 disabled:pointer-events-none"
+              disabled={serviceRelated.length === 0}
+              onClick={() =>
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  serviceRelated.forEach((p) => next.delete(p.id));
+                  return next;
+                })
+              }
+            >
+              Deselect matched
+            </button>
+            <button type="button" className="font-medium text-text-tertiary hover:underline" onClick={() => setSelectedIds(new Set())}>
+              Clear selection
+            </button>
+          </div>
+        )}
+
         {!partnersLoading && serviceRelated.length > 0 && (
           <p className="shrink-0 text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
             Matching “{request.service_type}” (trade / type of work) — {serviceRelated.length} partner(s)

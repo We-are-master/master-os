@@ -59,6 +59,7 @@ import {
   BID_DEFAULT_MARGIN_ON_SELL,
   customerUnitSellFromPartnerUnit,
 } from "@/lib/quote-bid-payload";
+import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
@@ -1100,6 +1101,13 @@ function QuoteDetailDrawer({
   useEffect(() => {
     if (invitePartnerOpen) { loadPartners(); setSelectedPartnerIds(new Set()); }
   }, [invitePartnerOpen, loadPartners]);
+
+  /** Type of work used for “Match” / deselect-matched in Invite Partners modal. */
+  const invitePartnerTypeOfWork = useMemo(() => {
+    const st = bidPayloadTrimmedString(quote.service_type as unknown);
+    if (st) return st;
+    return proposalFirstLineLabel(quote);
+  }, [quote]);
 
   const loadBids = useCallback(async (quoteId: string) => {
     setBidsLoading(true);
@@ -2290,14 +2298,42 @@ function QuoteDetailDrawer({
       {/* Invite Partner Modal */}
       <Modal open={invitePartnerOpen} onClose={() => setInvitePartnerOpen(false)} title="Invite Partners" subtitle="Select partners to send this quote request" size="lg">
         <div className="p-6 flex flex-col max-h-[70vh]">
-          <div className="flex items-center justify-between mb-4">
-            <button type="button" onClick={() => setSelectedPartnerIds(partners.length ? new Set(partners.map((p) => p.id)) : new Set())} className="text-xs font-medium text-primary hover:underline">Select all</button>
-            <button type="button" onClick={() => setSelectedPartnerIds(new Set())} className="text-xs font-medium text-text-tertiary hover:underline">Clear</button>
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-4">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <button
+                type="button"
+                onClick={() => setSelectedPartnerIds(partners.length ? new Set(partners.map((p) => p.id)) : new Set())}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Select all
+              </button>
+              <button type="button" onClick={() => setSelectedPartnerIds(new Set())} className="text-xs font-medium text-text-tertiary hover:underline">
+                Clear selection
+              </button>
+              <button
+                type="button"
+                disabled={!invitePartnerTypeOfWork.trim()}
+                onClick={() =>
+                  setSelectedPartnerIds((prev) => {
+                    const next = new Set(prev);
+                    for (const p of partners) {
+                      if (p.id && safePartnerMatchesTypeOfWork(p, invitePartnerTypeOfWork)) next.delete(p.id);
+                    }
+                    return next;
+                  })
+                }
+                className="text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-40 disabled:pointer-events-none"
+              >
+                Deselect matched
+              </button>
+            </div>
           </div>
           <div className="space-y-2 overflow-y-auto flex-1 min-h-0 pr-1 rounded-xl border border-amber-200/50 dark:border-amber-900/40 bg-card/80 p-2">
             {partners.length === 0 && <p className="text-sm text-text-tertiary text-center py-8">No partners found</p>}
             {partners.map((p) => {
               const isSelected = selectedPartnerIds.has(p.id);
+              const isTradeMatch =
+                !!invitePartnerTypeOfWork.trim() && safePartnerMatchesTypeOfWork(p, invitePartnerTypeOfWork);
               return (
                 <label
                   key={p.id}
@@ -2329,9 +2365,11 @@ function QuoteDetailDrawer({
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                      Match
-                    </span>
+                    {isTradeMatch ? (
+                      <span className="inline-flex items-center rounded-full border border-amber-500/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                        Match
+                      </span>
+                    ) : null}
                     <span
                       aria-hidden
                       className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
@@ -3262,14 +3300,28 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                     disabled={partnersForTrade.length === 0}
                     onClick={() => setSelectedPartnerIds(new Set(partnersForTrade.map((p) => p.id)))}
                   >
-                    Select all
+                    Select matched
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[11px] font-medium text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                    disabled={partnersForTrade.length === 0}
+                    onClick={() =>
+                      setSelectedPartnerIds((prev) => {
+                        const next = new Set(prev);
+                        partnersForTrade.forEach((p) => next.delete(p.id));
+                        return next;
+                      })
+                    }
+                  >
+                    Deselect matched
                   </button>
                   <button
                     type="button"
                     className="text-[11px] font-medium text-text-tertiary hover:underline"
                     onClick={() => setSelectedPartnerIds(new Set())}
                   >
-                    Clear
+                    Clear selection
                   </button>
                 </div>
               </div>
