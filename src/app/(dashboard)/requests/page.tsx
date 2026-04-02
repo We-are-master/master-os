@@ -101,6 +101,8 @@ const serviceColors: Record<string, string> = {
   Plumbing: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 ring-teal-200/50",
   Painting: "bg-amber-50 dark:bg-amber-950/30 text-amber-700 ring-amber-200/50",
   Carpentry: "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 ring-emerald-200/50",
+  Gardener: "bg-green-50 dark:bg-green-950/30 text-green-800 ring-green-200/50",
+  "Boiler Service": "bg-rose-50 dark:bg-rose-950/30 text-rose-800 ring-rose-200/50",
   "General Maintenance": "bg-surface-tertiary text-text-primary ring-border/50",
 };
 
@@ -272,6 +274,8 @@ export default function RequestsPage() {
       "Plumbing",
       "Painting",
       "Carpentry",
+      "Gardener",
+      "Boiler Service",
       "General Maintenance",
     ];
     const fromCatalog = catalogServices.map((c) => c.name);

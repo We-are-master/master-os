@@ -531,6 +531,8 @@ export interface Bill {
   created_at: string;
   updated_at: string;
   parent_bill_id?: string;
+  /** Same UUID for all rows inserted in one recurring batch (grouping in UI). */
+  recurring_series_id?: string | null;
 }
 
 /** Commission run: period, tier calc, manager approves → feeds Pay Run */

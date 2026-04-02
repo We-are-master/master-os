@@ -5,7 +5,6 @@ import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { DataTable, type Column } from "@/components/ui/data-table";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -20,6 +19,8 @@ import {
   Banknote,
   Pencil,
   Layers,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -31,6 +32,7 @@ import type { FinancePeriodMode } from "@/lib/finance-period";
 import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
 import { BILL_CATEGORY_OPTIONS, billCategoryLabel } from "@/lib/bill-categories";
 import { RECURRENCE_GENERATION_COUNTS } from "@/lib/bill-recurrence";
+import { buildBillDisplayList } from "@/lib/bill-groups";
 
 const BILL_STATUSES: BillStatus[] = ["submitted", "approved", "paid", "rejected", "needs_attention"];
 
@@ -57,6 +59,7 @@ export default function BillsPage() {
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
+  const [expandedSeries, setExpandedSeries] = useState<Record<string, boolean>>({});
 
   const periodBounds = useMemo(
     () => getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo),
@@ -86,10 +89,10 @@ export default function BillsPage() {
     );
   }, [bills, periodBounds]);
 
-  const filtered = useMemo(() => {
-    if (statusFilter === "all") return scopedBills;
-    return scopedBills.filter((b) => b.status === statusFilter);
-  }, [scopedBills, statusFilter]);
+  const displayList = useMemo(
+    () => buildBillDisplayList(scopedBills, statusFilter),
+    [scopedBills, statusFilter]
+  );
 
   const kpiPeriodDesc = useMemo(
     () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
@@ -168,87 +171,59 @@ export default function BillsPage() {
     }
   };
 
-  const columns: Column<Bill>[] = [
-    {
-      key: "description",
-      label: "Description",
-      render: (r) => (
-        <div>
-          <p className="text-sm font-medium text-text-primary">{r.description}</p>
-          <p className="text-xs text-text-tertiary">{billCategoryLabel(r.category)}</p>
-          {r.is_recurring && (
-            <Badge variant="info" size="sm" className="mt-1">
-              Recurring · {r.recurrence_interval ?? "—"}
-            </Badge>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: "amount",
-      label: "Amount",
-      align: "right",
-      render: (r) => <span className="text-sm font-medium tabular-nums">{formatCurrency(r.amount)}</span>,
-    },
-    {
-      key: "due_date",
-      label: "Due",
-      render: (r) => <span className="text-sm text-text-secondary tabular-nums">{formatDate(r.due_date)}</span>,
-    },
-    {
-      key: "submitted_by_name",
-      label: "Submitted by",
-      render: (r) => <span className="text-sm text-text-tertiary">{r.submitted_by_name ?? "—"}</span>,
-    },
-    {
-      key: "status",
-      label: "Status",
-      render: (r) => {
-        const c = statusConfig[r.status];
-        return (
-          <Badge variant={c?.variant ?? "default"} dot>
-            {c?.label ?? r.status}
-          </Badge>
-        );
-      },
-    },
-    {
-      key: "actions",
-      label: "",
-      render: (r) => (
-        <div className="flex flex-wrap gap-1 justify-end">
-          <Button variant="ghost" size="sm" icon={<Pencil className="h-3 w-3" />} onClick={() => { setEditing(r); setModalOpen(true); }}>
-            Edit
+  const formatStatusSummary = (bills: Bill[]) => {
+    const order: BillStatus[] = ["submitted", "approved", "paid", "rejected", "needs_attention"];
+    const counts = new Map<BillStatus, number>();
+    for (const b of bills) {
+      counts.set(b.status, (counts.get(b.status) ?? 0) + 1);
+    }
+    return order
+      .filter((s) => (counts.get(s) ?? 0) > 0)
+      .map((s) => `${counts.get(s)} ${statusConfig[s].label.toLowerCase()}`)
+      .join(" · ");
+  };
+
+  const renderStatusBadge = (r: Bill) => {
+    const c = statusConfig[r.status];
+    return (
+      <Badge variant={c?.variant ?? "default"} dot>
+        {c?.label ?? r.status}
+      </Badge>
+    );
+  };
+
+  const renderBillActions = (r: Bill) => (
+    <div className="flex flex-wrap gap-1 justify-end">
+      <Button variant="ghost" size="sm" icon={<Pencil className="h-3 w-3" />} onClick={() => { setEditing(r); setModalOpen(true); }}>
+        Edit
+      </Button>
+      {(r.status === "submitted" || r.status === "needs_attention") && (
+        <>
+          <Button variant="ghost" size="sm" onClick={() => handleApprove(r)}>
+            Approve
           </Button>
-          {(r.status === "submitted" || r.status === "needs_attention") && (
-            <>
-              <Button variant="ghost" size="sm" onClick={() => handleApprove(r)}>
-                Approve
-              </Button>
-              <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleReject(r)}>
-                Reject
-              </Button>
-            </>
-          )}
-          {r.status === "approved" && (
-            <Button variant="ghost" size="sm" onClick={() => handleMarkPaid(r)}>
-              Mark paid
-            </Button>
-          )}
-          {(r.status === "submitted" || r.status === "approved") && (
-            <Button variant="ghost" size="sm" className="text-amber-700" onClick={() => handleNeedsAttention(r)}>
-              Needs attention
-            </Button>
-          )}
-          {r.status === "needs_attention" && (
-            <Button variant="ghost" size="sm" onClick={() => handleClearAttention(r)}>
-              Back to submitted
-            </Button>
-          )}
-        </div>
-      ),
-    },
-  ];
+          <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleReject(r)}>
+            Reject
+          </Button>
+        </>
+      )}
+      {r.status === "approved" && (
+        <Button variant="ghost" size="sm" onClick={() => handleMarkPaid(r)}>
+          Mark paid
+        </Button>
+      )}
+      {(r.status === "submitted" || r.status === "approved") && (
+        <Button variant="ghost" size="sm" className="text-amber-700" onClick={() => handleNeedsAttention(r)}>
+          Needs attention
+        </Button>
+      )}
+      {r.status === "needs_attention" && (
+        <Button variant="ghost" size="sm" onClick={() => handleClearAttention(r)}>
+          Back to submitted
+        </Button>
+      )}
+    </div>
+  );
 
   return (
     <PageTransition>
@@ -340,15 +315,142 @@ export default function BillsPage() {
               </button>
             ))}
           </div>
-          <DataTable
-            columns={columns}
-            data={filtered}
-            getRowId={(r) => r.id}
-            loading={loading}
-            page={1}
-            totalPages={1}
-            totalItems={filtered.length}
-          />
+          {loading ? (
+            <div className="flex justify-center py-14">
+              <Loader2 className="h-8 w-8 animate-spin text-text-tertiary" />
+            </div>
+          ) : displayList.length === 0 ? (
+            <p className="text-sm text-text-tertiary py-10 text-center rounded-xl border border-dashed border-border-light bg-surface-hover/30">
+              No bills in this period for the current filters.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {displayList.map((item) => {
+                if (item.type === "series") {
+                  const head = item.all[0];
+                  const expanded = expandedSeries[item.key] ?? false;
+                  const summary = formatStatusSummary(item.visible);
+                  const cadence = head.recurrence_interval ?? "—";
+                  return (
+                    <div
+                      key={item.key}
+                      className="rounded-xl border border-border-light bg-card overflow-hidden shadow-sm"
+                    >
+                      <button
+                        type="button"
+                        aria-expanded={expanded}
+                        onClick={() =>
+                          setExpandedSeries((s) => ({ ...s, [item.key]: !expanded }))
+                        }
+                        className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-surface-hover/40 transition-colors"
+                      >
+                        <span className="mt-0.5 text-text-tertiary shrink-0">
+                          {expanded ? (
+                            <ChevronDown className="h-4 w-4" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4" />
+                          )}
+                        </span>
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold text-text-primary">{head.description}</p>
+                            <Badge variant="info" size="sm">
+                              Recurring · {cadence}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-text-tertiary">{billCategoryLabel(head.category)}</p>
+                          <p className="text-xs text-text-secondary">
+                            <span className="font-medium tabular-nums">{formatCurrency(head.amount)}</span>
+                            <span className="text-text-tertiary"> · </span>
+                            {item.visible.length} occurrence{item.visible.length === 1 ? "" : "s"} in view
+                            {item.all.length !== item.visible.length && (
+                              <span className="text-text-tertiary">
+                                {" "}
+                                ({item.all.length} total in period)
+                              </span>
+                            )}
+                            {summary ? (
+                              <>
+                                <span className="text-text-tertiary"> · </span>
+                                {summary}
+                              </>
+                            ) : null}
+                          </p>
+                        </div>
+                      </button>
+                      {expanded && (
+                        <div className="border-t border-border-light bg-surface-hover/25">
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm min-w-[720px]">
+                              <thead>
+                                <tr className="border-b border-border-light text-left text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
+                                  <th className="px-4 py-2 font-medium">Due</th>
+                                  <th className="px-4 py-2 font-medium text-right">Amount</th>
+                                  <th className="px-4 py-2 font-medium">Submitted by</th>
+                                  <th className="px-4 py-2 font-medium">Status</th>
+                                  <th className="px-4 py-2 font-medium text-right w-[min(40%,280px)]">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {item.visible.map((r) => (
+                                  <tr key={r.id} className="border-b border-border-light/80 last:border-0">
+                                    <td className="px-4 py-2.5 align-top tabular-nums text-text-secondary whitespace-nowrap">
+                                      {formatDate(r.due_date)}
+                                    </td>
+                                    <td className="px-4 py-2.5 align-top text-right font-medium tabular-nums whitespace-nowrap">
+                                      {formatCurrency(r.amount)}
+                                    </td>
+                                    <td className="px-4 py-2.5 align-top text-text-tertiary whitespace-nowrap">
+                                      {r.submitted_by_name ?? "—"}
+                                    </td>
+                                    <td className="px-4 py-2.5 align-top">{renderStatusBadge(r)}</td>
+                                    <td className="px-4 py-2.5 align-top text-right">{renderBillActions(r)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                const r = item.bill;
+                return (
+                  <div
+                    key={r.id}
+                    className="rounded-xl border border-border-light bg-card shadow-sm px-4 py-3 space-y-3"
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-text-primary">{r.description}</p>
+                        <p className="text-xs text-text-tertiary">{billCategoryLabel(r.category)}</p>
+                        {r.is_recurring && (
+                          <Badge variant="info" size="sm" className="mt-1">
+                            Recurring · {r.recurrence_interval ?? "—"}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm shrink-0">
+                        <span className="font-medium tabular-nums">{formatCurrency(r.amount)}</span>
+                        <span className="text-text-secondary tabular-nums whitespace-nowrap">
+                          Due {formatDate(r.due_date)}
+                        </span>
+                        <span className="text-text-tertiary whitespace-nowrap">
+                          {r.submitted_by_name ?? "—"}
+                        </span>
+                        {renderStatusBadge(r)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-1 pt-0.5 border-t border-border-light/60 lg:border-0 lg:pt-0">
+                      {renderBillActions(r)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </motion.div>
 
         <BillModal

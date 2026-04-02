@@ -10,6 +10,8 @@ export const SCHEDULE_TYPE_ABBR: Record<string, string> = {
   Builder: "BU",
   Carpenter: "CA",
   Cleaning: "CL",
+  Gardener: "GR",
+  "Boiler Service": "BS",
   EICR: "EI",
   "PAT EICR": "PC",
   "PAT Testing": "PT",

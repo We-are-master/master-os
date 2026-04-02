@@ -20,6 +20,10 @@ export async function createBill(payload: CreateBillPayload): Promise<Bill> {
     const interval = payload.recurrence_interval;
     const n = RECURRENCE_GENERATION_COUNTS[interval] ?? 12;
     const dueDates = generateRecurringDueDates(payload.due_date, interval, n);
+    const recurringSeriesId =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const rows = dueDates.map((due_date) => ({
       description: payload.description,
       category: payload.category ?? null,
@@ -27,6 +31,7 @@ export async function createBill(payload: CreateBillPayload): Promise<Bill> {
       due_date,
       is_recurring: true,
       recurrence_interval: interval,
+      recurring_series_id: recurringSeriesId,
       submitted_by_id: payload.submitted_by_id ?? null,
       submitted_by_name: payload.submitted_by_name ?? null,
       status: (payload.status ?? "submitted") as BillStatus,
