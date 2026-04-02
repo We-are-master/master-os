@@ -41,9 +41,10 @@ export async function getPayRunWithItems(payRunId: string): Promise<PayRunItem[]
   return (data ?? []) as PayRunItem[];
 }
 
-/** Aggregate items due in the week: approved commission_run items (payroll), ready_to_pay self_bills, approved bills. */
+/** Aggregate items due in the week: approved commission_run items (payroll), active internal salary lines, ready_to_pay self_bills, approved bills. */
 export async function loadItemsForWeek(weekStart: string, weekEnd: string): Promise<{
   payroll: { id: string; label: string; amount: number; due_date?: string }[];
+  internalSalary: { id: string; label: string; amount: number; due_date: string }[];
   selfBills: { id: string; label: string; amount: number; due_date?: string }[];
   bills: { id: string; label: string; amount: number; due_date: string }[];
 }> {
@@ -70,6 +71,23 @@ export async function loadItemsForWeek(weekStart: string, weekEnd: string): Prom
     }
   }
 
+  const { data: internalRows, error: internalErr } = await supabase
+    .from("payroll_internal_costs")
+    .select("id, payee_name, description, amount, due_date")
+    .eq("lifecycle_stage", "active")
+    .not("due_date", "is", null)
+    .gte("due_date", weekStart)
+    .lte("due_date", weekEnd);
+  if (internalErr) throw internalErr;
+
+  const internalSalary: { id: string; label: string; amount: number; due_date: string }[] = (internalRows ?? []).map(
+    (r: { id: string; payee_name?: string | null; description: string; amount: number; due_date: string }) => {
+      const name = r.payee_name?.trim();
+      const label = name ? `${name} — ${r.description}` : r.description;
+      return { id: r.id, label, amount: Number(r.amount), due_date: r.due_date };
+    },
+  );
+
   const { data: selfBillsRows } = await supabase
     .from("self_bills")
     .select("id, partner_name, net_payout, created_at")
@@ -95,7 +113,7 @@ export async function loadItemsForWeek(weekStart: string, weekEnd: string): Prom
     due_date: r.due_date,
   }));
 
-  return { payroll, selfBills, bills };
+  return { payroll, internalSalary, selfBills, bills };
 }
 
 /** Remove bill lines from any pay run when those bills are archived (stale rows). */
@@ -112,12 +130,31 @@ export async function removeBillIdsFromPayRunItems(billIds: string[]): Promise<v
 /** Create pay_run_items for the week with labels. */
 export async function buildPayRunItems(payRunId: string, weekStart: string, weekEnd: string): Promise<void> {
   const supabase = getSupabase();
-  const { payroll, selfBills, bills } = await loadItemsForWeek(weekStart, weekEnd);
+  const { payroll, internalSalary, selfBills, bills } = await loadItemsForWeek(weekStart, weekEnd);
 
-  const toInsert: { pay_run_id: string; item_type: "payroll" | "self_bill" | "bill"; source_id: string; source_label: string; amount: number; due_date: string | null; status: string }[] = [];
+  const toInsert: {
+    pay_run_id: string;
+    item_type: "payroll" | "self_bill" | "bill" | "internal_cost";
+    source_id: string;
+    source_label: string;
+    amount: number;
+    due_date: string | null;
+    status: string;
+  }[] = [];
 
   for (const p of payroll) {
     toInsert.push({ pay_run_id: payRunId, item_type: "payroll", source_id: p.id, source_label: p.label, amount: p.amount, due_date: weekStart, status: "pending" });
+  }
+  for (const line of internalSalary) {
+    toInsert.push({
+      pay_run_id: payRunId,
+      item_type: "internal_cost",
+      source_id: line.id,
+      source_label: line.label,
+      amount: line.amount,
+      due_date: line.due_date,
+      status: "pending",
+    });
   }
   for (const s of selfBills) {
     toInsert.push({ pay_run_id: payRunId, item_type: "self_bill", source_id: s.id, source_label: s.label, amount: s.amount, due_date: null, status: "pending" });
@@ -148,6 +185,12 @@ export async function markPayRunItemsPaid(itemIds: string[]): Promise<void> {
       await supabase.from("self_bills").update({ status: "paid" }).eq("id", item.source_id);
     } else if (item.item_type === "bill") {
       await supabase.from("bills").update({ status: "paid", paid_at: now }).eq("id", item.source_id);
+    } else if (item.item_type === "internal_cost") {
+      const paidDay = now.split("T")[0];
+      await supabase
+        .from("payroll_internal_costs")
+        .update({ status: "paid", paid_at: paidDay, updated_at: now })
+        .eq("id", item.source_id);
     }
   }
 }
