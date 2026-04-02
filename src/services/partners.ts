@@ -103,6 +103,15 @@ export async function createPartner(
     data = fallback.data;
     error = fallback.error;
   }
+  if (error && ("uk_coverage_regions" in input || "partner_address" in input)) {
+    const { uk_coverage_regions: _uk, partner_address: _pa, ...legacyInput } = input as typeof input & {
+      uk_coverage_regions?: unknown;
+      partner_address?: unknown;
+    };
+    const fallback = await supabase.from("partners").insert(legacyInput).select().single();
+    data = fallback.data;
+    error = fallback.error;
+  }
   if (error) throw error;
   return data as Partner;
 }
@@ -130,6 +139,20 @@ export async function updatePartner(id: string, input: Partial<Partner>): Promis
     const { partner_legal_type: _pl, utr: _u, ...legacyInput } = input as typeof input & {
       partner_legal_type?: unknown;
       utr?: unknown;
+    };
+    const fallback = await supabase
+      .from("partners")
+      .update(legacyInput)
+      .eq("id", id)
+      .select()
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
+  if (error && ("uk_coverage_regions" in input || "partner_address" in input)) {
+    const { uk_coverage_regions: _uk, partner_address: _pa, ...legacyInput } = input as typeof input & {
+      uk_coverage_regions?: unknown;
+      partner_address?: unknown;
     };
     const fallback = await supabase
       .from("partners")

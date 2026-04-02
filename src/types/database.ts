@@ -348,6 +348,10 @@ export interface Partner {
   total_earnings: number;
   compliance_score: number;
   location: string;
+  /** UK areas this partner covers (see `partner-uk-coverage`). */
+  uk_coverage_regions?: string[] | null;
+  /** Home or registered business address (distinct from coverage). */
+  partner_address?: string | null;
   verified: boolean;
   internal_notes?: string;
   role?: string;
