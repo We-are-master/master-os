@@ -3217,25 +3217,38 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
             />
           </div>
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Partners *</p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
-                  disabled={partnersForTrade.length === 0}
-                  onClick={() => setSelectedPartnerIds(new Set(partnersForTrade.map((p) => p.id)))}
-                >
-                  Select all
-                </button>
-                <button
-                  type="button"
-                  className="text-[11px] font-medium text-text-tertiary hover:underline"
-                  onClick={() => setSelectedPartnerIds(new Set())}
-                >
-                  Clear
-                </button>
+            <div className="mb-2 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-inset ring-primary/15"
+                    aria-hidden
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </span>
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Partners *</p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
+                    disabled={partnersForTrade.length === 0}
+                    onClick={() => setSelectedPartnerIds(new Set(partnersForTrade.map((p) => p.id)))}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[11px] font-medium text-text-tertiary hover:underline"
+                    onClick={() => setSelectedPartnerIds(new Set())}
+                  >
+                    Clear
+                  </button>
+                </div>
               </div>
+              <p className="text-[10px] text-text-tertiary leading-snug pl-9">
+                AI matched the partners below to your type of work.
+              </p>
             </div>
             <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
               {partnersLoading && partners.length === 0 ? (
@@ -3272,7 +3285,11 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
                       <Avatar name={p.company_name} size="md" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
-                        <p className="text-xs text-text-tertiary">{p.trade} — {p.location}</p>
+                        <p className="text-xs text-text-tertiary mt-0.5">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Match</span>
+                          <span className="text-text-secondary"> · {p.trade}</span>
+                          {p.location?.trim() ? <span> — {p.location}</span> : null}
+                        </p>
                       </div>
                     </label>
                   );
