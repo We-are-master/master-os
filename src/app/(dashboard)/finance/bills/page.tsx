@@ -88,7 +88,8 @@ export default function BillsPage() {
     null
   );
   const [archiveSeriesBusy, setArchiveSeriesBusy] = useState(false);
-  const [approveAllBusy, setApproveAllBusy] = useState(false);
+  /** `item.key` for recurring series while Approve all is running for that card */
+  const [approveSeriesBusyKey, setApproveSeriesBusyKey] = useState<string | null>(null);
 
   const archiveSeriesMonthLabel = useMemo(
     () => new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" }),
@@ -138,11 +139,6 @@ export default function BillsPage() {
     [periodMode, weekAnchor, rangeFrom, rangeTo]
   );
 
-  const submittedInScopeCount = useMemo(
-    () => scopedBills.filter((b) => b.status === "submitted").length,
-    [scopedBills]
-  );
-
   const kpis = useMemo(() => {
     const base = !periodBounds
       ? bills.filter((b) => kpiEligible(b))
@@ -172,27 +168,30 @@ export default function BillsPage() {
     };
   }, [bills, periodBounds]);
 
-  const handleApproveAllSubmitted = async () => {
-    if (submittedInScopeCount === 0) {
-      toast.error("No submitted bills in this period.");
+  const handleApproveAllInSeries = async (seriesKey: string) => {
+    const submittedInSeries = scopedBills.filter(
+      (b) => !b.archived_at && recurringGroupKey(b) === seriesKey && b.status === "submitted"
+    );
+    if (submittedInSeries.length === 0) {
+      toast.error("No submitted lines for this recurring bill.");
       return;
     }
     if (
       !confirm(
-        `Approve all ${submittedInScopeCount} submitted bill line(s) visible for this period? Recurring series are approved in one step each.`
+        `Approve all ${submittedInSeries.length} submitted line(s) for this recurring bill?`
       )
     ) {
       return;
     }
-    setApproveAllBusy(true);
+    setApproveSeriesBusyKey(seriesKey);
     try {
-      const { totalApproved } = await approveAllSubmittedInScope(scopedBills);
+      const { totalApproved } = await approveAllSubmittedInScope(submittedInSeries);
       toast.success(totalApproved > 0 ? `Approved ${totalApproved} line(s).` : "Nothing to approve.");
       load();
     } catch {
-      toast.error("Failed to approve all");
+      toast.error("Failed to approve");
     } finally {
-      setApproveAllBusy(false);
+      setApproveSeriesBusyKey(null);
     }
   };
 
@@ -502,35 +501,20 @@ export default function BillsPage() {
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2 items-center">
+          <div className="flex flex-wrap gap-2">
             {BILL_FILTER_ORDER.map((s) => (
-              <span key={s} className="inline-flex items-center gap-2">
-                {s === "submitted" ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-[11px] font-semibold border-primary/40 text-primary hover:bg-primary/10"
-                    disabled={approveAllBusy || submittedInScopeCount === 0}
-                    loading={approveAllBusy}
-                    onClick={() => void handleApproveAllSubmitted()}
-                    title="Approve every submitted bill in the current date filter (e.g. All periods = whole list)"
-                  >
-                    Approve all
-                  </Button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => setStatusFilter(s)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    statusFilter === s
-                      ? "bg-primary text-white shadow-sm"
-                      : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
-                  }`}
-                >
-                  {s === "all" ? "All" : s === "archived" ? "Archived" : statusConfig[s as BillStatus]?.label ?? s}
-                </button>
-              </span>
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  statusFilter === s
+                    ? "bg-primary text-white shadow-sm"
+                    : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
+                }`}
+              >
+                {s === "all" ? "All" : s === "archived" ? "Archived" : statusConfig[s as BillStatus]?.label ?? s}
+              </button>
             ))}
           </div>
           {loading ? (
@@ -549,6 +533,9 @@ export default function BillsPage() {
                   const expanded = expandedSeries[item.key] ?? false;
                   const summary = formatStatusSummary(item.visible);
                   const cadence = recurrenceLabel(head.recurrence_interval as BillRecurrence | undefined);
+                  const submittedCountInSeries = scopedBills.filter(
+                    (b) => !b.archived_at && recurringGroupKey(b) === item.key && b.status === "submitted"
+                  ).length;
                   return (
                     <div
                       key={item.key}
@@ -609,16 +596,28 @@ export default function BillsPage() {
                           </p>
                         </button>
                         {statusFilter !== "archived" && (
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                             {renderSeriesHeadlineStatusBadge(item.visible)}
+                            {submittedCountInSeries > 0 ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 text-[11px] font-semibold border-primary/40 text-primary hover:bg-primary/10 shrink-0"
+                                disabled={approveSeriesBusyKey === item.key}
+                                loading={approveSeriesBusyKey === item.key}
+                                onClick={() => void handleApproveAllInSeries(item.key)}
+                                title="Approve every submitted line for this recurring bill (all months in period)"
+                              >
+                                Approve all
+                              </Button>
+                            ) : null}
                             <Button
                               variant="ghost"
                               size="sm"
                               className="shrink-0"
                               icon={<Archive className="h-3 w-3" />}
-                              onClick={() => {
-                                setArchiveSeriesTarget(item);
-                              }}
+                              onClick={() => setArchiveSeriesTarget(item)}
                             >
                               Archive
                             </Button>
@@ -875,7 +874,9 @@ function BillModal({
       return;
     }
     let cancelled = false;
-    setSeriesLoading(true);
+    queueMicrotask(() => {
+      if (!cancelled) setSeriesLoading(true);
+    });
     listBillsInSameSeries(initial)
       .then((rows) => {
         if (cancelled) return;

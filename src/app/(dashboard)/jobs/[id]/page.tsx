@@ -1735,7 +1735,8 @@ export default function JobDetailPage() {
     : partnerLiveActiveMs != null
       ? formatPartnerLiveTimer(partnerLiveActiveMs)
       : formatOfficeTimer(Number(job.timer_elapsed_seconds ?? 0) || 0);
-  const ownerAttestationText = `I, ${job.owner_name?.trim() || "job owner"}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
+  const attestationDisplayName = profile?.full_name?.trim() || job.owner_name?.trim() || "Victor";
+  const ownerAttestationText = `I, ${attestationDisplayName}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
   const mandatoryChecksOk = reportsUploaded && reportsApproved && ownerApprovalChecked;
   const canSubmitApproval = mandatoryChecksOk || forceApprovalChecked;
@@ -1845,7 +1846,7 @@ export default function JobDetailPage() {
                   }
                   if (action.special === "send_report_invoice") {
                     setApprovalMode("review_approve");
-                    setOwnerApprovalChecked(false);
+                    setOwnerApprovalChecked(true);
                     setForceApprovalChecked(false);
                     setValidateCompleteOpen(true);
                     return;
@@ -3039,19 +3040,21 @@ export default function JobDetailPage() {
               <span className="text-xs text-text-secondary">{ownerAttestationText}</span>
             </label>
           </div>
-          <div className="rounded-xl border border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/10 p-3">
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4"
-                checked={forceApprovalChecked}
-                onChange={(e) => setForceApprovalChecked(e.target.checked)}
-              />
-              <span className="text-xs text-amber-700 dark:text-amber-300">
-                Force approve: allow Review & approve even when mandatory checks are incomplete.
-              </span>
-            </label>
-          </div>
+          {!mandatoryChecksOk && (
+            <div className="rounded-xl border border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/10 p-3">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4"
+                  checked={forceApprovalChecked}
+                  onChange={(e) => setForceApprovalChecked(e.target.checked)}
+                />
+                <span className="text-xs text-amber-700 dark:text-amber-300">
+                  Force approve: allow Review & approve even when mandatory checks are incomplete.
+                </span>
+              </label>
+            </div>
+          )}
           <p className="text-xs text-text-tertiary">
             Approve updates the client invoice first, then attempts partner self-bill linkage, then moves the job to Awaiting payment or Completed &amp; paid.
           </p>
