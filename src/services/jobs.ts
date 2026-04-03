@@ -1,6 +1,7 @@
 import { getSupabase, queryList, applyJobsScheduleRangeToQuery, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
 import { createInvoice } from "./invoices";
+import { getInvoiceDueDateIsoForClient } from "./invoice-due-date";
 import { syncSelfBillAfterJobChange } from "./self-bills";
 import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
 import {
@@ -216,15 +217,14 @@ export async function createJob(
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
   if (invoiceTotal > 0.01 && !job.invoice_id && !fromQuote) {
     try {
-      const due = new Date();
-      due.setDate(due.getDate() + 14);
+      const dueDateStr = await getInvoiceDueDateIsoForClient(job.client_id ?? null);
       const inv = await createInvoice(
         {
           client_name: job.client_name,
           job_reference: job.reference,
           amount: invoiceTotal,
           status: "pending",
-          due_date: due.toISOString().slice(0, 10),
+          due_date: dueDateStr,
           invoice_kind: "final",
         },
         invoiceRefPre ? { reference: invoiceRefPre } : undefined,

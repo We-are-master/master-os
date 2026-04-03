@@ -59,8 +59,8 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "People",
     items: [
+      { label: "People directory", href: "/people", icon: "contact", permission: "team" },
       { label: "Team Members", href: "/team", icon: "users-2", permission: "team" },
-      { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign", permission: "finance" },
     ],
   },
   {

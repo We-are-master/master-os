@@ -32,6 +32,7 @@ import {
   CalendarClock,
   Wrench,
   History,
+  ContactRound,
   type LucideIcon,
 } from "lucide-react";
 
@@ -55,6 +56,7 @@ const iconMap: Record<string, LucideIcon> = {
   "circle-dollar-sign": CircleDollarSign,
   wrench: Wrench,
   history: History,
+  contact: ContactRound,
 };
 
 /** Logos (SVG inline para herdar currentColor) para Clients, Partners, Accounts */

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
+import { getInvoiceDueDateIsoForJobReference } from "@/services/invoice-due-date";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -1437,6 +1439,17 @@ function CreateInvoiceModal({
   const [form, setForm] = useState({ client_name: "", job_reference: "", amount: "", due_date: "", status: "pending" as InvoiceStatus });
   const [submitting, setSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (!open) return;
+    setForm({
+      client_name: "",
+      job_reference: "",
+      amount: "",
+      due_date: dueDateIsoFromPaymentTerms(new Date(), null),
+      status: "pending",
+    });
+  }, [open]);
+
   const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1464,7 +1477,20 @@ function CreateInvoiceModal({
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Job Reference</label>
-          <Input value={form.job_reference} onChange={(e) => update("job_reference", e.target.value)} placeholder="e.g. JOB-2024-0001" />
+          <Input
+            value={form.job_reference}
+            onChange={(e) => update("job_reference", e.target.value)}
+            onBlur={async () => {
+              const ref = form.job_reference.trim();
+              if (!ref) return;
+              const due = await getInvoiceDueDateIsoForJobReference(ref);
+              if (due) setForm((prev) => ({ ...prev, due_date: due }));
+            }}
+            placeholder="e.g. JOB-2024-0001"
+          />
+          <p className="text-[11px] text-text-tertiary mt-1">
+            When the reference matches a job, leaving this field applies the due date from the client&apos;s linked account payment terms (e.g. Net 30).
+          </p>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>

@@ -17,7 +17,7 @@ import { motion } from "framer-motion";
 import { fadeInUp, staggerContainer, staggerItem } from "@/lib/motion";
 import {
   UserPlus, Filter, Users, Star, Briefcase, ShieldCheck, MapPin,
-  ArrowRight, Mail, Phone, Calendar, DollarSign,
+  ArrowRight, Mail, Phone, Calendar, DollarSign, Landmark,
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye,
   Play, KeyRound, MailPlus,
@@ -72,6 +72,12 @@ import {
   shouldForceActivateAck,
 } from "@/lib/partner-status";
 import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
+import {
+  formatUkSortCodeForDisplay,
+  normalizeUkAccountNumberInput,
+  normalizeUkSortCodeInput,
+  validatePartnerBankDetails,
+} from "@/lib/uk-bank-details";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
@@ -2149,6 +2155,11 @@ function PartnerDetailDrawer({
   const [loadingApp, setLoadingApp] = useState(false);
   const [actionEmail, setActionEmail] = useState("");
   const [actionSubmitting, setActionSubmitting] = useState(false);
+  const [bankSortCodeInput, setBankSortCodeInput] = useState("");
+  const [bankAccountNumberInput, setBankAccountNumberInput] = useState("");
+  const [bankAccountHolder, setBankAccountHolder] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [bankSaving, setBankSaving] = useState(false);
   const [partnerLocation, setPartnerLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
   const [addDocOpen, setAddDocOpen] = useState(false);
   const [addDocSubmitting, setAddDocSubmitting] = useState(false);
@@ -2267,6 +2278,67 @@ function PartnerDetailDrawer({
     setEditingOverview(false);
     setOverviewForm(partnerOverviewFormFromPartner(partner));
   }, [partner, loadAll, initialTab]);
+
+  useEffect(() => {
+    if (!partner) return;
+    setBankSortCodeInput(formatUkSortCodeForDisplay(partner.bank_sort_code ?? ""));
+    setBankAccountNumberInput(partner.bank_account_number ?? "");
+    setBankAccountHolder(partner.bank_account_holder ?? "");
+    setBankName(partner.bank_name ?? "");
+  }, [
+    partner?.id,
+    partner?.bank_sort_code,
+    partner?.bank_account_number,
+    partner?.bank_account_holder,
+    partner?.bank_name,
+  ]);
+
+  const bankDirty = useMemo(() => {
+    if (!partner) return false;
+    const s = normalizeUkSortCodeInput(bankSortCodeInput);
+    const a = normalizeUkAccountNumberInput(bankAccountNumberInput);
+    return (
+      s !== (partner.bank_sort_code ?? "") ||
+      a !== (partner.bank_account_number ?? "") ||
+      bankAccountHolder.trim() !== (partner.bank_account_holder ?? "").trim() ||
+      bankName.trim() !== (partner.bank_name ?? "").trim()
+    );
+  }, [partner, bankSortCodeInput, bankAccountNumberInput, bankAccountHolder, bankName]);
+
+  const resetBankForm = useCallback(() => {
+    if (!partner) return;
+    setBankSortCodeInput(formatUkSortCodeForDisplay(partner.bank_sort_code ?? ""));
+    setBankAccountNumberInput(partner.bank_account_number ?? "");
+    setBankAccountHolder(partner.bank_account_holder ?? "");
+    setBankName(partner.bank_name ?? "");
+  }, [partner]);
+
+  const handleSaveBankDetails = useCallback(async () => {
+    if (!partner) return;
+    const sortDigits = normalizeUkSortCodeInput(bankSortCodeInput);
+    const acctDigits = normalizeUkAccountNumberInput(bankAccountNumberInput);
+    const v = validatePartnerBankDetails({
+      sortDigits,
+      accountDigits: acctDigits,
+      accountHolder: bankAccountHolder,
+      bankName,
+    });
+    if (!v.ok) {
+      toast.error(v.message);
+      return;
+    }
+    setBankSaving(true);
+    try {
+      await onPartnerPatch({
+        bank_sort_code: sortDigits || null,
+        bank_account_number: acctDigits || null,
+        bank_account_holder: bankAccountHolder.trim() || null,
+        bank_name: bankName.trim() || null,
+      });
+    } finally {
+      setBankSaving(false);
+    }
+  }, [partner, bankSortCodeInput, bankAccountNumberInput, bankAccountHolder, bankName, onPartnerPatch]);
 
   const syncAppUserRow = useCallback(async (userId: string, partnerRowId: string) => {
     const res = await fetch("/api/admin/partner/sync-app-user", {
@@ -3720,7 +3792,7 @@ function PartnerDetailDrawer({
         {/* ========== FINANCIAL ========== */}
         {tab === "financial" && (
           <div className="p-6 space-y-4">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100">
                 <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wide">Total Paid</p>
                 <p className="text-lg font-bold text-emerald-700 mt-1">{formatCurrency(totalPaidOut)}</p>
@@ -3733,6 +3805,105 @@ function PartnerDetailDrawer({
                 <p className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide">Earned (Jobs)</p>
                 <p className="text-lg font-bold text-blue-700 mt-1">{formatCurrency(realEarnings)}</p>
               </div>
+            </div>
+
+            <div className="rounded-xl border border-border-light bg-card p-4 sm:p-5 space-y-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-lg bg-surface-hover p-2 shrink-0" aria-hidden>
+                    <Landmark className="h-5 w-5 text-text-secondary" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-text-primary">Bank details for payouts</p>
+                    <p id="partner-bank-hint" className="text-xs text-text-tertiary mt-0.5">
+                      UK sort code and account (digits only). If you start entering details, all four fields must be complete.
+                      Leave everything blank if you do not have them yet.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="partner-bank-sort" className="block text-xs font-medium text-text-secondary mb-1">
+                      Sort code
+                    </label>
+                    <Input
+                      id="partner-bank-sort"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="12-34-56"
+                      aria-describedby="partner-bank-hint"
+                      value={bankSortCodeInput}
+                      onChange={(e) => {
+                        const d = normalizeUkSortCodeInput(e.target.value);
+                        setBankSortCodeInput(formatUkSortCodeForDisplay(d));
+                      }}
+                      className="font-mono tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="partner-bank-acct" className="block text-xs font-medium text-text-secondary mb-1">
+                      Account number
+                    </label>
+                    <Input
+                      id="partner-bank-acct"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="8 digits typical"
+                      aria-describedby="partner-bank-hint"
+                      value={bankAccountNumberInput}
+                      onChange={(e) => setBankAccountNumberInput(normalizeUkAccountNumberInput(e.target.value))}
+                      className="font-mono tabular-nums"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label htmlFor="partner-bank-holder" className="block text-xs font-medium text-text-secondary mb-1">
+                      Account holder
+                    </label>
+                    <Input
+                      id="partner-bank-holder"
+                      autoComplete="name"
+                      placeholder="Name as on the bank account"
+                      aria-describedby="partner-bank-hint"
+                      value={bankAccountHolder}
+                      onChange={(e) => setBankAccountHolder(e.target.value)}
+                      maxLength={120}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label htmlFor="partner-bank-name" className="block text-xs font-medium text-text-secondary mb-1">
+                      Bank name
+                    </label>
+                    <Input
+                      id="partner-bank-name"
+                      autoComplete="organization"
+                      placeholder="e.g. Barclays, Monzo"
+                      aria-describedby="partner-bank-hint"
+                      value={bankName}
+                      onChange={(e) => setBankName(e.target.value)}
+                      maxLength={120}
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full sm:w-auto"
+                    disabled={!bankDirty || bankSaving}
+                    onClick={resetBankForm}
+                  >
+                    Reset
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="w-full sm:w-auto"
+                    disabled={!bankDirty || bankSaving}
+                    onClick={() => void handleSaveBankDetails()}
+                  >
+                    {bankSaving ? "Saving…" : "Save bank details"}
+                  </Button>
+                </div>
             </div>
 
             <p className="text-sm font-semibold text-text-primary">{selfBills.length} Self-Bills</p>
@@ -3761,7 +3932,7 @@ function PartnerDetailDrawer({
                   </div>
                   <span className="text-xs text-text-tertiary">{sb.period}</span>
                 </div>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <div>
                     <p className="text-[10px] text-text-tertiary uppercase">Jobs</p>
                     <p className="text-sm font-semibold text-text-primary">{sb.jobs_count}</p>

@@ -56,6 +56,7 @@ import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import type { Invoice, Job, JobPayment, JobPaymentType, Partner, QuoteLineItem, SelfBill } from "@/types/database";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
+import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { getSupabase } from "@/services/base";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import {
@@ -395,14 +396,13 @@ export default function JobDetailPage() {
         const amount = Math.max(0, jobBillableRevenue(j));
         if (amount > 0.01) {
           try {
-            const due = new Date();
-            due.setDate(due.getDate() + 14);
+            const dueDateStr = await getInvoiceDueDateIsoForClient(j.client_id ?? null);
             const inv = await createInvoice({
               client_name: j.client_name ?? "Client",
               job_reference: j.reference,
               amount,
               status: "pending",
-              due_date: due.toISOString().slice(0, 10),
+              due_date: dueDateStr,
               invoice_kind: "final",
             });
             const updated = await updateJob(j.id, { invoice_id: inv.id });
@@ -1578,14 +1578,13 @@ export default function JobDetailPage() {
         primaryInvoiceId = pick.id;
       }
       if (!primaryInvoiceId && customerDue > 0.02) {
-        const dueDate = new Date();
-        dueDate.setDate(dueDate.getDate() + 7);
+        const dueDateStr = await getInvoiceDueDateIsoForClient(current.client_id ?? null);
         const inv = await createInvoice({
           client_name: current.client_name ?? "Client",
           job_reference: current.reference,
           amount: Math.max(0, customerDue),
           status: customerDue <= 0.02 ? "paid" : "pending",
-          due_date: dueDate.toISOString().slice(0, 10),
+          due_date: dueDateStr,
           paid_date: customerDue <= 0.02 ? new Date().toISOString().slice(0, 10) : undefined,
           invoice_kind: "combined",
           collection_stage: customerDue <= 0.02 ? "completed" : "awaiting_final",
