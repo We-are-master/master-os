@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { getMonthBoundsForDate } from "@/lib/finance-period";
 import type { FinancePeriodMode } from "@/lib/finance-period";
 
 export type { FinancePeriodMode };
@@ -23,6 +24,10 @@ export interface FinanceWeekRangeBarProps {
   onRangeToChange: (v: string) => void;
   className?: string;
   showAllOption?: boolean;
+  /** When true, shows “This month” next to Week (Bills tab). */
+  showMonthOption?: boolean;
+  monthAnchor?: Date;
+  onMonthAnchorChange?: (d: Date) => void;
   /** Shown under the date inputs in range mode (e.g. pay run is one week at a time). */
   rangeHelperText?: string;
 }
@@ -43,6 +48,9 @@ export function FinanceWeekRangeBar({
   onRangeToChange,
   className,
   showAllOption = true,
+  showMonthOption = false,
+  monthAnchor,
+  onMonthAnchorChange,
   rangeHelperText,
 }: FinanceWeekRangeBarProps) {
   const { weekStart, weekEnd, weekLabel } = useMemo(
@@ -55,6 +63,11 @@ export function FinanceWeekRangeBar({
   }, [weekStart]);
   const prettyRange = `${fmtRangeLine(weekStart)} – ${fmtRangeLine(weekEnd)}`;
 
+  const monthBounds = useMemo(
+    () => (monthAnchor ? getMonthBoundsForDate(monthAnchor) : null),
+    [monthAnchor]
+  );
+
   const goPrev = () => {
     const x = new Date(weekAnchor);
     x.setDate(x.getDate() - 7);
@@ -64,6 +77,19 @@ export function FinanceWeekRangeBar({
     const x = new Date(weekAnchor);
     x.setDate(x.getDate() + 7);
     onWeekAnchorChange(x);
+  };
+
+  const goPrevMonth = () => {
+    if (!monthAnchor || !onMonthAnchorChange) return;
+    const x = new Date(monthAnchor);
+    x.setMonth(x.getMonth() - 1);
+    onMonthAnchorChange(x);
+  };
+  const goNextMonth = () => {
+    if (!monthAnchor || !onMonthAnchorChange) return;
+    const x = new Date(monthAnchor);
+    x.setMonth(x.getMonth() + 1);
+    onMonthAnchorChange(x);
   };
 
   const pill = (active: boolean) =>
@@ -76,6 +102,7 @@ export function FinanceWeekRangeBar({
 
   const handleMode = (m: FinancePeriodMode) => {
     if (!showAllOption && m === "all") return;
+    if (!showMonthOption && m === "month") return;
     onModeChange(m);
   };
 
@@ -100,11 +127,48 @@ export function FinanceWeekRangeBar({
           <button type="button" className={pill(mode === "week")} onClick={() => handleMode("week")}>
             Week
           </button>
+          {showMonthOption && (
+            <button type="button" className={pill(mode === "month")} onClick={() => handleMode("month")}>
+              This month
+            </button>
+          )}
           <button type="button" className={pill(mode === "range")} onClick={() => handleMode("range")}>
             Date range
           </button>
         </div>
       </div>
+
+      {mode === "month" && showMonthOption && monthBounds && monthAnchor && onMonthAnchorChange && (
+        <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-11 shrink-0 border-border-light bg-background shadow-sm sm:h-auto sm:min-h-[5.5rem] sm:w-11 sm:min-w-[2.75rem] sm:px-0"
+            onClick={goPrevMonth}
+            aria-label="Previous month"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="min-w-0 flex-1 rounded-xl border border-border-light bg-background px-3 py-3 text-center shadow-sm sm:px-5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">This month</p>
+            <p className="mt-0.5 text-xs font-semibold text-text-secondary">{monthBounds.monthLabel}</p>
+            <p className="mt-1 break-words text-base font-bold leading-snug text-text-primary sm:text-lg">
+              {fmtRangeLine(monthBounds.from)} – {fmtRangeLine(monthBounds.to)}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-11 shrink-0 border-border-light bg-background shadow-sm sm:h-auto sm:min-h-[5.5rem] sm:w-11 sm:min-w-[2.75rem] sm:px-0"
+            onClick={goNextMonth}
+            aria-label="Next month"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {mode === "week" && (
         <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">

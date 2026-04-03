@@ -56,8 +56,15 @@ export default function PayRunPage() {
       await buildPayRunItems(run.id, week_start, week_end);
       const list = await getPayRunWithItems(run.id);
       setItems(list);
-    } catch {
-      toast.error("Failed to load pay run");
+    } catch (e) {
+      console.error("Pay run load failed", e);
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e !== null && "message" in (e as object)
+            ? String((e as { message: unknown }).message)
+            : "Failed to load pay run";
+      toast.error(msg);
     } finally {
       setLoading(false);
     }

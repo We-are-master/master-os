@@ -15,12 +15,18 @@ export async function getInvoiceDueDateIsoForClient(
   return dueDateIsoFromPaymentTerms(baseDate, terms);
 }
 
-async function getPaymentTermsForClient(clientId: string | null | undefined): Promise<string | null> {
+export async function getPaymentTermsForClient(clientId: string | null | undefined): Promise<string | null> {
   if (!clientId?.trim()) return null;
   const client = await getClient(clientId);
   if (!client?.source_account_id) return null;
   const account = await getAccount(client.source_account_id);
   return account?.payment_terms?.trim() || null;
+}
+
+export async function getSourceAccountIdForClient(clientId: string | null | undefined): Promise<string | null> {
+  if (!clientId?.trim()) return null;
+  const client = await getClient(clientId);
+  return client?.source_account_id?.trim() ?? null;
 }
 
 /** Looks up job by reference, then applies the same client → account payment terms. */

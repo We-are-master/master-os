@@ -6,6 +6,7 @@ function nearEqual(a: number, b: number, eps = 0.02): boolean {
 }
 
 export function inferInvoiceKind(job: Job, inv: Pick<Invoice, "invoice_kind" | "amount">): NonNullable<Invoice["invoice_kind"]> {
+  if (inv.invoice_kind === "weekly_batch") return "combined";
   if (inv.invoice_kind && inv.invoice_kind !== "other") return inv.invoice_kind;
   const dep = Number(job.customer_deposit ?? 0);
   const fin = Number(job.customer_final_payment ?? 0);

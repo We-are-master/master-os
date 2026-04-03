@@ -54,6 +54,7 @@ const fieldLabels: Record<string, string> = {
   margin_percent: "Margin %",
   quote_figures: "Quote figures",
   timer_manager_adjustment: "Work timer (manager)",
+  review_force_approve: "Review (forced approval)",
 };
 
 function formatFieldName(field: string): string {
@@ -252,7 +253,9 @@ function getLogTitle(log: AuditLog): string {
     case "phase_advanced": return `Advanced to Phase ${log.new_value}`;
     case "assigned": return `Assigned to ${log.new_value}`;
     case "deleted": return `${log.entity_type.replace(/^\w/, (c) => c.toUpperCase())} deleted`;
-    case "note": return "Note added";
+    case "note":
+      if (log.field_name === "review_force_approve") return "Forced approval (mandatory checks incomplete)";
+      return "Note added";
     case "document_added": return "Document added";
     case "payment": return `Payment ${formatValue(log.new_value)}`;
     case "bulk_update": return `Bulk update — ${formatFieldName(log.field_name ?? "")}`;
@@ -276,6 +279,10 @@ function getLogDescription(log: AuditLog): string {
     const note = (log.metadata as Record<string, unknown>)?.note;
     const noteStr = typeof note === "string" && note.trim() ? ` Note: ${note.trim()}` : "";
     return `Elapsed time changed; client/partner totals recalculated.${noteStr}`;
+  }
+  if (log.action === "note" && log.field_name === "review_force_approve") {
+    const r = (log.metadata as Record<string, unknown>)?.reason;
+    return typeof r === "string" && r.trim() ? `Reason: ${r.trim()}` : "";
   }
   if (log.field_name && log.old_value) {
     return `${formatFieldName(log.field_name)}: ${formatValue(log.old_value)} → ${formatValue(log.new_value)}`;

@@ -55,7 +55,7 @@ export type InvoiceCollectionStage =
   | "awaiting_final"
   | "completed";
 
-export type InvoiceKind = "deposit" | "final" | "combined" | "other";
+export type InvoiceKind = "deposit" | "final" | "combined" | "weekly_batch" | "other";
 export type PipelineStage = "lead" | "qualified" | "meeting" | "proposal" | "negotiation" | "closed";
 
 export interface Profile {
@@ -405,6 +405,10 @@ export interface Invoice {
   reference: string;
   client_name: string;
   job_reference?: string;
+  /** ISO Monday of the week for consolidated weekly billing (Every N days terms). */
+  billing_week_start?: string | null;
+  /** Account whose jobs roll into this weekly invoice. */
+  source_account_id?: string | null;
   amount: number;
   /** Cumulative applied to this invoice (manual partials, Stripe full pay, etc.). */
   amount_paid?: number;
@@ -552,6 +556,8 @@ export interface RecurringBill {
 export interface Squad {
   id: string;
   name: string;
+  /** Present when the DB enforces a unique slug per squad */
+  slug?: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -1497,7 +1497,7 @@ function CreateInvoiceModal({
             placeholder="e.g. JOB-2024-0001"
           />
           <p className="text-[11px] text-text-tertiary mt-1">
-            When the reference matches a job, leaving this field applies the due date from the client&apos;s linked account payment terms (e.g. Net 30).
+            When the reference matches a job, leaving this field applies the due date from the client&apos;s linked account (Net 7/15/30/60, Due on Receipt, Every N days).
           </p>
         </div>
         <div className="grid grid-cols-2 gap-4">

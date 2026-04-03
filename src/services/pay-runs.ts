@@ -1,19 +1,11 @@
 import { getSupabase } from "./base";
 import type { PayRun, PayRunItem } from "@/types/database";
+import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 
-/** Get week bounds (Monday–Sunday) for a given date. */
+/** Get week bounds (Monday–Sunday, local calendar) for a given date — matches Finance week UI / due_date filters. */
 export function getWeekBounds(date: Date): { week_start: string; week_end: string } {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(d);
-  monday.setDate(diff);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  return {
-    week_start: monday.toISOString().split("T")[0],
-    week_end: sunday.toISOString().split("T")[0],
-  };
+  const { weekStart, weekEnd } = getWeekBoundsForDate(date);
+  return { week_start: weekStart, week_end: weekEnd };
 }
 
 export async function getOrCreatePayRun(weekStart: string, weekEnd: string): Promise<PayRun> {
@@ -51,16 +43,18 @@ export async function loadItemsForWeek(weekStart: string, weekEnd: string): Prom
   const supabase = getSupabase();
 
   const payroll: { id: string; label: string; amount: number; due_date?: string }[] = [];
-  const { data: approvedRuns } = await supabase
+  const { data: approvedRuns, error: runsErr } = await supabase
     .from("commission_runs")
     .select("id")
     .eq("status", "approved");
+  if (runsErr) throw runsErr;
   if (approvedRuns?.length) {
     for (const run of approvedRuns) {
-      const { data: items } = await supabase
+      const { data: items, error: itemsErr } = await supabase
         .from("commission_run_items")
         .select("id, commission_amount, team_members(full_name)")
         .eq("commission_run_id", run.id);
+      if (itemsErr) throw itemsErr;
       for (const row of items ?? []) {
         const r = row as { id: string; commission_amount: number; team_members: { full_name: string } | { full_name: string }[] | null };
         const amt = Number(r.commission_amount);
@@ -88,10 +82,11 @@ export async function loadItemsForWeek(weekStart: string, weekEnd: string): Prom
     },
   );
 
-  const { data: selfBillsRows } = await supabase
+  const { data: selfBillsRows, error: selfErr } = await supabase
     .from("self_bills")
     .select("id, partner_name, net_payout, created_at")
     .in("status", ["ready_to_pay", "awaiting_payment"]);
+  if (selfErr) throw selfErr;
   const selfBills = (selfBillsRows ?? []).map((r: { id: string; partner_name: string; net_payout: number }) => ({
     id: r.id,
     label: r.partner_name,
@@ -99,13 +94,14 @@ export async function loadItemsForWeek(weekStart: string, weekEnd: string): Prom
     due_date: undefined,
   }));
 
-  const { data: billsRows } = await supabase
+  const { data: billsRows, error: billsErr } = await supabase
     .from("bills")
     .select("id, description, amount, due_date")
     .eq("status", "approved")
     .is("archived_at", null)
     .gte("due_date", weekStart)
     .lte("due_date", weekEnd);
+  if (billsErr) throw billsErr;
   const bills = (billsRows ?? []).map((r: { id: string; description: string; amount: number; due_date: string }) => ({
     id: r.id,
     label: r.description,
@@ -164,10 +160,12 @@ export async function buildPayRunItems(payRunId: string, weekStart: string, week
   }
 
   const existing = await getSupabase().from("pay_run_items").select("id").eq("pay_run_id", payRunId);
+  if (existing.error) throw existing.error;
   if ((existing.data ?? []).length > 0) return;
 
   if (toInsert.length > 0) {
-    await supabase.from("pay_run_items").insert(toInsert);
+    const { error: insErr } = await supabase.from("pay_run_items").insert(toInsert);
+    if (insErr) throw insErr;
   }
 }
 

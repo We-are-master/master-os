@@ -55,8 +55,8 @@ import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import type { Invoice, Job, JobPayment, JobPaymentType, Partner, QuoteLineItem, SelfBill } from "@/types/database";
-import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
-import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
+import { listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
+import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
 import { getSupabase } from "@/services/base";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import {
@@ -79,6 +79,7 @@ import {
   jobMarginPercent,
   deriveStoredJobFinancials,
   partnerPaymentCap,
+  partnerSelfBillGrossAmount,
   customerScheduledTotal,
 } from "@/lib/job-financials";
 import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
@@ -238,6 +239,7 @@ export default function JobDetailPage() {
   const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   const [forceApprovalChecked, setForceApprovalChecked] = useState(false);
+  const [forceApprovalReason, setForceApprovalReason] = useState("");
   const [approvalBilledHoursInput, setApprovalBilledHoursInput] = useState("");
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
@@ -396,13 +398,10 @@ export default function JobDetailPage() {
         const amount = Math.max(0, jobBillableRevenue(j));
         if (amount > 0.01) {
           try {
-            const dueDateStr = await getInvoiceDueDateIsoForClient(j.client_id ?? null);
-            const inv = await createInvoice({
+            const inv = await createOrAppendJobInvoice(j, {
               client_name: j.client_name ?? "Client",
-              job_reference: j.reference,
               amount,
               status: "pending",
-              due_date: dueDateStr,
               invoice_kind: "final",
             });
             const updated = await updateJob(j.id, { invoice_id: inv.id });
@@ -1018,7 +1017,9 @@ export default function JobDetailPage() {
               linkedSelfBills[linkedSelfBills.length - 1];
             primarySelfBillId = pick.id;
           }
-          if (!primarySelfBillId && partnerDue > 0.02) {
+          const shouldCreateSelfBill =
+            partnerSelfBillGrossAmount(j) > 0.02 || partnerDue > 0.02;
+          if (!primarySelfBillId && shouldCreateSelfBill) {
             const selfBill = await createSelfBillFromJob({
               id: j.id,
               reference: j.reference,
@@ -1029,8 +1030,11 @@ export default function JobDetailPage() {
             primarySelfBillId = selfBill.id;
           }
           if (primarySelfBillId) selfBillId = primarySelfBillId;
-        } catch {
-          // Non-blocking: keep status progression even if self-bill resolution fails.
+        } catch (e) {
+          console.error("Self-bill link failed", e);
+          toast.warning(
+            e instanceof Error ? e.message : "Could not link weekly self-bill; use Finance or Link on this job.",
+          );
         }
       }
       const hourlyPatch: Partial<Job> = {};
@@ -1292,8 +1296,17 @@ export default function JobDetailPage() {
       setAddPaymentNote("");
       setAddPaymentBankRef("");
       await refreshJobFinance();
-    } catch {
-      toast.error("Failed to register payment");
+    } catch (e) {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e !== null && "message" in (e as object)
+            ? String((e as { message: unknown }).message)
+            : typeof e === "string"
+              ? e
+              : "Failed to register payment";
+      console.error("Register payment failed", e);
+      toast.error(msg);
     } finally {
       setAddingPayment(false);
     }
@@ -1497,6 +1510,16 @@ export default function JobDetailPage() {
       toast.error("Complete all mandatory checks: reports uploaded/approved and owner authorization.");
       return;
     }
+    if (
+      (!localReportsUploaded || !localReportsApproved || !ownerApprovalChecked) &&
+      forceApprovalChecked &&
+      !forceApprovalReason.trim()
+    ) {
+      toast.error("Enter a written reason for force approval.");
+      return;
+    }
+    const usedForceApprove =
+      (!localReportsUploaded || !localReportsApproved || !ownerApprovalChecked) && forceApprovalChecked;
     setValidatingComplete(true);
     try {
       let current = j;
@@ -1574,17 +1597,15 @@ export default function JobDetailPage() {
       let primaryInvoiceId = current.invoice_id ?? null;
       const linked = await listInvoicesLinkedToJob(current.reference, current.invoice_id);
       if (!primaryInvoiceId && linked.length > 0) {
-        const pick = linked.find((i) => i.invoice_kind === "combined") ?? linked[linked.length - 1];
+        const pick =
+          linked.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ?? linked[linked.length - 1];
         primaryInvoiceId = pick.id;
       }
       if (!primaryInvoiceId && customerDue > 0.02) {
-        const dueDateStr = await getInvoiceDueDateIsoForClient(current.client_id ?? null);
-        const inv = await createInvoice({
+        const inv = await createOrAppendJobInvoice(current, {
           client_name: current.client_name ?? "Client",
-          job_reference: current.reference,
           amount: Math.max(0, customerDue),
           status: customerDue <= 0.02 ? "paid" : "pending",
-          due_date: dueDateStr,
           paid_date: customerDue <= 0.02 ? new Date().toISOString().slice(0, 10) : undefined,
           invoice_kind: "combined",
           collection_stage: customerDue <= 0.02 ? "completed" : "awaiting_final",
@@ -1626,7 +1647,9 @@ export default function JobDetailPage() {
               linkedSelfBills[linkedSelfBills.length - 1];
             primarySelfBillId = pick.id;
           }
-          if (!primarySelfBillId && partnerDue > 0.02) {
+          const shouldCreateSelfBill =
+            partnerSelfBillGrossAmount(current) > 0.02 || partnerDue > 0.02;
+          if (!primarySelfBillId && shouldCreateSelfBill) {
             const selfBill = await createSelfBillFromJob({
               id: current.id,
               reference: current.reference,
@@ -1641,8 +1664,13 @@ export default function JobDetailPage() {
             if (withSelfBill) current = withSelfBill;
           }
         }
-      } catch {
-        toast.info("Partner self-bill could not be linked automatically; you can attach it later from Finance or this job.");
+      } catch (e) {
+        console.error("Review & approve: self-bill link failed", e);
+        toast.warning(
+          e instanceof Error
+            ? e.message
+            : "Partner self-bill could not be linked automatically; you can attach it later from Finance or this job.",
+        );
       }
 
       // Never re-derive hourly totals from the office timer here — this flow already applied modal hours + rates,
@@ -1657,8 +1685,31 @@ export default function JobDetailPage() {
         if (next) current = next;
         toast.success("Approved. Job marked Completed & paid.");
       }
+      if (usedForceApprove && forceApprovalReason.trim()) {
+        const reason = forceApprovalReason.trim();
+        const stampLine = `[${new Date().toISOString().slice(0, 19)}Z] Forced approval (mandatory checks incomplete). Reason: ${reason} — ${profile?.full_name?.trim() || "User"}`;
+        await logAudit({
+          entityType: "job",
+          entityId: current.id,
+          entityRef: current.reference,
+          action: "note",
+          fieldName: "review_force_approve",
+          newValue: stampLine,
+          userId: profile?.id,
+          userName: profile?.full_name,
+          metadata: { forced: true, reason },
+        });
+        const prevNotes = (current.internal_notes ?? "").trim();
+        const combined = prevNotes ? `${prevNotes}\n\n${stampLine}` : stampLine;
+        const withNotes = await handleJobUpdate(current.id, { internal_notes: combined }, { notifyPartner: false });
+        if (withNotes) current = withNotes;
+      }
       await refreshJobFinance();
       setValidateCompleteOpen(false);
+      setOwnerApprovalChecked(false);
+      setForceApprovalChecked(false);
+      setForceApprovalReason("");
+      setApprovalBilledHoursInput("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to validate and complete job");
     } finally {
@@ -1671,7 +1722,10 @@ export default function JobDetailPage() {
     partnerPayments,
     ownerApprovalChecked,
     forceApprovalChecked,
+    forceApprovalReason,
     approvalBilledHoursInput,
+    profile?.id,
+    profile?.full_name,
     officeTimerDisplaySeconds,
     refreshJobFinance,
     finForm.extras_amount,
@@ -1808,7 +1862,8 @@ export default function JobDetailPage() {
   const ownerAttestationText = `I, ${attestationDisplayName}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
   const mandatoryChecksOk = reportsUploaded && reportsApproved && ownerApprovalChecked;
-  const canSubmitApproval = mandatoryChecksOk || forceApprovalChecked;
+  const canSubmitApproval =
+    mandatoryChecksOk || (forceApprovalChecked && forceApprovalReason.trim().length > 0);
   const customerPaidPct = billableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / billableRevenue) * 100)) : 100;
   const partnerPaidPct = partnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / partnerCap) * 100)) : 100;
 
@@ -1917,6 +1972,7 @@ export default function JobDetailPage() {
                     setApprovalMode("review_approve");
                     setOwnerApprovalChecked(true);
                     setForceApprovalChecked(false);
+                    setForceApprovalReason("");
                     setValidateCompleteOpen(true);
                     return;
                   }
@@ -1924,6 +1980,7 @@ export default function JobDetailPage() {
                     setApprovalMode("validate_complete");
                     setOwnerApprovalChecked(false);
                     setForceApprovalChecked(false);
+                    setForceApprovalReason("");
                     setValidateCompleteOpen(true);
                     return;
                   }
@@ -2977,6 +3034,7 @@ export default function JobDetailPage() {
           setValidateCompleteOpen(false);
           setOwnerApprovalChecked(false);
           setForceApprovalChecked(false);
+          setForceApprovalReason("");
           setApprovalBilledHoursInput("");
         }}
         title={approvalMode === "review_approve" ? "Review and approve" : "Validate and complete"}
@@ -3110,18 +3168,37 @@ export default function JobDetailPage() {
             </label>
           </div>
           {!mandatoryChecksOk && (
-            <div className="rounded-xl border border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/10 p-3">
+            <div className="rounded-xl border border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/10 p-3 space-y-3">
               <label className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   className="mt-0.5 h-4 w-4"
                   checked={forceApprovalChecked}
-                  onChange={(e) => setForceApprovalChecked(e.target.checked)}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setForceApprovalChecked(on);
+                    if (!on) setForceApprovalReason("");
+                  }}
                 />
                 <span className="text-xs text-amber-700 dark:text-amber-300">
                   Force approve: allow Review & approve even when mandatory checks are incomplete.
                 </span>
               </label>
+              {forceApprovalChecked ? (
+                <div>
+                  <label className="block text-[10px] font-medium text-amber-800 dark:text-amber-200 mb-1.5">
+                    Reason (required)
+                  </label>
+                  <textarea
+                    value={forceApprovalReason}
+                    onChange={(e) => setForceApprovalReason(e.target.value)}
+                    rows={3}
+                    required
+                    placeholder="Explain why you are approving without completing all mandatory checks…"
+                    className="w-full rounded-lg border border-amber-200/80 dark:border-amber-800/60 bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400/40 resize-y min-h-[72px]"
+                  />
+                </div>
+              ) : null}
             </div>
           )}
           <p className="text-xs text-text-tertiary">
@@ -3134,7 +3211,7 @@ export default function JobDetailPage() {
           ) : null}
           {!mandatoryChecksOk && forceApprovalChecked ? (
             <p className="text-xs text-amber-600">
-              Force approve enabled: approval will continue with missing mandatory checks.
+              Force approve enabled: your reason is saved on the job and in command history.
             </p>
           ) : null}
           <div className="flex justify-end gap-2 pt-2">
@@ -3146,6 +3223,7 @@ export default function JobDetailPage() {
                 setValidateCompleteOpen(false);
                 setOwnerApprovalChecked(false);
                 setForceApprovalChecked(false);
+                setForceApprovalReason("");
                 setApprovalBilledHoursInput("");
               }}
             >
