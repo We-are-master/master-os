@@ -37,7 +37,13 @@ import { weekPeriodHelpText, parseDateRangeOrWeek, getWeekBoundsForDate } from "
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
 import { formatFinancePeriodKpiDescription } from "@/lib/finance-period";
-import { listJobsForSelfBill } from "@/services/self-bills";
+import { SELF_BILL_FINANCE_VOID_LABEL, selfBillPartnerStatusLine } from "@/lib/self-bill-display";
+import {
+  isSelfBillPayoutVoided,
+  listJobsForSelfBill,
+  selfBillJobPayoutStateLabel,
+  SELF_BILL_PAYOUT_VOID_STATUSES,
+} from "@/services/self-bills";
 import type { Job } from "@/types/database";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
@@ -49,6 +55,9 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   paid: { label: "Paid", variant: "success" },
   audit_required: { label: "Audit required", variant: "danger" },
   rejected: { label: "Rejected", variant: "default" },
+  payout_archived: { label: "Void · Archived", variant: "default" },
+  payout_cancelled: { label: "Void · Cancelled", variant: "default" },
+  payout_lost: { label: "Void · Lost", variant: "default" },
 };
 
 const TAB_ORDER = [
@@ -59,11 +68,15 @@ const TAB_ORDER = [
   "ready_to_pay",
   "paid",
   "rejected",
+  "no_payout",
 ] as const;
 
 type SelfBillTab = (typeof TAB_ORDER)[number];
 
-type JobLine = Pick<Job, "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address" | "self_bill_id">;
+type JobLine = Pick<
+  Job,
+  "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address" | "self_bill_id" | "deleted_at" | "partner_cancelled_at"
+>;
 
 function isPartnerFieldBill(sb: SelfBill): boolean {
   return sb.bill_origin !== "internal";
@@ -144,7 +157,11 @@ export default function SelfBillPage() {
   const filtered = useMemo(() => {
     let result = selfBills;
     if (activeTab !== "all") {
-      result = result.filter((sb) => sb.status === activeTab);
+      if (activeTab === "no_payout") {
+        result = result.filter((sb) => isSelfBillPayoutVoided(sb));
+      } else {
+        result = result.filter((sb) => sb.status === activeTab);
+      }
     }
     if (originFilter === "partner") {
       result = result.filter((sb) => isPartnerFieldBill(sb));
@@ -174,9 +191,8 @@ export default function SelfBillPage() {
       const supabase = getSupabase();
       const { data, error } = await supabase
         .from("jobs")
-        .select("id, reference, title, partner_cost, materials_cost, status, property_address, self_bill_id")
+        .select("id, reference, title, partner_cost, materials_cost, status, property_address, self_bill_id, deleted_at, partner_cancelled_at")
         .in("self_bill_id", ids)
-        .is("deleted_at", null)
         .order("reference", { ascending: true });
       if (cancelled || error) return;
       const map: Record<string, JobLine[]> = {};
@@ -217,11 +233,22 @@ export default function SelfBillPage() {
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
+    const eligible = Array.from(selectedIds).filter((id) => {
+      const sb = selfBills.find((s) => s.id === id);
+      return sb && !isSelfBillPayoutVoided(sb);
+    });
+    if (eligible.length === 0) {
+      toast.error("Selected self-bills include closed-out (void) records — remove them from the selection.");
+      return;
+    }
+    if (eligible.length < selectedIds.size) {
+      toast.message(`${selectedIds.size - eligible.length} void self-bill(s) skipped`);
+    }
     const supabase = getSupabase();
     try {
-      const { error } = await supabase.from("self_bills").update({ status: newStatus }).in("id", Array.from(selectedIds));
+      const { error } = await supabase.from("self_bills").update({ status: newStatus }).in("id", eligible);
       if (error) throw error;
-      toast.success(`${selectedIds.size} self-bill(s) updated`);
+      toast.success(`${eligible.length} self-bill(s) updated`);
       setSelectedIds(new Set());
       loadData();
     } catch {
@@ -318,8 +345,15 @@ export default function SelfBillPage() {
                     ? "Ready to Pay"
                     : id === "paid"
                       ? "Paid"
-                      : "Rejected",
-        count: id === "all" ? selfBills.length : statusCounts[id] ?? 0,
+                      : id === "rejected"
+                        ? "Rejected"
+                        : "No payout",
+        count:
+          id === "all"
+            ? selfBills.length
+            : id === "no_payout"
+              ? SELF_BILL_PAYOUT_VOID_STATUSES.reduce((acc, st) => acc + (statusCounts[st] ?? 0), 0)
+              : statusCounts[id] ?? 0,
       })),
     [selfBills.length, statusCounts]
   );
@@ -398,31 +432,71 @@ export default function SelfBillPage() {
       label: "Jobs",
       align: "center",
       width: "72px",
-      render: (item) => (
-        <button
-          type="button"
-          className="text-sm font-semibold text-primary hover:underline tabular-nums"
-          onClick={(e) => {
-            e.stopPropagation();
-            void openJobsModal(item);
-          }}
-        >
-          {item.jobs_count}
-        </button>
-      ),
+      render: (item) => {
+        const linked = jobsBySelfBillId[item.id]?.length ?? 0;
+        const n = linked > 0 ? linked : item.jobs_count;
+        return (
+          <button
+            type="button"
+            className="text-sm font-semibold text-primary hover:underline tabular-nums"
+            onClick={(e) => {
+              e.stopPropagation();
+              void openJobsModal(item);
+            }}
+          >
+            {n}
+          </button>
+        );
+      },
     },
     {
       key: "net_payout",
       label: "Net payout",
       align: "right",
       width: "100px",
-      render: (item) => <span className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(item.net_payout)}</span>,
+      render: (item) => (
+        <div className="text-right">
+          <span className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(item.net_payout)}</span>
+          {isSelfBillPayoutVoided(item) &&
+          item.original_net_payout != null &&
+          Number(item.original_net_payout) > 0.02 ? (
+            <span className="block text-[10px] text-text-tertiary tabular-nums">
+              Orig. {formatCurrency(Number(item.original_net_payout))}
+            </span>
+          ) : null}
+        </div>
+      ),
     },
     {
       key: "status",
       label: "Status",
-      minWidth: "140px",
+      minWidth: "160px",
       render: (item) => {
+        if (isSelfBillPayoutVoided(item)) {
+          const orig =
+            item.original_net_payout != null && Number(item.original_net_payout) > 0.02
+              ? Number(item.original_net_payout)
+              : null;
+          return (
+            <div className="space-y-1 min-w-0">
+              <Badge variant="default" size="sm" className="text-[10px]">
+                {SELF_BILL_FINANCE_VOID_LABEL}
+              </Badge>
+              <p className="text-[11px] font-medium text-text-primary truncate" title={selfBillPartnerStatusLine(item)}>
+                Status: {selfBillPartnerStatusLine(item)}
+              </p>
+              {orig != null ? (
+                <p className="text-[10px] text-text-tertiary tabular-nums">Original: {formatCurrency(orig)}</p>
+              ) : null}
+              <p className="text-[10px] text-text-tertiary tabular-nums">Payable: {formatCurrency(item.net_payout)}</p>
+              {item.payout_void_reason ? (
+                <p className="text-[10px] text-text-tertiary line-clamp-2" title={item.payout_void_reason}>
+                  Reason: {item.payout_void_reason}
+                </p>
+              ) : null}
+            </div>
+          );
+        }
         const config = statusConfig[item.status] ?? { label: item.status, variant: "default" as const };
         return (
           <Badge variant={config.variant} dot size="sm">
@@ -729,7 +803,18 @@ function SelfBillCard({
   onOpenJobs,
 }: {
   sb: SelfBill;
-  jobs: Pick<Job, "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address">[];
+  jobs: Pick<
+    Job,
+    | "id"
+    | "reference"
+    | "title"
+    | "partner_cost"
+    | "materials_cost"
+    | "status"
+    | "property_address"
+    | "deleted_at"
+    | "partner_cancelled_at"
+  >[];
   onApprove: () => void;
   onReject: () => void;
   onEdit: () => void;
@@ -738,6 +823,9 @@ function SelfBillCard({
   const cfg = statusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
   const review = sb.status === "pending_review";
   const internal = sb.bill_origin === "internal";
+  const voided = isSelfBillPayoutVoided(sb);
+  const origSnap =
+    sb.original_net_payout != null && Number(sb.original_net_payout) > 0.02 ? Number(sb.original_net_payout) : null;
 
   return (
     <div className="rounded-2xl border border-border-light bg-card shadow-sm overflow-hidden flex flex-col">
@@ -758,10 +846,37 @@ function SelfBillCard({
             </p>
           </div>
         </div>
-        <Badge variant={cfg.variant} dot size="sm">
-          {cfg.label}
-        </Badge>
+        {voided ? (
+          <div className="flex flex-col items-end gap-1 text-right max-w-[12rem]">
+            <Badge variant="default" size="sm" className="text-[10px]">
+              {SELF_BILL_FINANCE_VOID_LABEL}
+            </Badge>
+            <p className="text-[11px] font-medium text-text-primary leading-snug">
+              Status: {selfBillPartnerStatusLine(sb)}
+            </p>
+            {sb.payout_void_reason ? (
+              <p className="text-[10px] text-text-tertiary line-clamp-3">{sb.payout_void_reason}</p>
+            ) : null}
+          </div>
+        ) : (
+          <Badge variant={cfg.variant} dot size="sm">
+            {cfg.label}
+          </Badge>
+        )}
       </div>
+
+      {voided ? (
+        <div className="px-4 py-2.5 border-b border-border-light/80 bg-amber-50/40 dark:bg-amber-950/20 text-[11px] text-text-secondary space-y-0.5">
+          {origSnap != null ? (
+            <p>
+              <span className="font-semibold text-text-primary">Original amount:</span> {formatCurrency(origSnap)}
+            </p>
+          ) : null}
+          <p>
+            <span className="font-semibold text-text-primary">Payable amount:</span> {formatCurrency(sb.net_payout)}
+          </p>
+        </div>
+      ) : null}
 
       <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center border-b border-border-light/80 bg-background/50">
         <div>
@@ -795,28 +910,35 @@ function SelfBillCard({
           <p className="text-xs text-text-tertiary py-2">No jobs linked yet.</p>
         ) : (
           <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-            {jobs.map((j) => (
-              <div
-                key={j.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-light/80 bg-surface-hover/50 px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <Link href={`/jobs/${j.id}`} className="text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1">
-                    {j.reference}
-                    <ExternalLink className="h-3 w-3 shrink-0" />
-                  </Link>
-                  <p className="text-[11px] text-text-secondary truncate">{j.title}</p>
+            {jobs.map((j) => {
+              const payoutNote = selfBillJobPayoutStateLabel(j);
+              return (
+                <div
+                  key={j.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-light/80 bg-surface-hover/50 px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <Link href={`/jobs/${j.id}`} className="text-xs font-semibold text-primary hover:underline inline-flex items-center gap-1">
+                      {j.reference}
+                      <ExternalLink className="h-3 w-3 shrink-0" />
+                    </Link>
+                    <p className="text-[10px] text-text-tertiary font-mono truncate" title={j.id}>
+                      Job ID: {j.id}
+                    </p>
+                    <p className="text-[11px] text-text-secondary truncate">{j.title}</p>
+                    {payoutNote ? <p className="text-[10px] text-amber-700 dark:text-amber-400 font-medium">{payoutNote}</p> : null}
+                  </div>
+                  <div className="text-right text-[11px] tabular-nums space-y-0.5">
+                    <p>
+                      L {formatCurrency(Number(j.partner_cost) || 0)} · M {formatCurrency(Number(j.materials_cost) || 0)}
+                    </p>
+                    <Badge variant="default" size="sm" className="text-[9px]">
+                      {j.status}
+                    </Badge>
+                  </div>
                 </div>
-                <div className="text-right text-[11px] tabular-nums space-y-0.5">
-                  <p>
-                    L {formatCurrency(Number(j.partner_cost) || 0)} · M {formatCurrency(Number(j.materials_cost) || 0)}
-                  </p>
-                  <Badge variant="default" size="sm" className="text-[9px]">
-                    {j.status}
-                  </Badge>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -862,6 +984,9 @@ function SelfBillLinkedJobsPanel({
   loadingJobs: boolean;
 }) {
   const cfg = statusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
+  const voided = isSelfBillPayoutVoided(sb);
+  const origSnap =
+    sb.original_net_payout != null && Number(sb.original_net_payout) > 0.02 ? Number(sb.original_net_payout) : null;
 
   return (
     <div className="p-6">
@@ -877,9 +1002,18 @@ function SelfBillLinkedJobsPanel({
               </p>
             </div>
           </div>
-          <Badge variant={cfg.variant} dot size="sm">
-            {cfg.label}
-          </Badge>
+          {voided ? (
+            <div className="flex flex-col items-end gap-1 text-right max-w-[14rem]">
+              <Badge variant="default" size="sm" className="text-[10px]">
+                {SELF_BILL_FINANCE_VOID_LABEL}
+              </Badge>
+              <p className="text-xs font-medium text-text-primary">Status: {selfBillPartnerStatusLine(sb)}</p>
+            </div>
+          ) : (
+            <Badge variant={cfg.variant} dot size="sm">
+              {cfg.label}
+            </Badge>
+          )}
         </div>
 
         <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-border-light/80 text-center sm:text-left">
@@ -900,6 +1034,29 @@ function SelfBillLinkedJobsPanel({
             <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(sb.net_payout)}</p>
           </div>
         </div>
+
+        {voided ? (
+          <div className="mx-4 my-3 rounded-xl border border-amber-200/80 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/25 px-3 py-2.5 space-y-1 text-sm text-text-secondary">
+            <p>
+              <span className="font-semibold text-text-primary">Original amount:</span>{" "}
+              {origSnap != null ? formatCurrency(origSnap) : "—"}
+            </p>
+            <p>
+              <span className="font-semibold text-text-primary">Payable amount:</span> {formatCurrency(sb.net_payout)}
+            </p>
+            <p>
+              <span className="font-semibold text-text-primary">Status:</span> {selfBillPartnerStatusLine(sb)}
+            </p>
+            {sb.payout_void_reason ? (
+              <p className="text-xs leading-snug pt-0.5 border-t border-amber-200/60 dark:border-amber-900/40">
+                <span className="font-semibold text-text-primary">Reason:</span> {sb.payout_void_reason}
+              </p>
+            ) : null}
+            <p className="text-[11px] text-text-tertiary pt-0.5">
+              Finance record: {SELF_BILL_FINANCE_VOID_LABEL} — record kept for partner transparency.
+            </p>
+          </div>
+        ) : null}
 
         <div className="px-4 py-3">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-3">Linked jobs</p>
@@ -939,7 +1096,23 @@ function SelfBillLinkedJobsPanel({
   );
 }
 
-function JobRow({ j }: { j: Pick<Job, "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address"> }) {
+function JobRow({
+  j,
+}: {
+  j: Pick<
+    Job,
+    | "id"
+    | "reference"
+    | "title"
+    | "partner_cost"
+    | "materials_cost"
+    | "status"
+    | "property_address"
+    | "deleted_at"
+    | "partner_cancelled_at"
+  >;
+}) {
+  const payoutNote = selfBillJobPayoutStateLabel(j);
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl border border-border-light bg-surface-hover/80">
       <div className="min-w-0">
@@ -947,8 +1120,12 @@ function JobRow({ j }: { j: Pick<Job, "id" | "reference" | "title" | "partner_co
           {j.reference}
           <ExternalLink className="h-3 w-3 shrink-0" />
         </Link>
+        <p className="text-[10px] text-text-tertiary font-mono truncate" title={j.id}>
+          Job ID: {j.id}
+        </p>
         <p className="text-xs text-text-secondary truncate">{j.title}</p>
         <p className="text-[11px] text-text-tertiary truncate">{j.property_address}</p>
+        {payoutNote ? <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutNote}</p> : null}
       </div>
       <div className="text-right text-xs space-y-0.5">
         <p>

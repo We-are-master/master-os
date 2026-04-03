@@ -4,6 +4,9 @@ import React from "react";
 import { SelfBillPDF } from "@/lib/pdf/self-bill-template";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
+import { SELF_BILL_FINANCE_VOID_LABEL } from "@/lib/self-bill-display";
+import { isSelfBillPayoutVoided, selfBillJobPayoutStateLabel } from "@/services/self-bills";
+import type { Job, SelfBill } from "@/types/database";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth();
@@ -22,17 +25,36 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 
   const { data: jobs } = await supabase
     .from("jobs")
-    .select("reference, title, partner_cost, materials_cost, property_address")
+    .select("id, reference, title, partner_cost, materials_cost, property_address, status, deleted_at, partner_cancelled_at")
     .eq("self_bill_id", id)
     .order("reference", { ascending: true });
 
-  const lines = (jobs ?? []).map((j: Record<string, unknown>) => ({
-    reference: String(j.reference ?? ""),
-    title: String(j.title ?? ""),
-    partner_cost: Number(j.partner_cost) || 0,
-    materials_cost: Number(j.materials_cost) || 0,
-    property_address: j.property_address ? String(j.property_address) : undefined,
-  }));
+  const lines = (jobs ?? []).map((j: Record<string, unknown>) => {
+    const row = j as Pick<
+      Job,
+      | "id"
+      | "reference"
+      | "title"
+      | "partner_cost"
+      | "materials_cost"
+      | "property_address"
+      | "status"
+      | "deleted_at"
+      | "partner_cancelled_at"
+    >;
+    const note = selfBillJobPayoutStateLabel(row);
+    return {
+      reference: String(j.reference ?? ""),
+      title: String(j.title ?? ""),
+      partner_cost: Number(j.partner_cost) || 0,
+      materials_cost: Number(j.materials_cost) || 0,
+      property_address: j.property_address ? String(j.property_address) : undefined,
+      jobId: row.id ? String(row.id) : undefined,
+      payoutStateNote: note ?? undefined,
+    };
+  });
+
+  const voided = isSelfBillPayoutVoided({ status: sb.status as SelfBill["status"] });
 
   const buffer = await renderToBuffer(
     <SelfBillPDF
@@ -50,6 +72,11 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
         netPayout: Number(sb.net_payout) || 0,
         status: String(sb.status),
         lines,
+        originalNetPayout: (sb as { original_net_payout?: number | null }).original_net_payout ?? null,
+        payoutVoidReason: (sb as { payout_void_reason?: string | null }).payout_void_reason ?? null,
+        partnerStatusLabel: (sb as { partner_status_label?: string | null }).partner_status_label ?? null,
+        financeStatusLabel: voided ? SELF_BILL_FINANCE_VOID_LABEL : null,
+        payoutVoided: voided,
       }}
     />
   );

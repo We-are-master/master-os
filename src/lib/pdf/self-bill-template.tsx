@@ -7,6 +7,10 @@ export interface SelfBillPdfLine {
   partner_cost: number;
   materials_cost: number;
   property_address?: string;
+  /** Job UUID for audit / partner transparency. */
+  jobId?: string;
+  /** Archived / Lost / Cancelled — shown for audit when job no longer pays out. */
+  payoutStateNote?: string | null;
 }
 
 export interface SelfBillPdfData {
@@ -23,6 +27,14 @@ export interface SelfBillPdfData {
   netPayout: number;
   status: string;
   lines: SelfBillPdfLine[];
+  /** Snapshot before payout was voided (original combined net). */
+  originalNetPayout?: number | null;
+  payoutVoidReason?: string | null;
+  partnerStatusLabel?: string | null;
+  /** Internal finance label when voided (e.g. Void). */
+  financeStatusLabel?: string | null;
+  /** Explicit flag from server — preferred over inferring from optional text fields. */
+  payoutVoided?: boolean;
 }
 
 const styles = StyleSheet.create({
@@ -53,6 +65,19 @@ const styles = StyleSheet.create({
     color: "#57534E",
     lineHeight: 1.45,
   },
+  voidBox: {
+    marginBottom: 14,
+    padding: 10,
+    backgroundColor: "#F5F5F4",
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#D6D3D1",
+  },
+  voidTitle: { fontSize: 10, fontWeight: "bold", marginBottom: 6, color: "#44403C" },
+  voidRow: { fontSize: 9, marginBottom: 3, color: "#44403C" },
+  voidReason: { fontSize: 8, marginTop: 6, color: "#57534E", lineHeight: 1.4 },
+  lineNote: { fontSize: 7, color: "#78716C", marginTop: 2 },
+  lineId: { fontSize: 6, color: "#A8A29E", marginTop: 1 },
 });
 
 function fmt(n: number): string {
@@ -60,6 +85,15 @@ function fmt(n: number): string {
 }
 
 export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
+  const isVoided = data.payoutVoided === true;
+  const lineSum = data.lines.reduce((s, l) => s + l.partner_cost + l.materials_cost, 0);
+  const originalAmt =
+    data.originalNetPayout != null && Number.isFinite(Number(data.originalNetPayout)) && Number(data.originalNetPayout) > 0
+      ? Number(data.originalNetPayout)
+      : lineSum > 0.01
+        ? lineSum
+        : data.jobValue + data.materials - data.commission;
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -74,6 +108,23 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           </Text>
         ) : null}
 
+        {isVoided ? (
+          <View style={styles.voidBox}>
+            <Text style={styles.voidTitle}>Payout adjustment (no longer due)</Text>
+            <Text style={styles.voidRow}>Original amount: {fmt(originalAmt)}</Text>
+            <Text style={styles.voidRow}>Payable amount: {fmt(data.netPayout)}</Text>
+            <Text style={styles.voidRow}>
+              Status: {data.partnerStatusLabel ?? data.status}
+            </Text>
+            {data.financeStatusLabel ? (
+              <Text style={styles.voidRow}>Finance record: {data.financeStatusLabel}</Text>
+            ) : null}
+            {data.payoutVoidReason ? (
+              <Text style={styles.voidReason}>Reason: {data.payoutVoidReason}</Text>
+            ) : null}
+          </View>
+        ) : null}
+
         <View style={[styles.row, { borderBottomWidth: 2 }]}>
           <Text style={[styles.th, styles.cellRef]}>Job</Text>
           <Text style={[styles.th, styles.cellTitle]}>Title</Text>
@@ -83,7 +134,11 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
         </View>
         {data.lines.map((line) => (
           <View key={line.reference} style={styles.row} wrap={false}>
-            <Text style={styles.cellRef}>{line.reference}</Text>
+            <View style={styles.cellRef}>
+              <Text>{line.reference}</Text>
+              {line.jobId ? <Text style={styles.lineId}>Job ID: {line.jobId}</Text> : null}
+              {line.payoutStateNote ? <Text style={styles.lineNote}>{line.payoutStateNote}</Text> : null}
+            </View>
             <Text style={styles.cellTitle}>{line.title}</Text>
             <Text style={styles.cellAddr}>{line.property_address ?? "—"}</Text>
             <Text style={styles.cellNum}>{fmt(line.partner_cost)}</Text>
@@ -113,7 +168,15 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
             <Text>Net payout</Text>
             <Text>{fmt(data.netPayout)}</Text>
           </View>
-          <Text style={{ marginTop: 8, fontSize: 8, color: "#78716C" }}>Status: {data.status}</Text>
+          {isVoided && originalAmt > 0.01 ? (
+            <Text style={{ marginTop: 6, fontSize: 8, color: "#78716C" }}>
+              Original amount (for records): {fmt(originalAmt)}
+            </Text>
+          ) : null}
+          <Text style={{ marginTop: 8, fontSize: 8, color: "#78716C" }}>
+            Record status: {data.partnerStatusLabel ?? data.status}
+            {data.payoutVoidReason ? ` · ${data.payoutVoidReason}` : ""}
+          </Text>
         </View>
 
         <Text style={styles.ukNote}>
