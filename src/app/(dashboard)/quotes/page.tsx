@@ -35,6 +35,7 @@ import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
 import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
+import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { listPartners } from "@/services/partners";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
@@ -586,7 +587,7 @@ function QuotesPageContent() {
           scope: jobScope || undefined,
         });
 
-        const dueStr = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
+        const dueStr = await getInvoiceDueDateIsoForClient(formData.client_id ?? null);
         const totalClient = Number(formData.client_price ?? 0);
         if (totalClient > 0.01) {
           const linked = await listInvoicesLinkedToJob(job.reference, job.invoice_id);

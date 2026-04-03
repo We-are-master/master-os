@@ -65,6 +65,10 @@ type SelfBillTab = (typeof TAB_ORDER)[number];
 
 type JobLine = Pick<Job, "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address" | "self_bill_id">;
 
+function isPartnerFieldBill(sb: SelfBill): boolean {
+  return sb.bill_origin !== "internal";
+}
+
 function countByStatus(rows: SelfBill[]): Record<string, number> {
   const m: Record<string, number> = {};
   for (const sb of rows) {
@@ -90,6 +94,7 @@ export default function SelfBillPage() {
   const [editSelfBill, setEditSelfBill] = useState<SelfBill | null>(null);
   const [editForm, setEditForm] = useState({ job_value: "", materials: "", commission: "" });
   const [savingEdit, setSavingEdit] = useState(false);
+  const [originFilter, setOriginFilter] = useState<"all" | "partner" | "internal">("all");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -141,6 +146,11 @@ export default function SelfBillPage() {
     if (activeTab !== "all") {
       result = result.filter((sb) => sb.status === activeTab);
     }
+    if (originFilter === "partner") {
+      result = result.filter((sb) => isPartnerFieldBill(sb));
+    } else if (originFilter === "internal") {
+      result = result.filter((sb) => sb.bill_origin === "internal");
+    }
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(
@@ -151,7 +161,7 @@ export default function SelfBillPage() {
       );
     }
     return result;
-  }, [selfBills, activeTab, search]);
+  }, [selfBills, activeTab, search, originFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -336,7 +346,14 @@ export default function SelfBillPage() {
         <div className="flex items-center gap-2.5 min-w-0">
           <Avatar name={item.partner_name} size="sm" className="shrink-0" />
           <div className="min-w-0">
-            <p className="text-sm font-medium text-text-primary truncate">{item.partner_name}</p>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <p className="text-sm font-medium text-text-primary truncate">{item.partner_name}</p>
+              {item.bill_origin === "internal" && (
+                <Badge variant="info" size="sm" className="shrink-0 text-[10px]">
+                  Internal
+                </Badge>
+              )}
+            </div>
             <p className="text-[11px] text-text-tertiary truncate">
               {item.week_label ?? item.period}
             </p>
@@ -352,15 +369,29 @@ export default function SelfBillPage() {
     },
     {
       key: "job_value",
-      label: "Labour",
+      label: "Labour / gross",
       align: "right",
-      render: (item) => <span className="text-sm tabular-nums text-text-primary">{formatCurrency(item.job_value)}</span>,
+      render: (item) => (
+        <span className="text-sm tabular-nums text-text-primary">
+          {formatCurrency(item.job_value)}
+          {item.bill_origin === "internal" && Number(item.commission) > 0 ? (
+            <span className="block text-[10px] text-text-tertiary font-normal">−{formatCurrency(item.commission)} ded.</span>
+          ) : null}
+        </span>
+      ),
     },
     {
       key: "materials",
-      label: "Materials",
+      label: "Materials / extras",
       align: "right",
-      render: (item) => <span className="text-sm tabular-nums text-text-secondary">{formatCurrency(item.materials)}</span>,
+      render: (item) => (
+        <span className="text-sm tabular-nums text-text-secondary">
+          {formatCurrency(item.materials)}
+          {item.bill_origin === "internal" && item.materials > 0 ? (
+            <span className="block text-[10px] text-text-tertiary font-normal">extras</span>
+          ) : null}
+        </span>
+      ),
     },
     {
       key: "jobs_count",
@@ -441,8 +472,8 @@ export default function SelfBillPage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader
-          title="Partner self-billing"
-          subtitle={`Weekly partner payouts. Current week stays in Ongoing until Sunday 23:59; then it moves to Review and Approve. ${weekPeriodHelpText()}`}
+          title="Self-billing"
+          subtitle={`Partner field jobs and internal People (contractors). Weekly buckets; after the week closes, bills move to Review and Approve. ${weekPeriodHelpText()}`}
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>
             Export CSV
@@ -514,7 +545,27 @@ export default function SelfBillPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
             <Tabs tabs={tabs} activeTab={activeTab} onChange={(id) => setActiveTab(id as SelfBillTab)} />
             <div className="flex items-center gap-2 flex-wrap shrink-0">
-              <SearchInput placeholder="Search partner, ref, week…" className="w-52 max-w-full" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-hover" title="Source">
+                {(
+                  [
+                    { id: "all" as const, label: "All" },
+                    { id: "partner" as const, label: "Partners" },
+                    { id: "internal" as const, label: "Internal" },
+                  ] as const
+                ).map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`rounded-md px-2.5 py-1.5 text-xs font-semibold ${
+                      originFilter === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary"
+                    }`}
+                    onClick={() => setOriginFilter(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <SearchInput placeholder="Search name, ref, week…" className="w-52 max-w-full" value={search} onChange={(e) => setSearch(e.target.value)} />
               <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-hover" title="Layout">
                 <button
                   type="button"
@@ -686,6 +737,7 @@ function SelfBillCard({
 }) {
   const cfg = statusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
   const review = sb.status === "pending_review";
+  const internal = sb.bill_origin === "internal";
 
   return (
     <div className="rounded-2xl border border-border-light bg-card shadow-sm overflow-hidden flex flex-col">
@@ -693,7 +745,14 @@ function SelfBillCard({
         <div className="flex items-start gap-3 min-w-0">
           <Avatar name={sb.partner_name} size="md" className="shrink-0" />
           <div className="min-w-0">
-            <p className="text-sm font-bold text-text-primary truncate">{sb.partner_name}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-bold text-text-primary truncate">{sb.partner_name}</p>
+              {internal && (
+                <Badge variant="info" size="sm" className="text-[10px]">
+                  Internal
+                </Badge>
+              )}
+            </div>
             <p className="text-[11px] text-text-tertiary font-mono truncate">
               {sb.reference} · {sb.week_label ?? sb.period}
             </p>
@@ -706,11 +765,14 @@ function SelfBillCard({
 
       <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center border-b border-border-light/80 bg-background/50">
         <div>
-          <p className="text-[10px] font-semibold uppercase text-text-tertiary">Labour</p>
+          <p className="text-[10px] font-semibold uppercase text-text-tertiary">{internal ? "Gross" : "Labour"}</p>
           <p className="text-sm font-semibold tabular-nums">{formatCurrency(sb.job_value)}</p>
+          {internal && Number(sb.commission) > 0 ? (
+            <p className="text-[10px] text-text-tertiary">−{formatCurrency(sb.commission)} ded.</p>
+          ) : null}
         </div>
         <div>
-          <p className="text-[10px] font-semibold uppercase text-text-tertiary">Materials</p>
+          <p className="text-[10px] font-semibold uppercase text-text-tertiary">{internal ? "Extras" : "Materials"}</p>
           <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(sb.materials)}</p>
         </div>
         <div>
@@ -727,7 +789,9 @@ function SelfBillCard({
 
       <div className="px-4 py-3 space-y-0.5 flex-1">
         <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Linked jobs</p>
-        {jobs.length === 0 ? (
+        {internal ? (
+          <p className="text-xs text-text-tertiary py-2">Internal self-bill — no field jobs. Created from People → Contractors.</p>
+        ) : jobs.length === 0 ? (
           <p className="text-xs text-text-tertiary py-2">No jobs linked yet.</p>
         ) : (
           <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
@@ -845,7 +909,11 @@ function SelfBillLinkedJobsPanel({
               <div className="h-16 rounded-xl bg-surface-hover animate-pulse" />
             </div>
           ) : jobs.length === 0 ? (
-            <p className="text-sm text-text-tertiary py-2">No jobs linked to this self-bill.</p>
+            <p className="text-sm text-text-tertiary py-2">
+              {sb.bill_origin === "internal"
+                ? "Internal self-bill — no field jobs. Totals were entered from People → Contractors."
+                : "No jobs linked to this self-bill."}
+            </p>
           ) : (
             <div className="space-y-2">
               {jobs.map((j) => (

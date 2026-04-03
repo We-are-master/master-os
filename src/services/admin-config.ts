@@ -9,11 +9,11 @@ const SERVICES_NAV_ITEM = {
   permission: "service_catalog" as const,
 };
 
-const PAYROLL_NAV_ITEM = {
-  label: "Payroll",
-  href: "/finance/payroll",
-  icon: "circle-dollar-sign",
-  permission: "finance" as const,
+const PEOPLE_DIRECTORY_ITEM = {
+  label: "People directory",
+  href: "/people",
+  icon: "contact",
+  permission: "team" as const,
 };
 
 const TEAM_CORE_ITEM = {
@@ -34,11 +34,11 @@ const SETTINGS_NAV_ITEM = {
 };
 
 /**
- * Migrate stored navigation: Payroll → People; Services → Admin; strip duplicates; Team → People, Team link → Team Members.
+ * Migrate stored navigation: Services → Admin; strip duplicates; Team → People; Payroll nav item stripped (hidden).
  */
 function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
   const strip = new Set(["/finance/payroll", "/services"]);
-  let next = nav.map((g) => ({
+  const next = nav.map((g) => ({
     ...g,
     label: g.label === LEGACY_TEAM_GROUP_LABEL ? PEOPLE_GROUP_LABEL : g.label,
     items: g.items.filter((i) => !strip.has(i.href)),
@@ -49,16 +49,19 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     const items = next[peopleIdx].items.map((i) =>
       i.href === "/team" ? { ...i, ...TEAM_CORE_ITEM } : i
     );
-    const hasTeam = items.some((i) => i.href === "/team");
-    const hasPayroll = items.some((i) => i.href === "/finance/payroll");
-    const merged = [...items];
-    if (!hasTeam) merged.unshift({ ...TEAM_CORE_ITEM });
-    if (!hasPayroll) merged.push({ ...PAYROLL_NAV_ITEM });
-    next[peopleIdx] = { ...next[peopleIdx], items: merged };
+    const extras = items.filter(
+      (i) => i.href !== "/people" && i.href !== "/team" && i.href !== "/finance/payroll"
+    );
+    const peopleItem = items.find((i) => i.href === "/people") ?? { ...PEOPLE_DIRECTORY_ITEM };
+    const teamItem = items.find((i) => i.href === "/team") ?? { ...TEAM_CORE_ITEM };
+    next[peopleIdx] = {
+      ...next[peopleIdx],
+      items: [peopleItem, teamItem, ...extras],
+    };
   } else {
     next.push({
       label: PEOPLE_GROUP_LABEL,
-      items: [{ ...TEAM_CORE_ITEM }, { ...PAYROLL_NAV_ITEM }],
+      items: [{ ...PEOPLE_DIRECTORY_ITEM }, { ...TEAM_CORE_ITEM }],
     });
   }
 
@@ -118,8 +121,8 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: PEOPLE_GROUP_LABEL,
     items: [
+      { label: "People directory", href: "/people", icon: "contact", permission: "team" },
       { label: "Team Members", href: "/team", icon: "users-2", permission: "team" },
-      { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign", permission: "finance" },
     ],
   },
   {

@@ -12,7 +12,10 @@ export const SELF_EMPLOYED_PAYROLL_UPLOAD_KEYS = ["passport", "service_agreement
 
 export type PayrollDocumentFileMeta = { path: string; file_name: string };
 
+export const PROFILE_PHOTO_DOC_KEY = "profile_photo" as const;
+
 export const PAYROLL_UPLOAD_LABELS: Record<string, string> = {
+  [PROFILE_PHOTO_DOC_KEY]: "Profile photo",
   passport: "Passport / photo ID",
   employment_contract: "Employment contract",
   right_to_work: "Right to work evidence",
@@ -20,6 +23,11 @@ export const PAYROLL_UPLOAD_LABELS: Record<string, string> = {
   service_agreement: "Service agreement (signed)",
   self_bill_agreement: "Self-bill agreement",
   equity_agreement: "Equity agreement",
+  /** Finance tab — employees (HMRC / payroll). */
+  p60: "P60",
+  p45: "P45",
+  /** Latest payslip; use payslip_YYYY_MM for history rows in `payroll_document_files`. */
+  payslip: "Payslip (latest)",
 };
 
 export const EQUITY_AGREEMENT_KEY = "equity_agreement" as const;

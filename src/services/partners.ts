@@ -191,6 +191,34 @@ export async function updatePartner(id: string, input: Partial<Partner>): Promis
     data = fallback.data;
     error = fallback.error;
   }
+  if (
+    error &&
+    ("bank_sort_code" in input ||
+      "bank_account_number" in input ||
+      "bank_account_holder" in input ||
+      "bank_name" in input)
+  ) {
+    const {
+      bank_sort_code: _bs,
+      bank_account_number: _ba,
+      bank_account_holder: _bh,
+      bank_name: _bn,
+      ...legacyInput
+    } = input as Partial<Partner> & {
+      bank_sort_code?: unknown;
+      bank_account_number?: unknown;
+      bank_account_holder?: unknown;
+      bank_name?: unknown;
+    };
+    const fallback = await supabase
+      .from("partners")
+      .update(legacyInput)
+      .eq("id", id)
+      .select()
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
   if (error) throw error;
   return data as Partner;
 }

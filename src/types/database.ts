@@ -372,6 +372,11 @@ export interface Partner {
   auth_user_id?: string | null;
   /** Public photo URL (company-assets bucket). */
   avatar_url?: string | null;
+  /** UK sort code, 6 digits stored without hyphens (BACS). */
+  bank_sort_code?: string | null;
+  bank_account_number?: string | null;
+  bank_account_holder?: string | null;
+  bank_name?: string | null;
 }
 
 export interface Account {
@@ -428,12 +433,19 @@ export type SelfBillStatus =
   | "audit_required"
   | "rejected";
 
+/** Partner field jobs vs office payroll directory (People). */
+export type SelfBillOrigin = "partner" | "internal";
+
 export interface SelfBill {
   id: string;
   reference: string;
   partner_name: string;
   /** Legacy month bucket (YYYY-MM); prefer week_label for weekly workflow. */
   period: string;
+  /** partner = subcontractors; internal = payroll_internal_costs row. */
+  bill_origin?: SelfBillOrigin | null;
+  /** When bill_origin is internal, links to People / payroll row. */
+  internal_cost_id?: string | null;
   /** Same id as jobs.partner_id when assigned. */
   partner_id?: string | null;
   /** ISO week Monday (date). */
@@ -465,6 +477,7 @@ export type PayrollInternalPayFrequency = "weekly" | "biweekly" | "monthly";
 
 /** Optional UK / HR fields stored in `payroll_internal_costs.payroll_profile` (JSON). */
 export type PayrollInternalProfile = {
+  email?: string;
   utr?: string;
   ni_number?: string;
   tax_code?: string;
@@ -489,6 +502,8 @@ export interface InternalCost {
   due_date?: string;
   status: InternalCostStatus;
   paid_at?: string;
+  /** Optional squad (People UI — same `squads` table as legacy team_members). */
+  squad_id?: string | null;
   /** Person paid (salary / contractor). */
   payee_name?: string | null;
   /** Drives required document checklist in UI. */
