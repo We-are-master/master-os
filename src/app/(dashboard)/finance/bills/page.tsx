@@ -76,7 +76,8 @@ export default function BillsPage() {
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [billKindTab, setBillKindTab] = useState<"one_off" | "recurring">("one_off");
+  /** All = one-off + recurring; default All */
+  const [billKindTab, setBillKindTab] = useState<"all" | "one_off" | "recurring">("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [saving, setSaving] = useState(false);
@@ -128,7 +129,11 @@ export default function BillsPage() {
       statusFilter === "archived"
         ? inPeriod.filter((b) => b.archived_at)
         : inPeriod.filter((b) => !b.archived_at);
-    const matchesKind = (b: Bill) => (billKindTab === "recurring" ? !!b.is_recurring : !b.is_recurring);
+    const matchesKind = (b: Bill) => {
+      if (billKindTab === "all") return true;
+      if (billKindTab === "recurring") return !!b.is_recurring;
+      return !b.is_recurring;
+    };
     return archivedScoped.filter(matchesKind);
   }, [bills, periodBounds, statusFilter, billKindTab]);
 
@@ -142,6 +147,9 @@ export default function BillsPage() {
     [periodMode, weekAnchor, rangeFrom, rangeTo]
   );
 
+  const billKindKpiLabel =
+    billKindTab === "all" ? "All types" : billKindTab === "recurring" ? "Recurring" : "One-off";
+
   const kpis = useMemo(() => {
     const inPeriodEligible = !periodBounds
       ? bills.filter((b) => kpiEligible(b))
@@ -152,9 +160,11 @@ export default function BillsPage() {
             b.due_date >= periodBounds.from &&
             b.due_date <= periodBounds.to
         );
-    const base = inPeriodEligible.filter((b) =>
-      billKindTab === "recurring" ? !!b.is_recurring : !b.is_recurring
-    );
+    const base = inPeriodEligible.filter((b) => {
+      if (billKindTab === "all") return true;
+      if (billKindTab === "recurring") return !!b.is_recurring;
+      return !b.is_recurring;
+    });
     const pending = base.filter((b) => b.status === "submitted");
     const approved = base.filter((b) => b.status === "approved");
     const paid = base.filter((b) => b.status === "paid");
@@ -429,7 +439,7 @@ export default function BillsPage() {
       <div className="space-y-5">
         <PageHeader
           title="Bills & expenses"
-          subtitle="Use One-off vs Recurring below; then filter by workflow. KPIs and the list match the tab and the period bar."
+          subtitle="Filter by All, One-off, or Recurring; then by workflow. KPIs and the list match the bill type and the period above."
         >
           <Button
             size="sm"
@@ -459,7 +469,7 @@ export default function BillsPage() {
             title="Pending"
             value={kpis.pendingAmount}
             format="currency"
-            description={`${kpis.pendingCount} submitted · ${billKindTab === "recurring" ? "Recurring" : "One-off"} · ${kpiPeriodDesc}`}
+            description={`${kpis.pendingCount} submitted · ${billKindKpiLabel} · ${kpiPeriodDesc}`}
             icon={FileCheck}
             accent="amber"
           />
@@ -467,7 +477,7 @@ export default function BillsPage() {
             title="Approved"
             value={kpis.approvedAmount}
             format="currency"
-            description={`${kpis.approvedCount} awaiting payment · ${billKindTab === "recurring" ? "Recurring" : "One-off"} · ${kpiPeriodDesc}`}
+            description={`${kpis.approvedCount} awaiting payment · ${billKindKpiLabel} · ${kpiPeriodDesc}`}
             icon={DollarSign}
             accent="primary"
           />
@@ -475,7 +485,7 @@ export default function BillsPage() {
             title="Total bills (period)"
             value={kpis.totalAmount}
             format="currency"
-            description={`${kpis.totalCount} line${kpis.totalCount === 1 ? "" : "s"} · ${billKindTab === "recurring" ? "Recurring" : "One-off"} · Excl. archived, rejected & needs attention · ${kpiPeriodDesc}`}
+            description={`${kpis.totalCount} line${kpis.totalCount === 1 ? "" : "s"} · ${billKindKpiLabel} · Excl. archived, rejected & needs attention · ${kpiPeriodDesc}`}
             icon={Layers}
             accent="blue"
           />
@@ -483,7 +493,7 @@ export default function BillsPage() {
             title="Paid"
             value={kpis.paidAmount}
             format="currency"
-            description={`${kpis.paidCount} paid · ${billKindTab === "recurring" ? "Recurring" : "One-off"} · ${kpiPeriodDesc}`}
+            description={`${kpis.paidCount} paid · ${billKindKpiLabel} · ${kpiPeriodDesc}`}
             icon={Banknote}
             accent="emerald"
           />
@@ -510,6 +520,7 @@ export default function BillsPage() {
           <div className="flex flex-wrap gap-2">
             {(
               [
+                { id: "all" as const, label: "All" },
                 { id: "one_off" as const, label: "One-off" },
                 { id: "recurring" as const, label: "Recurring" },
               ] as const
@@ -550,7 +561,11 @@ export default function BillsPage() {
             </div>
           ) : displayList.length === 0 ? (
             <p className="text-sm text-text-tertiary py-10 text-center rounded-xl border border-dashed border-border-light bg-surface-hover/30">
-              No {billKindTab === "recurring" ? "recurring" : "one-off"} bills in this period for the current filters.
+              {billKindTab === "all"
+                ? "No bills in this period for the current filters."
+                : billKindTab === "recurring"
+                  ? "No recurring bills in this period for the current filters."
+                  : "No one-off bills in this period for the current filters."}
             </p>
           ) : (
             <div className="space-y-3">

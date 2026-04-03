@@ -228,8 +228,8 @@ export default function TeamPage() {
     <PageTransition>
       <div className="space-y-6">
         <PageHeader
-          title="Team"
-          subtitle="Internal squads and team members. Feeds payroll and commission."
+          title="Team Members"
+          subtitle="Squads, payroll roster, and people on the app. Feeds payroll and commission."
         >
           <Button variant="outline" size="sm" onClick={openAddSquad} icon={<Building2 className="h-3.5 w-3.5" />}>
             Add Squad
@@ -354,7 +354,7 @@ export default function TeamPage() {
             <div>
               <div className="flex items-start justify-between gap-2 mb-2">
                 <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-                  <Shield className="h-4 w-4" /> App users
+                  <Shield className="h-4 w-4" /> People
                 </h3>
                 <Link
                   href="/settings"

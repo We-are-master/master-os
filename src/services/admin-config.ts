@@ -2,7 +2,6 @@ import { getSupabase } from "./base";
 import type { NavGroup } from "@/lib/constants";
 import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
 
-/** Injected into stored navigation if missing (older admin_config rows). */
 const SERVICES_NAV_ITEM = {
   label: "Services",
   href: "/services",
@@ -10,32 +9,73 @@ const SERVICES_NAV_ITEM = {
   permission: "service_catalog" as const,
 };
 
-function ensureServicesNavItem(nav: NavGroup[]): NavGroup[] {
-  if (nav.some((g) => g.items.some((i) => i.href === "/services"))) {
-    // If it exists but is under Operations, move it to Finance.
-    const hasInOps = nav.find((g) => g.label === "Operations")?.items.some((i) => i.href === "/services");
-    if (!hasInOps) return nav;
-    // Remove from Operations and add to Finance.
-    const next = nav.map((g) => ({
-      ...g,
-      items: g.label === "Operations"
-        ? g.items.filter((i) => i.href !== "/services")
-        : g.items,
-    }));
-    const finance = next.find((g) => g.label === "Finance");
-    if (finance) {
-      finance.items = [...finance.items.filter((i) => i.href !== "/services"), { ...SERVICES_NAV_ITEM }];
-    }
-    return next;
+const PAYROLL_NAV_ITEM = {
+  label: "Payroll",
+  href: "/finance/payroll",
+  icon: "circle-dollar-sign",
+  permission: "finance" as const,
+};
+
+const TEAM_CORE_ITEM = {
+  label: "Team Members",
+  href: "/team",
+  icon: "users-2",
+  permission: "team" as const,
+};
+
+const PEOPLE_GROUP_LABEL = "People";
+const LEGACY_TEAM_GROUP_LABEL = "Team";
+
+const SETTINGS_NAV_ITEM = {
+  label: "Settings",
+  href: "/settings",
+  icon: "settings",
+  permission: "settings" as const,
+};
+
+/**
+ * Migrate stored navigation: Payroll → People; Services → Admin; strip duplicates; Team → People, Team link → Team Members.
+ */
+function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
+  const strip = new Set(["/finance/payroll", "/services"]);
+  let next = nav.map((g) => ({
+    ...g,
+    label: g.label === LEGACY_TEAM_GROUP_LABEL ? PEOPLE_GROUP_LABEL : g.label,
+    items: g.items.filter((i) => !strip.has(i.href)),
+  }));
+
+  const peopleIdx = next.findIndex((g) => g.label === PEOPLE_GROUP_LABEL);
+  if (peopleIdx >= 0) {
+    const items = next[peopleIdx].items.map((i) =>
+      i.href === "/team" ? { ...i, ...TEAM_CORE_ITEM } : i
+    );
+    const hasTeam = items.some((i) => i.href === "/team");
+    const hasPayroll = items.some((i) => i.href === "/finance/payroll");
+    const merged = [...items];
+    if (!hasTeam) merged.unshift({ ...TEAM_CORE_ITEM });
+    if (!hasPayroll) merged.push({ ...PAYROLL_NAV_ITEM });
+    next[peopleIdx] = { ...next[peopleIdx], items: merged };
+  } else {
+    next.push({
+      label: PEOPLE_GROUP_LABEL,
+      items: [{ ...TEAM_CORE_ITEM }, { ...PAYROLL_NAV_ITEM }],
+    });
   }
-  // Not present at all — add to Finance.
-  const next = nav.map((g) => ({ ...g, items: [...g.items] }));
-  const finance = next.find((g) => g.label === "Finance");
-  if (finance) {
-    finance.items = [...finance.items, { ...SERVICES_NAV_ITEM }];
-    return next;
+
+  const adminIdx = next.findIndex((g) => g.label === "Admin");
+  if (adminIdx >= 0) {
+    const items = [...next[adminIdx].items];
+    if (!items.some((i) => i.href === "/services")) items.push({ ...SERVICES_NAV_ITEM });
+    if (!items.some((i) => i.href === "/settings")) items.unshift({ ...SETTINGS_NAV_ITEM });
+    next[adminIdx] = { ...next[adminIdx], items };
+  } else {
+    next.push({
+      label: "Admin",
+      items: [{ ...SETTINGS_NAV_ITEM }, { ...SERVICES_NAV_ITEM }],
+    });
   }
-  return [...next, { label: "Finance", items: [{ ...SERVICES_NAV_ITEM }] }];
+
+  return next;
 }
 
 function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByRole {
@@ -72,13 +112,23 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
       { label: "Bills", href: "/finance/bills", icon: "file-check", permission: "finance" },
-      { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign", permission: "finance" },
       { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
+    ],
+  },
+  {
+    label: PEOPLE_GROUP_LABEL,
+    items: [
+      { label: "Team Members", href: "/team", icon: "users-2", permission: "team" },
+      { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign", permission: "finance" },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [
+      { label: "Settings", href: "/settings", icon: "settings", permission: "settings" },
       { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
     ],
   },
-  { label: "Team", items: [{ label: "Team", href: "/team", icon: "users-2", permission: "team" }] },
-  { label: "Admin", items: [{ label: "Settings", href: "/settings", icon: "settings", permission: "settings" }] },
 ];
 
 const DEFAULT_PERMISSIONS: PermissionsByRole = {
@@ -139,7 +189,7 @@ export async function getAdminConfig<K extends keyof { navigation: NavGroup[]; p
   const { data, error } = await supabase.from("admin_config").select("value").eq("key", key).maybeSingle();
   if (key === "navigation") {
     if (error || !data) return DEFAULT_NAVIGATION as never;
-    return ensureServicesNavItem(data.value as NavGroup[]) as never;
+    return normalizeNavigation(data.value as NavGroup[]) as never;
   }
   if (key === "permissions") {
     if (error || !data) return DEFAULT_PERMISSIONS as never;

@@ -1186,7 +1186,7 @@ const permissionLabels: Record<string, string> = {
   partners: "Partners",
   accounts: "Accounts",
   finance: "Finance",
-  team: "Team",
+  team: "People",
   settings: "System Settings",
   manage_team: "Manage Team",
   manage_roles: "Manage Roles",

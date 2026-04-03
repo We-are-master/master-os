@@ -50,19 +50,24 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Finance",
     items: [
-      { label: "Invoices", href: "/finance/invoices", icon: "receipt" },
-      { label: "Self-billing", href: "/finance/selfbill", icon: "wallet" },
-      { label: "Bills", href: "/finance/bills", icon: "file-check" },
-      { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign" },
-      { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock" },
-      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
+      { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
+      { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
+      { label: "Bills", href: "/finance/bills", icon: "file-check", permission: "finance" },
+      { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
     ],
   },
-  { label: "Team", items: [{ label: "Team", href: "/team", icon: "users-2" }] },
+  {
+    label: "People",
+    items: [
+      { label: "Team Members", href: "/team", icon: "users-2", permission: "team" },
+      { label: "Payroll", href: "/finance/payroll", icon: "circle-dollar-sign", permission: "finance" },
+    ],
+  },
   {
     label: "Admin",
     items: [
-      { label: "Settings", href: "/settings", icon: "settings" },
+      { label: "Settings", href: "/settings", icon: "settings", permission: "settings" },
+      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
     ],
   },
 ];
