@@ -82,7 +82,8 @@ export function OverviewExecutiveBundle() {
   const [revenue, setRevenue] = useState(0);
   const [partnerDirect, setPartnerDirect] = useState(0);
   const [grossProfit, setGrossProfit] = useState(0);
-  const [commission, setCommission] = useState(0);
+  const [billsCost, setBillsCost] = useState(0);
+  const [payrollCost, setPayrollCost] = useState(0);
   const [billingForTier, setBillingForTier] = useState(0);
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
   const [ownerLeaderboard, setOwnerLeaderboard] = useState<{ name: string; revenue: number; jobCount: number }[]>([]);
@@ -114,20 +115,53 @@ export function OverviewExecutiveBundle() {
 
         let rev = 0;
         let direct = 0;
-        let comm = 0;
         for (const r of pipelineRows) {
           const j = r as Parameters<typeof jobBillableRevenue>[0];
           rev += jobBillableRevenue(j);
           direct += jobDirectCost(r as OverviewPipelineJobRow);
-          comm += Number(r.commission ?? 0);
         }
         const gross = rev - direct;
         setRevenue(rev);
         setPartnerDirect(direct);
         setGrossProfit(gross);
-        setCommission(comm);
         setBillingForTier(invTotal);
         setTiers(tiersList);
+
+        const fromDay = fromIso.slice(0, 10);
+        const toDay = toBound.slice(0, 10);
+
+        let billsTotal = 0;
+        let payrollTotal = 0;
+        try {
+          let billsQ = supabase
+            .from("bills")
+            .select("amount")
+            .is("archived_at", null)
+            .neq("status", "rejected");
+          if (bounds) {
+            billsQ = billsQ.gte("due_date", fromDay).lte("due_date", toDay);
+          }
+          const { data: billRows, error: billErr } = await billsQ;
+          if (!billErr && billRows) {
+            billsTotal = billRows.reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
+          }
+        } catch {
+          billsTotal = 0;
+        }
+        try {
+          let payrollQ = supabase.from("payroll_internal_costs").select("amount");
+          if (bounds) {
+            payrollQ = payrollQ.not("due_date", "is", null).gte("due_date", fromDay).lte("due_date", toDay);
+          }
+          const { data: payrollRows, error: payErr } = await payrollQ;
+          if (!payErr && payrollRows) {
+            payrollTotal = payrollRows.reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
+          }
+        } catch {
+          payrollTotal = 0;
+        }
+        setBillsCost(billsTotal);
+        setPayrollCost(payrollTotal);
 
         const ownerMap = new Map<string, { revenue: number; jobCount: number }>();
         for (const r of pipelineRows) {
@@ -194,9 +228,6 @@ export function OverviewExecutiveBundle() {
         const fromMs = new Date(fromIso).getTime();
         const toMs = new Date(toBound).getTime();
         const spanDays = Math.max(1, Math.ceil((toMs - fromMs) / 86400000));
-        const fromDay = fromIso.slice(0, 10);
-        const toDay = toBound.slice(0, 10);
-
         const [{ data: invPaid }, { data: sbPaid }, billRes] = await Promise.all([
           supabase
             .from("invoices")
@@ -302,7 +333,8 @@ export function OverviewExecutiveBundle() {
           setRevenue(0);
           setPartnerDirect(0);
           setGrossProfit(0);
-          setCommission(0);
+          setBillsCost(0);
+          setPayrollCost(0);
           setOwnerLeaderboard([]);
           setTopAccounts([]);
           setCashflow([]);
@@ -325,7 +357,8 @@ export function OverviewExecutiveBundle() {
     return () => window.removeEventListener("master-os-company-settings", refreshGoal);
   }, []);
 
-  const netProfit = grossProfit - commission;
+  /** Pipeline revenue minus direct job cost, company bills (due in range), and payroll internal lines (due in range). */
+  const netProfit = grossProfit - billsCost - payrollCost;
   const grossPct = revenue > 0 ? Math.round((grossProfit / revenue) * 1000) / 10 : 0;
   const netPct = revenue > 0 ? Math.round((netProfit / revenue) * 1000) / 10 : 0;
   const { current, next, fillPct } = tierProgress(billingForTier, tiers);
@@ -360,7 +393,7 @@ export function OverviewExecutiveBundle() {
             {
               label: "Net margin",
               value: netProfit,
-              sub: `${netPct}% after commission`,
+              sub: `${netPct}% of revenue · after bills & payroll (in range)`,
               accent: netPct >= 15 ? "text-sky-600" : "text-rose-600",
             },
           ].map((cell) => (
