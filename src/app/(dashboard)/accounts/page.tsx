@@ -55,6 +55,12 @@ const PAYMENT_TERMS_OPTIONS = [
   { value: "Net 30", label: "Net 30" },
   { value: "Net 60", label: "Net 60" },
   { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Every 7 days", label: "Every 7 days (weekly invoice)" },
+  { value: "Every 15 days", label: "Every 15 days (weekly invoice)" },
+  { value: "Every 30 days", label: "Every 30 days (weekly invoice)" },
+  { value: "Every Friday", label: "Every Friday (weekly invoice)" },
+  { value: "Every 2 weeks on Friday", label: "Every 2 weeks on Friday" },
+  { value: "45 days", label: "45 days" },
 ];
 
 const statusConfig: Record<string, { label: string; variant: "success" | "info" | "default" }> = {

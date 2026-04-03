@@ -81,8 +81,9 @@ export default function BillsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [saving, setSaving] = useState(false);
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("month");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [expandedSeries, setExpandedSeries] = useState<Record<string, boolean>>({});
@@ -99,8 +100,8 @@ export default function BillsPage() {
   );
 
   const periodBounds = useMemo(
-    () => getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo),
-    [periodMode, weekAnchor, rangeFrom, rangeTo]
+    () => getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
+    [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]
   );
 
   const load = useCallback(async () => {
@@ -143,8 +144,8 @@ export default function BillsPage() {
   );
 
   const kpiPeriodDesc = useMemo(
-    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
-    [periodMode, weekAnchor, rangeFrom, rangeTo]
+    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
+    [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]
   );
 
   const billKindKpiLabel =
@@ -458,6 +459,9 @@ export default function BillsPage() {
           onModeChange={setPeriodMode}
           weekAnchor={weekAnchor}
           onWeekAnchorChange={setWeekAnchor}
+          showMonthOption
+          monthAnchor={monthAnchor}
+          onMonthAnchorChange={setMonthAnchor}
           rangeFrom={rangeFrom}
           rangeTo={rangeTo}
           onRangeFromChange={setRangeFrom}

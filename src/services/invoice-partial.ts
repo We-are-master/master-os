@@ -1,12 +1,11 @@
 import { getSupabase } from "./base";
 import { createJobPayment } from "./job-payments";
 import type { Invoice, Job, JobPaymentType } from "@/types/database";
-import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
+import { invoiceBalanceDue } from "@/lib/invoice-balance";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { listJobPayments } from "./job-payments";
-import { updateInvoice } from "./invoices";
 
 const EPS = 0.02;
 
@@ -49,8 +48,9 @@ export type RecordInvoicePartialInput = {
 };
 
 /**
- * Apply a partial (or final) customer payment against an invoice: updates `invoices.amount_paid`,
- * posts `job_payments` with `linked_invoice_id`, sets `partially_paid` or `paid`.
+ * Apply a partial (or final) customer payment against an invoice: posts `job_payments` with
+ * `linked_invoice_id`, then `syncInvoicesFromJobCustomerPayments` sets `amount_paid` from the ledger
+ * (linked rows take precedence so Finance partials match the job summary).
  */
 export async function recordInvoicePartialPayment(
   invoiceId: string,
@@ -81,6 +81,10 @@ export async function recordInvoicePartialPayment(
   const finalPaid = pays.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
 
   const chunks = allocateToDepositAndFinal(job, depositPaid, finalPaid, payAmt);
+  if (chunks.length === 0) {
+    throw new Error("Could not allocate payment against this job’s deposit/final schedule");
+  }
+
   const noteBase = input.note?.trim() ? `${input.note.trim()} · ` : "";
   for (const ch of chunks) {
     await createJobPayment({
@@ -95,27 +99,20 @@ export async function recordInvoicePartialPayment(
     });
   }
 
-  const prevPaid = invoiceAmountPaid(inv);
-  const newPaid = Math.round((prevPaid + payAmt) * 100) / 100;
-  const full = isInvoiceFullyPaidByAmount({ ...inv, amount_paid: newPaid });
-  const updates: Record<string, unknown> = {
-    amount_paid: newPaid,
-    status: full ? "paid" : "partially_paid",
-    last_payment_date: input.paymentDate,
-  };
-  if (full) {
-    updates.paid_date = input.paymentDate;
-    updates.collection_stage = "completed";
-  } else {
-    updates.paid_date = null;
+  await syncInvoicesFromJobCustomerPayments(supabase, job.id);
+
+  const { data: freshRow, error: freshErr } = await supabase.from("invoices").select("*").eq("id", invoiceId).single();
+  if (freshErr || !freshRow) throw new Error("Could not refresh invoice after recording payment");
+  const fresh = freshRow as Invoice;
+
+  if (fresh.status === "paid") {
+    await syncJobAfterInvoicePaidToLedger(supabase, invoiceId, "Manual");
+    await syncInvoicesFromJobCustomerPayments(supabase, job.id);
   }
 
-  const nextInv = await updateInvoice(invoiceId, updates as Partial<Invoice>);
-  if (full) {
-    await syncJobAfterInvoicePaidToLedger(supabase, invoiceId, "Manual");
-  }
-  await syncInvoicesFromJobCustomerPayments(supabase, job.id);
   await maybeCompleteAwaitingPaymentJob(supabase, job.id);
 
-  return nextInv;
+  const { data: out, error: outErr } = await supabase.from("invoices").select("*").eq("id", invoiceId).single();
+  if (outErr || !out) throw new Error("Could not load updated invoice");
+  return out as Invoice;
 }

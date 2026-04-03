@@ -279,8 +279,15 @@ export default function PeoplePage() {
       setSquadModalOpen(false);
       setEditingSquad(null);
       await load();
-    } catch {
-      toast.error("Failed to save squad");
+    } catch (e) {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e !== null && "message" in (e as object)
+            ? String((e as { message: unknown }).message)
+            : "Failed to save squad";
+      console.error("Save squad failed", e);
+      toast.error(msg);
     } finally {
       setSquadSaving(false);
     }

@@ -1,6 +1,16 @@
 import { getSupabase, softDeleteById } from "./base";
 import type { Squad, TeamMember } from "@/types/database";
 
+function uniqueSlugFromName(name: string): string {
+  const base = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48);
+  return `${base || "squad"}-${Date.now().toString(36)}`;
+}
+
 export async function listSquads(): Promise<Squad[]> {
   const { data, error } = await getSupabase()
     .from("squads")
@@ -12,13 +22,28 @@ export async function listSquads(): Promise<Squad[]> {
 }
 
 export async function createSquad(name: string): Promise<Squad> {
-  const { data, error } = await getSupabase()
-    .from("squads")
-    .insert({ name })
-    .select()
-    .single();
-  if (error) throw error;
-  return data as Squad;
+  const supabase = getSupabase();
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Name is required");
+  const now = new Date().toISOString();
+  const slug = uniqueSlugFromName(trimmed);
+
+  const payloads: Record<string, unknown>[] = [
+    { name: trimmed, created_at: now, updated_at: now },
+    { name: trimmed },
+    { name: trimmed, slug, created_at: now, updated_at: now },
+    { name: trimmed, slug },
+  ];
+
+  let lastErr: { message?: string; code?: string } | null = null;
+  for (const row of payloads) {
+    const { data, error } = await supabase.from("squads").insert(row).select().single();
+    if (!error && data) return data as Squad;
+    lastErr = error as { message?: string; code?: string };
+  }
+
+  if (lastErr?.message) throw new Error(lastErr.message);
+  throw new Error("Could not create squad");
 }
 
 export async function updateSquad(id: string, updates: Partial<Pick<Squad, "name">>): Promise<void> {

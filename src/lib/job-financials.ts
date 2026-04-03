@@ -34,6 +34,11 @@ export function partnerPaymentCap(j: Job): number {
   return agreed > 0 ? agreed : cost;
 }
 
+/** Partner payout + materials — rolls into weekly self-bill (even when partner is already marked paid). */
+export function partnerSelfBillGrossAmount(j: Job): number {
+  return partnerPaymentCap(j) + Number(j.materials_cost ?? 0);
+}
+
 export function customerScheduledTotal(j: Job): number {
   return Number(j.customer_deposit ?? 0) + Number(j.customer_final_payment ?? 0);
 }

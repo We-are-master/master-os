@@ -18,7 +18,7 @@ export function SquadModal({
   open: boolean;
   onClose: () => void;
   initial: Squad | null;
-  onSave: (name: string) => void;
+  onSave: (name: string) => void | Promise<void>;
   saving: boolean;
 }) {
   const [name, setName] = useState("");
@@ -27,13 +27,13 @@ export function SquadModal({
     queueMicrotask(() => setName(initial?.name ?? ""));
   }, [open, initial]);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       toast.error("Name is required");
       return;
     }
-    onSave(name.trim());
+    await Promise.resolve(onSave(name.trim()));
   };
 
   return (
