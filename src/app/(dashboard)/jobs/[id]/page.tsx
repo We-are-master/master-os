@@ -75,8 +75,6 @@ import {
 import {
   jobBillableRevenue,
   jobDirectCost,
-  jobProfit,
-  jobMarginPercent,
   deriveStoredJobFinancials,
   partnerPaymentCap,
   partnerSelfBillGrossAmount,
@@ -1771,11 +1769,26 @@ export default function JobDetailPage() {
   }
 
   const config = statusConfig[job.status] ?? { label: job.status, variant: "default" as const };
-  const billableRevenue = Math.max(jobBillableRevenue(job), customerScheduledTotal(job));
-  const directCost = jobDirectCost(job);
-  const profit = jobProfit(job);
-  const marginPct = jobMarginPercent(job);
-  const partnerCap = partnerPaymentCap(job);
+  /** Hourly jobs: approval + finance form use `computeHourlyTotals` from billed hours / timer; summary must use the same basis or amount due / “fully collected” drift from Final balance. */
+  const hourlyClientBillableWithExtras =
+    job.job_type === "hourly" && hourlyAutoBilling
+      ? hourlyAutoBilling.clientTotal + Number(job.extras_amount ?? 0)
+      : null;
+  const billableRevenue = Math.max(
+    jobBillableRevenue(job),
+    customerScheduledTotal(job),
+    ...(hourlyClientBillableWithExtras != null ? [hourlyClientBillableWithExtras] : []),
+  );
+  const partnerCap =
+    job.job_type === "hourly" && hourlyAutoBilling
+      ? Math.max(partnerPaymentCap(job), hourlyAutoBilling.partnerTotal)
+      : partnerPaymentCap(job);
+  const directCost =
+    job.job_type === "hourly" && hourlyAutoBilling
+      ? hourlyAutoBilling.partnerTotal + Number(job.materials_cost ?? 0)
+      : jobDirectCost(job);
+  const profit = billableRevenue - directCost;
+  const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
   const partnerPaidTotal = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
   const partnerPayRemaining = Math.max(0, partnerCap - partnerPaidTotal);
   const customerDepositPaid = customerPayments
