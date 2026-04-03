@@ -3,6 +3,7 @@ import type { JobPayment, JobPaymentMethod, JobPaymentType } from "@/types/datab
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 export interface CreateJobPaymentInput {
   job_id: string;
@@ -35,22 +36,30 @@ export async function listJobPayments(jobId: string, type?: JobPaymentType): Pro
 
 export async function createJobPayment(input: CreateJobPaymentInput): Promise<JobPayment> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("job_payments")
-    .insert({
-      job_id: input.job_id,
-      type: input.type,
-      amount: input.amount,
-      payment_date: input.payment_date,
-      note: input.note ?? null,
-      payment_method: input.payment_method ?? "bank_transfer",
-      bank_reference: input.bank_reference ?? null,
-      created_by: input.created_by ?? null,
-      source_invoice_id: input.source_invoice_id ?? null,
-      linked_invoice_id: input.linked_invoice_id ?? null,
-    })
-    .select()
-    .single();
+  const base: Record<string, unknown> = {
+    job_id: input.job_id,
+    type: input.type,
+    amount: input.amount,
+    payment_date: input.payment_date,
+    note: input.note ?? null,
+    payment_method: input.payment_method ?? "bank_transfer",
+    bank_reference: input.bank_reference ?? null,
+    created_by: input.created_by ?? null,
+  };
+  let payload: Record<string, unknown> = { ...base };
+  if (input.source_invoice_id) payload.source_invoice_id = input.source_invoice_id;
+  if (input.linked_invoice_id) payload.linked_invoice_id = input.linked_invoice_id;
+
+  let { data, error } = await supabase.from("job_payments").insert(payload).select().single();
+  if (error && isSupabaseMissingColumnError(error, "linked_invoice_id") && "linked_invoice_id" in payload) {
+    const { linked_invoice_id: _, ...rest } = payload;
+    payload = rest;
+    ({ data, error } = await supabase.from("job_payments").insert(payload).select().single());
+  }
+  if (error && isSupabaseMissingColumnError(error, "source_invoice_id") && "source_invoice_id" in payload) {
+    const { source_invoice_id: _, ...rest } = payload;
+    ({ data, error } = await supabase.from("job_payments").insert(rest).select().single());
+  }
 
   if (error) throw error;
 

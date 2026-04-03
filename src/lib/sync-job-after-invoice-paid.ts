@@ -4,6 +4,7 @@ import { customerCollectionsSatisfyBillable, jobBillableRevenue } from "@/lib/jo
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { invoiceAmountPaid } from "@/lib/invoice-balance";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 const EPS = 0.02;
 
@@ -21,11 +22,16 @@ async function loadJobForInvoice(
 }
 
 async function sumLinkedInvoicePayments(client: SupabaseClient, invoiceId: string): Promise<number> {
-  const { data: rows } = await client
+  const { data: rows, error } = await client
     .from("job_payments")
     .select("amount")
     .eq("linked_invoice_id", invoiceId)
     .is("deleted_at", null);
+  if (error) {
+    if (isSupabaseMissingColumnError(error, "linked_invoice_id")) return 0;
+    console.error("sumLinkedInvoicePayments", error);
+    return 0;
+  }
   return (rows ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
 }
 
@@ -57,19 +63,24 @@ export async function syncJobAfterInvoicePaidToLedger(
   const billable = jobBillableRevenue(job);
   const jobRemaining = Math.max(0, billable - customerTotal);
 
-  const { data: existingSource } = await client
+  const { data: existingSource, error: existingSrcErr } = await client
     .from("job_payments")
     .select("id")
     .eq("source_invoice_id", invoiceId)
     .is("deleted_at", null)
     .maybeSingle();
+  if (existingSrcErr && !isSupabaseMissingColumnError(existingSrcErr, "source_invoice_id")) {
+    console.error("syncJobAfterInvoicePaidToLedger: existingSource query", existingSrcErr);
+    return;
+  }
+  const hasExistingSource = Boolean(existingSource) && !existingSrcErr;
 
   const linkedSum = await sumLinkedInvoicePayments(client, invoiceId);
   const invPaid = invoiceAmountPaid(inv as { amount_paid?: number });
   const invoiceNotYetOnJobLedger = Math.max(0, invPaid - linkedSum);
   const payAmt = Math.min(jobRemaining, invoiceNotYetOnJobLedger > EPS ? invoiceNotYetOnJobLedger : jobRemaining);
 
-  if (!existingSource && payAmt > EPS) {
+  if (!hasExistingSource && payAmt > EPS) {
     const paidDate = (inv.paid_date as string) || new Date().toISOString().split("T")[0];
     const paymentRow = {
       job_id: job.id,

@@ -45,22 +45,34 @@ export async function recomputeSelfBillTotals(selfBillId: string): Promise<void>
   if (uErr) throw uErr;
 }
 
+export type EnsureWeeklySelfBillOptions = {
+  /**
+   * Which calendar week (Mon–Sun) this bill belongs to.
+   * Use **today** when linking at approval / payment so Finance “current week” matches ops.
+   * Omit to use `job.created_at` (backwards-compatible for any future callers).
+   */
+  weekAnchorDate?: Date;
+};
+
 /**
  * One weekly self-bill per partner (Mon–Sun), many jobs.
- * Uses job.created_at to determine the ISO week bucket.
+ * Default week bucket uses `job.created_at`; `createSelfBillFromJob` passes **today** so approval-time
+ * links land in the current ISO week (not the week the job record was created).
  */
-export async function ensureWeeklySelfBillForJob(job: Job): Promise<string | null> {
+export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
   if (!job.partner_id?.trim()) return null;
   const supabase = getSupabase();
-  const created = new Date(job.created_at);
-  const { weekStart, weekEnd, weekLabel } = getWeekBoundsForDate(created);
+  const anchor = options?.weekAnchorDate ?? new Date(job.created_at);
+  const { weekStart, weekEnd, weekLabel } = getWeekBoundsForDate(anchor);
 
+  // Any row for this partner + ISO week (same as backfill-from-jobs). Do not filter by status:
+  // once a bill moves to awaiting_payment / ready_to_pay / paid, older logic missed it and
+  // insert failed on unique (partner, week) or silently broke linking.
   const { data: existing, error: selErr } = await supabase
     .from("self_bills")
     .select("id")
     .eq("partner_id", job.partner_id)
     .eq("week_start", weekStart)
-    .in("status", ["accumulating", "pending_review"])
     .limit(1)
     .maybeSingle();
 
@@ -106,7 +118,6 @@ export async function ensureWeeklySelfBillForJob(job: Job): Promise<string | nul
             .select("id")
             .eq("partner_id", job.partner_id)
             .eq("week_start", weekStart)
-            .in("status", ["accumulating", "pending_review"])
             .limit(1)
             .maybeSingle();
           sbId = race?.id as string | undefined;
@@ -118,7 +129,6 @@ export async function ensureWeeklySelfBillForJob(job: Job): Promise<string | nul
           .select("id")
           .eq("partner_id", job.partner_id)
           .eq("week_start", weekStart)
-          .in("status", ["accumulating", "pending_review"])
           .limit(1)
           .maybeSingle();
         sbId = race?.id as string | undefined;
@@ -193,7 +203,7 @@ export async function createSelfBillFromJob(job: CreateSelfBillFromJobInput): Pr
   const supabase = getSupabase();
   const { data: full } = await supabase.from("jobs").select("*").eq("id", job.id).single();
   if (!full) throw new Error("Job not found");
-  const id = await ensureWeeklySelfBillForJob(full as Job);
+  const id = await ensureWeeklySelfBillForJob(full as Job, { weekAnchorDate: new Date() });
   if (!id) throw new Error("Partner required for self-bill");
   const row = await getSelfBill(id);
   if (!row) throw new Error("Self-bill not found after create");

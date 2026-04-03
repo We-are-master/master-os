@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Invoice, InvoiceCollectionStage, InvoiceStatus, Job } from "@/types/database";
 import { inferInvoiceKind, deriveCollectionStageForInvoice } from "@/lib/invoice-collection";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 const EPS = 0.02;
 
@@ -21,22 +22,32 @@ function computeStatus(inv: Invoice, amountPaid: number, amount: number): Invoic
 }
 
 async function sumLinkedCustomerPayments(client: SupabaseClient, invoiceId: string): Promise<number> {
-  const { data: rows } = await client
+  const { data: rows, error } = await client
     .from("job_payments")
     .select("amount")
     .eq("linked_invoice_id", invoiceId)
     .in("type", ["customer_deposit", "customer_final"])
     .is("deleted_at", null);
+  if (error && isSupabaseMissingColumnError(error, "linked_invoice_id")) return 0;
+  if (error) {
+    console.error("sumLinkedCustomerPayments", error);
+    return 0;
+  }
   return Math.round((rows ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0) * 100) / 100;
 }
 
 async function latestLinkedPaymentDate(client: SupabaseClient, invoiceId: string): Promise<string | null> {
-  const { data: rows } = await client
+  const { data: rows, error } = await client
     .from("job_payments")
     .select("payment_date")
     .eq("linked_invoice_id", invoiceId)
     .in("type", ["customer_deposit", "customer_final"])
     .is("deleted_at", null);
+  if (error) {
+    if (isSupabaseMissingColumnError(error, "linked_invoice_id")) return null;
+    console.error("latestLinkedPaymentDate", error);
+    return null;
+  }
   let latest: string | null = null;
   for (const r of rows ?? []) {
     const d = (r as { payment_date?: string }).payment_date?.slice(0, 10);

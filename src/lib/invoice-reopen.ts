@@ -4,6 +4,7 @@ import { isJobForcePaid } from "@/lib/job-force-paid";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 /**
  * Reset an invoice from paid/partially_paid to pending: clear amount_paid, remove job_payments
@@ -28,7 +29,7 @@ export async function reopenInvoiceToPending(client: SupabaseClient, invoice: In
     .select("id")
     .eq("source_invoice_id", invoice.id)
     .is("deleted_at", null);
-  if (e2) throw e2;
+  if (e2 && !isSupabaseMissingColumnError(e2, "source_invoice_id")) throw e2;
   for (const row of bySource ?? []) {
     await client.from("job_payments").update({ deleted_at: now }).eq("id", (row as { id: string }).id);
   }

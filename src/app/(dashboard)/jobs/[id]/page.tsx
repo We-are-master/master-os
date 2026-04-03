@@ -104,7 +104,7 @@ import {
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
-import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
+import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
@@ -1018,7 +1018,7 @@ export default function JobDetailPage() {
             primarySelfBillId = pick.id;
           }
           const shouldCreateSelfBill =
-            partnerSelfBillGrossAmount(j) > 0.02 || partnerDue > 0.02;
+            partnerSelfBillGrossAmount(j) > 0 || partnerDue > 0.02;
           if (!primarySelfBillId && shouldCreateSelfBill) {
             const selfBill = await createSelfBillFromJob({
               id: j.id,
@@ -1601,6 +1601,16 @@ export default function JobDetailPage() {
           linked.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ?? linked[linked.length - 1];
         primaryInvoiceId = pick.id;
       }
+      const primaryInvoiceRow = primaryInvoiceId ? linked.find((i) => i.id === primaryInvoiceId) : undefined;
+      const invoiceForPaidCheck =
+        primaryInvoiceRow ??
+        linked.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
+        linked[0];
+      const invoiceShowsPaidInDb =
+        Boolean(invoiceForPaidCheck) &&
+        (invoiceForPaidCheck!.status === "paid" || isInvoiceFullyPaidByAmount(invoiceForPaidCheck!));
+      const customerDueForStatus = invoiceShowsPaidInDb ? 0 : customerDue;
+
       if (!primaryInvoiceId && customerDue > 0.02) {
         const inv = await createOrAppendJobInvoice(current, {
           client_name: current.client_name ?? "Client",
@@ -1614,7 +1624,7 @@ export default function JobDetailPage() {
         if (inv.status === "paid") {
           await syncJobAfterInvoicePaidToLedger(getSupabase(), inv.id, "Manual");
         }
-      } else if (primaryInvoiceId && customerDue > 0.02) {
+      } else if (primaryInvoiceId && customerDue > 0.02 && !invoiceShowsPaidInDb) {
         // Keep linked invoice aligned with the latest approved totals (incl. hourly billed-hours changes).
         await updateInvoice(primaryInvoiceId, {
           amount: Math.max(0, customerDue),
@@ -1648,7 +1658,7 @@ export default function JobDetailPage() {
             primarySelfBillId = pick.id;
           }
           const shouldCreateSelfBill =
-            partnerSelfBillGrossAmount(current) > 0.02 || partnerDue > 0.02;
+            partnerSelfBillGrossAmount(current) > 0 || partnerDue > 0.02;
           if (!primarySelfBillId && shouldCreateSelfBill) {
             const selfBill = await createSelfBillFromJob({
               id: current.id,
@@ -1676,7 +1686,7 @@ export default function JobDetailPage() {
       // Never re-derive hourly totals from the office timer here — this flow already applied modal hours + rates,
       // and timer-based recalc would overwrite approved amounts (and desync the finance summary from the invoice).
       const statusOpts = { skipHourlyRecalc: current.job_type === "hourly" };
-      if (customerDue > 0.02 || partnerDue > 0.02) {
+      if (customerDueForStatus > 0.02 || partnerDue > 0.02) {
         const next = await handleStatusChange(current, "awaiting_payment", statusOpts);
         if (next) current = next;
         toast.success("Approved. Job moved to Awaiting payment.");
@@ -1873,6 +1883,16 @@ export default function JobDetailPage() {
 
   const approvalAmountDue = Math.max(0, approvalBillableRevenue - customerPaidTotal);
   const approvalPartnerPayRemaining = Math.max(0, approvalPartnerCap - partnerPaidTotal);
+  const approvalPrimaryInvoice = job.invoice_id
+    ? jobInvoices.find((i) => i.id === job.invoice_id) ??
+      jobInvoices.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
+      jobInvoices[0] ??
+      null
+    : jobInvoices.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ?? jobInvoices[0] ?? null;
+  const approvalInvoiceShowsPaid =
+    Boolean(approvalPrimaryInvoice) &&
+    (approvalPrimaryInvoice.status === "paid" || isInvoiceFullyPaidByAmount(approvalPrimaryInvoice));
+  const approvalEffectiveCustomerDue = approvalInvoiceShowsPaid ? 0 : approvalAmountDue;
   const approvalCustomerPaidPct =
     approvalBillableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / approvalBillableRevenue) * 100)) : 100;
   const approvalPartnerPaidPct =
@@ -3047,8 +3067,10 @@ export default function JobDetailPage() {
             <div className="rounded-xl border border-border-light bg-card p-3">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total price</p>
               <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(approvalBillableRevenue)}</p>
-              {approvalAmountDue > 0.02 ? (
-                <p className="text-[11px] font-semibold text-amber-600 mt-1">Amount due: {formatCurrency(approvalAmountDue)}</p>
+              {approvalEffectiveCustomerDue > 0.02 ? (
+                <p className="text-[11px] font-semibold text-amber-600 mt-1">Amount due: {formatCurrency(approvalEffectiveCustomerDue)}</p>
+              ) : approvalInvoiceShowsPaid ? (
+                <p className="text-[11px] font-semibold text-emerald-600 mt-1">Client invoice paid — collections satisfied for close.</p>
               ) : null}
             </div>
             <div className="rounded-xl border border-border-light bg-card p-3">
@@ -3074,7 +3096,7 @@ export default function JobDetailPage() {
                 <Progress value={approvalCustomerPaidPct} className="h-2 mt-2" />
                 <div className="flex items-center justify-between text-xs mt-1">
                   <span className="text-text-secondary">Client payment: Due</span>
-                  <span className={cn("font-semibold", approvalAmountDue <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalAmountDue)}</span>
+                  <span className={cn("font-semibold", approvalEffectiveCustomerDue <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalEffectiveCustomerDue)}</span>
                 </div>
               </div>
               <div>
@@ -3138,7 +3160,7 @@ export default function JobDetailPage() {
               </div>
               <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs">
                 <p className="text-text-tertiary">Next status</p>
-                <p className="font-semibold text-text-primary mt-0.5">{approvalAmountDue > 0.02 || approvalPartnerPayRemaining > 0.02 ? "Awaiting payment" : "Completed & paid"}</p>
+                <p className="font-semibold text-text-primary mt-0.5">{approvalEffectiveCustomerDue > 0.02 || approvalPartnerPayRemaining > 0.02 ? "Awaiting payment" : "Completed & paid"}</p>
               </div>
             </div>
           </div>
