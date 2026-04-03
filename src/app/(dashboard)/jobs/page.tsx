@@ -25,6 +25,7 @@ import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage } from "@/li
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob, fetchAllJobsFinancialKpiRows } from "@/services/jobs";
+import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById, type ListParams } from "@/services/base";
@@ -212,6 +213,14 @@ function JobsPageContent() {
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    if (status === "archived" && viewMode !== "list") setViewMode("list");
+  }, [status, viewMode]);
+
+  useEffect(() => {
+    if (status === "archived") setSelectedIds(new Set());
+  }, [status]);
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       const t = e.target as Node;
       if (filterOpen && filterRef.current && !filterRef.current.contains(t)) setFilterOpen(false);
@@ -296,11 +305,14 @@ function JobsPageContent() {
     setKpiFinancialLoading(true);
     try {
       const countOpts = scheduleRange ? { scheduleRange } : undefined;
-      const [counts, rows] = await Promise.all([
+      const supabase = getSupabase();
+      const [counts, rows, archivedHead] = await Promise.all([
         getStatusCounts("jobs", [...JOB_STATUSES], "status", countOpts),
         fetchAllJobsFinancialKpiRows(scheduleRange),
+        supabase.from("jobs").select("*", { count: "exact", head: true }).not("deleted_at", "is", null),
       ]);
-      setTabCounts(counts);
+      const archivedCount = archivedHead.error ? 0 : archivedHead.count ?? 0;
+      setTabCounts({ ...counts, archived: archivedCount });
       const pipelineRows = rows.filter((r) => r.status !== "cancelled");
       const ticketSum = pipelineRows.reduce((s, r) => s + jobBillableRevenue(r), 0);
       setTotalRevenue(ticketSum);
@@ -371,6 +383,7 @@ function JobsPageContent() {
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
     { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0 },
     { id: "cancelled", label: "Lost & Cancelled", count: tabCounts.cancelled ?? 0 },
+    { id: "archived", label: "Archived", count: tabCounts.archived ?? 0 },
   ];
 
   useEffect(() => {
@@ -615,10 +628,13 @@ function JobsPageContent() {
         if (upErr) throw upErr;
       }
 
+      await refreshSelfBillPayoutStatesForJobIds(ids);
+
       await logBulkAction("job", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
       toast.success(`${ids.length} jobs updated`);
       setSelectedIds(new Set());
       refresh();
+      loadDashboardStats();
     } catch {
       toast.error("Failed");
     }
@@ -637,13 +653,21 @@ function JobsPageContent() {
       const supabase = getSupabase();
       const { data: jobRows, error: jobFetchErr } = await supabase
         .from("jobs")
-        .select("reference, invoice_id")
+        .select("reference, invoice_id, self_bill_id")
         .in("id", ids)
         .is("deleted_at", null);
       if (jobFetchErr) throw jobFetchErr;
       const forInvoices = (jobRows ?? []) as { reference: string; invoice_id?: string | null }[];
+      const selfBillIds = [
+        ...new Set(
+          (jobRows ?? [])
+            .map((r) => (r as { self_bill_id?: string | null }).self_bill_id)
+            .filter((x): x is string => Boolean(x && String(x).trim())),
+        ),
+      ];
       await softDeleteInvoicesForArchivedJobs(forInvoices, profile?.id);
       await Promise.all(ids.map((id) => softDeleteById("jobs", id, profile?.id)));
+      await Promise.all(selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)));
       await logBulkAction("job", ids, "deleted", "deleted_at", "archived", profile?.id, profile?.full_name);
       toast.success(`${selectedIds.size} jobs archived`);
       setSelectedIds(new Set());
@@ -914,7 +938,32 @@ function JobsPageContent() {
               <SearchInput placeholder="Search jobs..." className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           </div>
-          {viewMode === "list" && <DataTable columns={columns} data={data} loading={loading} getRowId={(item) => item.id} onRowClick={(job) => router.push(`/jobs/${job.id}`)} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds} bulkActions={<div className="flex items-center gap-2"><span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span><BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" /><BulkBtn label="Paid & Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" /><BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" /></div>} />}
+          {viewMode === "list" && (
+            <DataTable
+              columns={columns}
+              data={data}
+              loading={loading}
+              getRowId={(item) => item.id}
+              onRowClick={(job) => router.push(`/jobs/${job.id}`)}
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              onPageChange={setPage}
+              selectable={status !== "archived"}
+              selectedIds={selectedIds}
+              onSelectionChange={setSelectedIds}
+              bulkActions={
+                status === "archived" ? undefined : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
+                    <BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" />
+                    <BulkBtn label="Paid & Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" />
+                    <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
+                  </div>
+                )
+              }
+            />
+          )}
           {viewMode === "kanban" && (
             <div className="min-h-[400px]">
               {loading ? (

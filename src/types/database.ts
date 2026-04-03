@@ -306,6 +306,8 @@ export interface Job {
   internal_invoice_approved?: boolean;
   /** Optional checklist items for Start Job modal (when set). */
   operational_checklist?: unknown;
+  /** Soft-delete (archive); job hidden from active lists but retained for audit. */
+  deleted_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -437,7 +439,13 @@ export type SelfBillStatus =
   | "ready_to_pay"
   | "paid"
   | "audit_required"
-  | "rejected";
+  | "rejected"
+  /** Linked jobs archived (soft-deleted); net payout zeroed for transparency. */
+  | "payout_archived"
+  /** Office-cancelled jobs only (no partner_cancelled_at). */
+  | "payout_cancelled"
+  /** Partner-cancelled / lost pipeline jobs (partner_cancelled_at set). */
+  | "payout_lost";
 
 /** Partner field jobs vs office payroll directory (People). */
 export type SelfBillOrigin = "partner" | "internal";
@@ -470,6 +478,11 @@ export interface SelfBill {
   net_payout: number;
   status: SelfBillStatus;
   created_at: string;
+  /** Snapshot before payout was voided (audit / partner PDF). */
+  original_net_payout?: number | null;
+  payout_void_reason?: string | null;
+  /** Partner-facing label: Archived, Lost, Cancelled. */
+  partner_status_label?: string | null;
 }
 
 /** Custos internos (payroll, despesas operacionais pontuais) */

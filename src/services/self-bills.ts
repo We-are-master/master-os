@@ -1,5 +1,5 @@
 import { getSupabase } from "./base";
-import type { Job, SelfBill } from "@/types/database";
+import type { Job, SelfBill, SelfBillStatus } from "@/types/database";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 
 export type CreateSelfBillFromJobInput = Pick<
@@ -7,26 +7,64 @@ export type CreateSelfBillFromJobInput = Pick<
   "id" | "reference" | "partner_name" | "partner_cost" | "materials_cost"
 >;
 
+/** Self-bills with zero payout due to archived / cancelled / lost jobs (kept visible for audit). */
+export const SELF_BILL_PAYOUT_VOID_STATUSES: SelfBillStatus[] = [
+  "payout_archived",
+  "payout_cancelled",
+  "payout_lost",
+];
+
+export function isSelfBillPayoutVoided(sb: Pick<SelfBill, "status">): boolean {
+  return SELF_BILL_PAYOUT_VOID_STATUSES.includes(sb.status);
+}
+
 function uniqueRef(weekLabel: string, jobRef: string): string {
   const short = jobRef.replace(/\s/g, "").slice(0, 8);
   return `SB-${weekLabel}-${short}`;
 }
 
-/** Recompute aggregates from all jobs linked to this self-bill. */
+type JobPayoutRow = {
+  partner_cost?: number | null;
+  materials_cost?: number | null;
+  status?: string | null;
+  deleted_at?: string | null;
+  partner_cancelled_at?: string | null;
+};
+
+/** Active jobs that still count toward partner payout on a weekly self-bill. */
+export function jobContributesToSelfBillPayout(j: Pick<Job, "status" | "deleted_at">): boolean {
+  if (j.deleted_at) return false;
+  if (j.status === "cancelled") return false;
+  return true;
+}
+
+/** Partner-readable job state when the job no longer counts toward payout (for UI / PDF). */
+export function selfBillJobPayoutStateLabel(
+  j: Pick<Job, "status" | "deleted_at" | "partner_cancelled_at">,
+): string | null {
+  if (j.deleted_at) return "Archived";
+  if (j.status === "cancelled" && j.partner_cancelled_at) return "Lost";
+  if (j.status === "cancelled") return "Cancelled";
+  return null;
+}
+
+/**
+ * Recompute labour/materials/net from linked jobs that are still payable (not archived, not cancelled).
+ * Does not assign payout-void status — use `refreshSelfBillPayoutState` after job lifecycle changes.
+ */
 export async function recomputeSelfBillTotals(selfBillId: string): Promise<void> {
   const supabase = getSupabase();
-  // Sum in app: PostgREST often returns 400 when combining id.count() with column.sum() in one select.
   const { data: rows, error: selErr } = await supabase
     .from("jobs")
-    .select("partner_cost, materials_cost")
-    .eq("self_bill_id", selfBillId)
-    .is("deleted_at", null);
+    .select("partner_cost, materials_cost, status, deleted_at")
+    .eq("self_bill_id", selfBillId);
   if (selErr) throw selErr;
-  const list = (rows ?? []) as { partner_cost?: number | null; materials_cost?: number | null }[];
-  const jobsCount = list.length;
+  const list = (rows ?? []) as JobPayoutRow[];
+  const payable = list.filter((r) => !r.deleted_at && r.status !== "cancelled");
+  const jobsCount = payable.length;
   let jobValue = 0;
   let materials = 0;
-  for (const r of list) {
+  for (const r of payable) {
     jobValue += Number(r.partner_cost) || 0;
     materials += Number(r.materials_cost) || 0;
   }
@@ -45,29 +83,114 @@ export async function recomputeSelfBillTotals(selfBillId: string): Promise<void>
   if (uErr) throw uErr;
 }
 
+/**
+ * Recompute totals from payable jobs, then set payout-void status (or reopen accumulating) from linked job states.
+ * Skips **paid** and **internal** self-bills. Call after job status/archive changes and weekly linking.
+ */
+export async function refreshSelfBillPayoutState(selfBillId: string): Promise<void> {
+  const supabase = getSupabase();
+  const before = await getSelfBill(selfBillId);
+  if (!before) return;
+  if (before.bill_origin === "internal") return;
+  if (before.status === "paid") return;
+
+  const prevNet = Number(before.net_payout) || 0;
+  const prevOriginalSnapshot = before.original_net_payout;
+
+  await recomputeSelfBillTotals(selfBillId);
+
+  const sb = await getSelfBill(selfBillId);
+  if (!sb || sb.status === "paid") return;
+
+  const { data: jobRows, error: jErr } = await supabase
+    .from("jobs")
+    .select("id, status, deleted_at, partner_cancelled_at")
+    .eq("self_bill_id", selfBillId);
+  if (jErr) throw jErr;
+  const jobs = (jobRows ?? []) as JobPayoutRow[];
+
+  const paying = jobs.filter((j) => !j.deleted_at && j.status !== "cancelled");
+
+  if (paying.length > 0) {
+    if (SELF_BILL_PAYOUT_VOID_STATUSES.includes(sb.status)) {
+      const net = Number(sb.net_payout) || 0;
+      if (net > 0.02) {
+        const { error: up } = await supabase
+          .from("self_bills")
+          .update({
+            status: "accumulating",
+            payout_void_reason: null,
+            partner_status_label: null,
+          })
+          .eq("id", selfBillId);
+        if (up) throw up;
+      }
+    }
+    return;
+  }
+
+  if (jobs.length === 0) return;
+
+  const hasArchived = jobs.some((j) => Boolean(j.deleted_at));
+  const hasLost = jobs.some((j) => j.status === "cancelled" && j.partner_cancelled_at);
+  const hasOfficeCancel = jobs.some((j) => j.status === "cancelled" && !j.partner_cancelled_at);
+
+  let nextStatus: SelfBillStatus;
+  let partnerLabel: string;
+  let reason: string;
+
+  if (hasArchived) {
+    nextStatus = "payout_archived";
+    partnerLabel = "Archived";
+    reason = jobs.length > 1 ? "Jobs archived and removed from payout" : "Job archived and removed from payout";
+  } else if (hasLost) {
+    nextStatus = "payout_lost";
+    partnerLabel = "Lost";
+    reason = jobs.length > 1 ? "Jobs marked as lost" : "Job marked as lost";
+  } else if (hasOfficeCancel) {
+    nextStatus = "payout_cancelled";
+    partnerLabel = "Cancelled";
+    reason = jobs.length > 1 ? "Jobs cancelled before completion" : "Job cancelled before completion";
+  } else {
+    nextStatus = "payout_cancelled";
+    partnerLabel = "Cancelled";
+    reason = "No payable amount on this self-bill";
+  }
+
+  const originalNetPayout =
+    prevOriginalSnapshot != null && Number.isFinite(Number(prevOriginalSnapshot))
+      ? Number(prevOriginalSnapshot)
+      : prevNet > 0.02
+        ? prevNet
+        : null;
+
+  const { error: voidErr } = await supabase
+    .from("self_bills")
+    .update({
+      status: nextStatus,
+      jobs_count: 0,
+      job_value: 0,
+      materials: 0,
+      commission: 0,
+      net_payout: 0,
+      payout_void_reason: reason,
+      partner_status_label: partnerLabel,
+      ...(originalNetPayout != null ? { original_net_payout: originalNetPayout } : {}),
+    })
+    .eq("id", selfBillId);
+  if (voidErr) throw voidErr;
+}
+
 export type EnsureWeeklySelfBillOptions = {
-  /**
-   * Which calendar week (Mon–Sun) this bill belongs to.
-   * Use **today** when linking at approval / payment so Finance “current week” matches ops.
-   * Omit to use `job.created_at` (backwards-compatible for any future callers).
-   */
   weekAnchorDate?: Date;
 };
 
-/**
- * One weekly self-bill per partner (Mon–Sun), many jobs.
- * Default week bucket uses `job.created_at`; `createSelfBillFromJob` passes **today** so approval-time
- * links land in the current ISO week (not the week the job record was created).
- */
 export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
   if (!job.partner_id?.trim()) return null;
   const supabase = getSupabase();
   const anchor = options?.weekAnchorDate ?? new Date(job.created_at);
   const { weekStart, weekEnd, weekLabel } = getWeekBoundsForDate(anchor);
 
-  // Any row for this partner + ISO week (same as backfill-from-jobs). Do not filter by status:
-  // once a bill moves to awaiting_payment / ready_to_pay / paid, older logic missed it and
-  // insert failed on unique (partner, week) or silently broke linking.
   const { data: existing, error: selErr } = await supabase
     .from("self_bills")
     .select("id")
@@ -144,30 +267,38 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   const { error: linkErr } = await supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
   if (linkErr) throw linkErr;
 
-  await recomputeSelfBillTotals(sbId);
+  await refreshSelfBillPayoutState(sbId);
   return sbId;
 }
 
-/**
- * Call after job create/update when partner and money fields may have changed.
- * Only recomputes totals when the job is already linked — does **not** auto-insert weekly self-bills
- * (avoids DB/RLS/constraint errors on every `updateJob` until backend is aligned). Linking is done
- * explicitly from approval flow or the job self-bill panel when the insert succeeds.
- */
 export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
-  if (!job.partner_id?.trim()) return;
   if (!job.self_bill_id) return;
   try {
-    await recomputeSelfBillTotals(job.self_bill_id);
+    await refreshSelfBillPayoutState(job.self_bill_id);
   } catch (e) {
     console.error("syncSelfBillAfterJobChange failed:", e);
   }
 }
 
-/**
- * Self-bills tied to a job (by jobs.reference + optional primary self_bill id on the job).
- * Mirrors listInvoicesLinkedToJob (invoices): resolves from DB so stale client state still picks up links.
- */
+/** After bulk job updates that bypass `updateJob`, refresh every linked weekly self-bill. */
+export async function refreshSelfBillPayoutStatesForJobIds(jobIds: string[]): Promise<void> {
+  if (jobIds.length === 0) return;
+  const supabase = getSupabase();
+  const { data, error } = await supabase.from("jobs").select("self_bill_id").in("id", jobIds);
+  if (error) {
+    console.error("refreshSelfBillPayoutStatesForJobIds:", error);
+    return;
+  }
+  const sbIds = [
+    ...new Set(
+      (data ?? [])
+        .map((r) => (r as { self_bill_id?: string | null }).self_bill_id)
+        .filter((x): x is string => Boolean(x && String(x).trim())),
+    ),
+  ];
+  await Promise.all(sbIds.map((bid) => refreshSelfBillPayoutState(bid).catch((e) => console.error("refreshSelfBillPayoutState", bid, e))));
+}
+
 export async function listSelfBillsLinkedToJob(
   jobReference: string,
   primarySelfBillId?: string | null,
@@ -177,7 +308,6 @@ export async function listSelfBillsLinkedToJob(
     .from("jobs")
     .select("self_bill_id")
     .eq("reference", jobReference)
-    .is("deleted_at", null)
     .maybeSingle();
   if (jobErr) throw jobErr;
   const ids = new Set<string>();
@@ -195,10 +325,6 @@ export async function listSelfBillsLinkedToJob(
   return rows;
 }
 
-/**
- * Legacy hook: when a job hits Awaiting Payment without a bill, attach to the weekly bucket.
- * Prefer syncSelfBillAfterJobChange from job create.
- */
 export async function createSelfBillFromJob(job: CreateSelfBillFromJobInput): Promise<SelfBill> {
   const supabase = getSupabase();
   const { data: full } = await supabase.from("jobs").select("*").eq("id", job.id).single();
@@ -217,13 +343,23 @@ export async function getSelfBill(id: string): Promise<SelfBill | null> {
   return (data as SelfBill) ?? null;
 }
 
-export async function listJobsForSelfBill(selfBillId: string): Promise<Pick<Job, "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address">[]> {
+export type SelfBillJobLine = Pick<
+  Job,
+  "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address"
+> & {
+  deleted_at?: string | null;
+  partner_cancelled_at?: string | null;
+};
+
+export async function listJobsForSelfBill(selfBillId: string): Promise<SelfBillJobLine[]> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("jobs")
-    .select("id, reference, title, partner_cost, materials_cost, status, property_address")
+    .select(
+      "id, reference, title, partner_cost, materials_cost, status, property_address, deleted_at, partner_cancelled_at",
+    )
     .eq("self_bill_id", selfBillId)
     .order("reference", { ascending: true });
   if (error) throw error;
-  return (data ?? []) as Pick<Job, "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address">[];
+  return (data ?? []) as SelfBillJobLine[];
 }

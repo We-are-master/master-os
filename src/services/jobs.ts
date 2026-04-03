@@ -87,9 +87,22 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     !params.dateFrom &&
     !params.dateTo &&
     !params.scheduleRange &&
+    params.status !== "archived" &&
     (params.status === "scheduled" || params.status === "all" || !params.status);
   if (shouldRunMarkLate && Date.now() - lastMarkLateAt > MARK_LATE_INTERVAL_MS) {
     void markLateJobs(); // fire-and-forget: don't block the list query
+  }
+
+  if (params.status === "archived") {
+    const { status: _st, scheduleRange: _sched, ...rest } = params;
+    return queryList<Job>(
+      "jobs",
+      { ...rest, archivedOnly: true, sortBy: rest.sortBy ?? "deleted_at", sortDir: rest.sortDir ?? "desc" },
+      {
+        searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+        defaultSort: "deleted_at",
+      },
+    );
   }
 
   if (params.status === "in_progress") {

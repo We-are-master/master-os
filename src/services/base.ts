@@ -23,6 +23,8 @@ export interface ListParams {
    * Matches if `scheduled_date` is in range OR `scheduled_start_at` falls within local start/end of range.
    */
   scheduleRange?: { from: string; to: string };
+  /** Soft-deleted rows only (`deleted_at` set). Used for the Jobs "Archived" tab. */
+  archivedOnly?: boolean;
 }
 
 /** PostgREST `or` filter for jobs table schedule window (pairs with deleted_at / status filters via AND). */
@@ -76,7 +78,12 @@ export async function queryList<T>(
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  let query = supabase.from(table).select("*", { count: "exact" }).is("deleted_at", null);
+  let query = supabase.from(table).select("*", { count: "exact" });
+  if (params.archivedOnly) {
+    query = query.not("deleted_at", "is", null);
+  } else {
+    query = query.is("deleted_at", null);
+  }
 
   if (params.statusIn && params.statusIn.length > 0) {
     query = query.in("status", params.statusIn);
