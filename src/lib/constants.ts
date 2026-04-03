@@ -48,19 +48,19 @@ export const NAVIGATION: NavGroup[] = [
     ],
   },
   {
+    label: "People",
+    items: [
+      { label: "Workforce", href: "/people", icon: "contact", permission: "team" },
+      { label: "Users Access", href: "/team", icon: "users-2", permission: "team" },
+    ],
+  },
+  {
     label: "Finance",
     items: [
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
       { label: "Bills", href: "/finance/bills", icon: "file-check", permission: "finance" },
       { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
-    ],
-  },
-  {
-    label: "People",
-    items: [
-      { label: "People directory", href: "/people", icon: "contact", permission: "team" },
-      { label: "Team Members", href: "/team", icon: "users-2", permission: "team" },
     ],
   },
   {

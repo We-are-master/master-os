@@ -292,7 +292,7 @@ export default function PeoplePage() {
     <PageTransition>
       <div className="space-y-6">
         <PageHeader
-          title="People"
+          title="Workforce"
           subtitle="Employees and contractors by squad — profile, documents, finance, and Pay Run data in one place. Squads replace the old payroll roster list."
         >
           <div className="flex flex-wrap gap-2">
