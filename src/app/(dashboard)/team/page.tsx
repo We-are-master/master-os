@@ -60,12 +60,12 @@ export default function TeamPage() {
     <PageTransition>
       <div className="space-y-6">
         <PageHeader
-          title="Team Members"
-          subtitle="People who can sign in to Master OS. Roster, squads, and payroll lines are managed in People — one profile per person."
+          title="Users Access"
+          subtitle="People who can sign in to Master OS. Roster, squads, and payroll lines are managed in Workforce — one profile per person."
         >
           <Link href="/people">
             <Button size="sm" icon={<Users className="h-4 w-4" />}>
-              People directory
+              Workforce
             </Button>
           </Link>
         </PageHeader>
@@ -85,10 +85,10 @@ export default function TeamPage() {
                 </Link>
               </div>
               <p className="text-xs text-text-tertiary mb-3">
-                Invite or change app roles in <strong className="text-text-secondary">Settings → Team Members</strong>.
+                Invite or change app roles in <strong className="text-text-secondary">Settings → Users Access</strong>.
                 For squads, internal employees, and contractors, use{" "}
                 <Link href="/people" className="font-semibold text-primary hover:underline">
-                  People
+                  Workforce
                 </Link>
                 .
               </p>

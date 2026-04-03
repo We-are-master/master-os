@@ -34,7 +34,7 @@ import { AiBriefsTab } from "./ai-briefs-tab";
 
 const settingsTabs = [
   { id: "profile", label: "My Profile" },
-  { id: "team", label: "Team Members" },
+  { id: "team", label: "Users Access" },
   { id: "tiers", label: "Commission Tiers" },
   { id: "ai-briefs", label: "AI & Daily brief" },
   { id: "navigation", label: "Navigation" },
@@ -435,7 +435,7 @@ function TeamTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Team Members</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Users Access</h3>
           <p className="text-sm text-text-tertiary">{members.length} members · click the sliders icon to set per-user permission overrides</p>
         </div>
         <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setInviteOpen(true)}>
@@ -461,7 +461,7 @@ function TeamTab() {
           {!loading && members.length === 0 && (
             <div className="p-12 text-center">
               <Users className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
-              <p className="text-sm text-text-tertiary">No team members found</p>
+              <p className="text-sm text-text-tertiary">No users found</p>
             </div>
           )}
           {!loading &&
@@ -1144,7 +1144,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
         animate={{ opacity: 1, scale: 1, y: 0 }}
         className="relative bg-card rounded-2xl shadow-modal border border-border w-full max-w-md p-6 space-y-4"
       >
-        <h3 className="text-lg font-semibold text-text-primary">Invite Team Member</h3>
+        <h3 className="text-lg font-semibold text-text-primary">Invite user</h3>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Full Name</label>
           <Input value={form.full_name} onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))} placeholder="John Smith" />

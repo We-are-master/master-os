@@ -577,7 +577,7 @@ export function WorkforcePersonDrawer({
             <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
               <Link href="/team" className="w-full sm:w-auto">
                 <Button variant="outline" className="w-full sm:w-auto">
-                  App team directory
+                  Users Access
                 </Button>
               </Link>
               <Button className="w-full sm:w-auto" disabled={saving} onClick={() => void handleSaveOverview()}>

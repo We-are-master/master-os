@@ -10,14 +10,14 @@ const SERVICES_NAV_ITEM = {
 };
 
 const PEOPLE_DIRECTORY_ITEM = {
-  label: "People directory",
+  label: "Workforce",
   href: "/people",
   icon: "contact",
   permission: "team" as const,
 };
 
 const TEAM_CORE_ITEM = {
-  label: "Team Members",
+  label: "Users Access",
   href: "/team",
   icon: "users-2",
   permission: "team" as const,
@@ -78,6 +78,13 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     });
   }
 
+  const financeIdx = next.findIndex((g) => g.label === "Finance");
+  const peopleNavIdx = next.findIndex((g) => g.label === PEOPLE_GROUP_LABEL);
+  if (peopleNavIdx >= 0 && financeIdx >= 0 && peopleNavIdx > financeIdx) {
+    const [peopleGroup] = next.splice(peopleNavIdx, 1);
+    next.splice(financeIdx, 0, peopleGroup);
+  }
+
   return next;
 }
 
@@ -110,19 +117,19 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     ],
   },
   {
+    label: PEOPLE_GROUP_LABEL,
+    items: [
+      { label: "Workforce", href: "/people", icon: "contact", permission: "team" },
+      { label: "Users Access", href: "/team", icon: "users-2", permission: "team" },
+    ],
+  },
+  {
     label: "Finance",
     items: [
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
       { label: "Bills", href: "/finance/bills", icon: "file-check", permission: "finance" },
       { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
-    ],
-  },
-  {
-    label: PEOPLE_GROUP_LABEL,
-    items: [
-      { label: "People directory", href: "/people", icon: "contact", permission: "team" },
-      { label: "Team Members", href: "/team", icon: "users-2", permission: "team" },
     ],
   },
   {
