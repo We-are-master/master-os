@@ -351,22 +351,6 @@ export default function RequestsPage() {
     }
   }, [selectedIds, profile?.id, refreshSilent, loadCounts]);
 
-  const handleBulkDelete = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    if (typeof window !== "undefined" && !window.confirm(`Delete ${selectedIds.size} selected requests permanently?`)) return;
-    try {
-      const supabase = getSupabase();
-      const { error } = await supabase.from("service_requests").delete().in("id", Array.from(selectedIds));
-      if (error) throw error;
-      toast.success(`${selectedIds.size} requests deleted`);
-      setSelectedIds(new Set());
-      refreshSilent();
-      loadCounts();
-    } catch {
-      toast.error("Failed to delete requests");
-    }
-  }, [selectedIds, refreshSilent, loadCounts]);
-
   const handleStatusChange = useCallback(
     async (id: string, newStatus: string, oldStatus?: string) => {
       try {
@@ -783,9 +767,6 @@ export default function RequestsPage() {
                 <BulkBtn label="Accept" onClick={() => handleBulkStatusChange("approved")} variant="success" />
                 <BulkBtn label="Decline" onClick={() => handleBulkStatusChange("declined")} variant="danger" />
                 <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
-                {selectedIds.size === 1 ? (
-                  <BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" />
-                ) : null}
               </div>
             }
           />

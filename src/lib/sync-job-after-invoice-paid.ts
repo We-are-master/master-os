@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Job } from "@/types/database";
 import { customerCollectionsSatisfyBillable, jobBillableRevenue } from "@/lib/job-financials";
-import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
+import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { invoiceAmountPaid } from "@/lib/invoice-balance";
 
@@ -106,7 +106,7 @@ export async function syncJobAfterInvoicePaidToLedger(
   }
 
   await reconcileJobCustomerPaymentFlags(client, job.id);
-  await syncInvoiceCollectionStagesForJob(client, job.id);
+  await syncInvoicesFromJobCustomerPayments(client, job.id);
   await maybeCompleteAwaitingPaymentJob(client, job.id);
 }
 

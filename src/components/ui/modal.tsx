@@ -35,7 +35,7 @@ export function Modal({
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain py-4 sm:items-center sm:py-6 px-3 sm:px-4">
           <motion.div
             variants={overlayTransition}
             initial="hidden"
@@ -50,15 +50,15 @@ export function Modal({
             animate="visible"
             exit="exit"
             className={cn(
-              "relative w-full h-fit max-h-[min(90vh,100dvh-1rem)] flex flex-col bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden",
+              "relative w-full h-fit max-h-[min(90dvh,100dvh-2rem)] flex flex-col bg-card rounded-2xl shadow-modal border border-border-light overflow-hidden my-auto",
               sizeStyles[size],
               className
             )}
           >
-            <div className="flex shrink-0 items-center justify-between px-6 py-4 border-b border-border-light">
-              <div>
-                <h2 className="text-base font-semibold text-text-primary">{title}</h2>
-                {subtitle && <p className="text-xs text-text-tertiary mt-0.5">{subtitle}</p>}
+            <div className="flex shrink-0 items-start justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4 border-b border-border-light">
+              <div className="min-w-0 flex-1 pr-1">
+                <h2 className="text-base font-semibold text-text-primary leading-snug">{title}</h2>
+                {subtitle && <p className="text-xs text-text-tertiary mt-0.5 leading-relaxed">{subtitle}</p>}
               </div>
               <button
                 type="button"

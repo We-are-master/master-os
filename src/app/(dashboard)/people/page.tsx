@@ -27,6 +27,7 @@ import {
   type PayrollDocumentFileMeta,
 } from "@/lib/payroll-doc-checklist";
 import { WorkforcePersonDrawer } from "@/components/people/workforce-person-drawer";
+import { buildPayLineDescription, WORKFORCE_DEPARTMENT_SELECT_OPTIONS } from "@/lib/workforce-departments";
 
 function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocumentFileMeta> {
   if (!raw || typeof raw !== "object") return {};
@@ -72,7 +73,9 @@ export default function PeoplePage() {
   const [addOpen, setAddOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formPayee, setFormPayee] = useState("");
-  const [formDesc, setFormDesc] = useState("");
+  const [formDept, setFormDept] = useState("");
+  const [formRoleTitle, setFormRoleTitle] = useState("");
+  const [formOtherDesc, setFormOtherDesc] = useState("");
   const [formAmount, setFormAmount] = useState("");
   const [formCategory, setFormCategory] = useState("Salary");
   const [formDue, setFormDue] = useState("");
@@ -167,8 +170,13 @@ export default function PeoplePage() {
   }, [load, selected?.id]);
 
   const handleCreatePerson = async () => {
-    if (!formPayee.trim() || !formDesc.trim()) {
-      toast.error("Name and description are required");
+    const desc = buildPayLineDescription(formDept, formRoleTitle, formOtherDesc);
+    if (!formPayee.trim() || !desc.trim()) {
+      toast.error("Name and department are required");
+      return;
+    }
+    if (formDept === "Other" && !formOtherDesc.trim()) {
+      toast.error("Enter a description when department is Other");
       return;
     }
     const amt = Number(formAmount);
@@ -181,7 +189,7 @@ export default function PeoplePage() {
     const now = new Date().toISOString();
     try {
       const row = {
-        description: formDesc.trim(),
+        description: desc.trim(),
         amount: amt,
         category: formCategory.trim() || null,
         due_date: formDue.trim() || null,
@@ -214,7 +222,9 @@ export default function PeoplePage() {
       toast.success("Person added — complete profile in the drawer");
       setAddOpen(false);
       setFormPayee("");
-      setFormDesc("");
+      setFormDept("");
+      setFormRoleTitle("");
+      setFormOtherDesc("");
       setFormAmount("");
       setFormDue("");
       setFormSquadId("");
@@ -478,39 +488,72 @@ export default function PeoplePage() {
         onClose={() => setAddOpen(false)}
         title="Add person"
         subtitle={section === "internal" ? "Creates an employee payroll row (PAYE)." : "Creates an internal contractor (self-employed) row."}
+        size="md"
+        className="w-[min(100%,calc(100vw-1.5rem))] sm:max-w-lg"
       >
-        <div className="space-y-3 p-1">
+        <div className="space-y-3 px-4 py-4 sm:px-6 sm:py-5 min-w-0">
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1">Display name</label>
-            <Input value={formPayee} onChange={(e) => setFormPayee(e.target.value)} placeholder="Full name" />
+            <Input value={formPayee} onChange={(e) => setFormPayee(e.target.value)} placeholder="Full name" className="w-full min-w-0" />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1">Role / pay line description</label>
-            <Input value={formDesc} onChange={(e) => setFormDesc(e.target.value)} placeholder="e.g. Operations coordinator" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
+          <Select
+            label="Department"
+            value={formDept}
+            onChange={(e) => {
+              setFormDept(e.target.value);
+              if (e.target.value !== "Other") setFormOtherDesc("");
+              if (!e.target.value) setFormRoleTitle("");
+            }}
+            options={WORKFORCE_DEPARTMENT_SELECT_OPTIONS}
+            className="min-w-0"
+          />
+          {formDept === "Other" && (
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1">Amount (GBP)</label>
-              <Input type="number" min={0} step="0.01" value={formAmount} onChange={(e) => setFormAmount(e.target.value)} />
+              <label className="block text-xs font-medium text-text-secondary mb-1">Role / pay line description</label>
+              <Input
+                value={formOtherDesc}
+                onChange={(e) => setFormOtherDesc(e.target.value)}
+                placeholder="e.g. Head of partnerships"
+                className="w-full min-w-0"
+              />
             </div>
+          )}
+          {!!formDept && formDept !== "Other" && (
             <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">Role title (optional)</label>
+              <Input
+                value={formRoleTitle}
+                onChange={(e) => setFormRoleTitle(e.target.value)}
+                placeholder="e.g. Coordinator"
+                className="w-full min-w-0"
+              />
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-2 min-w-0">
+            <div className="min-w-0">
+              <label className="block text-xs font-medium text-text-secondary mb-1">Amount (GBP)</label>
+              <Input type="number" min={0} step="0.01" value={formAmount} onChange={(e) => setFormAmount(e.target.value)} className="w-full min-w-0" />
+            </div>
+            <div className="min-w-0">
               <Select
                 label="Category"
                 value={formCategory}
                 onChange={(e) => setFormCategory(e.target.value)}
                 options={PAYROLL_COST_CATEGORIES.map((c) => ({ value: c.value, label: c.label }))}
+                className="min-w-0"
               />
             </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1">Next due date</label>
-            <Input type="date" value={formDue} onChange={(e) => setFormDue(e.target.value)} />
+            <Input type="date" value={formDue} onChange={(e) => setFormDue(e.target.value)} className="w-full min-w-0" />
           </div>
           <Select
             label="Pay frequency"
             value={formFreq}
             onChange={(e) => setFormFreq(e.target.value as typeof formFreq)}
             options={[{ value: "", label: "—" }, ...PAYROLL_FREQUENCY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]}
+            className="min-w-0"
           />
           <Select
             label="Employment type"
@@ -520,18 +563,20 @@ export default function PeoplePage() {
               { value: "employee", label: "Employee (internal team)" },
               { value: "self_employed", label: "Self-employed (contractor)" },
             ]}
+            className="min-w-0"
           />
           <Select
             label="Squad"
             value={formSquadId}
             onChange={(e) => setFormSquadId(e.target.value)}
             options={[{ value: "", label: "— No squad" }, ...squads.map((s) => ({ value: s.id, label: s.name }))]}
+            className="min-w-0"
           />
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setAddOpen(false)}>
+          <div className="flex flex-col-reverse gap-2 pt-3 sm:flex-row sm:justify-end sm:gap-2 sm:pt-2 sticky bottom-0 z-[1] bg-card pb-3 -mx-4 px-4 sm:static sm:z-0 sm:mx-0 sm:px-0 sm:pb-0 border-t border-border-light/80 sm:border-0 mt-1 sm:mt-0">
+            <Button variant="outline" className="w-full sm:w-auto shrink-0" onClick={() => setAddOpen(false)}>
               Cancel
             </Button>
-            <Button disabled={saving} onClick={() => void handleCreatePerson()}>
+            <Button disabled={saving} className="w-full sm:w-auto shrink-0" onClick={() => void handleCreatePerson()}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create"}
             </Button>
           </div>

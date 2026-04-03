@@ -27,6 +27,11 @@ import {
   payrollUploadKeysForRow,
   type PayrollDocumentFileMeta,
 } from "@/lib/payroll-doc-checklist";
+import {
+  buildPayLineDescription,
+  parsePayLineDescription,
+  WORKFORCE_DEPARTMENT_SELECT_OPTIONS,
+} from "@/lib/workforce-departments";
 import { uploadPayrollDocumentFile, getPayrollDocumentSignedUrl } from "@/services/payroll-documents-storage";
 import { getSupabase } from "@/services/base";
 import {
@@ -106,7 +111,9 @@ export function WorkforcePersonDrawer({
   const [pendingFiles, setPendingFiles] = useState<Record<string, File | undefined>>({});
 
   const [payeeName, setPayeeName] = useState("");
-  const [description, setDescription] = useState("");
+  const [payLineDept, setPayLineDept] = useState("");
+  const [payLineRoleTitle, setPayLineRoleTitle] = useState("");
+  const [payLineOther, setPayLineOther] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -138,7 +145,12 @@ export function WorkforcePersonDrawer({
     setTab("overview");
     setPendingFiles({});
     setPayeeName(person.payee_name ?? "");
-    setDescription(person.description ?? "");
+    {
+      const parsed = parsePayLineDescription(person.description ?? "");
+      setPayLineDept(parsed.department);
+      setPayLineRoleTitle(parsed.roleTitle);
+      setPayLineOther(parsed.otherFull);
+    }
     setAmount(String(person.amount ?? ""));
     setCategory(person.category ?? "");
     setDueDate(person.due_date ?? "");
@@ -198,8 +210,13 @@ export function WorkforcePersonDrawer({
 
   const handleSaveOverview = async () => {
     if (!person) return;
-    if (!description.trim()) {
-      toast.error("Description is required");
+    const desc = buildPayLineDescription(payLineDept, payLineRoleTitle, payLineOther).trim();
+    if (!desc) {
+      toast.error("Department / description is required");
+      return;
+    }
+    if (payLineDept === "Other" && !payLineOther.trim()) {
+      toast.error("Enter a description when department is Other");
       return;
     }
     const amt = Number(amount);
@@ -225,7 +242,7 @@ export function WorkforcePersonDrawer({
         vat_number: profile.vat_number?.trim() || undefined,
       };
       const updates: Record<string, unknown> = {
-        description: description.trim(),
+        description: desc,
         amount: amt,
         category: category.trim() || null,
         due_date: dueDate.trim() || null,
@@ -472,9 +489,40 @@ export function WorkforcePersonDrawer({
               <p className="text-sm font-semibold text-text-primary">Payroll & payment</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Description (pay line)</label>
-                  <Input value={description} onChange={(e) => setDescription(e.target.value)} />
+                  <Select
+                    label="Department"
+                    value={payLineDept}
+                    onChange={(e) => {
+                      setPayLineDept(e.target.value);
+                      if (e.target.value !== "Other") setPayLineOther("");
+                      if (!e.target.value) setPayLineRoleTitle("");
+                    }}
+                    options={WORKFORCE_DEPARTMENT_SELECT_OPTIONS}
+                    className="min-w-0"
+                  />
                 </div>
+                {payLineDept === "Other" && (
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">Role / pay line description</label>
+                    <Input
+                      value={payLineOther}
+                      onChange={(e) => setPayLineOther(e.target.value)}
+                      placeholder="Describe the pay line"
+                      className="w-full min-w-0"
+                    />
+                  </div>
+                )}
+                {!!payLineDept && payLineDept !== "Other" && (
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">Role title (optional)</label>
+                    <Input
+                      value={payLineRoleTitle}
+                      onChange={(e) => setPayLineRoleTitle(e.target.value)}
+                      placeholder="e.g. Coordinator"
+                      className="w-full min-w-0"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1">Amount (GBP)</label>
                   <Input type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />

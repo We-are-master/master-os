@@ -411,6 +411,8 @@ export interface Invoice {
   status: InvoiceStatus;
   due_date: string;
   paid_date?: string;
+  /** Last customer payment date (partial or full); set from job ledger sync. */
+  last_payment_date?: string | null;
   created_at: string;
   collection_stage: InvoiceCollectionStage;
   collection_stage_locked?: boolean;

@@ -18,8 +18,15 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  AreaChart,
+  Area,
 } from "recharts";
-import { Building2, Layers, Target } from "lucide-react";
+import { Building2, Layers, Target, TrendingUp, Sparkles, FileText, Briefcase, Receipt } from "lucide-react";
+import {
+  buildWeeklyCashPositionBuckets,
+  buildWeeklyJobSoldSeries,
+  type WeeklyCashPositionRow,
+} from "@/lib/dashboard-cashflow-buckets";
 import { BestSellersByOwner } from "@/components/dashboard/best-sellers-by-owner";
 import {
   fetchPipelineJobsForDashboard,
@@ -29,15 +36,21 @@ import {
   type OverviewPipelineJobRow,
 } from "@/lib/dashboard-overview-jobs";
 
-async function paidInvoiceTotal(supabase: ReturnType<typeof getSupabase>, fromIso: string, toIso: string): Promise<number> {
+/** Customer cash in from job ledger (deposit + final), matches Financial summary registrations. */
+async function customerPaymentsTotalInRange(
+  supabase: ReturnType<typeof getSupabase>,
+  fromIso: string,
+  toIso: string
+): Promise<number> {
   const fromDay = fromIso.slice(0, 10);
   const toDay = toIso.slice(0, 10);
   const { data, error } = await supabase
-    .from("invoices")
-    .select("amount, paid_date")
-    .eq("status", "paid")
-    .gte("paid_date", fromDay)
-    .lte("paid_date", toDay);
+    .from("job_payments")
+    .select("amount")
+    .in("type", ["customer_deposit", "customer_final"])
+    .is("deleted_at", null)
+    .gte("payment_date", fromDay)
+    .lte("payment_date", toDay);
   if (error) return 0;
   return (data ?? []).reduce((s, r: { amount?: number }) => s + Number(r.amount ?? 0), 0);
 }
@@ -66,14 +79,6 @@ function tierProgress(revenue: number, tiers: CommissionTier[]): {
   return { current, next, fillPct };
 }
 
-interface CashBucket {
-  label: string;
-  collected: number;
-  partnerPayouts: number;
-  bills: number;
-  net: number;
-}
-
 export function OverviewExecutiveBundle() {
   const { bounds, rangeLabel } = useDashboardDateRange();
   const boundsKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
@@ -88,7 +93,14 @@ export function OverviewExecutiveBundle() {
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
   const [ownerLeaderboard, setOwnerLeaderboard] = useState<{ name: string; revenue: number; jobCount: number }[]>([]);
   const [topAccounts, setTopAccounts] = useState<{ name: string; revenue: number }[]>([]);
-  const [cashflow, setCashflow] = useState<CashBucket[]>([]);
+  const [cashflow, setCashflow] = useState<WeeklyCashPositionRow[]>([]);
+  const [forecastWeeks, setForecastWeeks] = useState<{ label: string; sold: number }[]>([]);
+  const [funnel, setFunnel] = useState({
+    quotesAwaiting: 0,
+    sales: 0,
+    jobsBooked: 0,
+    invoicesPaid: 0,
+  });
   const [monthlySalesGoal, setMonthlySalesGoal] = useState(() => defaultMonthlySalesGoalGbp());
 
   useEffect(() => {
@@ -102,11 +114,11 @@ export function OverviewExecutiveBundle() {
         const fromIso = bounds?.fromIso ?? "2000-01-01T00:00:00.000Z";
         const toBound = bounds?.toIso ?? toIso;
 
-        const [companySettings, pipelineRows, tiersList, invTotal] = await Promise.all([
+        const [companySettings, pipelineRows, tiersList, customerCashTotal] = await Promise.all([
           getCompanySettings(),
           fetchPipelineJobsForDashboard(supabase, bounds),
           listCommissionTiers().catch(() => [] as CommissionTier[]),
-          paidInvoiceTotal(supabase, fromIso, toBound),
+          customerPaymentsTotalInRange(supabase, fromIso, toBound),
         ]);
 
         if (cancelled) return;
@@ -124,7 +136,7 @@ export function OverviewExecutiveBundle() {
         setRevenue(rev);
         setPartnerDirect(direct);
         setGrossProfit(gross);
-        setBillingForTier(invTotal);
+        setBillingForTier(customerCashTotal);
         setTiers(tiersList);
 
         const fromDay = fromIso.slice(0, 10);
@@ -225,108 +237,88 @@ export function OverviewExecutiveBundle() {
         }
         setTopAccounts(accountsOut);
 
-        const fromMs = new Date(fromIso).getTime();
-        const toMs = new Date(toBound).getTime();
-        const spanDays = Math.max(1, Math.ceil((toMs - fromMs) / 86400000));
-        const [{ data: invPaid }, { data: sbPaid }, billRes] = await Promise.all([
+        let quotesQuery = supabase.from("quotes").select("total_value").eq("status", "awaiting_customer").is("deleted_at", null);
+        if (bounds) {
+          quotesQuery = quotesQuery.gte("created_at", bounds.fromIso).lte("created_at", bounds.toIso);
+        }
+        const [customerCashRes, sbOutstandingRes, billsOutstandingRes, quotesAwaitingRes] = await Promise.all([
           supabase
-            .from("invoices")
-            .select("amount, paid_date")
-            .eq("status", "paid")
-            .gte("paid_date", fromDay)
-            .lte("paid_date", toDay),
+            .from("job_payments")
+            .select("amount, payment_date")
+            .in("type", ["customer_deposit", "customer_final"])
+            .is("deleted_at", null)
+            .gte("payment_date", fromDay)
+            .lte("payment_date", toDay),
           supabase
             .from("self_bills")
-            .select("net_payout, updated_at")
-            .eq("status", "paid")
-            .gte("updated_at", fromIso)
-            .lte("updated_at", toBound),
+            .select("net_payout, week_start, created_at")
+            .in("status", ["awaiting_payment", "ready_to_pay"]),
           supabase
             .from("bills")
-            .select("amount, paid_at")
-            .eq("status", "paid")
+            .select("amount, due_date")
+            .in("status", ["submitted", "approved", "needs_attention"])
             .is("archived_at", null)
-            .gte("paid_at", fromIso)
-            .lte("paid_at", toBound),
+            .gte("due_date", fromDay)
+            .lte("due_date", toDay),
+          quotesQuery,
         ]);
-        const billsPaid = billRes.error ? [] : ((billRes.data ?? []) as { amount: number; paid_at?: string }[]);
+        const customerCashRows = (customerCashRes.data ?? []) as { amount?: number; payment_date?: string }[];
+        const sbOutstanding = (sbOutstandingRes.data ?? []) as {
+          net_payout?: number;
+          week_start?: string | null;
+          created_at?: string;
+        }[];
+        const billsOutstanding = (billsOutstandingRes.error ? [] : billsOutstandingRes.data ?? []) as {
+          amount?: number;
+          due_date?: string;
+        }[];
+        const quotesAwaitingSum = (quotesAwaitingRes.data ?? []).reduce(
+          (s, r) => s + Number((r as { total_value?: number }).total_value ?? 0),
+          0,
+        );
 
-        const buckets: CashBucket[] = [];
-        if (spanDays <= 45) {
-          const dayKeys: string[] = [];
-          const walk = new Date(fromDay + "T12:00:00");
-          const endWalk = new Date(toDay + "T12:00:00");
-          while (walk <= endWalk) {
-            dayKeys.push(walk.toISOString().slice(0, 10));
-            walk.setDate(walk.getDate() + 1);
-            if (dayKeys.length > 62) break;
-          }
-          const keyToIdx = new Map(dayKeys.map((k, i) => [k, i]));
-          for (const k of dayKeys) {
-            buckets.push({
-              label: new Date(k + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-              collected: 0,
-              partnerPayouts: 0,
-              bills: 0,
-              net: 0,
-            });
-          }
-          for (const inv of invPaid ?? []) {
-            const d = (inv as { paid_date?: string }).paid_date?.slice(0, 10);
-            const i = d ? keyToIdx.get(d) : undefined;
-            if (i !== undefined) buckets[i]!.collected += Number((inv as { amount?: number }).amount ?? 0);
-          }
-          for (const sb of sbPaid ?? []) {
-            const d = (sb as { updated_at?: string }).updated_at?.slice(0, 10);
-            const i = d ? keyToIdx.get(d) : undefined;
-            if (i !== undefined) buckets[i]!.partnerPayouts += Number((sb as { net_payout?: number }).net_payout ?? 0);
-          }
-          for (const b of billsPaid) {
-            const d = b.paid_at?.slice(0, 10);
-            const i = d ? keyToIdx.get(d) : undefined;
-            if (i !== undefined) buckets[i]!.bills += Number(b.amount ?? 0);
+        setFunnel({
+          quotesAwaiting: quotesAwaitingSum,
+          sales: rev,
+          jobsBooked: pipelineRows.length,
+          invoicesPaid: customerCashTotal,
+        });
+
+        const forecastToIso = toBound;
+        let forecastFromIso = fromIso;
+        if (bounds) {
+          const days = Math.max(
+            1,
+            Math.round(
+              (new Date(bounds.toIso).getTime() - new Date(bounds.fromIso).getTime()) / 86400000,
+            ) + 1,
+          );
+          if (days > 400) {
+            const cap = new Date(bounds.toIso);
+            cap.setDate(cap.getDate() - 52 * 7);
+            forecastFromIso = cap.toISOString();
           }
         } else {
-          const monthKeys: string[] = [];
-          const curM = new Date(new Date(fromIso).getFullYear(), new Date(fromIso).getMonth(), 1);
-          const endM = new Date(toBound);
-          while (curM <= endM) {
-            monthKeys.push(`${curM.getFullYear()}-${String(curM.getMonth() + 1).padStart(2, "0")}`);
-            buckets.push({
-              label: curM.toLocaleDateString(undefined, { month: "short", year: "2-digit" }),
-              collected: 0,
-              partnerPayouts: 0,
-              bills: 0,
-              net: 0,
-            });
-            curM.setMonth(curM.getMonth() + 1);
-            if (monthKeys.length > 24) break;
-          }
-          const keyToIdxM = new Map(monthKeys.map((k, i) => [k, i]));
-          for (const inv of invPaid ?? []) {
-            const pd = (inv as { paid_date?: string }).paid_date;
-            const mk = pd?.slice(0, 7);
-            const i = mk ? keyToIdxM.get(mk) : undefined;
-            if (i !== undefined) buckets[i]!.collected += Number((inv as { amount?: number }).amount ?? 0);
-          }
-          for (const sb of sbPaid ?? []) {
-            const u = (sb as { updated_at?: string }).updated_at;
-            if (!u) continue;
-            const mk = u.slice(0, 7);
-            const i = keyToIdxM.get(mk);
-            if (i !== undefined) buckets[i]!.partnerPayouts += Number((sb as { net_payout?: number }).net_payout ?? 0);
-          }
-          for (const bill of billsPaid) {
-            const u = bill.paid_at;
-            if (!u) continue;
-            const mk = u.slice(0, 7);
-            const i = keyToIdxM.get(mk);
-            if (i !== undefined) buckets[i]!.bills += Number(bill.amount ?? 0);
-          }
+          const cap = new Date();
+          cap.setDate(cap.getDate() - 12 * 7);
+          forecastFromIso = cap.toISOString();
         }
-        for (const b of buckets) {
-          b.net = b.collected - b.partnerPayouts - b.bills;
-        }
+        setForecastWeeks(
+          buildWeeklyJobSoldSeries(
+            pipelineRows,
+            (row) => jobBillableRevenue(row as Parameters<typeof jobBillableRevenue>[0]),
+            forecastFromIso,
+            forecastToIso,
+          ),
+        );
+
+        const buckets = buildWeeklyCashPositionBuckets(
+          fromIso,
+          toBound,
+          customerCashRows,
+          sbOutstanding,
+          billsOutstanding,
+        );
         setCashflow(buckets);
       } catch {
         if (!cancelled) {
@@ -361,6 +353,15 @@ export function OverviewExecutiveBundle() {
   const netProfit = grossProfit - billsCost - payrollCost;
   const grossPct = revenue > 0 ? Math.round((grossProfit / revenue) * 1000) / 10 : 0;
   const netPct = revenue > 0 ? Math.round((netProfit / revenue) * 1000) / 10 : 0;
+  const cashflowTotals = cashflow.reduce(
+    (acc, b) => ({
+      collected: acc.collected + b.collected,
+      partnerToPay: acc.partnerToPay + b.partnerToPay,
+      billsToPay: acc.billsToPay + b.billsToPay,
+      net: acc.net + b.net,
+    }),
+    { collected: 0, partnerToPay: 0, billsToPay: 0, net: 0 },
+  );
   const { current, next, fillPct } = tierProgress(billingForTier, tiers);
 
   const periodGoal = periodSalesGoalGbp(bounds, monthlySalesGoal);
@@ -371,7 +372,7 @@ export function OverviewExecutiveBundle() {
 
   return (
     <div className="space-y-5">
-      <Card padding="none" className="overflow-hidden border-border-light shadow-sm">
+      <Card padding="none" className="overflow-hidden border-border-light shadow-sm ring-1 ring-border-light/20">
         <div className="px-5 pt-4 pb-2 flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 bg-gradient-to-r from-surface-hover/40 to-transparent">
           <div>
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider">Executive snapshot</p>
@@ -382,18 +383,18 @@ export function OverviewExecutiveBundle() {
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-border-light">
           {[
-            { label: "Revenue", value: revenue, sub: "Customer total (client price + extras)", accent: "text-emerald-600" },
+            { label: "Sales amount", value: revenue, sub: "Customer total (client price + extras)", accent: "text-emerald-600" },
             { label: "Partner & materials", value: partnerDirect, sub: "Direct job cost", accent: "text-amber-600" },
             {
               label: "Gross margin",
               value: grossProfit,
-              sub: `${grossPct}% of revenue`,
+              sub: `${grossPct}% of sales amount`,
               accent: grossPct >= 20 ? "text-emerald-600" : "text-rose-600",
             },
             {
               label: "Net margin",
               value: netProfit,
-              sub: `${netPct}% of revenue · after bills & payroll (in range)`,
+              sub: `${netPct}% of sales amount · after bills & payroll (in range)`,
               accent: netPct >= 15 ? "text-sky-600" : "text-rose-600",
             },
           ].map((cell) => (
@@ -403,6 +404,60 @@ export function OverviewExecutiveBundle() {
                 {loading ? "—" : formatCurrency(cell.value)}
               </p>
               <p className="text-[11px] text-text-tertiary mt-1 leading-snug">{cell.sub}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card padding="none" className="overflow-hidden border-border-light ring-1 ring-border-light/20">
+        <div className="px-5 pt-4 pb-2 border-b border-border-light/80 bg-gradient-to-r from-primary/5 to-transparent">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider">Pipeline snapshot</p>
+          <p className="text-xs text-text-tertiary mt-0.5">
+            Totals in {bounds ? rangeLabel : "all time"} · same filters as the date toolbar
+          </p>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-border-light">
+          {[
+            {
+              label: "Quotes awaiting customer",
+              value: funnel.quotesAwaiting,
+              sub: "Pipeline value · awaiting_customer",
+              accent: "text-sky-600",
+              icon: FileText,
+            },
+            {
+              label: "Sales (pipeline)",
+              value: funnel.sales,
+              sub: "Billable in range",
+              accent: "text-emerald-600",
+              icon: TrendingUp,
+            },
+            {
+              label: "Jobs booked",
+              value: funnel.jobsBooked,
+              sub: "Jobs created in range",
+              accent: "text-violet-600",
+              icon: Briefcase,
+            },
+            {
+              label: "Customer cash in",
+              value: funnel.invoicesPaid,
+              sub: "Deposit + final (job ledger, in range)",
+              accent: "text-amber-600",
+              icon: Receipt,
+            },
+          ].map((cell) => (
+            <div key={cell.label} className="p-4 sm:p-5 flex gap-3">
+              <div className="h-10 w-10 rounded-xl bg-surface-hover flex items-center justify-center shrink-0">
+                <cell.icon className={cn("h-4 w-4", cell.accent)} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">{cell.label}</p>
+                <p className={cn("text-xl sm:text-2xl font-bold tabular-nums mt-1", cell.accent)}>
+                  {loading ? "—" : cell.label === "Jobs booked" ? (cell.value as number) : formatCurrency(cell.value as number)}
+                </p>
+                <p className="text-[11px] text-text-tertiary mt-1 leading-snug">{cell.sub}</p>
+              </div>
             </div>
           ))}
         </div>
@@ -535,6 +590,66 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card>
 
+      <Card padding="none" className="overflow-hidden border-border-light ring-1 ring-border-light/20">
+        <CardHeader className="px-5 pt-4 pb-2 border-b border-border-light/60 bg-gradient-to-r from-emerald-500/5 to-transparent">
+          <div className="flex items-start gap-3">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-emerald-500/25 to-teal-500/10 flex items-center justify-center">
+              <Sparkles className="h-4 w-4 text-emerald-600" />
+            </div>
+            <div>
+              <CardTitle className="text-base">Forecast · jobs sold</CardTitle>
+              <p className="text-xs text-text-tertiary mt-0.5">
+                Weekly billable value from job <strong className="text-text-secondary">created</strong> dates in range (pipeline, excl. cancelled).
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+        <div className="px-3 pb-5 pt-2">
+          {loading ? (
+            <div className="h-56 animate-pulse rounded-xl bg-surface-hover" />
+          ) : forecastWeeks.length === 0 ? (
+            <div className="h-40 flex items-center justify-center text-sm text-text-tertiary">No jobs in range</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={forecastWeeks} margin={{ top: 12, right: 12, left: 4, bottom: 8 }}>
+                <defs>
+                  <linearGradient id="overviewSoldFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#34d399" stopOpacity={0.45} />
+                    <stop offset="100%" stopColor="#34d399" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border-light/60" />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 9, fill: "var(--color-text-tertiary)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  interval="preserveStartEnd"
+                  height={48}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: "var(--color-text-tertiary)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v) => (Math.abs(v) >= 1000 ? `£${(v / 1000).toFixed(0)}k` : `£${v}`)}
+                />
+                <Tooltip
+                  formatter={(v) => [formatCurrency(Number(v ?? 0)), "Sold"]}
+                  labelFormatter={(l) => String(l)}
+                  contentStyle={{
+                    borderRadius: 10,
+                    fontSize: 12,
+                    border: "1px solid var(--color-border-light)",
+                    background: "var(--color-card)",
+                  }}
+                />
+                <Area type="monotone" dataKey="sold" name="Jobs sold" stroke="#10b981" strokeWidth={2} fill="url(#overviewSoldFill)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </Card>
+
       <BestSellersByOwner
         items={ownerLeaderboard}
         loading={loading}
@@ -579,32 +694,89 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card>
 
-      <Card padding="none" className="border-border-light">
-        <CardHeader className="px-5 pt-4">
-          <CardTitle className="text-base">Cashflow</CardTitle>
-          <p className="text-xs text-text-tertiary mt-0.5">
-            Collected (invoices paid) vs partner payouts vs company bills paid — net estimate
-          </p>
+      <Card padding="none" className="border-border-light ring-1 ring-border-light/20 overflow-hidden">
+        <CardHeader className="px-5 pt-4 pb-3 border-b border-border-light/60 bg-gradient-to-r from-cyan-500/5 to-violet-500/5">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">Cash flow</CardTitle>
+              <p className="text-xs text-text-tertiary mt-0.5 max-w-xl">
+                <strong className="text-text-secondary">Weekly</strong> view: customer cash in (job payments) vs partner self-bills to pay vs company bills to pay. Net = collected − partner − bills.
+              </p>
+            </div>
+            {!loading && cashflow.length > 0 && (
+              <div className="flex flex-wrap gap-2 shrink-0">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Period net</span>
+                <span
+                  className={cn(
+                    "text-sm font-bold tabular-nums px-2 py-0.5 rounded-lg",
+                    cashflowTotals.net >= 0 ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-rose-500/15 text-rose-700 dark:text-rose-300",
+                  )}
+                >
+                  {formatCurrency(cashflowTotals.net)} {cashflowTotals.net >= 0 ? "· positive" : "· negative"}
+                </span>
+              </div>
+            )}
+          </div>
+          {!loading && cashflow.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+              {[
+                { k: "Customer cash in", v: cashflowTotals.collected, c: "text-emerald-600" },
+                { k: "Partner to pay", v: cashflowTotals.partnerToPay, c: "text-rose-500" },
+                { k: "Bills to pay", v: cashflowTotals.billsToPay, c: "text-violet-500" },
+                {
+                  k: "Net (sum)",
+                  v: cashflowTotals.net,
+                  c: cashflowTotals.net >= 0 ? "text-emerald-600" : "text-rose-600",
+                },
+              ].map((row) => (
+                <div key={row.k} className="rounded-xl bg-surface-hover/80 border border-border-light/50 px-3 py-2">
+                  <p className="text-[10px] font-medium text-text-tertiary uppercase tracking-wide">{row.k}</p>
+                  <p className={cn("text-sm font-bold tabular-nums mt-0.5", row.c)}>{formatCurrency(row.v)}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </CardHeader>
-        <div className="px-3 pb-5">
+        <div className="px-2 sm:px-3 pb-5">
           {loading ? (
-            <div className="h-52 animate-pulse rounded-xl bg-surface-hover" />
+            <div className="h-64 animate-pulse rounded-xl bg-surface-hover" />
           ) : cashflow.length === 0 ? (
-            <div className="h-40 flex items-center justify-center text-sm text-text-tertiary">No cash movements in range</div>
+            <div className="h-48 flex items-center justify-center text-sm text-text-tertiary">No data in range</div>
           ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={cashflow} margin={{ top: 8, right: 8, left: -12, bottom: 0 }} barCategoryGap="18%">
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#94a3b8" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={cashflow} margin={{ top: 8, right: 8, left: 4, bottom: 8 }} barCategoryGap="16%">
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border-light/50" />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 9, fill: "var(--color-text-tertiary)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  interval="preserveStartEnd"
+                  height={52}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: "var(--color-text-tertiary)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v) => (Math.abs(v) >= 1000 ? `£${(v / 1000).toFixed(0)}k` : `£${v}`)}
+                />
                 <Tooltip
                   formatter={(v, name) => [formatCurrency(Number(v ?? 0)), String(name ?? "")]}
-                  contentStyle={{ borderRadius: 10, fontSize: 12 }}
+                  labelFormatter={(label, payload) => {
+                    const w = payload?.[0]?.payload as WeeklyCashPositionRow | undefined;
+                    return w?.weekStart ? `${label} · starts ${w.weekStart}` : String(label);
+                  }}
+                  contentStyle={{
+                    borderRadius: 10,
+                    fontSize: 12,
+                    border: "1px solid var(--color-border-light)",
+                    background: "var(--color-card)",
+                  }}
                 />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey="collected" name="Collected" fill="#34d399" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="partnerPayouts" name="Partner payouts" fill="#f87171" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="bills" name="Bills paid" fill="#a78bfa" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="collected" name="Customer cash in" fill="#34d399" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="partnerToPay" name="Partner to pay" fill="#f87171" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="billsToPay" name="Bills to pay" fill="#a78bfa" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}

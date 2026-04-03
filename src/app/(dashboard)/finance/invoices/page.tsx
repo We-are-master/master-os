@@ -29,7 +29,9 @@ import { toast } from "sonner";
 import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listInvoices, createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
-import { syncInvoiceCollectionStagesForJob, COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
+import { COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
+import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
+import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import { reopenInvoiceToPending } from "@/lib/invoice-reopen";
 import { invoiceBalanceDue, invoiceAmountPaid } from "@/lib/invoice-balance";
@@ -214,7 +216,10 @@ export default function InvoicesPage() {
         if (invoice.job_reference?.trim()) {
           const { data: jobRow } = await supabase.from("jobs").select("id").eq("reference", invoice.job_reference.trim()).maybeSingle();
           const jid = (jobRow as { id?: string } | null)?.id;
-          if (jid) await syncInvoiceCollectionStagesForJob(supabase, jid);
+          if (jid) {
+            await syncInvoicesFromJobCustomerPayments(supabase, jid);
+            await maybeCompleteAwaitingPaymentJob(supabase, jid);
+          }
         }
         refresh();
         loadCounts();
@@ -262,7 +267,10 @@ export default function InvoicesPage() {
       if (invoice.job_reference?.trim()) {
         const { data: jobRow } = await supabase.from("jobs").select("id").eq("reference", invoice.job_reference.trim()).maybeSingle();
         const jid = (jobRow as { id?: string } | null)?.id;
-        if (jid) await syncInvoiceCollectionStagesForJob(supabase, jid);
+        if (jid) {
+          await syncInvoicesFromJobCustomerPayments(supabase, jid);
+          await maybeCompleteAwaitingPaymentJob(supabase, jid);
+        }
       }
       if (newStatus === "paid") {
         await syncJobAfterInvoicePaidToLedger(supabase, invoice.id, "Manual");
