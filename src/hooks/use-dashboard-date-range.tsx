@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useState,
@@ -12,7 +13,22 @@ import {
   type DashboardDateBounds,
   getBoundsForPreset,
   formatRangeHint,
+  PRESET_OPTIONS,
 } from "@/lib/dashboard-date-range";
+
+/** Bump when default preset should reset for all users (e.g. switch default to This month). */
+const PRESET_STORAGE_KEY = "master-os-dashboard-date-preset-v3";
+
+function readStoredPreset(): DateRangePreset {
+  if (typeof window === "undefined") return "mtd";
+  try {
+    const v = localStorage.getItem(PRESET_STORAGE_KEY);
+    if (v && PRESET_OPTIONS.some((o) => o.id === v)) return v as DateRangePreset;
+  } catch {
+    /* ignore */
+  }
+  return "mtd";
+}
 
 interface DashboardDateRangeContextValue {
   preset: DateRangePreset;
@@ -29,9 +45,18 @@ interface DashboardDateRangeContextValue {
 const Ctx = createContext<DashboardDateRangeContextValue | null>(null);
 
 export function DashboardDateRangeProvider({ children }: { children: ReactNode }) {
-  const [preset, setPreset] = useState<DateRangePreset>("all");
+  const [preset, setPresetState] = useState<DateRangePreset>(() => readStoredPreset());
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+
+  const setPreset = useCallback((p: DateRangePreset) => {
+    setPresetState(p);
+    try {
+      localStorage.setItem(PRESET_STORAGE_KEY, p);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const bounds = useMemo(
     () => getBoundsForPreset(preset, customFrom, customTo),

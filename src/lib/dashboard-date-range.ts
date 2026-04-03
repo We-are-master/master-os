@@ -55,10 +55,10 @@ export function getBoundsForPreset(
 }
 
 export const PRESET_OPTIONS: { id: DateRangePreset; label: string }[] = [
+  { id: "mtd", label: "This month" },
   { id: "7d", label: "7 days" },
   { id: "30d", label: "30 days" },
   { id: "90d", label: "90 days" },
-  { id: "mtd", label: "Month to date" },
   { id: "ytd", label: "Year to date" },
   { id: "custom", label: "Custom" },
   { id: "all", label: "All time" },

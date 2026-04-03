@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
-import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
+import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
+import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { applyJobDbCompat, prepareJobRowForInsert } from "@/lib/job-schema-compat";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 
@@ -311,7 +312,8 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      await syncInvoiceCollectionStagesForJob(supabase, job.id);
+      await syncInvoicesFromJobCustomerPayments(supabase, job.id);
+      await maybeCompleteAwaitingPaymentJob(supabase, job.id);
 
       const { error: quoteUpdateErr } = await supabase
         .from("quotes")

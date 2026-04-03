@@ -24,7 +24,7 @@ export function DashboardDateToolbar({ trailing }: DashboardDateToolbarProps) {
   } = useDashboardDateRange();
 
   return (
-    <div className="rounded-2xl border border-border-light bg-card/60 px-4 py-3 space-y-3">
+    <div className="rounded-2xl border border-border-light backdrop-blur-sm px-4 py-3 space-y-3 shadow-sm ring-1 ring-border-light/30 bg-gradient-to-br from-card via-card/95 to-surface-hover/35">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 justify-between">
         <div className="flex flex-wrap items-center gap-2 min-w-0">
           <span className="text-xs font-semibold text-text-tertiary uppercase tracking-wide inline-flex items-center gap-1.5 shrink-0">

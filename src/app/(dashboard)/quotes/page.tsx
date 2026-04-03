@@ -491,21 +491,6 @@ function QuotesPageContent() {
     }
   }, [selectedIds, profile?.id, refreshWithKpis]);
 
-  const handleBulkDelete = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    if (typeof window !== "undefined" && !window.confirm(`Delete ${selectedIds.size} selected quotes permanently?`)) return;
-    try {
-      const supabase = getSupabase();
-      const { error } = await supabase.from("quotes").delete().in("id", Array.from(selectedIds));
-      if (error) throw error;
-      toast.success(`${selectedIds.size} quotes deleted`);
-      setSelectedIds(new Set());
-      refreshWithKpis();
-    } catch {
-      toast.error("Failed to delete quotes");
-    }
-  }, [selectedIds, refreshWithKpis]);
-
   const handleConfirmCreateJob = useCallback(
     async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => {
       const perfStart = performance.now();
@@ -907,9 +892,6 @@ function QuotesPageContent() {
                   <BulkBtn label="Accept" onClick={() => handleBulkStatusChange("accepted")} variant="success" />
                   <BulkBtn label="Reject" onClick={() => handleBulkStatusChange("rejected")} variant="danger" />
                   <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
-                  {selectedIds.size === 1 ? (
-                    <BulkBtn label="Delete" onClick={handleBulkDelete} variant="danger" />
-                  ) : null}
                 </div>
               }
             />

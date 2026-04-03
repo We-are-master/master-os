@@ -3,7 +3,8 @@ import { createJobPayment } from "./job-payments";
 import type { Invoice, Job, JobPaymentType } from "@/types/database";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
-import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
+import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
+import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { listJobPayments } from "./job-payments";
 import { updateInvoice } from "./invoices";
 
@@ -100,17 +101,21 @@ export async function recordInvoicePartialPayment(
   const updates: Record<string, unknown> = {
     amount_paid: newPaid,
     status: full ? "paid" : "partially_paid",
+    last_payment_date: input.paymentDate,
   };
   if (full) {
     updates.paid_date = input.paymentDate;
     updates.collection_stage = "completed";
+  } else {
+    updates.paid_date = null;
   }
 
   const nextInv = await updateInvoice(invoiceId, updates as Partial<Invoice>);
   if (full) {
     await syncJobAfterInvoicePaidToLedger(supabase, invoiceId, "Manual");
   }
-  await syncInvoiceCollectionStagesForJob(supabase, job.id);
+  await syncInvoicesFromJobCustomerPayments(supabase, job.id);
+  await maybeCompleteAwaitingPaymentJob(supabase, job.id);
 
   return nextInv;
 }

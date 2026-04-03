@@ -2,7 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Invoice } from "@/types/database";
 import { isJobForcePaid } from "@/lib/job-force-paid";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
-import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
+import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
+import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 
 /**
  * Reset an invoice from paid/partially_paid to pending: clear amount_paid, remove job_payments
@@ -37,6 +38,7 @@ export async function reopenInvoiceToPending(client: SupabaseClient, invoice: In
     .update({
       status: "pending",
       paid_date: null,
+      last_payment_date: null,
       amount_paid: 0,
       stripe_payment_status: "none",
       stripe_payment_link_id: null,
@@ -54,7 +56,8 @@ export async function reopenInvoiceToPending(client: SupabaseClient, invoice: In
 
   const job = jobRow as import("@/types/database").Job;
   await reconcileJobCustomerPaymentFlags(client, job.id);
-  await syncInvoiceCollectionStagesForJob(client, job.id);
+  await syncInvoicesFromJobCustomerPayments(client, job.id);
+  await maybeCompleteAwaitingPaymentJob(client, job.id);
 
   if (job.status === "completed" && !isJobForcePaid(job.internal_notes)) {
     await client
