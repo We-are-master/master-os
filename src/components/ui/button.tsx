@@ -38,6 +38,8 @@ interface ButtonProps {
   onClick?: () => void;
   type?: "button" | "submit" | "reset";
   title?: string;
+  /** Associate a submit button with a form by id when the button is outside the `<form>`. */
+  form?: string;
 }
 
 export function Button({
@@ -51,11 +53,13 @@ export function Button({
   onClick,
   type = "button",
   title,
+  form,
 }: ButtonProps) {
   return (
     <motion.button
       type={type}
       title={title}
+      form={form}
       whileTap={!disabled ? buttonTap : undefined}
       className={cn(
         "inline-flex items-center justify-center font-medium transition-all duration-200 cursor-pointer select-none",
