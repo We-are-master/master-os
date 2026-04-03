@@ -34,7 +34,7 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { listQuoteLineItems } from "@/services/quotes";
-import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob } from "@/services/self-bills";
+import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob, syncSelfBillAfterJobChange } from "@/services/self-bills";
 import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
@@ -105,6 +105,13 @@ import {
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
+import {
+  applyCustomerExtraPatch,
+  applyPartnerExtraPatch,
+  type CustomerExtraAllocation,
+  type PartnerExtraAllocation,
+} from "@/lib/job-extra-charges";
+import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
@@ -223,6 +230,10 @@ export default function JobDetailPage() {
   const [addPaymentDate, setAddPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [addPaymentNote, setAddPaymentNote] = useState("");
   const [addPaymentBankRef, setAddPaymentBankRef] = useState("");
+  /** Regular = pay against remaining schedule; Extra = increase job totals then record payment (on-site upsell). */
+  const [addPaymentRegisterMode, setAddPaymentRegisterMode] = useState<"scheduled" | "extra">("scheduled");
+  const [extraCustomerAllocation, setExtraCustomerAllocation] = useState<CustomerExtraAllocation>("extras");
+  const [extraPartnerAllocation, setExtraPartnerAllocation] = useState<PartnerExtraAllocation>("partner_cost");
   const [addingPayment, setAddingPayment] = useState(false);
   const [deletePaymentTarget, setDeletePaymentTarget] = useState<{ id: string; amount: number; type: string } | null>(null);
   const [deletingPayment, setDeletingPayment] = useState(false);
@@ -1250,6 +1261,112 @@ export default function JobDetailPage() {
     const maxDep = Math.max(0, (job.customer_deposit ?? 0) - depPaid);
     const maxFin = Math.max(0, (job.customer_final_payment ?? 0) - finPaid);
 
+    if (addPaymentRegisterMode === "extra") {
+      if (addPaymentMethod !== "bank_transfer") {
+        toast.error("On-site extras use Bank transfer (manual) for now.");
+        return;
+      }
+      if (addPaymentType === "customer_deposit") {
+        toast.error("Use Final payment with Extra for on-site customer charges.");
+        return;
+      }
+      if (addPaymentType === "partner" && !job.partner_id?.trim()) {
+        toast.error("Assign a partner before recording a partner extra.");
+        return;
+      }
+      setAddingPayment(true);
+      try {
+        const noteBase = addPaymentNote.trim();
+        if (addPaymentType === "customer_final") {
+          const patch = applyCustomerExtraPatch(job, amount, extraCustomerAllocation);
+          const updated = await updateJob(job.id, patch);
+          setJob(updated);
+          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+          const allocLabel =
+            extraCustomerAllocation === "labour" ? "Labour" : extraCustomerAllocation === "extras" ? "CCZ / parking" : "Materials";
+          await createJobPayment({
+            job_id: job.id,
+            type: "customer_final",
+            amount,
+            payment_date: addPaymentDate,
+            note: noteBase ? `Extra (${allocLabel}) · ${noteBase}` : `Extra (${allocLabel})`,
+            payment_method: addPaymentMethod,
+            bank_reference: addPaymentBankRef.trim() || undefined,
+          });
+          await syncSelfBillAfterJobChange(updated);
+          await logAudit({
+            entityType: "job",
+            entityId: job.id,
+            entityRef: job.reference,
+            action: "payment",
+            fieldName: "customer_extra",
+            newValue: formatCurrency(amount),
+            userId: profile?.id,
+            userName: profile?.full_name,
+            metadata: {
+              type_label: "Customer final (extra)",
+              allocation: extraCustomerAllocation,
+              method: addPaymentMethod,
+              date: addPaymentDate,
+            },
+          });
+        } else {
+          const patch = applyPartnerExtraPatch(job, amount, extraPartnerAllocation);
+          const updated = await updateJob(job.id, patch);
+          setJob(updated);
+          await syncSelfBillAfterJobChange(updated);
+          const partnerAllocLabel =
+            extraPartnerAllocation === "materials" ? "Materials reimbursement" : "Partner cost";
+          await createJobPayment({
+            job_id: job.id,
+            type: "partner",
+            amount,
+            payment_date: addPaymentDate,
+            note: noteBase ? `Extra (${partnerAllocLabel}) · ${noteBase}` : `Extra (${partnerAllocLabel})`,
+            payment_method: addPaymentMethod,
+            bank_reference: addPaymentBankRef.trim() || undefined,
+          });
+          await logAudit({
+            entityType: "job",
+            entityId: job.id,
+            entityRef: job.reference,
+            action: "payment",
+            fieldName: "partner_extra",
+            newValue: formatCurrency(amount),
+            userId: profile?.id,
+            userName: profile?.full_name,
+            metadata: {
+              type_label: "Partner (extra)",
+              method: addPaymentMethod,
+              date: addPaymentDate,
+            },
+          });
+        }
+        toast.success("Extra charge applied and payment recorded.");
+        setAddPaymentOpen(false);
+        setAddPaymentAmount("");
+        setAddPaymentDate(new Date().toISOString().slice(0, 10));
+        setAddPaymentNote("");
+        setAddPaymentBankRef("");
+        setAddPaymentRegisterMode("scheduled");
+        setExtraCustomerAllocation("extras");
+        setExtraPartnerAllocation("partner_cost");
+        await refreshJobFinance();
+      } catch (e) {
+        const msg =
+          e instanceof Error
+            ? e.message
+            : typeof e === "object" && e !== null && "message" in (e as object)
+              ? String((e as { message: unknown }).message)
+              : "Failed to register extra payment";
+        console.error("Register extra payment failed", e);
+        toast.error(msg);
+      } finally {
+        setAddingPayment(false);
+      }
+      return;
+    }
+
     if (addPaymentType === "partner" && amount > maxPartner + 1e-6) {
       toast.error(`Partner payment cannot exceed remaining cap (${formatCurrency(maxPartner)}).`);
       return;
@@ -1295,6 +1412,9 @@ export default function JobDetailPage() {
       setAddPaymentDate(new Date().toISOString().slice(0, 10));
       setAddPaymentNote("");
       setAddPaymentBankRef("");
+      setAddPaymentRegisterMode("scheduled");
+      setExtraCustomerAllocation("extras");
+      setExtraPartnerAllocation("partner_cost");
       await refreshJobFinance();
     } catch (e) {
       const msg =
@@ -1318,6 +1438,9 @@ export default function JobDetailPage() {
     addPaymentBankRef,
     addPaymentMethod,
     addPaymentType,
+    addPaymentRegisterMode,
+    extraCustomerAllocation,
+    extraPartnerAllocation,
     refreshJobFinance,
     partnerPayments,
     customerPayments,
@@ -1848,6 +1971,9 @@ export default function JobDetailPage() {
         : addPaymentType === "customer_final"
           ? maxCustomerFinalPay
           : 0;
+
+  const paymentAmountMaxForUi =
+    addPaymentRegisterMode === "extra" ? Number.POSITIVE_INFINITY : paymentAmountMax;
 
   const statusActions = getJobStatusActions(job);
   const phaseCount = normalizeTotalPhases(job.total_phases);
@@ -2795,11 +2921,11 @@ export default function JobDetailPage() {
                   size="sm"
                   variant="outline"
                   className="mt-3 w-full"
-                  disabled={maxCustomerDepositPay <= 0 && maxCustomerFinalPay <= 0}
                   icon={<Plus className="h-3.5 w-3.5" />}
                   onClick={() => {
                     const type = maxCustomerDepositPay > 0 ? "customer_deposit" : "customer_final";
                     setAddPaymentType(type);
+                    setAddPaymentRegisterMode("scheduled");
                     setAddPaymentOpen(true);
                   }}
                 >
@@ -2867,7 +2993,18 @@ export default function JobDetailPage() {
                     </div>
                   )}
                 </div>
-                <Button size="sm" variant="outline" className="mt-3 w-full" disabled={partnerPayRemaining <= 0} icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setAddPaymentType("partner"); setAddPaymentOpen(true); }}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3 w-full"
+                  disabled={!job.partner_id?.trim()}
+                  icon={<Plus className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    setAddPaymentType("partner");
+                    setAddPaymentRegisterMode("scheduled");
+                    setAddPaymentOpen(true);
+                  }}
+                >
                   Register partner payment
                 </Button>
               </div>
@@ -3339,8 +3476,18 @@ export default function JobDetailPage() {
 
       <Modal
         open={addPaymentOpen}
-        onClose={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); setAddPaymentBankRef(""); setAddPaymentMethod("bank_transfer"); }}
+        onClose={() => {
+          setAddPaymentOpen(false);
+          setAddPaymentAmount("");
+          setAddPaymentNote("");
+          setAddPaymentBankRef("");
+          setAddPaymentMethod("bank_transfer");
+          setAddPaymentRegisterMode("scheduled");
+          setExtraCustomerAllocation("extras");
+          setExtraPartnerAllocation("partner_cost");
+        }}
         title="Register payment"
+        subtitle="Scheduled amounts, or on-site extra (updates job → invoice & self-bill)"
       >
         <div className="space-y-4 p-4">
 
@@ -3413,6 +3560,80 @@ export default function JobDetailPage() {
           {/* BANK TRANSFER MODE */}
           {addPaymentMethod === "bank_transfer" && (
             <>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Payment side</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAddPaymentType(maxCustomerDepositPay > 0.02 ? "customer_deposit" : "customer_final")
+                    }
+                    className={cn(
+                      "rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all",
+                      addPaymentType !== "partner"
+                        ? "border-primary bg-primary/8 text-primary"
+                        : "border-border-light bg-card text-text-secondary hover:bg-surface-hover/60",
+                    )}
+                  >
+                    Client pays us
+                    <span className="block text-[10px] font-normal opacity-80 mt-0.5">Deposit or final balance</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddPaymentType("partner")}
+                    disabled={!job.partner_id?.trim()}
+                    className={cn(
+                      "rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all",
+                      addPaymentType === "partner"
+                        ? "border-primary bg-primary/8 text-primary"
+                        : "border-border-light bg-card text-text-secondary hover:bg-surface-hover/60",
+                      !job.partner_id?.trim() && "opacity-50 cursor-not-allowed",
+                    )}
+                  >
+                    We pay partner
+                    <span className="block text-[10px] font-normal opacity-80 mt-0.5">Partner payout</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">How to register</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAddPaymentRegisterMode("scheduled")}
+                    className={cn(
+                      "rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all",
+                      addPaymentRegisterMode === "scheduled"
+                        ? "border-primary bg-primary/8 text-primary"
+                        : "border-border-light bg-card text-text-secondary hover:bg-surface-hover/60",
+                    )}
+                  >
+                    Scheduled payment
+                    <span className="block text-[10px] font-normal opacity-80 mt-0.5">Pay against amount due</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddPaymentRegisterMode("extra")}
+                    className={cn(
+                      "rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all",
+                      addPaymentRegisterMode === "extra"
+                        ? "border-primary bg-primary/8 text-primary"
+                        : "border-border-light bg-card text-text-secondary hover:bg-surface-hover/60",
+                    )}
+                  >
+                    On-site extra
+                    <span className="block text-[10px] font-normal opacity-80 mt-0.5">Adds to job & invoice first</span>
+                  </button>
+                </div>
+              </div>
+
+              {addPaymentRegisterMode === "extra" && (
+                <p className="text-[11px] text-text-tertiary leading-snug rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2">
+                  Use when the trade charges more on site: we increase the job totals (and linked invoice), record this payment, and update the partner self-bill when the partner gets an extra payout.
+                </p>
+              )}
+
               {(addPaymentType === "customer_deposit" || addPaymentType === "customer_final") && (
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
@@ -3426,21 +3647,67 @@ export default function JobDetailPage() {
                   />
                 </div>
               )}
+              {addPaymentType === "partner" && (
+                <div className="text-[11px] text-text-tertiary">
+                  Partner payment —{" "}
+                  {addPaymentRegisterMode === "extra"
+                    ? "On-site extra: job totals increase first, then this payout is recorded (self-bill recomputes)."
+                    : "Against remaining partner cap."}
+                </div>
+              )}
+
+              {addPaymentRegisterMode === "extra" && addPaymentType === "partner" && (
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Add partner extra to</label>
+                  <Select
+                    value={extraPartnerAllocation}
+                    onChange={(e) => setExtraPartnerAllocation(e.target.value as PartnerExtraAllocation)}
+                    options={[
+                      { value: "partner_cost", label: "Partner cost (labour / fee)" },
+                      { value: "materials", label: "Materials (reimbursement)" },
+                    ]}
+                  />
+                </div>
+              )}
+
+              {addPaymentRegisterMode === "extra" && addPaymentType === "customer_final" && (
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Add customer extra to</label>
+                  <Select
+                    value={extraCustomerAllocation}
+                    onChange={(e) => setExtraCustomerAllocation(e.target.value as CustomerExtraAllocation)}
+                    options={[
+                      { value: "labour", label: "Labour (sell price)" },
+                      { value: "extras", label: "CCZ / parking & extras" },
+                      { value: "materials", label: "Materials (client)" },
+                    ]}
+                  />
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
                 <Input
                   type="number"
                   min={0}
-                  max={paymentAmountMax > 0 ? paymentAmountMax : undefined}
+                  max={paymentAmountMaxForUi > 0 && Number.isFinite(paymentAmountMaxForUi) ? paymentAmountMaxForUi : undefined}
                   step="0.01"
                   placeholder="0.00"
                   value={addPaymentAmount}
                   onChange={(e) => setAddPaymentAmount(e.target.value)}
                 />
                 <p className="text-[11px] text-text-tertiary mt-1.5">
-                  Remaining: <strong className="text-text-secondary">{formatCurrency(paymentAmountMax)}</strong>
-                  {paymentAmountMax <= 0 && (
-                    <span className="block text-amber-600 dark:text-amber-400 mt-1">Nothing left to register for this type.</span>
+                  {addPaymentRegisterMode === "extra" ? (
+                    <>
+                      Extra amount to add to the job and record as paid (same value).
+                    </>
+                  ) : (
+                    <>
+                      Remaining: <strong className="text-text-secondary">{formatCurrency(paymentAmountMax)}</strong>
+                      {paymentAmountMax <= 0 && (
+                        <span className="block text-amber-600 dark:text-amber-400 mt-1">Nothing left to register for this type — try On-site extra if the trade added a charge.</span>
+                      )}
+                    </>
                   )}
                 </p>
               </div>
@@ -3469,14 +3736,32 @@ export default function JobDetailPage() {
                 />
               </div>
               <div className="flex gap-2 justify-end pt-2">
-                <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); setAddPaymentAmount(""); setAddPaymentNote(""); setAddPaymentBankRef(""); }}>Cancel</Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setAddPaymentOpen(false);
+                    setAddPaymentAmount("");
+                    setAddPaymentNote("");
+                    setAddPaymentBankRef("");
+                    setAddPaymentRegisterMode("scheduled");
+                    setExtraCustomerAllocation("extras");
+                    setExtraPartnerAllocation("partner_cost");
+                  }}
+                >
+                  Cancel
+                </Button>
                 <Button
                   size="sm"
                   loading={addingPayment}
-                  disabled={!addPaymentAmount || Number(addPaymentAmount) <= 0 || paymentAmountMax <= 0}
-                  onClick={handleAddPayment}
+                  disabled={
+                    !addPaymentAmount ||
+                    Number(addPaymentAmount) <= 0 ||
+                    (addPaymentRegisterMode === "scheduled" && paymentAmountMax <= 0)
+                  }
+                  onClick={() => void handleAddPayment()}
                 >
-                  Register payment
+                  {addPaymentRegisterMode === "extra" ? "Apply extra & record payment" : "Register payment"}
                 </Button>
               </div>
             </>
