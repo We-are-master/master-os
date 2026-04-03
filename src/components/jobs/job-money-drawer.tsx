@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import type { Invoice, JobPaymentMethod } from "@/types/database";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
@@ -120,7 +120,7 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
     <Drawer
       open={open && !!flow}
       onClose={onClose}
-      title={flow === "client" ? "Add payment" : "Pay partner"}
+      title="Add payment"
       width="w-[min(100vw,400px)]"
       className="bg-surface"
       footer={
@@ -139,7 +139,7 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
               loading={submitting}
               disabled={!canSubmit}
             >
-              {flow === "client" ? "Add payment" : "Pay partner"}
+              Add payment
             </Button>
           </div>
         )
@@ -199,6 +199,42 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
           </div>
         ) : (
           <>
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-text-secondary">Type</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setExtra(false)}
+                  className={cn(
+                    "rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors text-center",
+                    !extra
+                      ? "border-primary bg-primary/10 text-text-primary"
+                      : "border-border-light bg-card/40 text-text-secondary hover:bg-surface-hover",
+                  )}
+                >
+                  Payment received
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExtra(true)}
+                  className={cn(
+                    "rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors text-center",
+                    extra
+                      ? "border-primary bg-primary/10 text-text-primary"
+                      : "border-border-light bg-card/40 text-text-secondary hover:bg-surface-hover",
+                  )}
+                >
+                  Additional payment
+                </button>
+              </div>
+              {extra ? (
+                <p className="text-[11px] text-text-tertiary leading-relaxed pt-0.5">
+                  {flow === "client"
+                    ? "Extra charge — increases the job total and invoice."
+                    : "Extra payout — beyond planned partner cost."}
+                </p>
+              ) : null}
+            </div>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
               <Input
@@ -220,26 +256,6 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Note</label>
               <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional" className="h-10" />
             </div>
-            <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-border-light bg-card/40 px-3 py-3">
-              <input
-                type="checkbox"
-                className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/20"
-                checked={extra}
-                onChange={(e) => setExtra(e.target.checked)}
-              />
-              <div className="min-w-0">
-                <span className="text-sm font-medium text-text-primary">
-                  {flow === "client" ? "Extra charge" : "Extra payout"}
-                </span>
-                {extra ? (
-                  <p className="text-[11px] text-text-tertiary mt-1.5 leading-relaxed">
-                    {flow === "client"
-                      ? "This will increase the job total."
-                      : "This payment is outside the original partner cost."}
-                  </p>
-                ) : null}
-              </div>
-            </label>
           </>
         )}
       </form>

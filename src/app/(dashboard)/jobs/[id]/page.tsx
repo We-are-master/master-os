@@ -1269,7 +1269,7 @@ export default function JobDetailPage() {
             ...(payload.note.trim() ? { note: payload.note.trim() } : {}),
           },
         });
-        toast.success(moneyDrawerFlow === "client" ? "Payment added" : "Partner payment recorded");
+        toast.success("Payment added");
         setMoneyDrawerOpen(false);
         setMoneyDrawerFlow(null);
         await refreshJobFinance();
@@ -2831,7 +2831,7 @@ export default function JobDetailPage() {
                     setMoneyDrawerOpen(true);
                   }}
                 >
-                  Pay partner
+                  Add payment
                 </Button>
               </div>
 
