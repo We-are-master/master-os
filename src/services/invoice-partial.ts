@@ -1,44 +1,14 @@
 import { getSupabase } from "./base";
 import { createJobPayment } from "./job-payments";
-import type { Invoice, Job, JobPaymentType } from "@/types/database";
+import type { Invoice, Job } from "@/types/database";
 import { invoiceBalanceDue } from "@/lib/invoice-balance";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { listJobPayments } from "./job-payments";
+import { allocateCustomerPaymentToSchedule } from "@/lib/allocate-customer-payment";
 
 const EPS = 0.02;
-
-function allocateToDepositAndFinal(
-  job: Job,
-  depositPaid: number,
-  finalPaid: number,
-  paymentAmount: number,
-): { type: JobPaymentType; amount: number }[] {
-  const depNeed = Number(job.customer_deposit ?? 0);
-  const finNeed = Number(job.customer_final_payment ?? 0);
-  const depRem = Math.max(0, depNeed - depositPaid);
-  let left = Math.round(paymentAmount * 100) / 100;
-  const out: { type: JobPaymentType; amount: number }[] = [];
-  if (depRem > EPS && left > EPS) {
-    const d = Math.min(left, depRem);
-    out.push({ type: "customer_deposit", amount: Math.round(d * 100) / 100 });
-    left = Math.round((left - d) * 100) / 100;
-  }
-  if (left > EPS) {
-    if (finNeed > EPS) {
-      const f = Math.min(left, Math.max(0, finNeed - finalPaid));
-      if (f > EPS) {
-        out.push({ type: "customer_final", amount: Math.round(f * 100) / 100 });
-        left = Math.round((left - f) * 100) / 100;
-      }
-    }
-    if (left > EPS) {
-      out.push({ type: "customer_final", amount: left });
-    }
-  }
-  return out;
-}
 
 export type RecordInvoicePartialInput = {
   paymentDate: string;
@@ -80,7 +50,7 @@ export async function recordInvoicePartialPayment(
   const depositPaid = pays.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
   const finalPaid = pays.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
 
-  const chunks = allocateToDepositAndFinal(job, depositPaid, finalPaid, payAmt);
+  const chunks = allocateCustomerPaymentToSchedule(job, depositPaid, finalPaid, payAmt);
   if (chunks.length === 0) {
     throw new Error("Could not allocate payment against this job’s deposit/final schedule");
   }

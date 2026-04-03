@@ -35,7 +35,7 @@ import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { listQuoteLineItems } from "@/services/quotes";
 import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob, syncSelfBillAfterJobChange } from "@/services/self-bills";
-import { listJobPayments, createJobPayment, deleteJobPayment } from "@/services/job-payments";
+import { listJobPayments, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
@@ -54,7 +54,7 @@ import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
-import type { Invoice, Job, JobPayment, JobPaymentType, Partner, QuoteLineItem, SelfBill } from "@/types/database";
+import type { Invoice, Job, JobPayment, Partner, QuoteLineItem, SelfBill } from "@/types/database";
 import { listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
 import { getSupabase } from "@/services/base";
@@ -105,13 +105,8 @@ import {
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
-import {
-  applyCustomerExtraPatch,
-  applyPartnerExtraPatch,
-  type CustomerExtraAllocation,
-  type PartnerExtraAllocation,
-} from "@/lib/job-extra-charges";
-import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
+import { JobMoneyDrawer, type JobMoneyDrawerFlow, type JobMoneySubmitPayload } from "@/components/jobs/job-money-drawer";
+import { executeJobMoneyAction } from "@/services/job-money-actions";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: "warning", dot: true },
@@ -223,18 +218,9 @@ export default function JobDetailPage() {
   const [partnerPayments, setPartnerPayments] = useState<JobPayment[]>([]);
   const [customerPayments, setCustomerPayments] = useState<JobPayment[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
-  const [addPaymentOpen, setAddPaymentOpen] = useState(false);
-  const [addPaymentType, setAddPaymentType] = useState<JobPaymentType>("partner");
-  const [addPaymentMethod, setAddPaymentMethod] = useState<"stripe" | "bank_transfer">("bank_transfer");
-  const [addPaymentAmount, setAddPaymentAmount] = useState("");
-  const [addPaymentDate, setAddPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [addPaymentNote, setAddPaymentNote] = useState("");
-  const [addPaymentBankRef, setAddPaymentBankRef] = useState("");
-  /** Regular = pay against remaining schedule; Extra = increase job totals then record payment (on-site upsell). */
-  const [addPaymentRegisterMode, setAddPaymentRegisterMode] = useState<"scheduled" | "extra">("scheduled");
-  const [extraCustomerAllocation, setExtraCustomerAllocation] = useState<CustomerExtraAllocation>("extras");
-  const [extraPartnerAllocation, setExtraPartnerAllocation] = useState<PartnerExtraAllocation>("partner_cost");
-  const [addingPayment, setAddingPayment] = useState(false);
+  const [moneyDrawerOpen, setMoneyDrawerOpen] = useState(false);
+  const [moneyDrawerFlow, setMoneyDrawerFlow] = useState<JobMoneyDrawerFlow | null>(null);
+  const [moneySubmitting, setMoneySubmitting] = useState(false);
   const [deletePaymentTarget, setDeletePaymentTarget] = useState<{ id: string; amount: number; type: string } | null>(null);
   const [deletingPayment, setDeletingPayment] = useState(false);
   const [propertyEdit, setPropertyEdit] = useState<ClientAndAddressValue | null>(null);
@@ -1250,107 +1236,42 @@ export default function JobDetailPage() {
     return range ? `Client & partner will see: Arrival time (${range})` : null;
   }, [scheduleDate, scheduleTime, scheduleWindowMins]);
 
-  const handleAddPayment = useCallback(async () => {
-    if (!job || !addPaymentAmount || Number(addPaymentAmount) <= 0) return;
-    const amount = Number(addPaymentAmount);
-    const partnerCap = partnerPaymentCap(job);
-    const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
-    const maxPartner = Math.max(0, partnerCap - partnerPaid);
-    const depPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
-    const finPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
-    const maxDep = Math.max(0, (job.customer_deposit ?? 0) - depPaid);
-    const maxFin = Math.max(0, (job.customer_final_payment ?? 0) - finPaid);
-
-    if (addPaymentRegisterMode === "extra") {
-      if (addPaymentMethod !== "bank_transfer") {
-        toast.error("On-site extras use Bank transfer (manual) for now.");
-        return;
-      }
-      if (addPaymentType === "customer_deposit") {
-        toast.error("Use Final payment with Extra for on-site customer charges.");
-        return;
-      }
-      if (addPaymentType === "partner" && !job.partner_id?.trim()) {
-        toast.error("Assign a partner before recording a partner extra.");
-        return;
-      }
-      setAddingPayment(true);
+  const handleMoneyDrawerSubmit = useCallback(
+    async (payload: JobMoneySubmitPayload) => {
+      if (!job || !moneyDrawerFlow) return;
+      setMoneySubmitting(true);
       try {
-        const noteBase = addPaymentNote.trim();
-        if (addPaymentType === "customer_final") {
-          const patch = applyCustomerExtraPatch(job, amount, extraCustomerAllocation);
-          const updated = await updateJob(job.id, patch);
-          setJob(updated);
-          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-          const allocLabel =
-            extraCustomerAllocation === "labour" ? "Labour" : extraCustomerAllocation === "extras" ? "CCZ / parking" : "Materials";
-          await createJobPayment({
-            job_id: job.id,
-            type: "customer_final",
-            amount,
-            payment_date: addPaymentDate,
-            note: noteBase ? `Extra (${allocLabel}) · ${noteBase}` : `Extra (${allocLabel})`,
-            payment_method: addPaymentMethod,
-            bank_reference: addPaymentBankRef.trim() || undefined,
-          });
-          await syncSelfBillAfterJobChange(updated);
-          await logAudit({
-            entityType: "job",
-            entityId: job.id,
-            entityRef: job.reference,
-            action: "payment",
-            fieldName: "customer_extra",
-            newValue: formatCurrency(amount),
-            userId: profile?.id,
-            userName: profile?.full_name,
-            metadata: {
-              type_label: "Customer final (extra)",
-              allocation: extraCustomerAllocation,
-              method: addPaymentMethod,
-              date: addPaymentDate,
-            },
-          });
-        } else {
-          const patch = applyPartnerExtraPatch(job, amount, extraPartnerAllocation);
-          const updated = await updateJob(job.id, patch);
-          setJob(updated);
-          await syncSelfBillAfterJobChange(updated);
-          const partnerAllocLabel =
-            extraPartnerAllocation === "materials" ? "Materials reimbursement" : "Partner cost";
-          await createJobPayment({
-            job_id: job.id,
-            type: "partner",
-            amount,
-            payment_date: addPaymentDate,
-            note: noteBase ? `Extra (${partnerAllocLabel}) · ${noteBase}` : `Extra (${partnerAllocLabel})`,
-            payment_method: addPaymentMethod,
-            bank_reference: addPaymentBankRef.trim() || undefined,
-          });
-          await logAudit({
-            entityType: "job",
-            entityId: job.id,
-            entityRef: job.reference,
-            action: "payment",
-            fieldName: "partner_extra",
-            newValue: formatCurrency(amount),
-            userId: profile?.id,
-            userName: profile?.full_name,
-            metadata: {
-              type_label: "Partner (extra)",
-              method: addPaymentMethod,
-              date: addPaymentDate,
-            },
-          });
-        }
-        toast.success("Extra charge applied and payment recorded.");
-        setAddPaymentOpen(false);
-        setAddPaymentAmount("");
-        setAddPaymentDate(new Date().toISOString().slice(0, 10));
-        setAddPaymentNote("");
-        setAddPaymentBankRef("");
-        setAddPaymentRegisterMode("scheduled");
-        setExtraCustomerAllocation("extras");
-        setExtraPartnerAllocation("partner_cost");
+        const updated = await executeJobMoneyAction({
+          job,
+          kind: moneyDrawerFlow,
+          extra: payload.extra,
+          amount: payload.amount,
+          paymentDate: payload.paymentDate,
+          method: payload.method,
+          note: payload.note,
+          customerPayments,
+          partnerPayments,
+        });
+        setJob(updated);
+        await logAudit({
+          entityType: "job",
+          entityId: job.id,
+          entityRef: job.reference,
+          action: "payment",
+          fieldName: moneyDrawerFlow === "client" ? "customer_payment" : "partner_payment",
+          newValue: formatCurrency(payload.amount),
+          userId: profile?.id,
+          userName: profile?.full_name,
+          metadata: {
+            extra: payload.extra,
+            method: payload.method,
+            date: payload.paymentDate,
+            ...(payload.note.trim() ? { note: payload.note.trim() } : {}),
+          },
+        });
+        toast.success(moneyDrawerFlow === "client" ? "Payment added" : "Partner payment recorded");
+        setMoneyDrawerOpen(false);
+        setMoneyDrawerFlow(null);
         await refreshJobFinance();
       } catch (e) {
         const msg =
@@ -1358,93 +1279,15 @@ export default function JobDetailPage() {
             ? e.message
             : typeof e === "object" && e !== null && "message" in (e as object)
               ? String((e as { message: unknown }).message)
-              : "Failed to register extra payment";
-        console.error("Register extra payment failed", e);
+              : "Could not save";
+        console.error("Job money action failed", e);
         toast.error(msg);
       } finally {
-        setAddingPayment(false);
+        setMoneySubmitting(false);
       }
-      return;
-    }
-
-    if (addPaymentType === "partner" && amount > maxPartner + 1e-6) {
-      toast.error(`Partner payment cannot exceed remaining cap (${formatCurrency(maxPartner)}).`);
-      return;
-    }
-    if (addPaymentType === "customer_deposit" && amount > maxDep + 1e-6) {
-      toast.error(`Deposit payment cannot exceed scheduled deposit remaining (${formatCurrency(maxDep)}).`);
-      return;
-    }
-    if (addPaymentType === "customer_final" && amount > maxFin + 1e-6) {
-      toast.error(`Final payment cannot exceed scheduled final remaining (${formatCurrency(maxFin)}).`);
-      return;
-    }
-
-    setAddingPayment(true);
-    try {
-      await createJobPayment({
-        job_id: job.id,
-        type: addPaymentType,
-        amount,
-        payment_date: addPaymentDate,
-        note: addPaymentNote.trim() || undefined,
-        payment_method: addPaymentMethod,
-        bank_reference: addPaymentBankRef.trim() || undefined,
-      });
-      const typeLabel = addPaymentType === "customer_deposit" ? "Customer deposit" : addPaymentType === "customer_final" ? "Customer final" : "Partner payment";
-      await logAudit({
-        entityType: "job", entityId: job.id, entityRef: job.reference,
-        action: "payment",
-        fieldName: addPaymentType,
-        newValue: formatCurrency(amount),
-        userId: profile?.id, userName: profile?.full_name,
-        metadata: {
-          type_label: typeLabel,
-          method: addPaymentMethod,
-          date: addPaymentDate,
-          ...(addPaymentBankRef.trim() ? { bank_reference: addPaymentBankRef.trim() } : {}),
-          ...(addPaymentNote.trim() ? { note: addPaymentNote.trim() } : {}),
-        },
-      });
-      toast.success("Payment registered");
-      setAddPaymentOpen(false);
-      setAddPaymentAmount("");
-      setAddPaymentDate(new Date().toISOString().slice(0, 10));
-      setAddPaymentNote("");
-      setAddPaymentBankRef("");
-      setAddPaymentRegisterMode("scheduled");
-      setExtraCustomerAllocation("extras");
-      setExtraPartnerAllocation("partner_cost");
-      await refreshJobFinance();
-    } catch (e) {
-      const msg =
-        e instanceof Error
-          ? e.message
-          : typeof e === "object" && e !== null && "message" in (e as object)
-            ? String((e as { message: unknown }).message)
-            : typeof e === "string"
-              ? e
-              : "Failed to register payment";
-      console.error("Register payment failed", e);
-      toast.error(msg);
-    } finally {
-      setAddingPayment(false);
-    }
-  }, [
-    job,
-    addPaymentAmount,
-    addPaymentDate,
-    addPaymentNote,
-    addPaymentBankRef,
-    addPaymentMethod,
-    addPaymentType,
-    addPaymentRegisterMode,
-    extraCustomerAllocation,
-    extraPartnerAllocation,
-    refreshJobFinance,
-    partnerPayments,
-    customerPayments,
-  ]);
+    },
+    [job, moneyDrawerFlow, customerPayments, partnerPayments, profile?.id, profile?.full_name, refreshJobFinance],
+  );
 
   const confirmDeletePayment = useCallback(async () => {
     if (!deletePaymentTarget || !job) return;
@@ -1941,8 +1784,6 @@ export default function JobDetailPage() {
   const customerFinalPaidSum = customerPayments
     .filter((p) => p.type === "customer_final")
     .reduce((s, p) => s + Number(p.amount), 0);
-  const maxCustomerDepositPay = Math.max(0, (job.customer_deposit ?? 0) - customerDepositPaid);
-  const maxCustomerFinalPay = Math.max(0, (job.customer_final_payment ?? 0) - customerFinalPaidSum);
   const scheduledCustomerTotal = customerScheduledTotal(job);
   const customerScheduleMismatch = Math.abs(billableRevenue - scheduledCustomerTotal) > 0.02;
   // Use actual payment records sum — not boolean flags — so the UI stays live without a page reload.
@@ -1962,18 +1803,6 @@ export default function JobDetailPage() {
     Math.max(0, Number(job.materials_cost ?? 0)),
   );
   const finalLabour = Math.max(0, finalBalanceTotal - finalCczParking - finalMaterials);
-
-  const paymentAmountMax =
-    addPaymentType === "partner"
-      ? partnerPayRemaining
-      : addPaymentType === "customer_deposit"
-        ? maxCustomerDepositPay
-        : addPaymentType === "customer_final"
-          ? maxCustomerFinalPay
-          : 0;
-
-  const paymentAmountMaxForUi =
-    addPaymentRegisterMode === "extra" ? Number.POSITIVE_INFINITY : paymentAmountMax;
 
   const statusActions = getJobStatusActions(job);
   const phaseCount = normalizeTotalPhases(job.total_phases);
@@ -2923,13 +2752,11 @@ export default function JobDetailPage() {
                   className="mt-3 w-full"
                   icon={<Plus className="h-3.5 w-3.5" />}
                   onClick={() => {
-                    const type = maxCustomerDepositPay > 0 ? "customer_deposit" : "customer_final";
-                    setAddPaymentType(type);
-                    setAddPaymentRegisterMode("scheduled");
-                    setAddPaymentOpen(true);
+                    setMoneyDrawerFlow("client");
+                    setMoneyDrawerOpen(true);
                   }}
                 >
-                  Register customer payment
+                  Add payment
                 </Button>
               </div>
 
@@ -3000,12 +2827,11 @@ export default function JobDetailPage() {
                   disabled={!job.partner_id?.trim()}
                   icon={<Plus className="h-3.5 w-3.5" />}
                   onClick={() => {
-                    setAddPaymentType("partner");
-                    setAddPaymentRegisterMode("scheduled");
-                    setAddPaymentOpen(true);
+                    setMoneyDrawerFlow("partner");
+                    setMoneyDrawerOpen(true);
                   }}
                 >
-                  Register partner payment
+                  Pay partner
                 </Button>
               </div>
 
@@ -3474,301 +3300,17 @@ export default function JobDetailPage() {
         </div>
       </Modal>
 
-      <Modal
-        open={addPaymentOpen}
+      <JobMoneyDrawer
+        open={moneyDrawerOpen}
+        flow={moneyDrawerFlow}
         onClose={() => {
-          setAddPaymentOpen(false);
-          setAddPaymentAmount("");
-          setAddPaymentNote("");
-          setAddPaymentBankRef("");
-          setAddPaymentMethod("bank_transfer");
-          setAddPaymentRegisterMode("scheduled");
-          setExtraCustomerAllocation("extras");
-          setExtraPartnerAllocation("partner_cost");
+          setMoneyDrawerOpen(false);
+          setMoneyDrawerFlow(null);
         }}
-        title="Register payment"
-        subtitle="Scheduled amounts, or on-site extra (updates job → invoice & self-bill)"
-      >
-        <div className="space-y-4 p-4">
-
-          {/* METHOD SELECTOR */}
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-2">Payment method</label>
-            <div className="grid grid-cols-2 gap-2">
-              {(["stripe", "bank_transfer"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setAddPaymentMethod(m)}
-                  className={cn(
-                    "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium transition-all",
-                    addPaymentMethod === m
-                      ? "border-primary bg-primary/8 text-primary shadow-sm"
-                      : "border-border-light bg-card text-text-secondary hover:border-border hover:bg-surface-hover/60",
-                  )}
-                >
-                  {m === "stripe"
-                    ? <><CreditCard className="h-4 w-4" /><span>Stripe</span><span className="text-[10px] font-normal opacity-70">Automatic</span></>
-                    : <><Building2 className="h-4 w-4" /><span>Bank transfer</span><span className="text-[10px] font-normal opacity-70">Manual</span></>
-                  }
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* STRIPE MODE */}
-          {addPaymentMethod === "stripe" && (
-            <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
-              <p className="text-xs text-text-secondary leading-relaxed">
-                Stripe payments are tracked <strong>automatically via webhook</strong>. Share the payment link with the client — when they pay, the system updates instantly.
-              </p>
-              {jobInvoices.filter((inv) => inv.stripe_payment_link_url).length > 0 ? (
-                <div className="space-y-2">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Payment links</p>
-                  {jobInvoices.filter((inv) => inv.stripe_payment_link_url).map((inv) => (
-                    <div key={inv.id} className="flex items-center justify-between gap-2 rounded-lg border border-border-light bg-card px-3 py-2">
-                      <div>
-                        <p className="text-xs font-semibold text-text-primary">{inv.reference}</p>
-                        <p className="text-[11px] text-text-tertiary">{formatCurrency(inv.amount)}</p>
-                      </div>
-                      <div className="flex gap-1.5">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          icon={<Copy className="h-3 w-3" />}
-                          onClick={() => { void navigator.clipboard.writeText(inv.stripe_payment_link_url!); toast.success("Link copied"); }}
-                        >Copy</Button>
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          icon={<ExternalLink className="h-3 w-3" />}
-                          onClick={() => window.open(inv.stripe_payment_link_url!, "_blank", "noopener,noreferrer")}
-                        >Open</Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-amber-600 dark:text-amber-400">No Stripe payment links on this job yet. Create an invoice with a Stripe link first.</p>
-              )}
-              <div className="flex justify-end pt-1">
-                <Button variant="ghost" size="sm" onClick={() => { setAddPaymentOpen(false); }}>Close</Button>
-              </div>
-            </div>
-          )}
-
-          {/* BANK TRANSFER MODE */}
-          {addPaymentMethod === "bank_transfer" && (
-            <>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Payment side</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setAddPaymentType(maxCustomerDepositPay > 0.02 ? "customer_deposit" : "customer_final")
-                    }
-                    className={cn(
-                      "rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all",
-                      addPaymentType !== "partner"
-                        ? "border-primary bg-primary/8 text-primary"
-                        : "border-border-light bg-card text-text-secondary hover:bg-surface-hover/60",
-                    )}
-                  >
-                    Client pays us
-                    <span className="block text-[10px] font-normal opacity-80 mt-0.5">Deposit or final balance</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAddPaymentType("partner")}
-                    disabled={!job.partner_id?.trim()}
-                    className={cn(
-                      "rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all",
-                      addPaymentType === "partner"
-                        ? "border-primary bg-primary/8 text-primary"
-                        : "border-border-light bg-card text-text-secondary hover:bg-surface-hover/60",
-                      !job.partner_id?.trim() && "opacity-50 cursor-not-allowed",
-                    )}
-                  >
-                    We pay partner
-                    <span className="block text-[10px] font-normal opacity-80 mt-0.5">Partner payout</span>
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">How to register</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setAddPaymentRegisterMode("scheduled")}
-                    className={cn(
-                      "rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all",
-                      addPaymentRegisterMode === "scheduled"
-                        ? "border-primary bg-primary/8 text-primary"
-                        : "border-border-light bg-card text-text-secondary hover:bg-surface-hover/60",
-                    )}
-                  >
-                    Scheduled payment
-                    <span className="block text-[10px] font-normal opacity-80 mt-0.5">Pay against amount due</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAddPaymentRegisterMode("extra")}
-                    className={cn(
-                      "rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all",
-                      addPaymentRegisterMode === "extra"
-                        ? "border-primary bg-primary/8 text-primary"
-                        : "border-border-light bg-card text-text-secondary hover:bg-surface-hover/60",
-                    )}
-                  >
-                    On-site extra
-                    <span className="block text-[10px] font-normal opacity-80 mt-0.5">Adds to job & invoice first</span>
-                  </button>
-                </div>
-              </div>
-
-              {addPaymentRegisterMode === "extra" && (
-                <p className="text-[11px] text-text-tertiary leading-snug rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2">
-                  Use when the trade charges more on site: we increase the job totals (and linked invoice), record this payment, and update the partner self-bill when the partner gets an extra payout.
-                </p>
-              )}
-
-              {(addPaymentType === "customer_deposit" || addPaymentType === "customer_final") && (
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Type</label>
-                  <Select
-                    value={addPaymentType}
-                    onChange={(e) => setAddPaymentType(e.target.value as JobPaymentType)}
-                    options={[
-                      { value: "customer_deposit", label: "Deposit" },
-                      { value: "customer_final", label: "Final payment" },
-                    ]}
-                  />
-                </div>
-              )}
-              {addPaymentType === "partner" && (
-                <div className="text-[11px] text-text-tertiary">
-                  Partner payment —{" "}
-                  {addPaymentRegisterMode === "extra"
-                    ? "On-site extra: job totals increase first, then this payout is recorded (self-bill recomputes)."
-                    : "Against remaining partner cap."}
-                </div>
-              )}
-
-              {addPaymentRegisterMode === "extra" && addPaymentType === "partner" && (
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Add partner extra to</label>
-                  <Select
-                    value={extraPartnerAllocation}
-                    onChange={(e) => setExtraPartnerAllocation(e.target.value as PartnerExtraAllocation)}
-                    options={[
-                      { value: "partner_cost", label: "Partner cost (labour / fee)" },
-                      { value: "materials", label: "Materials (reimbursement)" },
-                    ]}
-                  />
-                </div>
-              )}
-
-              {addPaymentRegisterMode === "extra" && addPaymentType === "customer_final" && (
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Add customer extra to</label>
-                  <Select
-                    value={extraCustomerAllocation}
-                    onChange={(e) => setExtraCustomerAllocation(e.target.value as CustomerExtraAllocation)}
-                    options={[
-                      { value: "labour", label: "Labour (sell price)" },
-                      { value: "extras", label: "CCZ / parking & extras" },
-                      { value: "materials", label: "Materials (client)" },
-                    ]}
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={paymentAmountMaxForUi > 0 && Number.isFinite(paymentAmountMaxForUi) ? paymentAmountMaxForUi : undefined}
-                  step="0.01"
-                  placeholder="0.00"
-                  value={addPaymentAmount}
-                  onChange={(e) => setAddPaymentAmount(e.target.value)}
-                />
-                <p className="text-[11px] text-text-tertiary mt-1.5">
-                  {addPaymentRegisterMode === "extra" ? (
-                    <>
-                      Extra amount to add to the job and record as paid (same value).
-                    </>
-                  ) : (
-                    <>
-                      Remaining: <strong className="text-text-secondary">{formatCurrency(paymentAmountMax)}</strong>
-                      {paymentAmountMax <= 0 && (
-                        <span className="block text-amber-600 dark:text-amber-400 mt-1">Nothing left to register for this type — try On-site extra if the trade added a charge.</span>
-                      )}
-                    </>
-                  )}
-                </p>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Date received</label>
-                <Input type="date" value={addPaymentDate} onChange={(e) => setAddPaymentDate(e.target.value)} />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Bank reference / transaction ID</label>
-                <input
-                  type="text"
-                  placeholder="e.g. TRF-20260326-001"
-                  value={addPaymentBankRef}
-                  onChange={(e) => setAddPaymentBankRef(e.target.value)}
-                  className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">Note (optional)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Paid by John via Barclays"
-                  value={addPaymentNote}
-                  onChange={(e) => setAddPaymentNote(e.target.value)}
-                  className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15"
-                />
-              </div>
-              <div className="flex gap-2 justify-end pt-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setAddPaymentOpen(false);
-                    setAddPaymentAmount("");
-                    setAddPaymentNote("");
-                    setAddPaymentBankRef("");
-                    setAddPaymentRegisterMode("scheduled");
-                    setExtraCustomerAllocation("extras");
-                    setExtraPartnerAllocation("partner_cost");
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  loading={addingPayment}
-                  disabled={
-                    !addPaymentAmount ||
-                    Number(addPaymentAmount) <= 0 ||
-                    (addPaymentRegisterMode === "scheduled" && paymentAmountMax <= 0)
-                  }
-                  onClick={() => void handleAddPayment()}
-                >
-                  {addPaymentRegisterMode === "extra" ? "Apply extra & record payment" : "Register payment"}
-                </Button>
-              </div>
-            </>
-          )}
-
-        </div>
-      </Modal>
+        onSubmit={handleMoneyDrawerSubmit}
+        submitting={moneySubmitting}
+        stripeInvoices={jobInvoices}
+      />
 
       <Modal
         open={partnerModalOpen}
