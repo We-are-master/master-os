@@ -76,6 +76,7 @@ export default function BillsPage() {
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [billKindTab, setBillKindTab] = useState<"one_off" | "recurring">("one_off");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [saving, setSaving] = useState(false);
@@ -123,11 +124,13 @@ export default function BillsPage() {
       : bills.filter(
           (b) => b.due_date && b.due_date >= periodBounds.from && b.due_date <= periodBounds.to
         );
-    if (statusFilter === "archived") {
-      return inPeriod.filter((b) => b.archived_at);
-    }
-    return inPeriod.filter((b) => !b.archived_at);
-  }, [bills, periodBounds, statusFilter]);
+    const archivedScoped =
+      statusFilter === "archived"
+        ? inPeriod.filter((b) => b.archived_at)
+        : inPeriod.filter((b) => !b.archived_at);
+    const matchesKind = (b: Bill) => (billKindTab === "recurring" ? !!b.is_recurring : !b.is_recurring);
+    return archivedScoped.filter(matchesKind);
+  }, [bills, periodBounds, statusFilter, billKindTab]);
 
   const displayList = useMemo(
     () => buildBillDisplayList(scopedBills, statusFilter),
@@ -140,7 +143,7 @@ export default function BillsPage() {
   );
 
   const kpis = useMemo(() => {
-    const base = !periodBounds
+    const inPeriodEligible = !periodBounds
       ? bills.filter((b) => kpiEligible(b))
       : bills.filter(
           (b) =>
@@ -149,6 +152,9 @@ export default function BillsPage() {
             b.due_date >= periodBounds.from &&
             b.due_date <= periodBounds.to
         );
+    const base = inPeriodEligible.filter((b) =>
+      billKindTab === "recurring" ? !!b.is_recurring : !b.is_recurring
+    );
     const pending = base.filter((b) => b.status === "submitted");
     const approved = base.filter((b) => b.status === "approved");
     const paid = base.filter((b) => b.status === "paid");
@@ -166,7 +172,7 @@ export default function BillsPage() {
       totalCount: base.length,
       totalAmount: totalAmt,
     };
-  }, [bills, periodBounds]);
+  }, [bills, periodBounds, billKindTab]);
 
   const handleApproveAllInSeries = async (seriesKey: string) => {
     const submittedInSeries = scopedBills.filter(
@@ -423,7 +429,7 @@ export default function BillsPage() {
       <div className="space-y-5">
         <PageHeader
           title="Bills & expenses"
-          subtitle="Operating debits in one place: one-off and recurring schedules. KPIs and the table follow the date filter above."
+          subtitle="Use One-off vs Recurring below; then filter by workflow. KPIs and the list match the tab and the period bar."
         >
           <Button
             size="sm"
@@ -453,7 +459,7 @@ export default function BillsPage() {
             title="Pending"
             value={kpis.pendingAmount}
             format="currency"
-            description={`${kpis.pendingCount} submitted · Due in ${kpiPeriodDesc}`}
+            description={`${kpis.pendingCount} submitted · ${billKindTab === "recurring" ? "Recurring" : "One-off"} · ${kpiPeriodDesc}`}
             icon={FileCheck}
             accent="amber"
           />
@@ -461,7 +467,7 @@ export default function BillsPage() {
             title="Approved"
             value={kpis.approvedAmount}
             format="currency"
-            description={`${kpis.approvedCount} awaiting payment · ${kpiPeriodDesc}`}
+            description={`${kpis.approvedCount} awaiting payment · ${billKindTab === "recurring" ? "Recurring" : "One-off"} · ${kpiPeriodDesc}`}
             icon={DollarSign}
             accent="primary"
           />
@@ -469,7 +475,7 @@ export default function BillsPage() {
             title="Total bills (period)"
             value={kpis.totalAmount}
             format="currency"
-            description={`${kpis.totalCount} line${kpis.totalCount === 1 ? "" : "s"} · Excl. archived, rejected & needs attention · ${kpiPeriodDesc}`}
+            description={`${kpis.totalCount} line${kpis.totalCount === 1 ? "" : "s"} · ${billKindTab === "recurring" ? "Recurring" : "One-off"} · Excl. archived, rejected & needs attention · ${kpiPeriodDesc}`}
             icon={Layers}
             accent="blue"
           />
@@ -477,7 +483,7 @@ export default function BillsPage() {
             title="Paid"
             value={kpis.paidAmount}
             format="currency"
-            description={`${kpis.paidCount} paid · Due in ${kpiPeriodDesc}`}
+            description={`${kpis.paidCount} paid · ${billKindTab === "recurring" ? "Recurring" : "One-off"} · ${kpiPeriodDesc}`}
             icon={Banknote}
             accent="emerald"
           />
@@ -502,6 +508,27 @@ export default function BillsPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {(
+              [
+                { id: "one_off" as const, label: "One-off" },
+                { id: "recurring" as const, label: "Recurring" },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setBillKindTab(t.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  billKindTab === t.id
+                    ? "bg-primary text-white shadow-sm"
+                    : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
             {BILL_FILTER_ORDER.map((s) => (
               <button
                 key={s}
@@ -523,7 +550,7 @@ export default function BillsPage() {
             </div>
           ) : displayList.length === 0 ? (
             <p className="text-sm text-text-tertiary py-10 text-center rounded-xl border border-dashed border-border-light bg-surface-hover/30">
-              No bills in this period for the current filters.
+              No {billKindTab === "recurring" ? "recurring" : "one-off"} bills in this period for the current filters.
             </p>
           ) : (
             <div className="space-y-3">
