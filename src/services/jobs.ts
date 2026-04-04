@@ -11,6 +11,7 @@ import {
   prepareJobRowForUpdate,
 } from "@/lib/job-schema-compat";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { jobHasPartnerSet } from "@/lib/job-partner-assign";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
@@ -168,14 +169,15 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
 }
 
 export async function getJob(id: string): Promise<Job | null> {
+  if (!id?.trim()) return null;
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("jobs")
     .select("*")
-    .eq("id", id)
-    .single();
+    .eq("id", id.trim())
+    .maybeSingle();
   if (error) return null;
-  return data as Job;
+  return data as Job | null;
 }
 
 export async function getJobByQuoteId(quoteId: string): Promise<Job | null> {
@@ -291,16 +293,24 @@ function jobPatchTouchesSchedule(patch: Record<string, unknown>): boolean {
 const JOB_UPDATE_GATE_COLUMNS =
   "status,scheduled_date,scheduled_start_at,scheduled_end_at,scheduled_finish_date";
 
+/** Same gates without `scheduled_finish_date` (migration 064) for DBs where PostgREST returns 400. */
+const JOB_UPDATE_GATE_COLUMNS_NO_FINISH =
+  "status,scheduled_date,scheduled_start_at,scheduled_end_at";
+
 async function fetchJobGatesForUpdate(id: string): Promise<Pick<
   Job,
   "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"
 > | null> {
+  if (!id?.trim()) return null;
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select(JOB_UPDATE_GATE_COLUMNS)
-    .eq("id", id)
-    .maybeSingle();
+  const jid = id.trim();
+
+  let { data, error } = await supabase.from("jobs").select(JOB_UPDATE_GATE_COLUMNS).eq("id", jid).maybeSingle();
+
+  if (error && isSupabaseMissingColumnError(error)) {
+    ({ data, error } = await supabase.from("jobs").select(JOB_UPDATE_GATE_COLUMNS_NO_FINISH).eq("id", jid).maybeSingle());
+  }
+
   if (error || !data) return null;
   return data as Pick<
     Job,
@@ -319,8 +329,10 @@ export async function updateJob(
   input: Partial<Job>,
   options?: UpdateJobOptions
 ): Promise<Job> {
+  if (!id?.trim()) throw new Error("Invalid job id");
+  const trimmedId = id.trim();
   const supabase = getSupabase();
-  const beforeGates = await fetchJobGatesForUpdate(id);
+  const beforeGates = await fetchJobGatesForUpdate(trimmedId);
   if (!beforeGates) throw new Error("Job not found");
 
   const basePatch = input as Record<string, unknown>;
@@ -336,7 +348,7 @@ export async function updateJob(
    * Plural JSON avoids 406 when zero rows; we check `length` instead.
    */
   async function runUpdateReturning(row: Record<string, unknown>) {
-    return supabase.from("jobs").update(row).eq("id", id).select("*");
+    return supabase.from("jobs").update(row).eq("id", trimmedId).select("*");
   }
 
   let { data: rows, error } = await runUpdateReturning(patch);
@@ -351,6 +363,9 @@ export async function updateJob(
   }
 
   const row = rows[0] as Job;
+  if (!row.id?.toString().trim()) {
+    throw new Error("Job update returned a row without id — refresh the page.");
+  }
   if (!options?.skipSelfBillSync) {
     await syncSelfBillAfterJobChange(row);
   }

@@ -40,6 +40,12 @@ export type ExecuteJobMoneyActionInput = {
   paymentLedgerLabel?: string;
 };
 
+function resolveJobId(job: Job): string {
+  const raw = job?.id;
+  if (typeof raw === "string" && raw.trim()) return raw.trim();
+  return "";
+}
+
 /**
  * Client/partner money: payments only hit `job_payments`; extras only bump job + invoice / self-bill (no mixed rows).
  */
@@ -58,6 +64,11 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     paymentLedgerLabel,
   } = input;
 
+  const jobId = resolveJobId(job);
+  if (!jobId) {
+    throw new Error("Missing job id — refresh the page and try again.");
+  }
+
   const a = Math.round(amount * 100) / 100;
   if (a <= 0) throw new Error("Enter an amount greater than zero");
 
@@ -69,13 +80,11 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
       throw new Error("Extra charges cannot use Stripe here — use Bank or Cash, or add the charge then collect via link.");
     }
     const patch = applyCustomerExtraPatch(job, a, "extras");
-    const updated = await updateJob(job.id, patch);
+    const updated = await updateJob(jobId, patch);
     await bumpLinkedInvoiceAmountsToJobSchedule(updated);
     await syncSelfBillAfterJobChange(updated);
-    await reconcileJobCustomerPaymentFlags(getSupabase(), job.id);
-    const fresh = await getJob(job.id);
-    if (!fresh) throw new Error("Job not found after update");
-    return fresh;
+    await reconcileJobCustomerPaymentFlags(getSupabase(), jobId);
+    return updated;
   }
 
   if (mode === "client_pay") {
@@ -94,7 +103,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
         throw new Error(`Outstanding deposit is only £${depRem.toFixed(2)}. Lower the amount or use partial payment (final balance).`);
       }
       await createJobPayment({
-        job_id: job.id,
+        job_id: jobId,
         type: "customer_deposit",
         amount: a,
         payment_date: paymentDate,
@@ -104,7 +113,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
       });
     } else {
       await createJobPayment({
-        job_id: job.id,
+        job_id: jobId,
         type: "customer_final",
         amount: a,
         payment_date: paymentDate,
@@ -113,7 +122,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
         bank_reference: bankTrim || undefined,
       });
     }
-    const fresh = await getJob(job.id);
+    const fresh = await getJob(jobId);
     if (!fresh) throw new Error("Job not found after update");
     return fresh;
   }
@@ -121,11 +130,9 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
   if (mode === "partner_extra") {
     if (!job.partner_id?.trim()) throw new Error("Assign a partner first");
     const patch = applyPartnerExtraPatch(job, a, "partner_cost");
-    const updated = await updateJob(job.id, patch);
+    const updated = await updateJob(jobId, patch);
     await syncSelfBillAfterJobChange(updated);
-    const fresh = await getJob(job.id);
-    if (!fresh) throw new Error("Job not found after update");
-    return fresh;
+    return updated;
   }
 
   if (mode === "partner_pay") {
@@ -141,7 +148,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     }
 
     await createJobPayment({
-      job_id: job.id,
+      job_id: jobId,
       type: "partner",
       amount: a,
       payment_date: paymentDate,
@@ -149,7 +156,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
       payment_method: method,
       bank_reference: bankTrim || undefined,
     });
-    const fresh = await getJob(job.id);
+    const fresh = await getJob(jobId);
     if (!fresh) throw new Error("Job not found after update");
     return fresh;
   }
