@@ -9,6 +9,7 @@ import type { Invoice, JobPaymentMethod } from "@/types/database";
 import { formatCurrency } from "@/lib/utils";
 import { Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import type { ClientPayApplyAs } from "@/services/job-money-actions";
 
 const LS_CLIENT = "mos-job-money-method-client";
 const LS_PARTNER = "mos-job-money-method-partner";
@@ -21,6 +22,13 @@ export type JobMoneySubmitPayload = {
   paymentDate: string;
   method: JobPaymentMethod;
   note: string;
+  /** Set when `flow === "client_pay"`. */
+  clientPayApplyAs?: ClientPayApplyAs;
+};
+
+export type JobMoneyDrawerClientCashContext = {
+  depositScheduled: number;
+  depositRemaining: number;
 };
 
 type Props = {
@@ -30,6 +38,8 @@ type Props = {
   onSubmit: (payload: JobMoneySubmitPayload) => Promise<void>;
   submitting: boolean;
   stripeInvoices: Invoice[];
+  /** When opening Add payment, used to offer Deposit vs partial (final). */
+  clientCashInContext?: JobMoneyDrawerClientCashContext | null;
 };
 
 const CLIENT_METHODS: { value: JobPaymentMethod; label: string }[] = [
@@ -55,7 +65,7 @@ function flowTitle(flow: JobMoneyDrawerFlow): string {
     case "client_extra":
       return "Add extra charge";
     case "partner_pay":
-      return "Pay partner";
+      return "Record Payment";
     case "partner_extra":
       return "Add extra payout";
   }
@@ -88,11 +98,22 @@ function isPayFlow(flow: JobMoneyDrawerFlow): boolean {
   return flow === "client_pay" || flow === "partner_pay";
 }
 
-export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stripeInvoices }: Props) {
+const PAY_CTX_EPS = 0.02;
+
+export function JobMoneyDrawer({
+  open,
+  flow,
+  onClose,
+  onSubmit,
+  submitting,
+  stripeInvoices,
+  clientCashInContext,
+}: Props) {
   const [amount, setAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [method, setMethod] = useState<JobPaymentMethod>("bank_transfer");
   const [note, setNote] = useState("");
+  const [clientPayApplyAs, setClientPayApplyAs] = useState<ClientPayApplyAs>("final");
   const amountRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -100,6 +121,13 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
     setAmount("");
     setPaymentDate(new Date().toISOString().slice(0, 10));
     setNote("");
+    if (flow === "client_pay") {
+      const ctx = clientCashInContext ?? { depositScheduled: 0, depositRemaining: 0 };
+      const canDeposit = ctx.depositScheduled > PAY_CTX_EPS && ctx.depositRemaining > PAY_CTX_EPS;
+      setClientPayApplyAs(canDeposit ? "deposit" : "final");
+    } else {
+      setClientPayApplyAs("final");
+    }
     if (isPayFlow(flow)) {
       setMethod(readSavedMethod(flow));
     } else {
@@ -109,7 +137,7 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
       amountRef.current?.focus();
     });
     return () => cancelAnimationFrame(id);
-  }, [open, flow]);
+  }, [open, flow, clientCashInContext]);
 
   useEffect(() => {
     if (!open || !flow || !isPayFlow(flow) || method === "stripe") return;
@@ -118,6 +146,26 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
   }, [method, open, flow]);
 
   if (!flow) return null;
+
+  const cashIn = clientCashInContext ?? { depositScheduled: 0, depositRemaining: 0 };
+  const depositScheduledOk = cashIn.depositScheduled > PAY_CTX_EPS;
+  const depositRemainingOk = cashIn.depositRemaining > PAY_CTX_EPS;
+  const canRecordDeposit =
+    flow === "client_pay" && depositScheduledOk && depositRemainingOk;
+
+  const depositLabel = !depositScheduledOk
+    ? "Deposit (not on this job)"
+    : !depositRemainingOk
+      ? "Deposit (already paid)"
+      : `Deposit (${formatCurrency(cashIn.depositRemaining)} due)`;
+
+  const clientPayTypeOptions: { value: ClientPayApplyAs; label: string; disabled?: boolean }[] = [
+    { value: "deposit", label: depositLabel, disabled: !canRecordDeposit },
+    { value: "final", label: "Partial payment (final balance)" },
+  ];
+
+  const displayClientPayApplyAs =
+    clientPayApplyAs === "deposit" && !canRecordDeposit ? "final" : clientPayApplyAs;
 
   const isClientStripe = flow === "client_pay" && method === "stripe";
   const n = Number(amount);
@@ -134,12 +182,19 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
     if (!canSubmit) return;
     const pay = isPayFlow(flow);
     const submitMethod = pay ? method : isClientFlow(flow) ? "bank_transfer" : "other";
+    const applyForSubmit: ClientPayApplyAs | undefined =
+      flow === "client_pay"
+        ? clientPayApplyAs === "deposit" && !canRecordDeposit
+          ? "final"
+          : clientPayApplyAs
+        : undefined;
     await onSubmit({
       flow,
       amount: n,
       paymentDate: pay ? paymentDate : new Date().toISOString().slice(0, 10),
       method: submitMethod,
       note,
+      ...(applyForSubmit != null ? { clientPayApplyAs: applyForSubmit } : {}),
     });
   };
 
@@ -149,7 +204,7 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
     <p className="text-[11px] text-text-tertiary leading-relaxed">
       {flow === "client_extra"
         ? "Increases the job total and linked invoice. This is not a payment — use Add payment when money is received."
-        : "Increases partner cost on the job. This is not a payout — use Pay partner when you send money."}
+        : "Increases partner cost on the job. This is not a payout — use Record Payment when you send money."}
     </p>
   );
 
@@ -183,6 +238,22 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
       }
     >
       <form id="job-money-drawer-form" onSubmit={handleFormSubmit} className="px-5 py-5 space-y-5">
+        {flow === "client_pay" ? (
+          <div>
+            <Select
+              label="Payment type"
+              value={displayClientPayApplyAs}
+              onChange={(e) => setClientPayApplyAs(e.target.value as ClientPayApplyAs)}
+              options={clientPayTypeOptions}
+              className="h-10"
+            />
+            <p className="text-[11px] text-text-tertiary mt-1.5 leading-relaxed">
+              {displayClientPayApplyAs === "deposit" && canRecordDeposit
+                ? `Up to ${formatCurrency(cashIn.depositRemaining)} can be recorded as deposit.`
+                : "Partial payment applies to the final balance (after deposit, if any)."}
+            </p>
+          </div>
+        ) : null}
         {isPayFlow(flow) ? (
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Method</label>
@@ -193,7 +264,7 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
               className="h-10"
             />
             {flow === "partner_pay" ? (
-              <p className="text-[11px] text-text-tertiary mt-1.5">Record payout — how you sent money to the partner.</p>
+              <p className="text-[11px] text-text-tertiary mt-1.5">How you paid the partner (bank, cash, etc.).</p>
             ) : null}
           </div>
         ) : null}

@@ -113,7 +113,12 @@ import {
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
-import { JobMoneyDrawer, type JobMoneyDrawerFlow, type JobMoneySubmitPayload } from "@/components/jobs/job-money-drawer";
+import {
+  JobMoneyDrawer,
+  type JobMoneyDrawerClientCashContext,
+  type JobMoneyDrawerFlow,
+  type JobMoneySubmitPayload,
+} from "@/components/jobs/job-money-drawer";
 import { executeJobMoneyAction } from "@/services/job-money-actions";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
@@ -498,6 +503,13 @@ export default function JobDetailPage() {
       setRefreshingJob(false);
     }
   }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill]);
+
+  const jobMoneyClientCashContext = useMemo((): JobMoneyDrawerClientCashContext | undefined => {
+    if (!job) return undefined;
+    const sched = Number(job.customer_deposit ?? 0);
+    const paid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
+    return { depositScheduled: sched, depositRemaining: Math.max(0, sched - paid) };
+  }, [job, customerPayments]);
 
   const quoteLineBreakdown = useMemo(() => {
     if (!quoteLineItems.length) return null;
@@ -1333,6 +1345,9 @@ export default function JobDetailPage() {
           note: payload.note,
           customerPayments,
           partnerPayments,
+          ...(payload.flow === "client_pay" && payload.clientPayApplyAs
+            ? { clientPayApplyAs: payload.clientPayApplyAs }
+            : {}),
         });
         setJob(updated);
         const fieldName =
@@ -1357,6 +1372,9 @@ export default function JobDetailPage() {
             method: payload.method,
             date: payload.paymentDate,
             ...(payload.note.trim() ? { note: payload.note.trim() } : {}),
+            ...(payload.flow === "client_pay" && payload.clientPayApplyAs
+              ? { client_pay_apply_as: payload.clientPayApplyAs }
+              : {}),
           },
         });
         const toastMsg =
@@ -3011,10 +3029,10 @@ export default function JobDetailPage() {
                 </div>
               </div>
 
-              {/* PARTNER cash out */}
+              {/* Cash out (partner payout — materials line below is internal Master cost, display only) */}
               <div className="pt-3 border-t border-border-light">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner (cash out)</p>
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Cash Out</p>
                   <div className="text-right">
                     <p className="text-[10px] text-text-tertiary">Total to pay</p>
                     <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(partnerCap)}</p>
@@ -3030,6 +3048,14 @@ export default function JobDetailPage() {
                     </div>
                     <span className="text-sm font-semibold tabular-nums">{formatCurrency(partnerCap)}</span>
                   </div>
+                  {Number(job.materials_cost ?? 0) > 0.005 ? (
+                    <div className="flex items-center justify-between gap-2 pt-0.5">
+                      <span className="text-[11px] text-text-secondary leading-snug">Materials internal cost</span>
+                      <span className="text-[11px] font-medium tabular-nums text-red-600 dark:text-red-400 shrink-0">
+                        {formatCurrency(-Math.abs(Number(job.materials_cost ?? 0)))}
+                      </span>
+                    </div>
+                  ) : null}
                   {/* Partner payment history */}
                   {partnerPayments.length > 0 && (
                     <div className="mt-1 space-y-1">
@@ -3083,7 +3109,7 @@ export default function JobDetailPage() {
                       setMoneyDrawerOpen(true);
                     }}
                   >
-                    Pay partner
+                    Record Payment
                   </Button>
                   <Button
                     size="sm"
@@ -3576,6 +3602,7 @@ export default function JobDetailPage() {
         onSubmit={handleMoneyDrawerSubmit}
         submitting={moneySubmitting}
         stripeInvoices={jobInvoices}
+        clientCashInContext={jobMoneyClientCashContext}
       />
 
       <Modal
