@@ -50,6 +50,21 @@ export async function fetchAllJobsFinancialKpiRows(
 let lastMarkLateAt = 0;
 const MARK_LATE_INTERVAL_MS = 30 * 60 * 1000;
 
+/** Jobs "All" tab: non-deleted rows only, excluding Lost & Cancelled (`cancelled`). */
+export const JOB_LIST_ALL_TAB_STATUSES = [
+  "unassigned",
+  "auto_assigning",
+  "scheduled",
+  "late",
+  "in_progress_phase1",
+  "in_progress_phase2",
+  "in_progress_phase3",
+  "final_check",
+  "awaiting_payment",
+  "need_attention",
+  "completed",
+] as const;
+
 export async function markLateJobs(): Promise<void> {
   const supabase = getSupabase();
   const nowIso = new Date().toISOString();
@@ -129,6 +144,13 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     );
   }
 
+  if (params.statusIn && params.statusIn.length > 0) {
+    return queryList<Job>("jobs", params, {
+      searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+      defaultSort: "created_at",
+    });
+  }
+
   if (params.status === "in_progress") {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(
@@ -162,6 +184,19 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
       }
     );
   }
+
+  if (!params.status || params.status === "all") {
+    const { status: _omit, ...rest } = params;
+    return queryList<Job>(
+      "jobs",
+      { ...rest, statusIn: [...JOB_LIST_ALL_TAB_STATUSES] },
+      {
+        searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+        defaultSort: "created_at",
+      },
+    );
+  }
+
   return queryList<Job>("jobs", params, {
     searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
     defaultSort: "created_at",

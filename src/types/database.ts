@@ -46,7 +46,15 @@ export type PartnerStatus =
   | "needs_attention"
   /** @deprecated Use `inactive` + reason `on_break` in partner_status_reasons */
   | "on_break";
-export type InvoiceStatus = "draft" | "paid" | "pending" | "partially_paid" | "overdue" | "cancelled";
+export type InvoiceStatus =
+  | "draft"
+  | "paid"
+  | "pending"
+  | "partially_paid"
+  | "overdue"
+  | "cancelled"
+  /** Client dispute / office audit queue (same idea as self_bills.audit_required). */
+  | "audit_required";
 
 /** Customer collection lifecycle for job-linked invoices (synced from job flags unless locked). */
 export type InvoiceCollectionStage =
