@@ -80,6 +80,7 @@ import {
   partnerSelfBillGrossAmount,
   customerScheduledTotal,
 } from "@/lib/job-financials";
+import { computeAccessSurcharge } from "@/lib/ccz";
 import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 import {
@@ -1818,19 +1819,21 @@ export default function JobDetailPage() {
   const customerPaidTotal = customerDepositPaid + customerFinalPaidSum;
   const amountDue = Math.max(0, billableRevenue - customerPaidTotal);
   const finalBalanceTotal = Math.max(0, Number(job.customer_final_payment ?? 0));
-  /** Explicit CCZ/parking from job row, or implied from schedule identity (final + deposit − labour) when extras were not persisted. */
+  /** `extras_amount` = add-ons / “Add extra charge”; CCZ/parking line = access flags only (see `computeAccessSurcharge`). */
   const explicitExtras = Math.max(0, Number(job.extras_amount ?? 0));
-  const scheduleExtras = Math.max(
-    0,
-    Number(job.customer_final_payment ?? 0) + Number(job.customer_deposit ?? 0) - Number(job.client_price ?? 0),
-  );
-  const extrasForCczLine = explicitExtras > 0.02 ? explicitExtras : scheduleExtras;
-  const finalCczParking = Math.min(finalBalanceTotal, extrasForCczLine);
-  const finalMaterials = Math.min(
-    Math.max(0, finalBalanceTotal - finalCczParking),
-    Math.max(0, Number(job.materials_cost ?? 0)),
-  );
-  const finalLabour = Math.max(0, finalBalanceTotal - finalCczParking - finalMaterials);
+  const accessCczParkingNominal = computeAccessSurcharge({
+    inCcz: job.in_ccz,
+    hasFreeParking: job.has_free_parking,
+  });
+  let finalSplitRemain = finalBalanceTotal;
+  const finalExtraCharges = Math.min(explicitExtras, finalSplitRemain);
+  finalSplitRemain = Math.max(0, finalSplitRemain - finalExtraCharges);
+  const finalCczParking = Math.min(Math.max(0, accessCczParkingNominal), finalSplitRemain);
+  finalSplitRemain = Math.max(0, finalSplitRemain - finalCczParking);
+  const matsCap = Math.max(0, Number(job.materials_cost ?? 0));
+  const finalMaterials = Math.min(matsCap, finalSplitRemain);
+  finalSplitRemain = Math.max(0, finalSplitRemain - finalMaterials);
+  const finalLabour = finalSplitRemain;
 
   const statusActions = getJobStatusActions(job);
   const phaseCount = normalizeTotalPhases(job.total_phases);
@@ -2726,6 +2729,7 @@ export default function JobDetailPage() {
                         <div className="text-[11px] text-text-tertiary space-y-0.5 pl-0.5">
                           <p>Labour {formatCurrency(finalLabour)}</p>
                           <p>Materials {formatCurrency(finalMaterials)}</p>
+                          <p>Extra charges {formatCurrency(finalExtraCharges)}</p>
                           <p>CCZ / Parking {formatCurrency(finalCczParking)}</p>
                         </div>
                       </div>

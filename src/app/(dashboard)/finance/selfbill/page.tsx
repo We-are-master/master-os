@@ -41,6 +41,7 @@ import { SELF_BILL_FINANCE_VOID_LABEL, selfBillPartnerStatusLine } from "@/lib/s
 import {
   isSelfBillPayoutVoided,
   listJobsForSelfBill,
+  listJobsLinkedToSelfBillIds,
   selfBillJobPayoutStateLabel,
   SELF_BILL_PAYOUT_VOID_STATUSES,
 } from "@/services/self-bills";
@@ -128,8 +129,9 @@ export default function SelfBillPage() {
       const { data, error } = await q;
       if (error) throw error;
       setSelfBills((data ?? []) as SelfBill[]);
-    } catch {
-      toast.error("Failed to load self-bills");
+    } catch (e) {
+      console.error("Self-bills load failed", e);
+      toast.error(e instanceof Error ? e.message : "Failed to load self-bills");
     } finally {
       setLoading(false);
     }
@@ -172,8 +174,8 @@ export default function SelfBillPage() {
       const q = search.toLowerCase();
       result = result.filter(
         (sb) =>
-          sb.partner_name.toLowerCase().includes(q) ||
-          sb.reference.toLowerCase().includes(q) ||
+          (sb.partner_name ?? "").toLowerCase().includes(q) ||
+          (sb.reference ?? "").toLowerCase().includes(q) ||
           (sb.week_label ?? "").toLowerCase().includes(q)
       );
     }
@@ -188,20 +190,23 @@ export default function SelfBillPage() {
       return;
     }
     (async () => {
-      const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from("jobs")
-        .select("id, reference, title, partner_cost, materials_cost, status, property_address, self_bill_id, deleted_at, partner_cancelled_at")
-        .in("self_bill_id", ids)
-        .order("reference", { ascending: true });
-      if (cancelled || error) return;
-      const map: Record<string, JobLine[]> = {};
-      for (const j of (data ?? []) as JobLine[]) {
-        const sid = j.self_bill_id as string;
-        if (!map[sid]) map[sid] = [];
-        map[sid].push(j);
+      try {
+        const rows = await listJobsLinkedToSelfBillIds(ids);
+        if (cancelled) return;
+        const map: Record<string, JobLine[]> = {};
+        for (const j of rows) {
+          const sid = j.self_bill_id as string;
+          if (!map[sid]) map[sid] = [];
+          map[sid].push(j);
+        }
+        setJobsBySelfBillId(map);
+      } catch (e) {
+        console.error("Self-bill linked jobs load failed", e);
+        if (!cancelled) {
+          setJobsBySelfBillId({});
+          toast.error(e instanceof Error ? e.message : "Failed to load jobs linked to self-bills");
+        }
       }
-      setJobsBySelfBillId(map);
     })();
     return () => {
       cancelled = true;
