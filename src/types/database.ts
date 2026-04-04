@@ -36,7 +36,9 @@ export type JobStatus =
   | "awaiting_payment"
   | "need_attention"
   | "completed"
-  | "cancelled";
+  | "cancelled"
+  /** Soft-deleted trash (Deleted tab); excluded from KPIs and active lists. */
+  | "deleted";
 export type JobFinanceStatus = "unpaid" | "partial" | "paid";
 /** Directory lifecycle: only `active` partners are eligible for invites / job assignment. */
 export type PartnerStatus =
@@ -316,6 +318,8 @@ export interface Job {
   operational_checklist?: unknown;
   /** Soft-delete (archive); job hidden from active lists but retained for audit. */
   deleted_at?: string | null;
+  /** Status before moving to `deleted` (used by Recover). */
+  deleted_previous_status?: string | null;
   created_at: string;
   updated_at: string;
 }

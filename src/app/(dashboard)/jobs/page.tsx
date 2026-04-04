@@ -37,7 +37,7 @@ import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { createSelfBillFromJob } from "@/services/self-bills";
-import { getSupabase, getStatusCounts, softDeleteById, type ListParams } from "@/services/base";
+import { getSupabase, getStatusCounts, type ListParams } from "@/services/base";
 import { sumCustomerCollectionsByJobIds } from "@/services/job-payments";
 import { softDeleteInvoicesForArchivedJobs, cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
 import { useProfile } from "@/hooks/use-profile";
@@ -86,6 +86,14 @@ import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
+
+const RESTORE_ALLOWED_JOB_STATUSES = new Set<string>([...JOB_STATUSES]);
+
+function parseRestoredJobStatus(raw: string | null | undefined): Job["status"] {
+  const s = (raw ?? "").trim();
+  if (RESTORE_ALLOWED_JOB_STATUSES.has(s)) return s as Job["status"];
+  return "unassigned";
+}
 
 const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
 
@@ -165,6 +173,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   need_attention: { label: "Final Check", variant: "warning", dot: true },
   completed: { label: "Paid & Completed", variant: "success", dot: true },
   cancelled: { label: "Lost & Cancelled", variant: "danger", dot: true },
+  deleted: { label: "Deleted", variant: "default", dot: true },
 };
 
 function JobsPageContent() {
@@ -223,7 +232,7 @@ function JobsPageContent() {
   const [filterPartner, setFilterPartner] = useState<"all" | "with" | "without">("all");
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive">(null);
+  const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover">(null);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
   const [kpiFinancialLoading, setKpiFinancialLoading] = useState(true);
@@ -233,11 +242,11 @@ function JobsPageContent() {
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (status === "archived" && viewMode !== "list") setViewMode("list");
+    if (status === "deleted" && viewMode !== "list") setViewMode("list");
   }, [status, viewMode]);
 
   useEffect(() => {
-    if (status === "archived") setSelectedIds(new Set());
+    if (status === "deleted") setSelectedIds(new Set());
   }, [status]);
 
   useEffect(() => {
@@ -358,19 +367,23 @@ function JobsPageContent() {
     try {
       const countOpts = scheduleRange ? { scheduleRange } : undefined;
       const supabase = getSupabase();
-      const [counts, rows, archivedHead] = await Promise.all([
+      const [counts, rows, deletedHead] = await Promise.all([
         getStatusCounts("jobs", [...JOB_STATUSES], "status", countOpts),
         fetchAllJobsFinancialKpiRows(scheduleRange),
-        supabase.from("jobs").select("*", { count: "exact", head: true }).not("deleted_at", "is", null),
+        supabase
+          .from("jobs")
+          .select("*", { count: "exact", head: true })
+          .eq("status", "deleted")
+          .not("deleted_at", "is", null),
       ]);
-      const archivedCount = archivedHead.error ? 0 : archivedHead.count ?? 0;
+      const deletedCount = deletedHead.error ? 0 : deletedHead.count ?? 0;
       const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
-      setTabCounts({ ...counts, all: allTabCount, archived: archivedCount });
-      const pipelineRows = rows.filter((r) => r.status !== "cancelled");
+      setTabCounts({ ...counts, all: allTabCount, deleted: deletedCount });
+      const pipelineRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
       const ticketSum = pipelineRows.reduce((s, r) => s + jobBillableRevenue(r), 0);
       setTotalRevenue(ticketSum);
       setAvgTicket(pipelineRows.length ? ticketSum / pipelineRows.length : 0);
-      const activeRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "completed");
+      const activeRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted");
       const margins = activeRows.map((r) => jobMarginPercent(r));
       const avgM = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
       setAvgMarginPct(Math.round(avgM * 10) / 10);
@@ -436,7 +449,7 @@ function JobsPageContent() {
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
     { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0 },
     { id: "cancelled", label: "Lost & Cancelled", count: tabCounts.cancelled ?? 0 },
-    { id: "archived", label: "Delete", count: tabCounts.archived ?? 0 },
+    { id: "deleted", label: "Deleted", count: tabCounts.deleted ?? 0 },
   ];
 
   useEffect(() => {
@@ -718,7 +731,7 @@ function JobsPageContent() {
       const found = new Set((jobRows as Job[]).map((j) => j.id));
       const missing = ids.filter((id) => !found.has(id));
       if (missing.length) {
-        toast.error(`${missing.length} selected job(s) not found or archived.`);
+        toast.error(`${missing.length} selected job(s) not found or in Deleted.`);
         return false;
       }
       const ns = "in_progress_phase1" as const;
@@ -834,29 +847,98 @@ function JobsPageContent() {
       const supabase = getSupabase();
       const { data: jobRows, error: jobFetchErr } = await supabase
         .from("jobs")
-        .select("reference, invoice_id, self_bill_id")
+        .select("id, reference, invoice_id, self_bill_id, status")
         .in("id", ids)
         .is("deleted_at", null);
       if (jobFetchErr) throw jobFetchErr;
-      const forInvoices = (jobRows ?? []) as { reference: string; invoice_id?: string | null }[];
+      const rows = (jobRows ?? []) as Pick<Job, "id" | "reference" | "invoice_id" | "self_bill_id" | "status">[];
+      const eligible = rows.filter((j) => j.status !== "deleted");
+      if (eligible.length === 0) {
+        toast.message("No eligible jobs to delete.");
+        return false;
+      }
+      const forInvoices = eligible.map((j) => ({ reference: j.reference, invoice_id: j.invoice_id }));
       const selfBillIds = [
         ...new Set(
-          (jobRows ?? [])
-            .map((r) => (r as { self_bill_id?: string | null }).self_bill_id)
-            .filter((x): x is string => Boolean(x && String(x).trim())),
+          eligible.map((r) => r.self_bill_id).filter((x): x is string => Boolean(x && String(x).trim())),
         ),
       ];
       await softDeleteInvoicesForArchivedJobs(forInvoices, profile?.id);
-      await Promise.all(ids.map((id) => softDeleteById("jobs", id, profile?.id)));
+      const ts = new Date().toISOString();
+      const uid = profile?.id ?? null;
+      await Promise.all(
+        eligible.map((j) =>
+          supabase
+            .from("jobs")
+            .update({
+              deleted_previous_status: j.status,
+              status: "deleted",
+              deleted_at: ts,
+              deleted_by: uid,
+            })
+            .eq("id", j.id),
+        ),
+      );
       await Promise.all(selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)));
-      await logBulkAction("job", ids, "deleted", "deleted_at", "archived", profile?.id, profile?.full_name);
-      toast.success(`${selectedIds.size} job(s) deleted`);
+      await logBulkAction("job", eligible.map((j) => j.id), "deleted", "status", "deleted", profile?.id, profile?.full_name);
+      toast.success(`${eligible.length} job(s) moved to Deleted`);
       setSelectedIds(new Set());
       refresh();
       loadDashboardStats();
       return true;
     } catch {
       toast.error("Failed to delete jobs");
+      return false;
+    }
+  }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
+
+  const handleBulkRecoverJobs = useCallback(async (): Promise<boolean> => {
+    if (selectedIds.size === 0) return false;
+    try {
+      const ids = Array.from(selectedIds);
+      const supabase = getSupabase();
+      const { data: jobRows, error: jobFetchErr } = await supabase
+        .from("jobs")
+        .select("id, self_bill_id, deleted_previous_status")
+        .in("id", ids)
+        .eq("status", "deleted")
+        .not("deleted_at", "is", null);
+      if (jobFetchErr) throw jobFetchErr;
+      const rows = (jobRows ?? []) as Pick<Job, "id" | "self_bill_id" | "deleted_previous_status">[];
+      if (rows.length === 0) {
+        toast.message("No deleted jobs selected.");
+        return false;
+      }
+      const selfBillIds = [
+        ...new Set(
+          rows.map((r) => r.self_bill_id).filter((x): x is string => Boolean(x && String(x).trim())),
+        ),
+      ];
+      await Promise.all(
+        rows.map((j) => {
+          const next = parseRestoredJobStatus(j.deleted_previous_status);
+          return supabase
+            .from("jobs")
+            .update({
+              status: next,
+              deleted_at: null,
+              deleted_by: null,
+              deleted_previous_status: null,
+            })
+            .eq("id", j.id);
+        }),
+      );
+      await Promise.all(selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)));
+      await logBulkAction("job", rows.map((r) => r.id), "status_changed", "deleted_at", "recovered", profile?.id, profile?.full_name);
+      toast.success(`${rows.length} job(s) recovered`, {
+        description: "Linked invoices stay cancelled—adjust in Finance if needed.",
+      });
+      setSelectedIds(new Set());
+      refresh();
+      loadDashboardStats();
+      return true;
+    } catch {
+      toast.error("Failed to recover jobs");
       return false;
     }
   }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
@@ -1136,11 +1218,15 @@ function JobsPageContent() {
               totalPages={totalPages}
               totalItems={totalItems}
               onPageChange={setPage}
-              selectable={status !== "archived"}
+              selectable
               selectedIds={selectedIds}
               onSelectionChange={setSelectedIds}
               bulkActions={
-                status === "archived" ? undefined : (
+                status === "deleted" ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <BulkBtn label="Recover" onClick={() => setBulkActionModal("recover")} variant="success" />
+                  </div>
+                ) : (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <BulkBtn label="Start Job" onClick={() => setBulkActionModal("start_job")} variant="success" />
                     <BulkBtn label="Mark as Paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
@@ -1216,12 +1302,14 @@ function JobsPageContent() {
           bulkActionModal === "start_job"
             ? "Start selected jobs?"
             : bulkActionModal === "cancel"
-              ? "Cancel selected jobs?"
+              ? "Move to Lost & Cancelled?"
               : bulkActionModal === "mark_paid"
                 ? "Mark selected jobs as paid?"
                 : bulkActionModal === "archive"
-                  ? "Delete selected jobs?"
-                  : ""
+                  ? "Move to Deleted?"
+                  : bulkActionModal === "recover"
+                    ? "Recover selected jobs?"
+                    : ""
         }
         size="md"
       >
@@ -1236,9 +1324,9 @@ function JobsPageContent() {
             )}
             {bulkActionModal === "cancel" && (
               <>
-                You are about to <strong className="text-text-primary">cancel</strong>{" "}
-                <strong className="text-text-primary">{selectedIds.size}</strong> job(s). Completed jobs cannot be cancelled this way.
-                Partners will be notified where applicable. Are you sure?
+                Move <strong className="text-text-primary">{selectedIds.size}</strong> job(s) to{" "}
+                <strong className="text-text-primary">Lost &amp; Cancelled</strong>? Completed jobs cannot be cancelled this way. Partners
+                will be notified where applicable. This is not the same as Deleted (trash).
               </>
             )}
             {bulkActionModal === "mark_paid" && (
@@ -1251,9 +1339,16 @@ function JobsPageContent() {
             )}
             {bulkActionModal === "archive" && (
               <>
-                You are about to <strong className="text-text-primary">delete</strong>{" "}
-                <strong className="text-text-primary">{selectedIds.size}</strong> job(s). Linked invoices will be cancelled and hidden from
-                the Invoices list. This cannot be undone from the list. Are you sure?
+                Move <strong className="text-text-primary">{selectedIds.size}</strong> job(s) to{" "}
+                <strong className="text-text-primary">Deleted</strong> (removed from KPIs and active tabs). Status will show{" "}
+                <strong className="text-text-primary">Deleted</strong>; you can recover from the Deleted tab. Linked invoices are cancelled
+                and hidden from Finance—recovering a job does not restore invoices.
+              </>
+            )}
+            {bulkActionModal === "recover" && (
+              <>
+                Restore <strong className="text-text-primary">{selectedIds.size}</strong> job(s) to their status before deletion (or
+                Unassigned if unknown)? Self-bill totals refresh after recover.
               </>
             )}
           </p>
@@ -1275,6 +1370,7 @@ function JobsPageContent() {
                     else if (bulkActionModal === "cancel") ok = await handleBulkCancelJobs();
                     else if (bulkActionModal === "mark_paid") ok = await handleBulkStatusChange("completed");
                     else if (bulkActionModal === "archive") ok = await handleBulkArchive();
+                    else if (bulkActionModal === "recover") ok = await handleBulkRecoverJobs();
                     if (ok) setBulkActionModal(null);
                   } finally {
                     setBulkRunning(false);
@@ -1285,12 +1381,14 @@ function JobsPageContent() {
               {bulkActionModal === "start_job"
                 ? "Yes, start jobs"
                 : bulkActionModal === "cancel"
-                  ? "Yes, cancel jobs"
+                  ? "Yes, Lost & Cancelled"
                   : bulkActionModal === "mark_paid"
                     ? "Yes, mark as paid"
                     : bulkActionModal === "archive"
-                      ? "Yes, delete"
-                      : "Confirm"}
+                      ? "Yes, move to Deleted"
+                      : bulkActionModal === "recover"
+                        ? "Yes, recover"
+                        : "Confirm"}
             </Button>
           </div>
         </div>
