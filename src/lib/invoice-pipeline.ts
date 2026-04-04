@@ -1,35 +1,42 @@
 import type { Invoice, JobStatus } from "@/types/database";
 
-/** Finance tabs aligned with self-bill workflow + job lifecycle. */
+/**
+ * Finance tabs. **All** is first in the UI; it shows every invoice in the selected period.
+ * Other tabs slice the same list by linked job status + invoice status.
+ */
 export const INVOICE_PIPELINE_TAB_ORDER = [
+  "all",
   "audit_required",
   "ongoing",
   "review_approve",
   "awaiting_payment",
   "overdue",
   "paid",
-  "all",
   "cancelled",
 ] as const;
 
 export type InvoicePipelineTab = (typeof INVOICE_PIPELINE_TAB_ORDER)[number];
 
-/** Job still in field / office pipeline before completed handoff. */
-const JOB_OPEN_STATUSES: ReadonlySet<JobStatus> = new Set([
-  "unassigned",
-  "auto_assigning",
-  "scheduled",
-  "late",
-  "in_progress_phase1",
-  "in_progress_phase2",
-  "in_progress_phase3",
-  "final_check",
-  "need_attention",
+/** Job reached a handoff or terminal state — no longer "ongoing" field work. */
+const JOB_CLOSED_FOR_INVOICE_PIPELINE: ReadonlySet<JobStatus> = new Set([
+  "completed",
+  "awaiting_payment",
+  "cancelled",
 ]);
 
+function jobIsNotYetClosed(status: JobStatus): boolean {
+  return !JOB_CLOSED_FOR_INVOICE_PIPELINE.has(status);
+}
+
 /**
- * Maps an invoice + linked job row into a finance tab.
- * Precedence: cancelled → audit_required → paid → overdue → job phase → unlinked draft.
+ * Maps an invoice + linked job row into a finance tab (never `"all"` — that bucket is implicit).
+ *
+ * Job-driven flow:
+ * - **Ongoing** — job still open (not completed, not awaiting payment, not cancelled).
+ * - **Review & approve** — job `completed` (work finished; office review before collection).
+ * - **Awaiting payment** — job `awaiting_payment` after approve (same row set as job card).
+ *
+ * Invoice row overrides: cancelled, audit_required, paid, overdue (clock) still win.
  */
 export function invoicePipelineTab(
   inv: Invoice,
@@ -43,7 +50,7 @@ export function invoicePipelineTab(
   const ref = inv.job_reference?.trim();
   if (ref && job) {
     if (job.status === "cancelled") return "awaiting_payment";
-    if (JOB_OPEN_STATUSES.has(job.status)) return "ongoing";
+    if (jobIsNotYetClosed(job.status)) return "ongoing";
     if (job.status === "completed") return "review_approve";
     if (job.status === "awaiting_payment") return "awaiting_payment";
   } else if (!ref) {

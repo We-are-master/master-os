@@ -196,12 +196,12 @@ function invoiceDrawerSyncSignature(inv: Invoice): string {
 }
 
 export default function InvoicesPage() {
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
 
-  const [pipelineTab, setPipelineTab] = useState<InvoicePipelineTab>("ongoing");
+  const [pipelineTab, setPipelineTab] = useState<InvoicePipelineTab>("all");
   const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
   const [jobsByRef, setJobsByRef] = useState<Record<string, { status: JobStatus }>>({});
   const [loading, setLoading] = useState(true);
@@ -813,7 +813,7 @@ export default function InvoicesPage() {
       <div className="space-y-5">
         <PageHeader
           title="Invoices"
-          subtitle={`Client collection aligned with job lifecycle. Weekly buckets like self-billing; tabs follow open job → completed (review) → awaiting payment → overdue → paid. ${weekPeriodHelpText()}`}
+          subtitle={`Period defaults to All time. Tabs: Ongoing = job still open (not completed, awaiting payment, or cancelled); Review & approve = job completed; Awaiting payment = job awaiting payment after approve. ${weekPeriodHelpText()}`}
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>Export CSV</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>Create Invoice</Button>
