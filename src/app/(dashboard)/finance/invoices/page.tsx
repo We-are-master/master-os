@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
-import { getInvoiceDueDateIsoForJobReference } from "@/services/invoice-due-date";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -37,16 +35,23 @@ import { reopenInvoiceToPending } from "@/lib/invoice-reopen";
 import { invoiceBalanceDue, invoiceAmountPaid } from "@/lib/invoice-balance";
 import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
-import { getStatusCounts, getSupabase, type ListParams } from "@/services/base";
+import { applyInvoicePeriodBoundsToQuery, getStatusCounts, getSupabase, type ListParams } from "@/services/base";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
-import { getFinanceListDateFilter, getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
+import {
+  getFinanceListInvoicePeriodFilter,
+  getFinancePeriodClosedBounds,
+  formatFinancePeriodKpiDescription,
+} from "@/lib/finance-period";
+import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { useProfile } from "@/hooks/use-profile";
+import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
+  draft: { label: "Draft", variant: "default" },
   paid: { label: "Paid", variant: "success" },
   pending: { label: "Pending", variant: "warning" },
   partially_paid: { label: "Partial", variant: "info" },
@@ -54,7 +59,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   cancelled: { label: "Cancelled", variant: "default" },
 };
 
-const INVOICE_STATUSES: InvoiceStatus[] = ["paid", "pending", "partially_paid", "overdue", "cancelled"];
+const INVOICE_STATUSES: InvoiceStatus[] = ["draft", "paid", "pending", "partially_paid", "overdue", "cancelled"];
 
 const COLLECTION_STAGE_OPTIONS: InvoiceCollectionStage[] = [
   "awaiting_deposit",
@@ -62,6 +67,13 @@ const COLLECTION_STAGE_OPTIONS: InvoiceCollectionStage[] = [
   "awaiting_final",
   "completed",
 ];
+
+/** Date used for period KPIs and the Date column (weekly batch → billing week; else created). */
+function invoiceEffectiveDateValue(inv: Pick<Invoice, "billing_week_start" | "created_at">): string {
+  const b = inv.billing_week_start?.trim();
+  if (b && /^\d{4}-\d{2}-\d{2}$/.test(b)) return b;
+  return inv.created_at;
+}
 
 interface LinkedJob {
   id: string;
@@ -92,7 +104,7 @@ export default function InvoicesPage() {
   const [rangeTo, setRangeTo] = useState("");
 
   const invoiceListParams = useMemo(
-    (): Partial<ListParams> => getFinanceListDateFilter(periodMode, weekAnchor, rangeFrom, rangeTo, "created_at"),
+    (): Partial<ListParams> => getFinanceListInvoicePeriodFilter(periodMode, weekAnchor, rangeFrom, rangeTo),
     [periodMode, weekAnchor, rangeFrom, rangeTo]
   );
 
@@ -102,13 +114,14 @@ export default function InvoicesPage() {
     fetcher: listInvoices,
     realtimeTable: "invoices",
     listParams: invoiceListParams,
+    initialStatus: "pending",
   });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({
-    all: 0, paid: 0, pending: 0, partially_paid: 0, overdue: 0, cancelled: 0,
+    all: 0, draft: 0, paid: 0, pending: 0, partially_paid: 0, overdue: 0, cancelled: 0,
   });
   const [kpis, setKpis] = useState({
     totalInvoiced: 0,
@@ -123,11 +136,22 @@ export default function InvoicesPage() {
   const loadCounts = useCallback(async () => {
     try {
       const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo);
+      const utc =
+        bounds != null ? localYmdBoundsToUtcIso(bounds.from, bounds.to) : null;
       const counts = await getStatusCounts(
         "invoices",
         INVOICE_STATUSES,
         "status",
-        bounds ? { dateColumn: "created_at", dateFrom: bounds.from, dateTo: bounds.to } : undefined
+        bounds && utc
+          ? {
+              invoicePeriodBounds: {
+                from: bounds.from,
+                to: bounds.to,
+                startIso: utc.startIso,
+                endIso: utc.endIso,
+              },
+            }
+          : undefined
       );
       setTabCounts(counts);
     } catch { /* cosmetic */ }
@@ -136,9 +160,18 @@ export default function InvoicesPage() {
   const loadKpis = useCallback(async () => {
     try {
       const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo);
-      let q = getSupabase().from("invoices").select("amount, status, amount_paid, paid_date, created_at");
+      let q = getSupabase()
+        .from("invoices")
+        .select("amount, status, amount_paid, paid_date, created_at, billing_week_start")
+        .is("deleted_at", null);
       if (bounds) {
-        q = q.gte("created_at", bounds.from).lte("created_at", bounds.to);
+        const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
+        q = applyInvoicePeriodBoundsToQuery(q, {
+          from: bounds.from,
+          to: bounds.to,
+          startIso,
+          endIso,
+        });
       }
       const { data: rows, error } = await q;
       if (error) throw error;
@@ -148,6 +181,7 @@ export default function InvoicesPage() {
         amount_paid?: number;
         paid_date?: string | null;
         created_at: string;
+        billing_week_start?: string | null;
       }[];
       const nonCancelled = all.filter((r) => r.status !== "cancelled");
       const totalInvoiced = nonCancelled.reduce((sum, r) => sum + Number(r.amount), 0);
@@ -160,7 +194,7 @@ export default function InvoicesPage() {
         let sumDays = 0;
         let n = 0;
         for (const r of paidWithDates) {
-          const c = new Date(r.created_at).getTime();
+          const c = new Date(invoiceEffectiveDateValue(r as Invoice)).getTime();
           const p = new Date(r.paid_date!).getTime();
           if (!Number.isFinite(c) || !Number.isFinite(p)) continue;
           sumDays += Math.max(0, (p - c) / 864e5);
@@ -437,13 +471,14 @@ export default function InvoicesPage() {
 
   const tabs = [
     { id: "all", label: "All", count: tabCounts.all },
-    { id: "paid", label: "Paid", count: tabCounts.paid },
+    { id: "draft", label: "Draft", count: tabCounts.draft ?? 0 },
     {
       id: "pending",
       label: "Pending",
       count: (tabCounts.pending ?? 0) + (tabCounts.partially_paid ?? 0),
     },
     { id: "overdue", label: "Overdue", count: tabCounts.overdue },
+    { id: "paid", label: "Paid", count: tabCounts.paid },
     { id: "cancelled", label: "Cancelled", count: tabCounts.cancelled },
   ];
 
@@ -495,7 +530,9 @@ export default function InvoicesPage() {
     },
     {
       key: "created_at", label: "Date",
-      render: (item) => <span className="text-sm text-text-secondary">{formatDate(item.created_at)}</span>,
+      render: (item) => (
+        <span className="text-sm text-text-secondary">{formatDate(invoiceEffectiveDateValue(item))}</span>
+      ),
     },
     {
       key: "due_date", label: "Due Date",
@@ -507,16 +544,26 @@ export default function InvoicesPage() {
     },
     {
       key: "amount", label: "Amount", align: "right",
+      render: (item) => (
+        <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(item.amount)}</span>
+      ),
+    },
+    {
+      key: "balance_due",
+      label: "due",
+      align: "right",
       render: (item) => {
         const bal = invoiceBalanceDue(item);
-        const paid = invoiceAmountPaid(item);
+        if (item.status === "paid" || item.status === "cancelled" || item.status === "draft") {
+          return <span className="text-sm text-text-tertiary tabular-nums">—</span>;
+        }
+        const show = bal > 0.005 || item.status === "partially_paid";
         return (
-          <div className="text-right">
-            <span className="text-sm font-semibold text-text-primary">{formatCurrency(item.amount)}</span>
-            {(item.status === "partially_paid" || paid > 0.02) && item.status !== "paid" ? (
-              <p className="text-[11px] text-text-tertiary">Due {formatCurrency(bal)}</p>
-            ) : null}
-          </div>
+          <span
+            className={`text-sm font-medium tabular-nums ${show ? "text-text-primary" : "text-text-tertiary"}`}
+          >
+            {show ? formatCurrency(bal) : "—"}
+          </span>
         );
       },
     },
@@ -583,7 +630,7 @@ export default function InvoicesPage() {
             title="Total Invoiced"
             value={kpis.totalInvoiced}
             format="currency"
-            description={kpiPeriodDesc}
+            description={`Invoice date (billing week or created) · ${kpiPeriodDesc}`}
             icon={Receipt}
             accent="primary"
           />
@@ -591,7 +638,7 @@ export default function InvoicesPage() {
             title="Amount Received"
             value={kpis.amountReceived}
             format="currency"
-            description={`From amount paid on invoices · ${kpiPeriodDesc}`}
+            description={`Amount paid on invoices in this period · ${kpiPeriodDesc}`}
             icon={Banknote}
             accent="emerald"
           />
@@ -609,7 +656,7 @@ export default function InvoicesPage() {
             format="none"
             description={
               kpis.avgCollectionDays != null
-                ? `Created → paid date · ${kpiPeriodDesc}`
+                ? `Invoice date → paid (in period) · ${kpiPeriodDesc}`
                 : `No paid invoices in period · ${kpiPeriodDesc}`
             }
             icon={Clock}
@@ -809,7 +856,11 @@ function InvoiceDetailDrawer({
   if (!invoice) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
   const config = statusConfig[invoice.status] ?? statusConfig.pending;
-  const isOverdue = invoice.status !== "paid" && invoice.status !== "cancelled" && new Date(invoice.due_date) < new Date();
+  const isOverdue =
+    invoice.status !== "paid" &&
+    invoice.status !== "cancelled" &&
+    invoice.status !== "draft" &&
+    new Date(invoice.due_date) < new Date();
   const daysUntilDue = Math.ceil((new Date(invoice.due_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   const hasStripeLink = !!stripeState.linkUrl;
   const stripePaid = stripeState.paymentStatus === "paid";
@@ -842,6 +893,7 @@ function InvoiceDetailDrawer({
               invoice.status === "partially_paid" ? "bg-sky-50 dark:bg-sky-950/25 border-sky-200" :
               invoice.status === "overdue" || isOverdue ? "bg-red-50 dark:bg-red-950/30 border-red-200" :
               invoice.status === "cancelled" ? "bg-surface-hover border-border" :
+              invoice.status === "draft" ? "bg-slate-50 dark:bg-slate-950/30 border-slate-200 dark:border-slate-800" :
               "bg-amber-50 dark:bg-amber-950/30 border-amber-200"
             }`}>
               <div className="flex items-center justify-between gap-3">
@@ -851,12 +903,14 @@ function InvoiceDetailDrawer({
                     invoice.status === "partially_paid" ? "bg-sky-100 dark:bg-sky-900/40" :
                     invoice.status === "overdue" || isOverdue ? "bg-red-100" :
                     invoice.status === "cancelled" ? "bg-surface-tertiary" :
+                    invoice.status === "draft" ? "bg-slate-100 dark:bg-slate-900/50" :
                     "bg-amber-100"
                   }`}>
                     {invoice.status === "paid" ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> :
                      invoice.status === "partially_paid" ? <Banknote className="h-5 w-5 text-sky-600" /> :
                      invoice.status === "overdue" || isOverdue ? <AlertTriangle className="h-5 w-5 text-red-600" /> :
                      invoice.status === "cancelled" ? <XCircle className="h-5 w-5 text-text-secondary" /> :
+                     invoice.status === "draft" ? <FileText className="h-5 w-5 text-slate-600" /> :
                      <Clock className="h-5 w-5 text-amber-600" />}
                   </div>
                   <div className="min-w-0">
@@ -890,7 +944,7 @@ function InvoiceDetailDrawer({
             <div className="grid grid-cols-2 gap-4">
               <InfoRow icon={Hash} label="Reference" value={invoice.reference} />
               <InfoRow icon={Building2} label="Client" value={invoice.client_name} />
-              <InfoRow icon={Calendar} label="Issue Date" value={formatDate(invoice.created_at)} />
+              <InfoRow icon={Calendar} label="Issue Date" value={formatDate(invoiceEffectiveDateValue(invoice))} />
               <InfoRow icon={Calendar} label="Due Date" value={formatDate(invoice.due_date)} highlight={isOverdue} />
               {invoice.paid_date && <InfoRow icon={CheckCircle2} label="Paid Date" value={formatDate(invoice.paid_date)} />}
               {invoice.job_reference && <InfoRow icon={Briefcase} label="Job Reference" value={invoice.job_reference} />}
@@ -1022,15 +1076,22 @@ function InvoiceDetailDrawer({
                 <TimelineStep done={invoice.status !== "cancelled"} label="Sent to Client" date={formatDate(invoice.created_at)} />
                 <TimelineStep
                   done={invoice.status === "paid"}
-                  active={invoice.status === "pending" || invoice.status === "overdue" || invoice.status === "partially_paid"}
+                  active={
+                    invoice.status === "pending" ||
+                    invoice.status === "overdue" ||
+                    invoice.status === "partially_paid" ||
+                    invoice.status === "draft"
+                  }
                   label={
                     invoice.status === "paid"
                       ? "Payment Received"
                       : invoice.status === "partially_paid"
                         ? "Partially paid"
-                        : isOverdue
-                          ? "Payment Overdue"
-                          : "Awaiting Payment"
+                        : invoice.status === "draft"
+                          ? "Draft — not issued"
+                          : isOverdue
+                            ? "Payment Overdue"
+                            : "Awaiting Payment"
                   }
                   date={invoice.paid_date ? formatDate(invoice.paid_date) : `Due ${formatDate(invoice.due_date)}`}
                   danger={isOverdue}
@@ -1040,6 +1101,16 @@ function InvoiceDetailDrawer({
 
             {/* Actions */}
             <div className="flex flex-wrap gap-2 pt-4 border-t border-border-light">
+              {invoice.status === "draft" && (
+                <>
+                  <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
+                    Issue (mark pending)
+                  </Button>
+                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>
+                    Cancel
+                  </Button>
+                </>
+              )}
               {invoice.status === "pending" && (
                 <>
                   <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark as Paid</Button>
@@ -1510,101 +1581,6 @@ function TimelineStep({ done, active, label, date, danger }: { done: boolean; ac
         <p className="text-[10px] text-text-tertiary">{date}</p>
       </div>
     </div>
-  );
-}
-
-/* ───────────────────── Create Invoice Modal ───────────────────── */
-
-function CreateInvoiceModal({
-  open, onClose, onCreate,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onCreate: (data: CreateInvoiceInput) => void;
-}) {
-  const [form, setForm] = useState({ client_name: "", job_reference: "", amount: "", due_date: "", status: "pending" as InvoiceStatus });
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    setForm({
-      client_name: "",
-      job_reference: "",
-      amount: "",
-      due_date: dueDateIsoFromPaymentTerms(new Date(), null),
-      status: "pending",
-    });
-  }, [open]);
-
-  const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.client_name || !form.amount || !form.due_date) { toast.error("Please fill in all required fields"); return; }
-    setSubmitting(true);
-    try {
-      await onCreate({
-        client_name: form.client_name,
-        job_reference: form.job_reference || undefined,
-        amount: Number(form.amount),
-        due_date: form.due_date,
-        status: form.status,
-      });
-      setForm({ client_name: "", job_reference: "", amount: "", due_date: "", status: "pending" });
-    } finally { setSubmitting(false); }
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} title="Create Invoice" subtitle="Add a new client invoice" size="md">
-      <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Client Name *</label>
-          <Input value={form.client_name} onChange={(e) => update("client_name", e.target.value)} placeholder="Company name" required />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Job Reference</label>
-          <Input
-            value={form.job_reference}
-            onChange={(e) => update("job_reference", e.target.value)}
-            onBlur={async () => {
-              const ref = form.job_reference.trim();
-              if (!ref) return;
-              const due = await getInvoiceDueDateIsoForJobReference(ref);
-              if (due) setForm((prev) => ({ ...prev, due_date: due }));
-            }}
-            placeholder="e.g. JOB-2024-0001"
-          />
-          <p className="text-[11px] text-text-tertiary mt-1">
-            When the reference matches a job, leaving this field applies the due date from the client&apos;s linked account (Net 7/15/30/60, Due on Receipt, Every N days).
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount *</label>
-            <Input type="number" value={form.amount} onChange={(e) => update("amount", e.target.value)} placeholder="0.00" required />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Due Date *</label>
-            <Input type="date" value={form.due_date} onChange={(e) => update("due_date", e.target.value)} required />
-          </div>
-        </div>
-        <Select
-          label="Status"
-          value={form.status}
-          onChange={(e) => update("status", e.target.value)}
-          options={[
-            { value: "pending", label: "Pending" },
-            { value: "paid", label: "Paid" },
-            { value: "overdue", label: "Overdue" },
-            { value: "cancelled", label: "Cancelled" },
-          ]}
-        />
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit" disabled={submitting}>{submitting ? "Creating..." : "Create Invoice"}</Button>
-        </div>
-      </form>
-    </Modal>
   );
 }
 

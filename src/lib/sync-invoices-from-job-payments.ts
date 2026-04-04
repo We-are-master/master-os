@@ -6,6 +6,7 @@ import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 const EPS = 0.02;
 
 function computeStatus(inv: Invoice, amountPaid: number, amount: number): InvoiceStatus {
+  if (inv.status === "draft" && amountPaid <= EPS) return "draft";
   if (inv.status === "cancelled") return "cancelled";
   if (amountPaid >= amount - EPS) return "paid";
   if (amountPaid > EPS) return "partially_paid";

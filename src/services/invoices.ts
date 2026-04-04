@@ -186,7 +186,7 @@ export async function softDeleteInvoicesForArchivedJobs(
   }
 }
 
-const OPEN_INVOICE_STATUSES: InvoiceStatus[] = ["pending", "partially_paid", "overdue"];
+const OPEN_INVOICE_STATUSES: InvoiceStatus[] = ["draft", "pending", "partially_paid", "overdue"];
 
 /**
  * When a job is cancelled, cancel open invoices tied to that job and store the same reason as on the job.

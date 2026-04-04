@@ -16,6 +16,9 @@ export interface ListParams {
   dateFrom?: string;
   /** Inclusive YYYY-MM-DD */
   dateTo?: string;
+  /** Inclusive bounds for `timestamptz` columns (local calendar day → UTC ISO). Overrides dateFrom/dateTo when set. */
+  dateFromUtcIso?: string;
+  dateToUtcIso?: string;
   /** Column used for date range filtering (e.g. `scheduled_date`). */
   dateColumn?: string;
   /**
@@ -25,6 +28,11 @@ export interface ListParams {
   scheduleRange?: { from: string; to: string };
   /** Soft-deleted rows only (`deleted_at` set). Used for the Jobs "Archived" tab. */
   archivedOnly?: boolean;
+  /**
+   * Invoices: period matches rows where `billing_week_start` is in [from,to] (weekly batch),
+   * or `billing_week_start` is null and `created_at` falls in the local-day UTC window.
+   */
+  invoicePeriodBounds?: { from: string; to: string; startIso: string; endIso: string };
 }
 
 /** PostgREST `or` filter for jobs table schedule window (pairs with deleted_at / status filters via AND). */
@@ -36,6 +44,17 @@ export function applyJobsScheduleRangeToQuery<T extends { or: (filters: string) 
   const byDate = `and(scheduled_date.gte.${range.from},scheduled_date.lte.${range.to})`;
   const byStart = `and(scheduled_start_at.gte."${startIso}",scheduled_start_at.lte."${endIso}")`;
   return query.or(`${byDate},${byStart}`);
+}
+
+/** Invoices list/KPIs: align period with displayed invoice date (billing week vs created). */
+export function applyInvoicePeriodBoundsToQuery<T extends { or: (filters: string) => T }>(
+  query: T,
+  bounds: { from: string; to: string; startIso: string; endIso: string }
+): T {
+  const { from, to, startIso, endIso } = bounds;
+  const byWeek = `and(billing_week_start.gte.${from},billing_week_start.lte.${to})`;
+  const byCreated = `and(billing_week_start.is.null,created_at.gte."${startIso}",created_at.lte."${endIso}")`;
+  return query.or(`${byWeek},${byCreated}`);
 }
 
 export interface ListResult<T> {
@@ -100,9 +119,13 @@ export async function queryList<T>(
 
   if (params.scheduleRange) {
     query = applyJobsScheduleRangeToQuery(query, params.scheduleRange);
+  } else if (params.invoicePeriodBounds) {
+    query = applyInvoicePeriodBoundsToQuery(query, params.invoicePeriodBounds);
   } else if (params.dateColumn) {
-    if (params.dateFrom) query = query.gte(params.dateColumn, params.dateFrom);
-    if (params.dateTo) query = query.lte(params.dateColumn, params.dateTo);
+    if (params.dateFromUtcIso) query = query.gte(params.dateColumn, params.dateFromUtcIso);
+    else if (params.dateFrom) query = query.gte(params.dateColumn, params.dateFrom);
+    if (params.dateToUtcIso) query = query.lte(params.dateColumn, params.dateToUtcIso);
+    else if (params.dateTo) query = query.lte(params.dateColumn, params.dateTo);
   }
 
   const sortCol = params.sortBy ?? options?.defaultSort ?? "created_at";
@@ -128,11 +151,19 @@ export async function getStatusCounts(
   table: string,
   statuses: string[],
   statusColumn = "status",
-  options?: { dateFrom?: string; dateTo?: string; dateColumn?: string; scheduleRange?: { from: string; to: string } }
+  options?: {
+    dateFrom?: string;
+    dateTo?: string;
+    dateFromUtcIso?: string;
+    dateToUtcIso?: string;
+    dateColumn?: string;
+    scheduleRange?: { from: string; to: string };
+    invoicePeriodBounds?: { from: string; to: string; startIso: string; endIso: string };
+  }
 ): Promise<Record<string, number>> {
   const supabase = getSupabase();
   const counts: Record<string, number> = {};
-  const canUseRpc = !options?.scheduleRange;
+  const canUseRpc = !options?.scheduleRange && !options?.invoicePeriodBounds;
 
   if (canUseRpc) {
     const { data: rpcRows, error: rpcErr } = await supabase.rpc("get_status_counts", {
@@ -172,9 +203,13 @@ export async function getStatusCounts(
   if (useDeletedFilter) totalQuery = totalQuery.is("deleted_at", null);
   if (options?.scheduleRange && table === "jobs") {
     totalQuery = applyJobsScheduleRangeToQuery(totalQuery, options.scheduleRange);
+  } else if (options?.invoicePeriodBounds) {
+    totalQuery = applyInvoicePeriodBoundsToQuery(totalQuery, options.invoicePeriodBounds);
   } else if (options?.dateColumn) {
-    if (options.dateFrom) totalQuery = totalQuery.gte(options.dateColumn, options.dateFrom);
-    if (options.dateTo) totalQuery = totalQuery.lte(options.dateColumn, options.dateTo);
+    if (options.dateFromUtcIso) totalQuery = totalQuery.gte(options.dateColumn, options.dateFromUtcIso);
+    else if (options.dateFrom) totalQuery = totalQuery.gte(options.dateColumn, options.dateFrom);
+    if (options.dateToUtcIso) totalQuery = totalQuery.lte(options.dateColumn, options.dateToUtcIso);
+    else if (options.dateTo) totalQuery = totalQuery.lte(options.dateColumn, options.dateTo);
   }
   const { count: totalCount } = await totalQuery;
   counts["all"] = totalCount ?? 0;
@@ -185,9 +220,13 @@ export async function getStatusCounts(
       if (useDeletedFilter) statusQuery = statusQuery.is("deleted_at", null);
       if (options?.scheduleRange && table === "jobs") {
         statusQuery = applyJobsScheduleRangeToQuery(statusQuery, options.scheduleRange);
+      } else if (options?.invoicePeriodBounds) {
+        statusQuery = applyInvoicePeriodBoundsToQuery(statusQuery, options.invoicePeriodBounds);
       } else if (options?.dateColumn) {
-        if (options.dateFrom) statusQuery = statusQuery.gte(options.dateColumn, options.dateFrom);
-        if (options.dateTo) statusQuery = statusQuery.lte(options.dateColumn, options.dateTo);
+        if (options.dateFromUtcIso) statusQuery = statusQuery.gte(options.dateColumn, options.dateFromUtcIso);
+        else if (options.dateFrom) statusQuery = statusQuery.gte(options.dateColumn, options.dateFrom);
+        if (options.dateToUtcIso) statusQuery = statusQuery.lte(options.dateColumn, options.dateToUtcIso);
+        else if (options.dateTo) statusQuery = statusQuery.lte(options.dateColumn, options.dateTo);
       }
       const { count } = await statusQuery;
       counts[s] = count ?? 0;

@@ -161,9 +161,12 @@ export function DataTable<T>({
               {columns.map((col) => (
                 <th
                   key={col.key}
-                  style={{ width: col.width, minWidth: col.minWidth }}
+                  style={{
+                    /** Prefer minWidth so header text stays one line; horizontal scroll handles overflow. */
+                    minWidth: col.minWidth ?? col.width,
+                  }}
                   className={cn(
-                    "px-3 sm:px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary",
+                    "px-3 sm:px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary whitespace-nowrap",
                     col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
                     col.headerClassName
                   )}
@@ -240,7 +243,7 @@ export function DataTable<T>({
                       {columns.map((col) => (
                         <td
                           key={col.key}
-                          style={{ minWidth: col.minWidth }}
+                          style={{ minWidth: col.minWidth ?? col.width }}
                           className={cn(
                             "px-3 sm:px-5 py-3.5 text-sm align-top",
                             col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
