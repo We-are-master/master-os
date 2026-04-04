@@ -1,6 +1,59 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { Job, SelfBill, SelfBillStatus } from "@/types/database";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+
+const JOB_LINE_FOR_SB_FULL =
+  "id, reference, title, partner_cost, materials_cost, status, property_address, deleted_at, partner_cancelled_at";
+const JOB_LINE_FOR_SB_FULL_WITH_LINK =
+  "id, reference, title, partner_cost, materials_cost, status, property_address, self_bill_id, deleted_at, partner_cancelled_at";
+const JOB_LINE_FOR_SB_LEGACY =
+  "id, reference, title, partner_cost, materials_cost, status, property_address, deleted_at";
+const JOB_LINE_FOR_SB_LEGACY_WITH_LINK =
+  "id, reference, title, partner_cost, materials_cost, status, property_address, self_bill_id, deleted_at";
+
+export type SelfBillJobLine = Pick<
+  Job,
+  "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address"
+> & {
+  deleted_at?: string | null;
+  partner_cancelled_at?: string | null;
+};
+
+export type SelfBillLinkedJobRow = SelfBillJobLine & { self_bill_id: string };
+
+async function fetchJobLinesForSelfBill(
+  supabase: SupabaseClient,
+  options: { selfBillId: string } | { selfBillIds: string[] },
+  includeSelfBillIdColumn: boolean,
+): Promise<SelfBillJobLine[] | SelfBillLinkedJobRow[]> {
+  const full = includeSelfBillIdColumn ? JOB_LINE_FOR_SB_FULL_WITH_LINK : JOB_LINE_FOR_SB_FULL;
+  const legacy = includeSelfBillIdColumn ? JOB_LINE_FOR_SB_LEGACY_WITH_LINK : JOB_LINE_FOR_SB_LEGACY;
+
+  const build = (cols: string) => {
+    let q = supabase.from("jobs").select(cols).order("reference", { ascending: true });
+    if ("selfBillId" in options) {
+      q = q.eq("self_bill_id", options.selfBillId);
+    } else {
+      if (options.selfBillIds.length === 0) return null;
+      q = q.in("self_bill_id", options.selfBillIds);
+    }
+    return q;
+  };
+
+  const first = build(full);
+  if (!first) return [];
+
+  let { data, error } = await first;
+  /** Any missing column in the “full” select — retry without `partner_cancelled_at` (older DBs). */
+  if (error && isSupabaseMissingColumnError(error)) {
+    const second = build(legacy);
+    if (second) ({ data, error } = await second);
+  }
+  if (error) throw error;
+  return (data ?? []) as unknown as SelfBillJobLine[] | SelfBillLinkedJobRow[];
+}
 
 export type CreateSelfBillFromJobInput = Pick<
   Job,
@@ -102,12 +155,22 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   const sb = await getSelfBill(selfBillId);
   if (!sb || sb.status === "paid") return;
 
-  const { data: jobRows, error: jErr } = await supabase
+  const jobSelect1 = await supabase
     .from("jobs")
     .select("id, status, deleted_at, partner_cancelled_at")
     .eq("self_bill_id", selfBillId);
+  let jobRows: JobPayoutRow[] | null = (jobSelect1.data ?? null) as JobPayoutRow[] | null;
+  let jErr = jobSelect1.error;
+  if (jErr && isSupabaseMissingColumnError(jErr)) {
+    const jobSelect2 = await supabase
+      .from("jobs")
+      .select("id, status, deleted_at")
+      .eq("self_bill_id", selfBillId);
+    jobRows = (jobSelect2.data ?? null) as JobPayoutRow[] | null;
+    jErr = jobSelect2.error;
+  }
   if (jErr) throw jErr;
-  const jobs = (jobRows ?? []) as JobPayoutRow[];
+  const jobs = jobRows ?? [];
 
   const paying = jobs.filter((j) => !j.deleted_at && j.status !== "cancelled");
 
@@ -209,6 +272,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
       reference: ref,
       partner_id: job.partner_id,
       partner_name: job.partner_name?.trim() || "Partner",
+      bill_origin: "partner" as const,
       period: weekStart.slice(0, 7),
       week_start: weekStart,
       week_end: weekEnd,
@@ -221,7 +285,11 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
       status: "accumulating" as const,
       payment_cadence: "weekly",
     };
-    const { data: ins, error: insErr } = await supabase.from("self_bills").insert(row).select("id").single();
+    let { data: ins, error: insErr } = await supabase.from("self_bills").insert(row).select("id").single();
+    if (insErr && isSupabaseMissingColumnError(insErr, "bill_origin")) {
+      const { bill_origin: _bo, ...rowLegacy } = row;
+      ({ data: ins, error: insErr } = await supabase.from("self_bills").insert(rowLegacy).select("id").single());
+    }
     if (insErr) {
       const code = (insErr as { code?: string }).code;
       const msg = insErr.message ?? "";
@@ -258,6 +326,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
         if (!sbId) throw insErr;
       }
     } else {
+      if (!ins?.id) throw new Error("Self-bill insert returned no id");
       sbId = ins.id as string;
     }
   }
@@ -267,7 +336,11 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   const { error: linkErr } = await supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
   if (linkErr) throw linkErr;
 
-  await refreshSelfBillPayoutState(sbId);
+  try {
+    await refreshSelfBillPayoutState(sbId);
+  } catch (e) {
+    console.error("refreshSelfBillPayoutState after weekly self-bill link:", e);
+  }
   return sbId;
 }
 
@@ -329,7 +402,15 @@ export async function createSelfBillFromJob(job: CreateSelfBillFromJobInput): Pr
   const supabase = getSupabase();
   const { data: full } = await supabase.from("jobs").select("*").eq("id", job.id).single();
   if (!full) throw new Error("Job not found");
-  const id = await ensureWeeklySelfBillForJob(full as Job, { weekAnchorDate: new Date() });
+  const j = full as Job;
+  /** Week for the self-bill bucket: scheduled day if set, else job creation (not “today”, which mis-buckets approvals). */
+  const sched = typeof j.scheduled_date === "string" ? j.scheduled_date.trim().slice(0, 10) : "";
+  const anchorDay =
+    sched && /^\d{4}-\d{2}-\d{2}$/.test(sched)
+      ? sched
+      : (j.created_at ? String(j.created_at).slice(0, 10) : "");
+  const weekAnchorDate = anchorDay ? new Date(`${anchorDay}T12:00:00`) : new Date();
+  const id = await ensureWeeklySelfBillForJob(j, { weekAnchorDate });
   if (!id) throw new Error("Partner required for self-bill");
   const row = await getSelfBill(id);
   if (!row) throw new Error("Self-bill not found after create");
@@ -343,23 +424,23 @@ export async function getSelfBill(id: string): Promise<SelfBill | null> {
   return (data as SelfBill) ?? null;
 }
 
-export type SelfBillJobLine = Pick<
-  Job,
-  "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address"
-> & {
-  deleted_at?: string | null;
-  partner_cancelled_at?: string | null;
-};
-
 export async function listJobsForSelfBill(selfBillId: string): Promise<SelfBillJobLine[]> {
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select(
-      "id, reference, title, partner_cost, materials_cost, status, property_address, deleted_at, partner_cancelled_at",
-    )
-    .eq("self_bill_id", selfBillId)
-    .order("reference", { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as SelfBillJobLine[];
+  const rows = await fetchJobLinesForSelfBill(supabase, { selfBillId }, false);
+  return rows as SelfBillJobLine[];
+}
+
+const SELF_BILL_JOB_QUERY_CHUNK = 60;
+
+/** Jobs linked to any of the given self-bills (chunked `.in()` + legacy column fallback). */
+export async function listJobsLinkedToSelfBillIds(selfBillIds: string[]): Promise<SelfBillLinkedJobRow[]> {
+  if (selfBillIds.length === 0) return [];
+  const supabase = getSupabase();
+  const out: SelfBillLinkedJobRow[] = [];
+  for (let i = 0; i < selfBillIds.length; i += SELF_BILL_JOB_QUERY_CHUNK) {
+    const chunk = selfBillIds.slice(i, i + SELF_BILL_JOB_QUERY_CHUNK);
+    const rows = (await fetchJobLinesForSelfBill(supabase, { selfBillIds: chunk }, true)) as SelfBillLinkedJobRow[];
+    out.push(...rows);
+  }
+  return out;
 }
