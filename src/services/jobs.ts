@@ -287,46 +287,73 @@ function jobPatchTouchesSchedule(patch: Record<string, unknown>): boolean {
   return JOB_SCHEDULE_PATCH_KEYS.some((k) => Object.prototype.hasOwnProperty.call(patch, k));
 }
 
+/** Slim read for `updateJob` gates — avoids loading the full jobs row before PATCH. */
+const JOB_UPDATE_GATE_COLUMNS =
+  "status,scheduled_date,scheduled_start_at,scheduled_end_at,scheduled_finish_date";
+
+async function fetchJobGatesForUpdate(id: string): Promise<Pick<
+  Job,
+  "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"
+> | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select(JOB_UPDATE_GATE_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as Pick<
+    Job,
+    "status" | "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"
+  >;
+}
+
+export type UpdateJobOptions = {
+  /** Skip weekly self-bill recompute (call `syncSelfBillAfterJobChange` once after a batch of updates). */
+  skipSelfBillSync?: boolean;
+};
+
 /** Use `null` (not `undefined`) on nullable columns you want to clear — `undefined` keys are omitted from the PATCH. */
 export async function updateJob(
   id: string,
-  input: Partial<Job>
+  input: Partial<Job>,
+  options?: UpdateJobOptions
 ): Promise<Job> {
   const supabase = getSupabase();
-  const before = await getJob(id);
-  if (!before) throw new Error("Job not found");
+  const beforeGates = await fetchJobGatesForUpdate(id);
+  if (!beforeGates) throw new Error("Job not found");
 
   const basePatch = input as Record<string, unknown>;
   /** Reschedule clears `late`: late = missed start on the previous slot; new date/time is a new booking. */
   const effectivePatch: Record<string, unknown> = { ...basePatch };
-  if (before.status === "late" && jobPatchTouchesSchedule(basePatch)) {
+  if (beforeGates.status === "late" && jobPatchTouchesSchedule(basePatch)) {
     effectivePatch.status = "scheduled";
   }
   const patch = prepareJobRowForUpdate(effectivePatch);
 
   /**
-   * Avoid `.select().single()` on PATCH: PostgREST returns **406 Not Acceptable** when the
-   * `Accept: application/vnd.pgrst.object+json` singular response gets 0 rows (RLS, or empty RETURNING).
-   * We verify with a plural `.select("id")`, then reload the full row via `getJob`.
+   * Return full row from PATCH (array select — no `.single()`) to skip a follow-up `getJob`.
+   * Plural JSON avoids 406 when zero rows; we check `length` instead.
    */
-  async function runUpdate(row: Record<string, unknown>) {
-    return supabase.from("jobs").update(row).eq("id", id).select("id");
+  async function runUpdateReturning(row: Record<string, unknown>) {
+    return supabase.from("jobs").update(row).eq("id", id).select("*");
   }
 
-  let { data: idRows, error } = await runUpdate(patch);
+  let { data: rows, error } = await runUpdateReturning(patch);
   if (error && isPostgrestWriteRetryableError(error)) {
-    const retry = await runUpdate(applyJobDbCompat({ ...effectivePatch }));
-    idRows = retry.data;
+    const retry = await runUpdateReturning(applyJobDbCompat({ ...effectivePatch }));
+    rows = retry.data;
     error = retry.error;
   }
   if (error) throw error;
-  if (!idRows?.length) {
+  if (!rows?.length) {
     throw new Error("Job update did not affect any row (check permissions or job id).");
   }
 
-  const row = await getJob(id);
-  if (!row) throw new Error("Job not found after update");
-  await syncSelfBillAfterJobChange(row);
+  const row = rows[0] as Job;
+  if (!options?.skipSelfBillSync) {
+    await syncSelfBillAfterJobChange(row);
+  }
   if (row.status === "cancelled") {
     try {
       await cancelOpenInvoicesForJobCancellation({

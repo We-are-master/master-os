@@ -519,7 +519,7 @@ export default function RequestsPage() {
             action: "created", userId: profile?.id, userName: profile?.full_name,
           }),
           photoPromise,
-          isManualSource ? getRequest(result.id).catch(() => null) : Promise.resolve(null),
+          isManualSource ? getRequest(result.id, { enrich: false }).catch(() => null) : Promise.resolve(null),
         ]);
         setCreateOpen(false);
         if (isManualSource) {
@@ -1156,7 +1156,7 @@ export default function RequestsPage() {
             }
             const [resolvedAddr, freshReq, quoteInviteMod] = await Promise.all([
               ensureClientAddressForQuote(clientAddress),
-              getRequest(req.id).catch(() => null),
+              getRequest(req.id, { enrich: false }).catch(() => null),
               import("@/services/quote-invite-images"),
             ]);
             const { uploadQuoteInviteImages } = quoteInviteMod;
@@ -1250,14 +1250,16 @@ export default function RequestsPage() {
                 body: JSON.stringify({ quoteId: quote.id, partnerIds }),
               }).catch(() => {});
             }
-            await updateRequestStatus(req.id, "converted_to_quote");
-            await logAudit({
-              entityType: "request", entityId: req.id, entityRef: req.reference,
-              action: "status_changed", fieldName: "status",
-              oldValue: req.status, newValue: "converted_to_quote",
-              metadata: { converted_to_quote: quote.reference, partners_invited: partnerIds.length, send_method: sendMethod },
-              userId: profile?.id, userName: profile?.full_name,
-            });
+            await Promise.all([
+              updateRequestStatus(req.id, "converted_to_quote", { enrich: false }),
+              logAudit({
+                entityType: "request", entityId: req.id, entityRef: req.reference,
+                action: "status_changed", fieldName: "status",
+                oldValue: req.status, newValue: "converted_to_quote",
+                metadata: { converted_to_quote: quote.reference, partners_invited: partnerIds.length, send_method: sendMethod },
+                userId: profile?.id, userName: profile?.full_name,
+              }),
+            ]);
             setInvitePartnerOpen(null);
             refreshSilent();
             loadCounts();
@@ -1296,7 +1298,7 @@ export default function RequestsPage() {
             }
             const [resolvedAddr, freshReq] = await Promise.all([
               ensureClientAddressForQuote(clientAddress),
-              getRequest(req.id).catch(() => null),
+              getRequest(req.id, { enrich: false }).catch(() => null),
             ]);
             const total = lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
             const fromRequest = normalizeJsonImageArray(freshReq?.images ?? req.images);
@@ -1352,7 +1354,7 @@ export default function RequestsPage() {
             }));
             if (items.length > 0) await supabase.from("quote_line_items").insert(items);
             await Promise.all([
-              updateRequestStatus(req.id, "converted_to_quote"),
+              updateRequestStatus(req.id, "converted_to_quote", { enrich: false }),
               logAudit({
                 entityType: "request", entityId: req.id, entityRef: req.reference,
                 action: "status_changed", fieldName: "status",
@@ -1450,7 +1452,7 @@ export default function RequestsPage() {
               billed_hours: data.billed_hours ?? null,
             });
             await Promise.all([
-              updateRequestStatus(convertToJobOpen.id, "converted_to_job"),
+              updateRequestStatus(convertToJobOpen.id, "converted_to_job", { enrich: false }),
               logAudit({
                 entityType: "job", entityId: job.id, entityRef: job.reference,
                 action: "created", metadata: { from_request: convertToJobOpen.reference },
