@@ -428,7 +428,7 @@ function JobsPageContent() {
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
     { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0 },
     { id: "cancelled", label: "Lost & Cancelled", count: tabCounts.cancelled ?? 0 },
-    { id: "archived", label: "Archived", count: tabCounts.archived ?? 0 },
+    { id: "archived", label: "Delete", count: tabCounts.archived ?? 0 },
   ];
 
   useEffect(() => {
@@ -842,13 +842,13 @@ function JobsPageContent() {
       await Promise.all(ids.map((id) => softDeleteById("jobs", id, profile?.id)));
       await Promise.all(selfBillIds.map((bid) => refreshSelfBillPayoutState(bid)));
       await logBulkAction("job", ids, "deleted", "deleted_at", "archived", profile?.id, profile?.full_name);
-      toast.success(`${selectedIds.size} jobs archived`);
+      toast.success(`${selectedIds.size} job(s) deleted`);
       setSelectedIds(new Set());
       refresh();
       loadDashboardStats();
       return true;
     } catch {
-      toast.error("Failed to archive jobs");
+      toast.error("Failed to delete jobs");
       return false;
     }
   }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
@@ -1135,9 +1135,9 @@ function JobsPageContent() {
                 status === "archived" ? undefined : (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <BulkBtn label="Start Job" onClick={() => setBulkActionModal("start_job")} variant="success" />
-                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="danger" />
                     <BulkBtn label="Mark as Paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
-                    <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="warning" />
+                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
+                    <BulkBtn label="Delete" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 )
               }
@@ -1212,7 +1212,7 @@ function JobsPageContent() {
               : bulkActionModal === "mark_paid"
                 ? "Mark selected jobs as paid?"
                 : bulkActionModal === "archive"
-                  ? "Archive selected jobs?"
+                  ? "Delete selected jobs?"
                   : ""
         }
         size="md"
@@ -1243,7 +1243,7 @@ function JobsPageContent() {
             )}
             {bulkActionModal === "archive" && (
               <>
-                You are about to <strong className="text-text-primary">archive</strong>{" "}
+                You are about to <strong className="text-text-primary">delete</strong>{" "}
                 <strong className="text-text-primary">{selectedIds.size}</strong> job(s). Linked invoices will be cancelled and hidden from
                 the Invoices list. This cannot be undone from the list. Are you sure?
               </>
@@ -1255,7 +1255,7 @@ function JobsPageContent() {
             </Button>
             <Button
               type="button"
-              variant={bulkActionModal === "cancel" || bulkActionModal === "archive" ? "danger" : "primary"}
+              variant={bulkActionModal === "archive" ? "danger" : "primary"}
               loading={bulkRunning}
               onClick={() => {
                 void (async () => {
@@ -1281,7 +1281,7 @@ function JobsPageContent() {
                   : bulkActionModal === "mark_paid"
                     ? "Yes, mark as paid"
                     : bulkActionModal === "archive"
-                      ? "Yes, archive"
+                      ? "Yes, delete"
                       : "Confirm"}
             </Button>
           </div>
