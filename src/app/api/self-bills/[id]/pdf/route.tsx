@@ -4,6 +4,7 @@ import React from "react";
 import { SelfBillPDF } from "@/lib/pdf/self-bill-template";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { SELF_BILL_FINANCE_VOID_LABEL } from "@/lib/self-bill-display";
 import { isSelfBillPayoutVoided, selfBillJobPayoutStateLabel } from "@/services/self-bills";
 import type { Job, SelfBill } from "@/types/database";
@@ -30,21 +31,14 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     .order("reference", { ascending: true });
   let jobs: Record<string, unknown>[] | null = (jobsFull.data ?? null) as Record<string, unknown>[] | null;
   let jobsErr = jobsFull.error;
-  if (jobsErr) {
-    const msg = String((jobsErr as { message?: string }).message ?? "");
-    const looksMissingCol =
-      (jobsErr as { code?: string }).code === "PGRST204" ||
-      msg.includes("Could not find") ||
-      msg.includes("schema cache");
-    if (looksMissingCol) {
-      const jobsLegacy = await supabase
-        .from("jobs")
-        .select("id, reference, title, partner_cost, materials_cost, property_address, status, deleted_at")
-        .eq("self_bill_id", id)
-        .order("reference", { ascending: true });
-      jobs = (jobsLegacy.data ?? null) as Record<string, unknown>[] | null;
-      jobsErr = jobsLegacy.error;
-    }
+  if (jobsErr && isSupabaseMissingColumnError(jobsErr)) {
+    const jobsLegacy = await supabase
+      .from("jobs")
+      .select("id, reference, title, partner_cost, materials_cost, property_address, status, deleted_at")
+      .eq("self_bill_id", id)
+      .order("reference", { ascending: true });
+    jobs = (jobsLegacy.data ?? null) as Record<string, unknown>[] | null;
+    jobsErr = jobsLegacy.error;
   }
   if (jobsErr) {
     return NextResponse.json({ error: "Could not load jobs for self-bill" }, { status: 500 });
