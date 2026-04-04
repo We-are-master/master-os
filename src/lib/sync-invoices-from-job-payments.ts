@@ -206,6 +206,13 @@ async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: J
   }
   allocated = Math.round(allocated * 100) / 100;
 
+  /** When invoice total is slightly above `jobCustomerBillableRevenueForCollections` (e.g. CCZ/parking in invoice but not yet in job row), deposit/final-only allocation can stay 0 — pool customer payments if close enough. */
+  const pooled = Math.round(Math.min(depSum + finSum, amt) * 100) / 100;
+  const maxJobRevenueHint = Math.max(totalBillable, scheduleTotal, ticketPlusExtras);
+  if (pooled > allocated + EPS && Math.abs(amt - maxJobRevenueHint) <= 50) {
+    allocated = pooled;
+  }
+
   await applyInvoicePaymentUpdates(client, inv, job, allocated, latestDate, opts);
 }
 

@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/database";
+import type { Invoice, InvoiceCollectionStage, InvoiceStatus, Job } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listInvoices, createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
@@ -35,6 +35,8 @@ import { reopenInvoiceToPending } from "@/lib/invoice-reopen";
 import { invoiceBalanceDue, invoiceAmountPaid } from "@/lib/invoice-balance";
 import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
+import { jobBillableRevenue } from "@/lib/job-financials";
+import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { applyInvoicePeriodBoundsToQuery, getStatusCounts, getSupabase, type ListParams } from "@/services/base";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
@@ -111,6 +113,7 @@ interface LinkedJob {
   current_phase: number;
   total_phases: number;
   client_price: number;
+  extras_amount?: number | null;
   partner_cost: number;
   materials_cost: number;
   margin_percent: number;
@@ -877,6 +880,8 @@ function InvoiceDetailDrawer({
   const [partialPaymentDate, setPartialPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [savingPartial, setSavingPartial] = useState(false);
   const [collectionSectionOpen, setCollectionSectionOpen] = useState(false);
+  /** Sum of customer_deposit + customer_final on linked job (aligns invoice paid/due with job card). */
+  const [jobCustomerPaidSum, setJobCustomerPaidSum] = useState<number | null>(null);
 
   const onInvoiceUpdatedRef = useRef(onInvoiceUpdated);
   onInvoiceUpdatedRef.current = onInvoiceUpdated;
@@ -901,6 +906,7 @@ function InvoiceDetailDrawer({
     setPartialAmount("");
     setPartialPaymentDate(new Date().toISOString().slice(0, 10));
     setCollectionSectionOpen(false);
+    setJobCustomerPaidSum(null);
 
     const supabase = getSupabase();
 
@@ -917,6 +923,22 @@ function InvoiceDetailDrawer({
           setLinkedJob((jobData ?? null) as LinkedJob | null);
 
           const jid = (jobData as { id?: string } | null)?.id;
+          if (jid) {
+            const { data: payRows } = await supabase
+              .from("job_payments")
+              .select("amount, type, note")
+              .eq("job_id", jid)
+              .in("type", ["customer_deposit", "customer_final"])
+              .is("deleted_at", null);
+            let sum = 0;
+            for (const p of payRows ?? []) {
+              const row = p as { amount?: number; type?: string; note?: string | null };
+              if (isLegacyMisclassifiedCustomerPayment(row as { type: string; note?: string | null })) continue;
+              sum += Number(row.amount ?? 0);
+            }
+            if (!cancelled) setJobCustomerPaidSum(Math.round(sum * 100) / 100);
+          }
+
           if (jid && onInvoiceUpdatedRef.current) {
             try {
               await syncInvoicesFromJobCustomerPayments(supabase, jid);
@@ -1047,12 +1069,18 @@ function InvoiceDetailDrawer({
   const hasStripeLink = !!stripeState.linkUrl;
   const stripePaid = stripeState.paymentStatus === "paid";
 
-  const invPaidForHero = invoiceAmountPaid(invoice);
-  const invBalanceForHero = invoiceBalanceDue(invoice);
-  /** Row can lag `status`; job-synced `amount_paid` still means show balance in the hero (same as job “amount due”). */
+  const invAmt = Number(invoice.amount ?? 0);
+  const rowPaid = invoiceAmountPaid(invoice);
+  const useLedgerBridge =
+    Boolean(invoice.job_reference?.trim() && linkedJob && jobCustomerPaidSum !== null);
+  const effectivePaid = useLedgerBridge
+    ? Math.round(Math.min(invAmt, Math.max(rowPaid, jobCustomerPaidSum!)) * 100) / 100
+    : rowPaid;
+  const effectiveBalance = Math.max(0, Math.round((invAmt - effectivePaid) * 100) / 100);
+  /** Hero matches job customer ledger when linked; DB row may lag until sync completes. */
   const showBalanceHero =
-    invPaidForHero > 0.02 &&
-    invBalanceForHero > 0.02 &&
+    effectivePaid > 0.02 &&
+    effectiveBalance > 0.02 &&
     invoice.status !== "paid" &&
     invoice.status !== "cancelled" &&
     invoice.status !== "draft";
@@ -1066,7 +1094,11 @@ function InvoiceDetailDrawer({
   ];
 
   const linkedJobTotalCost = linkedJob ? linkedJob.partner_cost + linkedJob.materials_cost : 0;
-  const linkedJobMarginAmount = linkedJob ? linkedJob.client_price - linkedJobTotalCost : 0;
+  const linkedJobCustomerTotal = linkedJob
+    ? jobBillableRevenue(linkedJob as Pick<Job, "client_price" | "extras_amount">)
+    : 0;
+  const linkedJobMarginAmount = linkedJob ? linkedJobCustomerTotal - linkedJobTotalCost : 0;
+  const linkedJobMarginPct = linkedJobCustomerTotal > 0.01 ? (linkedJobMarginAmount / linkedJobCustomerTotal) * 100 : 0;
   const linkedJobForcedPaidBySystemOwner = linkedJob ? isJobForcePaid(linkedJob.internal_notes) : false;
 
   return (
@@ -1109,7 +1141,7 @@ function InvoiceDetailDrawer({
                     <Badge variant={config.variant} dot size="md">{config.label}</Badge>
                     <p className="text-xs text-text-tertiary mt-0.5">
                       {invoice.status === "paid" && invoice.paid_date ? `Paid on ${formatDate(invoice.paid_date)}` :
-                       invoice.status === "partially_paid" || showBalanceHero ? `${formatCurrency(invoiceAmountPaid(invoice))} received · ${formatCurrency(invoiceBalanceDue(invoice))} left` :
+                       invoice.status === "partially_paid" || showBalanceHero ? `${formatCurrency(effectivePaid)} received · ${formatCurrency(effectiveBalance)} due` :
                        isOverdue ? `Overdue by ${Math.abs(daysUntilDue)} days` :
                        invoice.status === "cancelled"
                          ? invoice.cancellation_reason?.trim()
@@ -1122,8 +1154,8 @@ function InvoiceDetailDrawer({
                 <div className="text-right shrink-0">
                   {invoice.status === "partially_paid" || showBalanceHero ? (
                     <>
-                      <p className="text-2xl font-bold text-text-primary tabular-nums">{formatCurrency(invoiceBalanceDue(invoice))}</p>
-                      <p className="text-[11px] text-text-tertiary">due · total {formatCurrency(invoice.amount)}</p>
+                      <p className="text-2xl font-bold text-text-primary tabular-nums">{formatCurrency(effectiveBalance)}</p>
+                      <p className="text-[11px] text-text-tertiary">due · invoice total {formatCurrency(invoice.amount)}</p>
                     </>
                   ) : (
                     <p className="text-2xl font-bold text-text-primary tabular-nums">{formatCurrency(invoice.amount)}</p>
@@ -1131,6 +1163,39 @@ function InvoiceDetailDrawer({
                 </div>
               </div>
             </div>
+
+            {linkedJob && (
+              <div className="rounded-xl border border-primary/20 bg-primary/[0.06] dark:bg-primary/10 p-4 space-y-3 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-primary">Linked job · sales &amp; costs</p>
+                  <span className="text-[10px] font-mono text-text-tertiary">{linkedJob.reference}</span>
+                </div>
+                <p className="text-[11px] text-text-secondary leading-relaxed">
+                  Customer billable (ticket + extras) and what you pay the partner — same basis as the job finance card.
+                </p>
+                <div className="rounded-lg bg-card/80 dark:bg-card/40 border border-border-light divide-y divide-border-light overflow-hidden">
+                  <div className="flex justify-between items-center px-3 py-2.5 text-sm">
+                    <span className="text-text-secondary">Customer total (ticket + extras)</span>
+                    <span className="font-semibold text-text-primary tabular-nums">{formatCurrency(linkedJobCustomerTotal)}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-3 py-2.5 text-sm">
+                    <span className="text-text-secondary">Partner cost</span>
+                    <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.partner_cost)}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-3 py-2.5 text-sm">
+                    <span className="text-text-secondary">Materials</span>
+                    <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.materials_cost)}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-3 py-2.5 text-sm bg-surface-hover/50">
+                    <span className="font-semibold text-text-primary">Gross margin</span>
+                    <span className={`font-bold tabular-nums ${linkedJobMarginPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                      {formatCurrency(linkedJobMarginAmount)}{" "}
+                      <span className="text-xs font-semibold">({linkedJobMarginPct.toFixed(1)}%)</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Invoice Info */}
             <div className="grid grid-cols-2 gap-4">
@@ -1188,96 +1253,43 @@ function InvoiceDetailDrawer({
               </div>
             )}
 
-            {/* Financial Breakdown */}
-            <div className="p-4 rounded-xl bg-surface-hover space-y-3">
-              <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Financial Summary</p>
-              <div className="space-y-2">
+            {/* Invoice collections — aligned with job customer ledger when linked */}
+            <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
+              <div>
+                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Invoice · customer collections</p>
+                <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
+                  {linkedJob
+                    ? "Totals follow payments recorded on the job (deposit / final). They stay in sync with the job finance card."
+                    : "Amounts on this invoice row only (no job link)."}
+                </p>
+              </div>
+              <div className="space-y-2 rounded-lg border border-border-light bg-card/50 px-3 py-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-text-secondary">Invoice Amount</span>
-                  <span className="font-semibold text-text-primary">{formatCurrency(invoice.amount)}</span>
+                  <span className="text-text-secondary">Invoice amount</span>
+                  <span className="font-semibold text-text-primary tabular-nums">{formatCurrency(invoice.amount)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-text-secondary">Amount paid</span>
-                  <span className="font-semibold text-text-primary">{formatCurrency(invoiceAmountPaid(invoice))}</span>
+                  <span className="text-text-secondary">Amount received</span>
+                  <span className="font-semibold text-text-primary tabular-nums">
+                    {useLedgerBridge ? formatCurrency(effectivePaid) : formatCurrency(rowPaid)}
+                  </span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-text-secondary">Balance due</span>
-                  <span className="font-semibold text-primary">{formatCurrency(invoiceBalanceDue(invoice))}</span>
+                {useLedgerBridge && Math.abs(rowPaid - effectivePaid) > 0.02 ? (
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400/90">
+                    Invoice row shows {formatCurrency(rowPaid)}; job ledger has {formatCurrency(jobCustomerPaidSum!)} — showing the higher so due matches the job.
+                  </p>
+                ) : null}
+                <div className="flex justify-between text-sm pt-1 border-t border-border-light">
+                  <span className="font-medium text-text-primary">Balance due</span>
+                  <span className="font-bold text-primary tabular-nums">
+                    {useLedgerBridge ? formatCurrency(effectiveBalance) : formatCurrency(invoiceBalanceDue(invoice))}
+                  </span>
                 </div>
-                {invoice.job_reference &&
-                  onInvoiceUpdated &&
-                  (invoice.status === "pending" || invoice.status === "partially_paid" || invoice.status === "overdue") && (
-                  <div className="pt-3 mt-1 border-t border-border space-y-2">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partial payment</p>
-                    <p className="text-[11px] text-text-tertiary">Posts to the linked job (deposit/final split) and updates amount due on the job.</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        placeholder="Amount"
-                        value={partialAmount}
-                        onChange={(e) => setPartialAmount(e.target.value)}
-                      />
-                      <Input type="date" value={partialPaymentDate} onChange={(e) => setPartialPaymentDate(e.target.value)} />
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="w-full"
-                      loading={savingPartial}
-                      disabled={!partialAmount || Number(partialAmount) <= 0}
-                      onClick={async () => {
-                        if (!invoice || !onInvoiceUpdated) return;
-                        setSavingPartial(true);
-                        try {
-                          const updated = await recordInvoicePartialPayment(invoice.id, Number(partialAmount), {
-                            paymentDate: partialPaymentDate,
-                            createdBy: profile?.id,
-                          });
-                          onInvoiceUpdated(updated);
-                          setPartialAmount("");
-                          toast.success("Partial payment recorded");
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "Failed to record payment");
-                        } finally {
-                          setSavingPartial(false);
-                        }
-                      }}
-                    >
-                      Record partial payment
-                    </Button>
-                  </div>
-                )}
-                {linkedJob && (
-                  <>
-                    <div className="h-px bg-border" />
-                    <div className="flex justify-between text-sm">
-                      <span className="text-text-secondary">Client Price (Job)</span>
-                      <span className="font-medium text-text-primary">{formatCurrency(linkedJob.client_price)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-text-secondary">Partner Cost</span>
-                      <span className="font-medium text-red-500">-{formatCurrency(linkedJob.partner_cost)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-text-secondary">Materials</span>
-                      <span className="font-medium text-red-500">-{formatCurrency(linkedJob.materials_cost)}</span>
-                    </div>
-                    <div className="h-px bg-border" />
-                    <div className="flex justify-between text-sm">
-                      <span className="font-semibold text-text-primary">Gross Margin</span>
-                      <span className={`font-bold ${linkedJob.margin_percent >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                        {formatCurrency(linkedJob.client_price - linkedJob.partner_cost - linkedJob.materials_cost)} ({linkedJob.margin_percent.toFixed(1)}%)
-                      </span>
-                    </div>
-                  </>
-                )}
               </div>
             </div>
 
             {/* Actions */}
-            <div className="flex flex-wrap gap-2 pt-4 border-t border-border-light">
+            <div className="flex flex-wrap gap-2 pt-1">
               {invoice.status === "draft" && (
                 <>
                   <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
@@ -1316,6 +1328,56 @@ function InvoiceDetailDrawer({
                 <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reactivate</Button>
               )}
             </div>
+
+            {invoice.job_reference &&
+              onInvoiceUpdated &&
+              (invoice.status === "pending" || invoice.status === "partially_paid" || invoice.status === "overdue") && (
+              <div className="rounded-xl border border-border bg-surface-hover/80 p-4 space-y-3 mt-2">
+                <div>
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Record partial payment</p>
+                  <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
+                    Posts to the linked job (deposit / final split) and updates this invoice and amount due on the job.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="Amount"
+                    value={partialAmount}
+                    onChange={(e) => setPartialAmount(e.target.value)}
+                  />
+                  <Input type="date" value={partialPaymentDate} onChange={(e) => setPartialPaymentDate(e.target.value)} />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="w-full"
+                  loading={savingPartial}
+                  disabled={!partialAmount || Number(partialAmount) <= 0}
+                  onClick={async () => {
+                    if (!invoice || !onInvoiceUpdated) return;
+                    setSavingPartial(true);
+                    try {
+                      const updated = await recordInvoicePartialPayment(invoice.id, Number(partialAmount), {
+                        paymentDate: partialPaymentDate,
+                        createdBy: profile?.id,
+                      });
+                      onInvoiceUpdated(updated);
+                      setPartialAmount("");
+                      toast.success("Partial payment recorded");
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Failed to record payment");
+                    } finally {
+                      setSavingPartial(false);
+                    }
+                  }}
+                >
+                  Record partial payment
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -1380,7 +1442,9 @@ function InvoiceDetailDrawer({
                   {invoice.status === "partially_paid" || showBalanceHero ? "Balance due" : "Amount"}
                 </p>
                 <p className="text-lg font-bold text-text-primary mt-0.5">
-                  {invoice.status === "partially_paid" || showBalanceHero ? formatCurrency(invoiceBalanceDue(invoice)) : formatCurrency(invoice.amount)}
+                  {invoice.status === "partially_paid" || showBalanceHero
+                    ? formatCurrency(useLedgerBridge ? effectiveBalance : invoiceBalanceDue(invoice))
+                    : formatCurrency(invoice.amount)}
                 </p>
                 {invoice.status === "partially_paid" || showBalanceHero ? (
                   <p className="text-[10px] text-text-tertiary mt-0.5">of {formatCurrency(invoice.amount)}</p>
