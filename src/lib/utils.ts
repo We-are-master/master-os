@@ -53,12 +53,14 @@ export function formatCurrency(value: number, currency?: string): string {
 
 export function formatCurrencyPrecise(value: number, currency?: string): string {
   const code = currency ?? appCurrencyCode;
+  const n = Number(value);
+  const safe = Number.isFinite(n) ? n : 0;
   return new Intl.NumberFormat(localeForCurrency(code), {
     style: "currency",
     currency: code,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(value);
+  }).format(safe);
 }
 
 export function formatNumber(value: number): string {
