@@ -185,12 +185,16 @@ async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: J
   const totalBillable = jobCustomerBillableRevenueForCollections(job);
   const schedDep = Number(job.customer_deposit ?? 0);
   const schedFin = Number(job.customer_final_payment ?? 0);
+  const scheduleTotal = schedDep + schedFin;
+  /** Matches `inferInvoiceKind` “combined” heuristic so invoice amount aligns with job ticket + extras. */
+  const ticketPlusExtras = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
   const kind = inferInvoiceKind(job, inv);
   let allocated = 0;
   // Invoice covers the full job (or full deposit+final schedule): pool all customer rows so job ledger matches Finance.
   const fullJobInvoice =
     (totalBillable > EPS && nearEqualAmounts(amt, totalBillable)) ||
-    (schedDep + schedFin > EPS && nearEqualAmounts(amt, schedDep + schedFin));
+    (scheduleTotal > EPS && nearEqualAmounts(amt, scheduleTotal)) ||
+    (ticketPlusExtras > EPS && nearEqualAmounts(amt, ticketPlusExtras));
   if (fullJobInvoice) {
     allocated = Math.min(depSum + finSum, amt);
   } else if (kind === "deposit") {
