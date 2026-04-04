@@ -3,10 +3,20 @@ import { getSupabase } from "./base";
 import { getJob, updateJob } from "./jobs";
 import { createJobPayment } from "./job-payments";
 import { applyCustomerExtraPatch, applyPartnerExtraPatch } from "@/lib/job-extra-charges";
+import { sumPartnerRecordedPayoutsForCap } from "@/lib/job-payment-ledger";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { partnerPaymentCap } from "@/lib/job-financials";
 import { syncSelfBillAfterJobChange } from "@/services/self-bills";
+
+function composeLedgerNote(ledgerLabel?: string, userNote?: string): string | undefined {
+  const label = ledgerLabel?.trim();
+  const note = userNote?.trim();
+  if (label && note) return `[${label}] ${note}`;
+  if (label) return `[${label}]`;
+  if (note) return note;
+  return undefined;
+}
 
 /** Payments (ledger) vs price adjustments (job row + invoice / self-bill only). */
 export type JobMoneyMode = "client_pay" | "client_extra" | "partner_pay" | "partner_extra";
@@ -26,14 +36,27 @@ export type ExecuteJobMoneyActionInput = {
   partnerPayments: JobPayment[];
   /** When mode is client_pay: post as deposit vs final (otherwise auto-split from schedule). */
   clientPayApplyAs?: ClientPayApplyAs;
+  /** Optional history label only (prefixed in note); does not affect allocation. */
+  paymentLedgerLabel?: string;
 };
 
 /**
  * Client/partner money: payments only hit `job_payments`; extras only bump job + invoice / self-bill (no mixed rows).
  */
 export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): Promise<Job> {
-  const { job, mode, amount, paymentDate, method, note, bankReference, customerPayments, partnerPayments, clientPayApplyAs } =
-    input;
+  const {
+    job,
+    mode,
+    amount,
+    paymentDate,
+    method,
+    note,
+    bankReference,
+    customerPayments,
+    partnerPayments,
+    clientPayApplyAs,
+    paymentLedgerLabel,
+  } = input;
 
   const a = Math.round(amount * 100) / 100;
   if (a <= 0) throw new Error("Enter an amount greater than zero");
@@ -57,11 +80,11 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
 
   if (mode === "client_pay") {
     const depPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
-    const finPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
     const depNeed = Number(job.customer_deposit ?? 0);
     const depRem = Math.max(0, depNeed - depPaid);
 
     const applyAs = clientPayApplyAs ?? (depRem > 0.02 ? "deposit" : "final");
+    const paymentNote = composeLedgerNote(paymentLedgerLabel, noteTrim);
 
     if (applyAs === "deposit") {
       if (depRem <= 0.02) {
@@ -75,7 +98,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
         type: "customer_deposit",
         amount: a,
         payment_date: paymentDate,
-        note: noteTrim || undefined,
+        note: paymentNote,
         payment_method: method,
         bank_reference: bankTrim || undefined,
       });
@@ -85,7 +108,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
         type: "customer_final",
         amount: a,
         payment_date: paymentDate,
-        note: noteTrim || undefined,
+        note: paymentNote,
         payment_method: method,
         bank_reference: bankTrim || undefined,
       });
@@ -109,7 +132,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     if (!job.partner_id?.trim()) throw new Error("Assign a partner before paying out");
 
     const partnerCap = partnerPaymentCap(job);
-    const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
+    const partnerPaid = sumPartnerRecordedPayoutsForCap(partnerPayments);
     const maxPartner = Math.max(0, partnerCap - partnerPaid);
     if (a > maxPartner + 1e-6) {
       throw new Error(
@@ -122,7 +145,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
       type: "partner",
       amount: a,
       payment_date: paymentDate,
-      note: noteTrim || undefined,
+      note: composeLedgerNote(paymentLedgerLabel, noteTrim),
       payment_method: method,
       bank_reference: bankTrim || undefined,
     });

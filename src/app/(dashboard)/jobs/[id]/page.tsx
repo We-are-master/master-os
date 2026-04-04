@@ -30,7 +30,7 @@ import {
   Timer,
   X,
 } from "lucide-react";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, formatCurrencyPrecise } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { listQuoteLineItems } from "@/services/quotes";
@@ -80,14 +80,17 @@ import {
   partnerPaymentCap,
   partnerSelfBillGrossAmount,
   customerScheduledTotal,
+  jobCustomerBillableRevenueForCollections,
 } from "@/lib/job-financials";
 import {
   ACCESS_CCZ_FEE_GBP,
   ACCESS_PARKING_FEE_GBP,
-  computeAccessSurcharge,
   effectiveInCczForAddress,
   isLikelyCczAddress,
 } from "@/lib/ccz";
+import { patchJobFinancialsForAccessTransition } from "@/lib/job-access-fee-financials";
+import { jobPaymentNoteWithoutLedgerPrefix, parseJobPaymentLedgerLabel } from "@/lib/job-payment-history-label";
+import { isLegacyMisclassifiedPartnerPayment, sumPartnerRecordedPayoutsForCap } from "@/lib/job-payment-ledger";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
@@ -188,6 +191,8 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
             · Whole bill total {formatCurrency(sb.net_payout)}
           </>
         ) : null}
+        {" "}
+        Record Payment on the job reduces amount due only; this line stays contract gross. Add extra payout on the job increases this gross.
       </p>
       <div className="flex items-center gap-1.5 flex-wrap pt-1">
         <Button
@@ -838,19 +843,14 @@ export default function JobDetailPage() {
       try {
         const nextInCcz = patch.in_ccz !== undefined ? patch.in_ccz : job.in_ccz;
         const nextHasFreeParking = patch.has_free_parking !== undefined ? patch.has_free_parking : job.has_free_parking;
-        const effectiveOld = effectiveInCczForAddress(job.in_ccz, job.property_address);
-        const effectiveNew = effectiveInCczForAddress(nextInCcz, job.property_address);
-        const oldAccess = computeAccessSurcharge({ inCcz: effectiveOld, hasFreeParking: job.has_free_parking });
-        const newAccess = computeAccessSurcharge({ inCcz: effectiveNew, hasFreeParking: nextHasFreeParking });
-        const delta = Math.round((newAccess - oldAccess) * 100) / 100;
-        const extras = Math.max(0, Math.round((Number(job.extras_amount ?? 0) + delta) * 100) / 100);
-        const deposit = Number(job.customer_deposit ?? 0);
-        const clientPrice = Number(job.client_price ?? 0);
-        const customer_final_payment = Math.round(Math.max(0, clientPrice + extras - deposit) * 100) / 100;
+        const accessFin = patchJobFinancialsForAccessTransition(job, {
+          in_ccz: nextInCcz,
+          has_free_parking: nextHasFreeParking,
+        });
         const updated = await handleJobUpdate(job.id, {
           ...patch,
-          extras_amount: extras,
-          customer_final_payment,
+          extras_amount: accessFin.extras_amount,
+          customer_final_payment: accessFin.customer_final_payment,
         });
         if (updated) {
           await bumpLinkedInvoiceAmountsToJobSchedule(updated);
@@ -860,12 +860,13 @@ export default function JobDetailPage() {
           } catch {
             /* non-blocking */
           }
+          await refreshJobFinance();
         }
       } finally {
         setSavingAccessFees(false);
       }
     },
-    [job, handleJobUpdate],
+    [job, handleJobUpdate, refreshJobFinance],
   );
 
   const reportByPhase = useMemo(() => {
@@ -972,17 +973,26 @@ export default function JobDetailPage() {
         customer_final_payment,
         ...(billed_hours != null ? { billed_hours } : {}),
       };
-      await handleJobUpdate(job.id, newFields);
+      const updated = await handleJobUpdate(job.id, newFields);
       await logFieldChanges(
         "job", job.id, job.reference,
         job as unknown as Record<string, unknown>,
         newFields as Record<string, unknown>,
         profile?.id, profile?.full_name,
       );
+      if (updated) {
+        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        try {
+          await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
+        } catch {
+          /* non-blocking */
+        }
+        await refreshJobFinance();
+      }
     } finally {
       setSavingFin(false);
     }
-  }, [job, finForm, handleJobUpdate, profile?.id, profile?.full_name]);
+  }, [job, finForm, handleJobUpdate, profile?.id, profile?.full_name, refreshJobFinance]);
 
   const handleSaveLinkedProperty = useCallback(async () => {
     if (!job || !propertyEdit?.property_address?.trim()) {
@@ -994,19 +1004,35 @@ export default function JobDetailPage() {
       return;
     }
     const trimmed = propertyEdit.property_address.trim();
+    const mergedInCcz = effectiveInCczForAddress(job.in_ccz, trimmed);
+    const accessFin = patchJobFinancialsForAccessTransition(job, {
+      property_address: trimmed,
+      in_ccz: mergedInCcz,
+    });
     setSavingProperty(true);
     try {
-      await handleJobUpdate(job.id, {
+      const updated = await handleJobUpdate(job.id, {
         client_id: propertyEdit.client_id,
         client_name: propertyEdit.client_name?.trim() || job.client_name,
         property_address: trimmed,
         client_address_id: propertyEdit.client_address_id,
-        in_ccz: effectiveInCczForAddress(job.in_ccz, trimmed),
+        in_ccz: mergedInCcz,
+        extras_amount: accessFin.extras_amount,
+        customer_final_payment: accessFin.customer_final_payment,
       });
+      if (updated) {
+        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        try {
+          await reconcileJobCustomerPaymentFlags(getSupabase(), job.id);
+        } catch {
+          /* non-blocking */
+        }
+        await refreshJobFinance();
+      }
     } finally {
       setSavingProperty(false);
     }
-  }, [job, propertyEdit, handleJobUpdate]);
+  }, [job, propertyEdit, handleJobUpdate, refreshJobFinance]);
 
   const handleSaveUnlinkedProperty = useCallback(async () => {
     if (!job || !unlinkedAddressDraft.trim()) {
@@ -1014,16 +1040,32 @@ export default function JobDetailPage() {
       return;
     }
     const trimmed = unlinkedAddressDraft.trim();
+    const mergedInCcz = effectiveInCczForAddress(job.in_ccz, trimmed);
+    const accessFin = patchJobFinancialsForAccessTransition(job, {
+      property_address: trimmed,
+      in_ccz: mergedInCcz,
+    });
     setSavingUnlinkedAddress(true);
     try {
-      await handleJobUpdate(job.id, {
+      const updated = await handleJobUpdate(job.id, {
         property_address: trimmed,
-        in_ccz: effectiveInCczForAddress(job.in_ccz, trimmed),
+        in_ccz: mergedInCcz,
+        extras_amount: accessFin.extras_amount,
+        customer_final_payment: accessFin.customer_final_payment,
       });
+      if (updated) {
+        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        try {
+          await reconcileJobCustomerPaymentFlags(getSupabase(), job.id);
+        } catch {
+          /* non-blocking */
+        }
+        await refreshJobFinance();
+      }
     } finally {
       setSavingUnlinkedAddress(false);
     }
-  }, [job, unlinkedAddressDraft, handleJobUpdate]);
+  }, [job, unlinkedAddressDraft, handleJobUpdate, refreshJobFinance]);
 
   const handleConfirmOfficeCancel = useCallback(async () => {
     if (!job) return;
@@ -1090,7 +1132,7 @@ export default function JobDetailPage() {
     try {
       let selfBillId: string | undefined = j.self_bill_id ?? undefined;
       if (newStatus === "awaiting_payment" && j.partner_id?.trim()) {
-        const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
+        const partnerPaid = sumPartnerRecordedPayoutsForCap(partnerPayments);
         const partnerDue = Math.max(0, partnerPaymentCap(j) - partnerPaid);
         let primarySelfBillId = j.self_bill_id ?? null;
         try {
@@ -1348,6 +1390,7 @@ export default function JobDetailPage() {
           ...(payload.flow === "client_pay" && payload.clientPayApplyAs
             ? { clientPayApplyAs: payload.clientPayApplyAs }
             : {}),
+          ...(payload.paymentLedgerLabel?.trim() ? { paymentLedgerLabel: payload.paymentLedgerLabel.trim() } : {}),
         });
         setJob(updated);
         const fieldName =
@@ -1672,7 +1715,7 @@ export default function JobDetailPage() {
       const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
       const billableForCollections = Math.max(jobBillableRevenue(current), customerScheduledTotal(current));
       const customerDue = Math.max(0, billableForCollections - (depositPaid + finalPaid));
-      const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
+      const partnerPaid = sumPartnerRecordedPayoutsForCap(partnerPayments);
       const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
 
       /** Single instant for invoice due date, weekly invoice week, and partner self-bill week (this approve action only). */
@@ -1837,7 +1880,7 @@ export default function JobDetailPage() {
     finForm.customer_deposit,
   ]);
 
-  const billableRevenueForApproval = job ? Math.max(jobBillableRevenue(job), customerScheduledTotal(job)) : 0;
+  const billableRevenueForApproval = job ? jobCustomerBillableRevenueForCollections(job) : 0;
   const partnerCapForApproval = job ? partnerPaymentCap(job) : 0;
 
   const approvalModalElapsedSeconds = useMemo(() => {
@@ -1899,16 +1942,8 @@ export default function JobDetailPage() {
   }
 
   const config = statusConfig[job.status] ?? { label: job.status, variant: "default" as const };
-  /** Hourly jobs: approval + finance form use `computeHourlyTotals` from billed hours / timer; summary must use the same basis or amount due / “fully collected” drift from Final balance. */
-  const hourlyClientBillableWithExtras =
-    job.job_type === "hourly" && hourlyAutoBilling
-      ? hourlyAutoBilling.clientTotal + Number(job.extras_amount ?? 0)
-      : null;
-  const billableRevenue = Math.max(
-    jobBillableRevenue(job),
-    customerScheduledTotal(job),
-    ...(hourlyClientBillableWithExtras != null ? [hourlyClientBillableWithExtras] : []),
-  );
+  /** Same basis as linked invoice targets and `syncInvoicesFromJobCustomerPayments` (ticket + extras, schedule, hourly). */
+  const billableRevenue = jobCustomerBillableRevenueForCollections(job);
   const partnerCap =
     job.job_type === "hourly" && hourlyAutoBilling
       ? Math.max(partnerPaymentCap(job), hourlyAutoBilling.partnerTotal)
@@ -1919,8 +1954,17 @@ export default function JobDetailPage() {
       : jobDirectCost(job);
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
-  const partnerPaidTotal = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
+  /** Transfers to partner only — excludes legacy rows that recorded extra payout as a payment (those are cost, not cash out). */
+  const partnerPaidTotal = sumPartnerRecordedPayoutsForCap(partnerPayments);
   const partnerPayRemaining = Math.max(0, partnerCap - partnerPaidTotal);
+  const partnerPayoutLedgerRows = partnerPayments.filter(
+    (p) => p.type === "partner" && !isLegacyMisclassifiedPartnerPayment(p),
+  );
+  const partnerLegacyCostAsPayoutRows = partnerPayments.filter(
+    (p) => p.type === "partner" && isLegacyMisclassifiedPartnerPayment(p),
+  );
+  const partnerFinanceHistoryVisible =
+    partnerPayoutLedgerRows.length > 0 || partnerLegacyCostAsPayoutRows.length > 0;
   const customerDepositPaid = customerPayments
     .filter((p) => p.type === "customer_deposit")
     .reduce((s, p) => s + Number(p.amount), 0);
@@ -1933,12 +1977,15 @@ export default function JobDetailPage() {
   const customerPaidTotal = customerDepositPaid + customerFinalPaidSum;
   const amountDue = Math.max(0, billableRevenue - customerPaidTotal);
   const finalBalanceTotal = Math.max(0, Number(job.customer_final_payment ?? 0));
-  /** `extras_amount` = add-ons / “Add extra charge”; CCZ/parking line = access flags only (see `computeAccessSurcharge`). */
+  /** `extras_amount` includes manual extras and access fees folded in by CCZ/parking toggles — split display so CCZ/parking stay positive lines, not double-counted under “Extra charges”. */
   const explicitExtras = Math.max(0, Number(job.extras_amount ?? 0));
   const cczFeeNominal = effectiveCustomerInCcz ? ACCESS_CCZ_FEE_GBP : 0;
   const parkingFeeNominal = job.has_free_parking === false ? ACCESS_PARKING_FEE_GBP : 0;
+  const attributedAccessNominal = cczFeeNominal + parkingFeeNominal;
+  const attributedAccessForExtrasLine = Math.min(attributedAccessNominal, explicitExtras);
+  const extrasNetOfAccess = Math.max(0, Math.round((explicitExtras - attributedAccessForExtrasLine) * 100) / 100);
   let finalSplitRemain = finalBalanceTotal;
-  const finalExtraCharges = Math.min(explicitExtras, finalSplitRemain);
+  const finalExtraCharges = Math.min(extrasNetOfAccess, finalSplitRemain);
   finalSplitRemain = Math.max(0, finalSplitRemain - finalExtraCharges);
   const finalCczLine = Math.min(cczFeeNominal, finalSplitRemain);
   finalSplitRemain = Math.max(0, finalSplitRemain - finalCczLine);
@@ -2900,11 +2947,14 @@ export default function JobDetailPage() {
 
               {/* CLIENT cash in */}
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 gap-2">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client (cash in)</p>
-                  <div className="text-right">
+                  <div className="text-right min-w-0">
                     <p className="text-[10px] text-text-tertiary">Total job value</p>
                     <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(billableRevenue)}</p>
+                    <p className="text-[10px] text-text-tertiary leading-snug mt-0.5 max-w-[14rem] ml-auto">
+                      Extra charge and CCZ/parking increase this total and the linked invoice amount. Record Payment is money in: negative in history, reduces amount due and invoice balance due — not invoice total.
+                    </p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -2959,10 +3009,29 @@ export default function JobDetailPage() {
                         <div className="text-[11px] text-text-tertiary space-y-1 pl-0.5">
                           <p>Labour {formatCurrency(finalLabour)}</p>
                           <p>Materials {formatCurrency(finalMaterials)}</p>
-                          <p>Extra charges {formatCurrency(finalExtraCharges)}</p>
+                          <p
+                            className={
+                              finalExtraCharges > 0.02
+                                ? "text-emerald-700 dark:text-emerald-500/90 font-medium"
+                                : ""
+                            }
+                          >
+                            Extra charges{" "}
+                            {finalExtraCharges > 0.02 ? "+" : ""}
+                            {formatCurrency(finalExtraCharges)}
+                          </p>
                           {effectiveCustomerInCcz ? (
                             <div className="flex items-center justify-between gap-2">
-                              <span>CCZ (congestion) {formatCurrency(finalCczLine)}</span>
+                              <span
+                                className={
+                                  finalCczLine > 0.02
+                                    ? "text-emerald-700 dark:text-emerald-500/90 font-medium"
+                                    : ""
+                                }
+                              >
+                                CCZ (congestion) {finalCczLine > 0.02 ? "+" : ""}
+                                {formatCurrency(finalCczLine)}
+                              </span>
                               {job.status !== "cancelled" ? (
                                 <button
                                   type="button"
@@ -2977,7 +3046,16 @@ export default function JobDetailPage() {
                           ) : null}
                           {job.has_free_parking === false ? (
                             <div className="flex items-center justify-between gap-2">
-                              <span>Parking access {formatCurrency(finalParkingLine)}</span>
+                              <span
+                                className={
+                                  finalParkingLine > 0.02
+                                    ? "text-emerald-700 dark:text-emerald-500/90 font-medium"
+                                    : ""
+                                }
+                              >
+                                Parking access {finalParkingLine > 0.02 ? "+" : ""}
+                                {formatCurrency(finalParkingLine)}
+                              </span>
                               {job.status !== "cancelled" ? (
                                 <button
                                   type="button"
@@ -3002,25 +3080,47 @@ export default function JobDetailPage() {
                   {customerPayments.length > 0 && (
                     <div className="mt-1 space-y-1">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
-                      {customerPayments.map((p) => (
+                      <p className="text-[10px] text-text-tertiary leading-snug">
+                        Record Payment = cash received: shown as negative (e.g. −£50). Reduces amount due and linked invoice balance due; does not change total job value or invoice total. Extra charge, CCZ, and parking are positive revenue lines above.
+                      </p>
+                      {customerPayments.map((p) => {
+                        const ledgerTag = parseJobPaymentLedgerLabel(p.note);
+                        const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
+                        const scheduleTag = p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance";
+                        return (
                         <div key={p.id} className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2">
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-[10px] font-semibold text-text-tertiary uppercase">
-                                {p.type === "customer_deposit" ? "Deposit" : "Final"}
+                                {ledgerTag ?? scheduleTag}
                               </span>
+                              <Badge variant="success" size="sm">Received</Badge>
                               {p.payment_method && (
-                                <span className="text-[10px] text-text-tertiary">· {p.payment_method === "bank_transfer" ? "Bank" : "Stripe"}</span>
+                                <span className="text-[10px] text-text-tertiary">
+                                  ·{" "}
+                                  {p.payment_method === "bank_transfer"
+                                    ? "Bank"
+                                    : p.payment_method === "cash"
+                                      ? "Cash"
+                                      : p.payment_method === "stripe"
+                                        ? "Stripe"
+                                        : p.payment_method}
+                                </span>
                               )}
                               <span className="text-[10px] text-text-tertiary">
                                 · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
                               </span>
                             </div>
+                            {ledgerTag ? (
+                              <p className="text-[10px] text-text-tertiary truncate pl-0.5">{scheduleTag}</p>
+                            ) : null}
                             {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
-                            {p.note && <p className="text-[10px] text-text-tertiary truncate">{p.note}</p>}
+                            {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="text-sm font-semibold tabular-nums text-emerald-600">+{formatCurrency(Number(p.amount))}</span>
+                            <span className="text-sm font-semibold tabular-nums text-sky-700 dark:text-sky-300" title="Reduces amount due">
+                              {formatCurrencyPrecise(-Number(p.amount))}
+                            </span>
                             {isAdmin && (
                               <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
                                 <X className="h-3 w-3" />
@@ -3028,7 +3128,8 @@ export default function JobDetailPage() {
                             )}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                   <div className="flex items-center justify-between pt-1.5 border-t border-border-light">
@@ -3036,9 +3137,14 @@ export default function JobDetailPage() {
                       {amountDue > 0 ? "Amount due" : "Fully collected"}
                     </span>
                     <span className={`text-sm font-bold tabular-nums ${amountDue > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-                      {amountDue > 0 ? formatCurrency(amountDue) : formatCurrency(billableRevenue)}
+                      {amountDue > 0 ? formatCurrency(amountDue) : formatCurrency(0)}
                     </span>
                   </div>
+                  {amountDue <= 0 && billableRevenue > 0 ? (
+                    <p className="text-[10px] text-text-tertiary text-right -mt-0.5">
+                      Total job value {formatCurrency(billableRevenue)} · invoice total unchanged by payments
+                    </p>
+                  ) : null}
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <Button
@@ -3070,11 +3176,14 @@ export default function JobDetailPage() {
 
               {/* Cash out (partner payout) */}
               <div className="pt-3 border-t border-border-light">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 gap-2">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Cash Out</p>
-                  <div className="text-right">
+                  <div className="text-right min-w-0">
                     <p className="text-[10px] text-text-tertiary">Total to pay</p>
                     <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(partnerCap)}</p>
+                    <p className="text-[10px] text-text-tertiary leading-snug mt-0.5 max-w-[14rem] ml-auto">
+                      Record Payment = cash sent: negative in history (e.g. −£10), reduces amount due only. Total to pay and self-bill job line stay at contract gross. Add extra payout = positive cost: raises partner cost, total to pay, self-bill gross, and amount due — not a payment row.
+                    </p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -3087,34 +3196,136 @@ export default function JobDetailPage() {
                     </div>
                     <span className="text-sm font-semibold tabular-nums">{formatCurrency(partnerCap)}</span>
                   </div>
-                  {/* Partner payment history */}
-                  {partnerPayments.length > 0 && (
-                    <div className="mt-1 space-y-1">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
-                      {partnerPayments.map((p) => (
-                        <div key={p.id} className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              {p.payment_method && (
-                                <span className="text-[10px] text-text-tertiary">{p.payment_method === "bank_transfer" ? "Bank" : "Stripe"}</span>
-                              )}
-                              <span className="text-[10px] text-text-tertiary">
-                                · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                              </span>
-                            </div>
-                            {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
-                            {p.note && <p className="text-[10px] text-text-tertiary truncate">{p.note}</p>}
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="text-sm font-semibold tabular-nums text-emerald-600">+{formatCurrency(Number(p.amount))}</span>
-                            {isAdmin && (
-                              <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
-                                <X className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
+                  <p className="text-[10px] text-text-tertiary leading-snug">
+                    Extra payout increases the Partner cost / Total to pay above (positive cost) and syncs self-bill — it does not add a row here. Only Record Payment adds negative cash-out lines below.
+                  </p>
+                  {/* Partner payment history (transfers) + legacy cost rows mis-filed as payouts */}
+                  {partnerFinanceHistoryVisible && (
+                    <div className="mt-1 space-y-2">
+                      {partnerPayoutLedgerRows.length > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
+                          <p className="text-[10px] text-text-tertiary leading-snug">
+                            Record Payment = money already paid out: shown as negative (e.g. −£10). Reduces amount due only — not Total to pay, not self-bill gross for this job.
+                          </p>
+                          {partnerPayoutLedgerRows.map((p) => {
+                            const ledgerTag = parseJobPaymentLedgerLabel(p.note);
+                            const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
+                            return (
+                              <div
+                                key={p.id}
+                                className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {ledgerTag ? (
+                                      <span className="text-[10px] font-semibold text-text-tertiary uppercase">{ledgerTag}</span>
+                                    ) : null}
+                                    <Badge variant="outline" size="sm">
+                                      Paid
+                                    </Badge>
+                                    {p.payment_method && (
+                                      <span className="text-[10px] text-text-tertiary">
+                                        {p.payment_method === "bank_transfer"
+                                          ? "Bank"
+                                          : p.payment_method === "cash"
+                                            ? "Cash"
+                                            : p.payment_method === "other"
+                                              ? "Other"
+                                              : p.payment_method}
+                                      </span>
+                                    )}
+                                    <span className="text-[10px] text-text-tertiary">
+                                      ·{" "}
+                                      {new Date(p.payment_date).toLocaleDateString("en-GB", {
+                                        day: "2-digit",
+                                        month: "short",
+                                        year: "numeric",
+                                      })}
+                                    </span>
+                                  </div>
+                                  {p.bank_reference && (
+                                    <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>
+                                  )}
+                                  {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span
+                                    className="text-sm font-semibold tabular-nums text-sky-700 dark:text-sky-300"
+                                    title="Reduces amount due only; does not lower Total to pay or self-bill gross"
+                                  >
+                                    {formatCurrencyPrecise(-Number(p.amount))}
+                                  </span>
+                                  {isAdmin && (
+                                    <button
+                                      onClick={() =>
+                                        setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })
+                                      }
+                                      className="text-text-tertiary hover:text-red-500 transition-colors"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      ))}
+                      ) : null}
+                      {partnerLegacyCostAsPayoutRows.length > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">
+                            Cost adjustment (legacy)
+                          </p>
+                          <p className="text-[10px] text-text-tertiary leading-snug">
+                            Legacy: extra payout was saved as a partner row. Shown as positive cost; excluded from amount due. New extra cost should use Add extra payout.
+                          </p>
+                          {partnerLegacyCostAsPayoutRows.map((p) => {
+                            const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
+                            return (
+                              <div
+                                key={p.id}
+                                className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2 border border-orange-500/20"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <Badge variant="warning" size="sm">
+                                      Extra cost
+                                    </Badge>
+                                    <span className="text-[10px] text-text-tertiary">
+                                      ·{" "}
+                                      {new Date(p.payment_date).toLocaleDateString("en-GB", {
+                                        day: "2-digit",
+                                        month: "short",
+                                        year: "numeric",
+                                      })}
+                                    </span>
+                                  </div>
+                                  {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span
+                                    className="text-sm font-semibold tabular-nums text-orange-700 dark:text-orange-400"
+                                    title="Positive partner cost (legacy row)"
+                                  >
+                                    +{formatCurrencyPrecise(Number(p.amount))}
+                                  </span>
+                                  {isAdmin && (
+                                    <button
+                                      onClick={() =>
+                                        setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })
+                                      }
+                                      className="text-text-tertiary hover:text-red-500 transition-colors"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
                   )}
                   {partnerCap > 0 && (
@@ -3123,10 +3334,15 @@ export default function JobDetailPage() {
                         {partnerPayRemaining > 0 ? "Amount due" : "Fully paid out"}
                       </span>
                       <span className={`text-sm font-bold tabular-nums ${partnerPayRemaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-                        {partnerPayRemaining > 0 ? formatCurrency(partnerPayRemaining) : formatCurrency(partnerCap)}
+                        {partnerPayRemaining > 0 ? formatCurrency(partnerPayRemaining) : formatCurrency(0)}
                       </span>
                     </div>
                   )}
+                  {partnerCap > 0 && partnerPayRemaining <= 0 ? (
+                    <p className="text-[10px] text-text-tertiary text-right -mt-0.5">
+                      Total to pay {formatCurrency(partnerCap)} · self-bill gross unchanged by payouts recorded here
+                    </p>
+                  ) : null}
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <Button

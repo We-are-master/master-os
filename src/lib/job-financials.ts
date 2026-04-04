@@ -1,6 +1,7 @@
 import type { Job, JobPaymentType } from "@/types/database";
 import { computeHourlyTotals, resolveJobHourlyRates } from "@/lib/job-hourly-billing";
 import { computeOfficeTimerElapsedSeconds } from "@/lib/office-job-timer";
+import { sumPartnerRecordedPayoutsForCap } from "@/lib/job-payment-ledger";
 
 /** Total billable to customer before payment schedule split (deposit + final). */
 export function jobBillableRevenue(j: Pick<Job, "client_price" | "extras_amount">): number {
@@ -98,6 +99,8 @@ export function jobCustomerBillableRevenueForCollections(j: JobCustomerBillableF
 export type JobCompletionPaymentRow = {
   type: JobPaymentType | string;
   amount: number;
+  /** When set, legacy partner “extra payout” notes are excluded from partner payout totals. */
+  note?: string | null;
 };
 
 /**
@@ -111,7 +114,7 @@ export function canMarkJobCompletedFinancially(
 ): { ok: boolean; message?: string } {
   const billable = jobBillableRevenue(job);
   const customerTotal = customerPayments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
-  const partnerTotal = partnerPayments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
+  const partnerTotal = sumPartnerRecordedPayoutsForCap(partnerPayments);
   const partnerDue = partnerPaymentCap(job);
   const eps = 0.01;
 

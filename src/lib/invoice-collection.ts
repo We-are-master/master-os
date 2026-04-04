@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Invoice, InvoiceCollectionStage, Job } from "@/types/database";
+import { jobCustomerBillableRevenueForCollections } from "@/lib/job-financials";
 
 function nearEqual(a: number, b: number, eps = 0.02): boolean {
   return Math.abs(a - b) <= eps;
@@ -11,10 +12,17 @@ export function inferInvoiceKind(job: Job, inv: Pick<Invoice, "invoice_kind" | "
   const dep = Number(job.customer_deposit ?? 0);
   const fin = Number(job.customer_final_payment ?? 0);
   const amt = Number(inv.amount ?? 0);
-  const total = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  const ticketPlusExtras = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  const billableForCollections = jobCustomerBillableRevenueForCollections(job);
   if (dep > 0 && nearEqual(amt, dep)) return "deposit";
   if (fin > 0 && nearEqual(amt, fin)) return "final";
-  if (nearEqual(amt, total) || nearEqual(amt, dep + fin)) return "combined";
+  if (
+    nearEqual(amt, billableForCollections) ||
+    nearEqual(amt, ticketPlusExtras) ||
+    nearEqual(amt, dep + fin)
+  ) {
+    return "combined";
+  }
   return "other";
 }
 

@@ -7,6 +7,7 @@ import {
   reversePartnerExtraPatch,
 } from "@/lib/job-extra-charges";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
+import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
@@ -73,8 +74,18 @@ export async function createJobPayment(input: CreateJobPaymentInput): Promise<Jo
   if (error) throw error;
 
   await reconcileJobCustomerPaymentFlags(supabase, input.job_id);
-  await syncInvoicesFromJobCustomerPayments(supabase, input.job_id);
-  await maybeCompleteAwaitingPaymentJob(supabase, input.job_id);
+
+  /** Customer cash-in only: sync invoice balance due / stages / completion — not partner payouts (those are ledger-only). */
+  const isCustomerCashIn = input.type === "customer_deposit" || input.type === "customer_final";
+  if (isCustomerCashIn) {
+    await syncInvoicesFromJobCustomerPayments(supabase, input.job_id);
+    try {
+      await syncInvoiceCollectionStagesForJob(supabase, input.job_id);
+    } catch {
+      /* non-blocking — invoice rows may still show correct amount_paid */
+    }
+    await maybeCompleteAwaitingPaymentJob(supabase, input.job_id);
+  }
 
   return data as JobPayment;
 }
@@ -113,8 +124,16 @@ export async function deleteJobPayment(id: string): Promise<void> {
   await softDeleteById("job_payments", id);
   if (jobId) {
     await reconcileJobCustomerPaymentFlags(supabase, jobId);
-    await syncInvoicesFromJobCustomerPayments(supabase, jobId);
-    await maybeCompleteAwaitingPaymentJob(supabase, jobId);
+    const customerRowDeleted = payType === "customer_deposit" || payType === "customer_final";
+    if (customerRowDeleted) {
+      await syncInvoicesFromJobCustomerPayments(supabase, jobId);
+      try {
+        await syncInvoiceCollectionStagesForJob(supabase, jobId);
+      } catch {
+        /* non-blocking */
+      }
+      await maybeCompleteAwaitingPaymentJob(supabase, jobId);
+    }
   }
 }
 

@@ -26,6 +26,8 @@ export type JobMoneySubmitPayload = {
   method: JobPaymentMethod;
   note: string;
   clientPayApplyAs?: ClientPayApplyAs;
+  /** Optional; prefixed into payment note for history only. */
+  paymentLedgerLabel?: string;
 };
 
 /** Deposit scheduled vs still owed (for payment type UI). */
@@ -54,6 +56,22 @@ const PARTNER_METHODS: { value: JobPaymentMethod; label: string }[] = [
   { value: "bank_transfer", label: "Bank transfer" },
   { value: "cash", label: "Cash" },
   { value: "other", label: "Other" },
+];
+
+const CLIENT_LEDGER_LABEL_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Optional — for history" },
+  { value: "Deposit", label: "Deposit" },
+  { value: "Partial payment", label: "Partial payment" },
+  { value: "Advance payment", label: "Advance payment" },
+  { value: "Other", label: "Other" },
+];
+
+const PARTNER_LEDGER_LABEL_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Optional — for history" },
+  { value: "Advance", label: "Advance" },
+  { value: "Partial payout", label: "Partial payout" },
+  { value: "Early payment", label: "Early payment" },
+  { value: "Other", label: "Other" },
 ];
 
 function isClientFlow(flow: JobMoneyDrawerFlow): boolean {
@@ -114,6 +132,7 @@ export function JobMoneyDrawer({
   const [method, setMethod] = useState<JobPaymentMethod>("bank_transfer");
   const [note, setNote] = useState("");
   const [clientPayApplyAs, setClientPayApplyAs] = useState<ClientPayApplyAs>("final");
+  const [paymentLedgerLabel, setPaymentLedgerLabel] = useState("");
   const amountRef = useRef<HTMLInputElement>(null);
 
   const depositRemaining = clientCashContext?.depositRemaining ?? 0;
@@ -126,6 +145,7 @@ export function JobMoneyDrawer({
     setAmount("");
     setPaymentDate(new Date().toISOString().slice(0, 10));
     setNote("");
+    setPaymentLedgerLabel("");
     if (isPayFlow(flow)) {
       setMethod(readSavedMethod(flow));
     } else {
@@ -177,6 +197,9 @@ export function JobMoneyDrawer({
       method: submitMethod,
       note,
       ...(applyForSubmit != null ? { clientPayApplyAs: applyForSubmit } : {}),
+      ...(pay && paymentLedgerLabel.trim()
+        ? { paymentLedgerLabel: paymentLedgerLabel.trim() }
+        : {}),
     });
   };
 
@@ -186,7 +209,7 @@ export function JobMoneyDrawer({
     <p className="text-[11px] text-text-tertiary leading-relaxed">
       {flow === "client_extra"
         ? "Increases the job total and linked invoice. This is not a payment — use Record Payment when money is received."
-        : "Increases partner cost on the job. This is not a payout — use Record Payment when you send money."}
+        : "Positive partner cost: increases Total to pay, self-bill gross for this job, and amount due. Not a cash-out row — use Record Payment when you send money to the partner."}
     </p>
   );
 
@@ -233,18 +256,32 @@ export function JobMoneyDrawer({
     >
       <form id="job-money-drawer-form" onSubmit={handleFormSubmit} className="px-5 py-5 space-y-5">
         {flow === "client_pay" && !isClientStripe ? (
-          <div>
-            <Select
-              label="Payment type"
-              value={clientPayApplyAs}
-              onChange={(e) => setClientPayApplyAs(e.target.value as ClientPayApplyAs)}
-              options={clientPayTypeOptions.map((o) => ({ value: o.value, label: o.label, disabled: o.disabled }))}
-              className="h-10"
-            />
-            <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">
-              Choose whether this receipt applies to the scheduled deposit or to the final balance. Deposit is disabled when
-              nothing is due.
-            </p>
+          <div className="space-y-4">
+            <div>
+              <Select
+                label="Payment type"
+                value={clientPayApplyAs}
+                onChange={(e) => setClientPayApplyAs(e.target.value as ClientPayApplyAs)}
+                options={clientPayTypeOptions.map((o) => ({ value: o.value, label: o.label, disabled: o.disabled }))}
+                className="h-10"
+              />
+              <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">
+                Choose whether this receipt applies to the scheduled deposit or to the final balance. Deposit is disabled when
+                nothing is due.
+              </p>
+            </div>
+            <div>
+              <Select
+                label="Classification (optional)"
+                value={paymentLedgerLabel}
+                onChange={(e) => setPaymentLedgerLabel(e.target.value)}
+                options={CLIENT_LEDGER_LABEL_OPTIONS}
+                className="h-10"
+              />
+              <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">
+                Deposit / Partial payment / Advance / Other — history label only. Use Payment type above for deposit vs final balance.
+              </p>
+            </div>
           </div>
         ) : null}
 
@@ -260,6 +297,21 @@ export function JobMoneyDrawer({
             {flow === "partner_pay" ? (
               <p className="text-[11px] text-text-tertiary mt-1.5">How you sent money to the partner (ledger record only).</p>
             ) : null}
+          </div>
+        ) : null}
+
+        {flow === "partner_pay" ? (
+          <div>
+            <Select
+              label="Classification (optional)"
+              value={paymentLedgerLabel}
+              onChange={(e) => setPaymentLedgerLabel(e.target.value)}
+              options={PARTNER_LEDGER_LABEL_OPTIONS}
+              className="h-10"
+            />
+            <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">
+              Advance / Partial payout / Early payment / Other — history label only. Does not change Total to pay or self-bill gross.
+            </p>
           </div>
         ) : null}
 
