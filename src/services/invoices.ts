@@ -1,5 +1,6 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
-import type { Invoice, InvoiceCollectionStage } from "@/types/database";
+import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/database";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 /** Payload for creating an invoice (collection fields default when omitted). */
 export type CreateInvoiceInput = Omit<Invoice, "id" | "reference" | "created_at" | "collection_stage"> & {
@@ -182,5 +183,73 @@ export async function softDeleteInvoicesForArchivedJobs(
   for (const id of primaryIds) {
     const { error } = await supabase.from("invoices").update(payload).eq("id", id).is("deleted_at", null);
     if (error) throw error;
+  }
+}
+
+const OPEN_INVOICE_STATUSES: InvoiceStatus[] = ["pending", "partially_paid", "overdue"];
+
+/**
+ * When a job is cancelled, cancel open invoices tied to that job and store the same reason as on the job.
+ * Skips paid / already cancelled / soft-deleted rows.
+ * Skips `weekly_batch` (same row can aggregate multiple jobs in a week — do not void the whole batch).
+ */
+export async function cancelOpenInvoicesForJobCancellation(options: {
+  jobReference: string;
+  cancellationReason: string;
+  primaryInvoiceId?: string | null;
+}): Promise<void> {
+  const supabase = getSupabase();
+  const ref = options.jobReference?.trim();
+  if (!ref) return;
+  const reason = options.cancellationReason?.trim() || "Job cancelled.";
+
+  const collectEligibleIds = async (): Promise<string[]> => {
+    const ids = new Set<string>();
+
+    const { data: byRef, error: e1 } = await supabase
+      .from("invoices")
+      .select("id, invoice_kind")
+      .eq("job_reference", ref)
+      .is("deleted_at", null)
+      .in("status", OPEN_INVOICE_STATUSES);
+    if (e1) throw e1;
+    for (const r of byRef ?? []) {
+      const row = r as { id: string; invoice_kind?: string | null };
+      if (row.invoice_kind === "weekly_batch") continue;
+      ids.add(row.id);
+    }
+
+    const pid = options.primaryInvoiceId?.trim();
+    if (pid) {
+      const { data: primary, error: e2 } = await supabase
+        .from("invoices")
+        .select("id, status, invoice_kind")
+        .eq("id", pid)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (e2) throw e2;
+      const p = primary as { id: string; status: string; invoice_kind?: string | null } | null;
+      if (
+        p &&
+        OPEN_INVOICE_STATUSES.includes(p.status as InvoiceStatus) &&
+        p.invoice_kind !== "weekly_batch"
+      ) {
+        ids.add(p.id);
+      }
+    }
+
+    return [...ids];
+  };
+
+  const idList = await collectEligibleIds();
+  if (idList.length === 0) return;
+
+  const withReason = { status: "cancelled" as const, cancellation_reason: reason };
+  let { error } = await supabase.from("invoices").update(withReason).in("id", idList);
+  if (error && isSupabaseMissingColumnError(error)) {
+    const { error: e2 } = await supabase.from("invoices").update({ status: "cancelled" }).in("id", idList);
+    if (e2) throw e2;
+  } else if (error) {
+    throw error;
   }
 }

@@ -18,7 +18,7 @@ import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
 import {
-  Plus, Filter, Download, UserPlus, Users, Star,
+  Plus, Filter, Download, UserPlus, Users,
   DollarSign, Briefcase, ArrowRight, MapPin,
   Mail, Phone, Calendar, Tag, Edit3, Trash2,
   Home, Building2, Key, UserCheck, Ban, Crown,
@@ -101,6 +101,8 @@ function ClientsPageInner() {
   const { profile } = useProfile();
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [totalSpent, setTotalSpent] = useState(0);
+  /** Linked clients ÷ distinct `source_account_id` (0 if none). */
+  const [clientsPerAccountAvg, setClientsPerAccountAvg] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [sourceAccounts, setSourceAccounts] = useState<Array<{ id: string; name: string }>>([]);
@@ -115,9 +117,17 @@ function ClientsPageInner() {
   const loadAggregates = useCallback(async () => {
     try {
       const supabase = getSupabase();
-      const { data: rows } = await supabase.from("clients").select("total_spent");
-      const total = (rows ?? []).reduce((s, r) => s + Number((r as { total_spent: number }).total_spent), 0);
+      const { data: rows } = await supabase.from("clients").select("total_spent, source_account_id");
+      const list = (rows ?? []) as { total_spent?: number | null; source_account_id?: string | null }[];
+      const total = list.reduce((s, r) => s + Number(r.total_spent ?? 0), 0);
       setTotalSpent(total);
+      const accountIds = new Set<string>();
+      for (const r of list) {
+        const id = r.source_account_id?.trim();
+        if (id) accountIds.add(id);
+      }
+      const linkedCount = list.filter((r) => Boolean(r.source_account_id?.trim())).length;
+      setClientsPerAccountAvg(accountIds.size > 0 ? linkedCount / accountIds.size : 0);
     } catch { /* cosmetic */ }
   }, []);
 
@@ -316,8 +326,15 @@ function ClientsPageInner() {
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard title="Total Clients" value={statusCounts.all ?? 0} format="number" icon={Users} accent="blue" />
-          <KpiCard title="VIP Clients" value={statusCounts.vip ?? 0} format="number" icon={Star} accent="amber" />
           <KpiCard title="Lifetime Value" value={totalSpent} format="currency" icon={DollarSign} accent="emerald" />
+          <KpiCard
+            title="Clients per Account"
+            value={clientsPerAccountAvg > 0 ? clientsPerAccountAvg.toFixed(1) : "0"}
+            format="none"
+            description="Avg. linked clients per corporate account"
+            icon={Building2}
+            accent="purple"
+          />
           <KpiCard title="Active" value={statusCounts.active ?? 0} format="number" description="Currently active clients" icon={UserCheck} accent="primary" />
         </StaggerContainer>
 
