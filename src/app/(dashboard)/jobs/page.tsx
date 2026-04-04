@@ -77,7 +77,7 @@ import {
   computeHourlyTotals,
   partnerHourlyRateFromCatalogBundle,
 } from "@/lib/job-hourly-billing";
-import { computeAccessSurcharge, isLikelyCczAddress } from "@/lib/ccz";
+import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 
@@ -476,10 +476,13 @@ function JobsPageContent() {
     const housekeepFromPayload =
       isHousekeepWorkLabel(formData.title) ||
       isHousekeepWorkLabel((formData as { service_type?: string }).service_type);
+    const inCczEff = housekeepFromPayload
+      ? false
+      : effectiveInCczForAddress(formData.in_ccz, formData.property_address);
     const accessSurcharge = housekeepFromPayload
       ? 0
       : computeAccessSurcharge({
-          inCcz: formData.in_ccz,
+          inCcz: inCczEff,
           hasFreeParking: formData.has_free_parking,
         });
     try {
@@ -522,7 +525,7 @@ function JobsPageContent() {
         hourly_client_rate: formData.hourly_client_rate ?? null,
         hourly_partner_rate: formData.hourly_partner_rate ?? null,
         billed_hours: formData.billed_hours ?? null,
-        in_ccz: housekeepFromPayload ? false : (formData.in_ccz ?? null),
+        in_ccz: housekeepFromPayload ? false : inCczEff,
         has_free_parking: housekeepFromPayload ? true : (formData.has_free_parking ?? null),
         cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
         partner_agreed_value: 0, finance_status: "unpaid", service_value: cp + accessSurcharge,
@@ -1370,9 +1373,15 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   }, [open]);
 
   useEffect(() => {
-    const inCcz = isLikelyCczAddress(clientAddress.property_address);
-    queueMicrotask(() => setForm((prev) => ({ ...prev, in_ccz: inCcz })));
-  }, [clientAddress.property_address]);
+    if (isHousekeepJob) return;
+    const eligible = isLikelyCczAddress(clientAddress.property_address);
+    queueMicrotask(() => {
+      setForm((prev) => {
+        if (!eligible && prev.in_ccz) return { ...prev, in_ccz: false };
+        return prev;
+      });
+    });
+  }, [clientAddress.property_address, isHousekeepJob]);
 
   useEffect(() => {
     if (!isHousekeepJob) return;
@@ -1422,7 +1431,9 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       partnerHourlyRate: hourlyPartnerRate,
     });
     const isHourly = form.job_type === "hourly";
-    const accessSurcharge = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+    const cczEligibleAddr = !isHousekeepJob && isLikelyCczAddress(clientAddress.property_address);
+    const inCczOut = cczEligibleAddr && form.in_ccz;
+    const accessSurcharge = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: inCczOut, hasFreeParking: form.has_free_parking });
     const clientPriceOut = isHourly ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
     const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
 
@@ -1443,7 +1454,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       hourly_client_rate: isHourly ? hourlyClientRate : null,
       hourly_partner_rate: isHourly ? hourlyPartnerRate : null,
       billed_hours: isHourly ? hourlyTotals.billedHours : null,
-      in_ccz: isHousekeepJob ? false : form.in_ccz,
+      in_ccz: isHousekeepJob ? false : inCczOut,
       has_free_parking: isHousekeepJob ? true : form.has_free_parking,
       client_price: clientPriceOut,
       partner_cost: partnerCostOut,
@@ -1480,7 +1491,9 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     setClientAddress({ client_name: "", property_address: "" });
   };
 
-  const accessSurchargePreview = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+  const cczEligible = !isHousekeepJob && isLikelyCczAddress(clientAddress.property_address);
+  const inCczPreview = cczEligible && form.in_ccz;
+  const accessSurchargePreview = isHousekeepJob ? 0 : computeAccessSurcharge({ inCcz: inCczPreview, hasFreeParking: form.has_free_parking });
   const hourlyPreview = computeHourlyTotals({
     elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
     clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
@@ -1574,16 +1587,28 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
               type="button"
-              disabled={isHousekeepJob}
-              onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+              disabled={isHousekeepJob || !cczEligible}
+              onClick={() => cczEligible && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
               className={cn(
                 "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                isHousekeepJob && "opacity-50 cursor-not-allowed",
-                form.in_ccz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
+                (isHousekeepJob || !cczEligible) && "opacity-50 cursor-not-allowed",
+                form.in_ccz && cczEligible ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
               )}
             >
-              <p className="font-medium">{form.in_ccz ? "CCZ fee applied" : "Apply CCZ"}</p>
-              <p className="text-xs opacity-80">{form.in_ccz ? "+£15 applied" : "Adds +£15"}</p>
+              <p className="font-medium">
+                {!cczEligible && !isHousekeepJob
+                  ? "CCZ (Congestion Charge — central London)"
+                  : inCczPreview
+                    ? "CCZ fee applied"
+                    : "Apply CCZ"}
+              </p>
+              <p className="text-xs opacity-80">
+                {!cczEligible && !isHousekeepJob
+                  ? "Only jobs with EC1–4, WC1–2, W1, SW1 or SE1 in the address can turn CCZ on"
+                  : inCczPreview
+                    ? "+£15 applied"
+                    : "Turn on only inside the central CCZ postcode list"}
+              </p>
             </button>
             <button
               type="button"
