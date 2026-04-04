@@ -1,9 +1,18 @@
 import { getSupabase, softDeleteById } from "./base";
 import type { JobPayment, JobPaymentMethod, JobPaymentType } from "@/types/database";
+import {
+  isCustomerExtraChargePaymentNote,
+  isPartnerExtraPayoutPaymentNote,
+  reverseCustomerExtraPatch,
+  reversePartnerExtraPatch,
+} from "@/lib/job-extra-charges";
+import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { getJob, updateJob } from "./jobs";
+import { syncSelfBillAfterJobChange } from "./self-bills";
 
 export interface CreateJobPaymentInput {
   job_id: string;
@@ -72,9 +81,36 @@ export async function createJobPayment(input: CreateJobPaymentInput): Promise<Jo
 
 export async function deleteJobPayment(id: string): Promise<void> {
   const supabase = getSupabase();
-  const { data: row } = await supabase.from("job_payments").select("job_id").eq("id", id).maybeSingle();
-  await softDeleteById("job_payments", id);
+  const { data: row, error: selErr } = await supabase
+    .from("job_payments")
+    .select("job_id, type, amount, note")
+    .eq("id", id)
+    .maybeSingle();
+  if (selErr) throw selErr;
+
   const jobId = (row as { job_id?: string } | null)?.job_id;
+  const payType = (row as { type?: string } | null)?.type;
+  const payAmount = Number((row as { amount?: unknown } | null)?.amount) || 0;
+  const payNote = (row as { note?: string | null } | null)?.note ?? null;
+
+  if (jobId && payType === "customer_final" && isCustomerExtraChargePaymentNote(payNote)) {
+    const job = await getJob(jobId);
+    if (job) {
+      const patch = reverseCustomerExtraPatch(job, payAmount, "extras");
+      const updated = await updateJob(jobId, patch);
+      await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+      await syncSelfBillAfterJobChange(updated);
+    }
+  } else if (jobId && payType === "partner" && isPartnerExtraPayoutPaymentNote(payNote)) {
+    const job = await getJob(jobId);
+    if (job) {
+      const patch = reversePartnerExtraPatch(job, payAmount, "partner_cost");
+      const updated = await updateJob(jobId, patch);
+      await syncSelfBillAfterJobChange(updated);
+    }
+  }
+
+  await softDeleteById("job_payments", id);
   if (jobId) {
     await reconcileJobCustomerPaymentFlags(supabase, jobId);
     await syncInvoicesFromJobCustomerPayments(supabase, jobId);
