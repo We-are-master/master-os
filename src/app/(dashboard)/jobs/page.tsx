@@ -31,7 +31,7 @@ import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById, type ListParams } from "@/services/base";
-import { softDeleteInvoicesForArchivedJobs } from "@/services/invoices";
+import { softDeleteInvoicesForArchivedJobs, cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
 import { useProfile } from "@/hooks/use-profile";
 import type { Job, Partner } from "@/types/database";
 import { listPartners } from "@/services/partners";
@@ -710,6 +710,7 @@ function JobsPageContent() {
       }
       const now = new Date().toISOString();
       let updatedCount = 0;
+      const cancelledForInvoices: Job[] = [];
       for (const j of jobRows as Job[]) {
         if (j.status === "cancelled") continue;
         if (j.status === "completed") {
@@ -731,6 +732,7 @@ function JobsPageContent() {
         }
         if (upErr) throw upErr;
         updatedCount += 1;
+        cancelledForInvoices.push(j);
         if (j.partner_id?.trim()) {
           const fresh = { ...j, ...patch } as Job;
           notifyAssignedPartnerAboutJob({
@@ -745,6 +747,15 @@ function JobsPageContent() {
         toast.message("No eligible jobs to cancel (already cancelled).");
         return false;
       }
+      await Promise.all(
+        cancelledForInvoices.map((j) =>
+          cancelOpenInvoicesForJobCancellation({
+            jobReference: j.reference,
+            cancellationReason: reason,
+            primaryInvoiceId: j.invoice_id,
+          }).catch((e) => console.error("cancelOpenInvoicesForJobCancellation", j.reference, e)),
+        ),
+      );
       await refreshSelfBillPayoutStatesForJobIds(ids);
       await logBulkAction("job", ids, "status_changed", "status", "cancelled", profile?.id, profile?.full_name);
       toast.success(`${updatedCount} job(s) cancelled`);

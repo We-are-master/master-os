@@ -429,6 +429,8 @@ export interface Invoice {
   stripe_payment_intent_id?: string;
   stripe_customer_email?: string;
   stripe_paid_at?: string;
+  /** Set when cancelled (e.g. job cancel mirrors jobs.cancellation_reason). */
+  cancellation_reason?: string | null;
 }
 
 export type SelfBillStatus =

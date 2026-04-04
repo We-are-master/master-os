@@ -86,7 +86,7 @@ interface LinkedJob {
 }
 
 export default function InvoicesPage() {
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
@@ -256,6 +256,9 @@ export default function InvoicesPage() {
       }
 
       const updates: Record<string, unknown> = { status: newStatus };
+      if (invoice.status === "cancelled" && newStatus !== "cancelled") {
+        updates.cancellation_reason = null;
+      }
       if (newStatus === "paid") {
         updates.paid_date = new Date().toISOString().split("T")[0];
         updates.collection_stage = "completed";
@@ -862,8 +865,11 @@ function InvoiceDetailDrawer({
                       {invoice.status === "paid" && invoice.paid_date ? `Paid on ${formatDate(invoice.paid_date)}` :
                        invoice.status === "partially_paid" ? `${formatCurrency(invoiceAmountPaid(invoice))} received · ${formatCurrency(invoiceBalanceDue(invoice))} left` :
                        isOverdue ? `Overdue by ${Math.abs(daysUntilDue)} days` :
-                       invoice.status === "cancelled" ? "This invoice was cancelled" :
-                       `Due in ${daysUntilDue} days`}
+                       invoice.status === "cancelled"
+                         ? invoice.cancellation_reason?.trim()
+                           ? `Cancelled: ${invoice.cancellation_reason.trim()}`
+                           : "This invoice was cancelled"
+                       : `Due in ${daysUntilDue} days`}
                     </p>
                   </div>
                 </div>
@@ -1237,7 +1243,11 @@ function InvoiceDetailDrawer({
                 <p className="text-xs text-center text-text-tertiary">This invoice was marked as paid manually.</p>
               )}
               {invoice.status === "cancelled" && (
-                <p className="text-xs text-center text-text-tertiary">This invoice has been cancelled.</p>
+                <p className="text-xs text-center text-text-tertiary">
+                  {invoice.cancellation_reason?.trim()
+                    ? `Cancelled: ${invoice.cancellation_reason.trim()}`
+                    : "This invoice has been cancelled."}
+                </p>
               )}
             </div>
           </div>

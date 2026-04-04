@@ -1,6 +1,6 @@
 import { getSupabase, queryList, applyJobsScheduleRangeToQuery, type ListParams, type ListResult } from "./base";
 import type { Job } from "@/types/database";
-import { createInvoice } from "./invoices";
+import { cancelOpenInvoicesForJobCancellation, createInvoice } from "./invoices";
 import { getInvoiceDueDateIsoForClient } from "./invoice-due-date";
 import { syncSelfBillAfterJobChange } from "./self-bills";
 import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
@@ -285,5 +285,19 @@ export async function updateJob(
   const row = await getJob(id);
   if (!row) throw new Error("Job not found after update");
   await syncSelfBillAfterJobChange(row);
+  if (row.status === "cancelled") {
+    try {
+      await cancelOpenInvoicesForJobCancellation({
+        jobReference: row.reference,
+        cancellationReason:
+          row.cancellation_reason?.trim() ||
+          row.partner_cancellation_reason?.trim() ||
+          "Job cancelled.",
+        primaryInvoiceId: row.invoice_id,
+      });
+    } catch (e) {
+      console.error("cancelOpenInvoicesForJobCancellation:", e);
+    }
+  }
   return row;
 }
