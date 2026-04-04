@@ -27,6 +27,8 @@ import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listJobs, createJob, updateJob, getJob, fetchAllJobsFinancialKpiRows } from "@/services/jobs";
 import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
+import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
+import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById, type ListParams } from "@/services/base";
 import { softDeleteInvoicesForArchivedJobs } from "@/services/invoices";
@@ -205,6 +207,8 @@ function JobsPageContent() {
   const [filterPartner, setFilterPartner] = useState<"all" | "with" | "without">("all");
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive">(null);
+  const [bulkRunning, setBulkRunning] = useState(false);
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
   const [kpiFinancialLoading, setKpiFinancialLoading] = useState(true);
   const [totalRevenue, setTotalRevenue] = useState(0);
@@ -546,8 +550,8 @@ function JobsPageContent() {
     } catch { toast.error("Failed to update"); }
   }, [refresh, loadDashboardStats]);
 
-  const handleBulkStatusChange = async (newStatus: string) => {
-    if (selectedIds.size === 0) return;
+  const handleBulkStatusChange = async (newStatus: string): Promise<boolean> => {
+    if (selectedIds.size === 0) return false;
     const supabase = getSupabase();
     const ids = Array.from(selectedIds);
     const ns = newStatus as Job["status"];
@@ -559,7 +563,7 @@ function JobsPageContent() {
         if (jobErr) throw jobErr;
         if (!jobRows?.length) {
           toast.error("No jobs found for selection.");
-          return;
+          return false;
         }
         const { data: payRows, error: payErr } = await supabase
           .from("job_payments")
@@ -578,7 +582,7 @@ function JobsPageContent() {
         for (const j of jobRows as Job[]) {
           if (!allowedFrom.has(j.status)) {
             toast.error(`${j.reference}: only Awaiting payment or Need attention can be completed (now: ${j.status}).`);
-            return;
+            return false;
           }
           const pays = byJob.get(j.id) ?? [];
           const customerPayments = pays.filter((p) => p.type === "customer_deposit" || p.type === "customer_final");
@@ -586,14 +590,14 @@ function JobsPageContent() {
           const check = canAdvanceJob(j, "completed", { customerPayments, partnerPayments });
           if (!check.ok) {
             toast.error(`${j.reference}: ${check.message ?? "Cannot complete"}`);
-            return;
+            return false;
           }
         }
         const found = new Set((jobRows as Job[]).map((j) => j.id));
         const missing = ids.filter((id) => !found.has(id));
         if (missing.length) {
           toast.error(`${missing.length} selected job(s) not found.`);
-          return;
+          return false;
         }
         rows = jobRows as Job[];
       } else {
@@ -604,13 +608,13 @@ function JobsPageContent() {
         if (error) throw error;
         if (!data?.length) {
           toast.error("No jobs found for selection.");
-          return;
+          return false;
         }
         const found = new Set((data as { id: string }[]).map((j) => j.id));
         const missing = ids.filter((id) => !found.has(id));
         if (missing.length) {
           toast.error(`${missing.length} selected job(s) not found.`);
-          return;
+          return false;
         }
         rows = data as Job[];
       }
@@ -635,19 +639,127 @@ function JobsPageContent() {
       setSelectedIds(new Set());
       refresh();
       loadDashboardStats();
+      return true;
     } catch {
       toast.error("Failed");
+      return false;
     }
   };
 
-  const handleBulkArchive = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    const n = selectedIds.size;
-    const msg =
-      n === 1
-        ? "Archive this job? Linked invoices will be cancelled and hidden from the Invoices list."
-        : `Archive ${n} selected jobs? Linked invoices will be cancelled and hidden from the Invoices list.`;
-    if (typeof window !== "undefined" && !window.confirm(msg)) return;
+  const handleBulkStartJob = useCallback(async (): Promise<boolean> => {
+    if (selectedIds.size === 0) return false;
+    const supabase = getSupabase();
+    const ids = Array.from(selectedIds);
+    try {
+      const { data: jobRows, error: jobErr } = await supabase.from("jobs").select("*").in("id", ids).is("deleted_at", null);
+      if (jobErr) throw jobErr;
+      if (!jobRows?.length) {
+        toast.error("No jobs found for selection.");
+        return false;
+      }
+      const found = new Set((jobRows as Job[]).map((j) => j.id));
+      const missing = ids.filter((id) => !found.has(id));
+      if (missing.length) {
+        toast.error(`${missing.length} selected job(s) not found or archived.`);
+        return false;
+      }
+      const ns = "in_progress_phase1" as const;
+      for (const j of jobRows as Job[]) {
+        const check = canAdvanceJob(j, ns);
+        if (!check.ok) {
+          toast.error(`${j.reference}: ${check.message ?? "Cannot start job"}`);
+          return false;
+        }
+      }
+      for (const j of jobRows as Job[]) {
+        const patch: Record<string, unknown> = {
+          status: ns,
+          ...statusChangePartnerTimerPatch(j, ns),
+        };
+        let { error: upErr } = await supabase.from("jobs").update(prepareJobRowForUpdate(patch)).eq("id", j.id);
+        if (upErr && isPostgrestWriteRetryableError(upErr)) {
+          const r = await supabase.from("jobs").update(applyJobDbCompat({ ...patch })).eq("id", j.id);
+          upErr = r.error;
+        }
+        if (upErr) throw upErr;
+      }
+      await refreshSelfBillPayoutStatesForJobIds(ids);
+      await logBulkAction("job", ids, "status_changed", "status", ns, profile?.id, profile?.full_name);
+      toast.success(`${ids.length} job(s) moved to In progress`);
+      setSelectedIds(new Set());
+      refresh();
+      loadDashboardStats();
+      return true;
+    } catch {
+      toast.error("Failed to start jobs");
+      return false;
+    }
+  }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
+
+  const handleBulkCancelJobs = useCallback(async (): Promise<boolean> => {
+    if (selectedIds.size === 0) return false;
+    const supabase = getSupabase();
+    const ids = Array.from(selectedIds);
+    const reason = "Cancelled in bulk from Jobs list.";
+    try {
+      const { data: jobRows, error: jobErr } = await supabase.from("jobs").select("*").in("id", ids).is("deleted_at", null);
+      if (jobErr) throw jobErr;
+      if (!jobRows?.length) {
+        toast.error("No jobs found for selection.");
+        return false;
+      }
+      const now = new Date().toISOString();
+      let updatedCount = 0;
+      for (const j of jobRows as Job[]) {
+        if (j.status === "cancelled") continue;
+        if (j.status === "completed") {
+          toast.error(`${j.reference}: completed jobs cannot be cancelled in bulk.`);
+          return false;
+        }
+        const patch: Record<string, unknown> = {
+          status: "cancelled",
+          cancellation_reason: reason,
+          cancelled_at: now,
+          cancelled_by: profile?.id ?? null,
+          ...statusChangePartnerTimerPatch(j, "cancelled"),
+          ...statusChangeOfficeTimerPatch(j, "cancelled"),
+        };
+        let { error: upErr } = await supabase.from("jobs").update(prepareJobRowForUpdate(patch)).eq("id", j.id);
+        if (upErr && isPostgrestWriteRetryableError(upErr)) {
+          const r = await supabase.from("jobs").update(applyJobDbCompat({ ...patch })).eq("id", j.id);
+          upErr = r.error;
+        }
+        if (upErr) throw upErr;
+        updatedCount += 1;
+        if (j.partner_id?.trim()) {
+          const fresh = { ...j, ...patch } as Job;
+          notifyAssignedPartnerAboutJob({
+            partnerId: j.partner_id,
+            job: fresh,
+            kind: "job_cancelled_by_office",
+            cancellationReason: reason,
+          });
+        }
+      }
+      if (updatedCount === 0) {
+        toast.message("No eligible jobs to cancel (already cancelled).");
+        return false;
+      }
+      await refreshSelfBillPayoutStatesForJobIds(ids);
+      await logBulkAction("job", ids, "status_changed", "status", "cancelled", profile?.id, profile?.full_name);
+      toast.success(`${updatedCount} job(s) cancelled`);
+      setSelectedIds(new Set());
+      refresh();
+      loadDashboardStats();
+      return true;
+    } catch {
+      toast.error("Failed to cancel jobs");
+      return false;
+    }
+  }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
+
+  const handleBulkArchive = useCallback(async (): Promise<boolean> => {
+    if (selectedIds.size === 0) return false;
     try {
       const ids = Array.from(selectedIds);
       const supabase = getSupabase();
@@ -673,8 +785,10 @@ function JobsPageContent() {
       setSelectedIds(new Set());
       refresh();
       loadDashboardStats();
+      return true;
     } catch {
       toast.error("Failed to archive jobs");
+      return false;
     }
   }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
 
@@ -954,11 +1068,11 @@ function JobsPageContent() {
               onSelectionChange={setSelectedIds}
               bulkActions={
                 status === "archived" ? undefined : (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
-                    <BulkBtn label="Phase 1" onClick={() => handleBulkStatusChange("in_progress_phase1")} variant="success" />
-                    <BulkBtn label="Paid & Completed" onClick={() => handleBulkStatusChange("completed")} variant="success" />
-                    <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <BulkBtn label="Start Job" onClick={() => setBulkActionModal("start_job")} variant="success" />
+                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="danger" />
+                    <BulkBtn label="Mark as Paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
+                    <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="warning" />
                   </div>
                 )
               }
@@ -1019,6 +1133,95 @@ function JobsPageContent() {
           {viewMode === "map" && <JobsMapView jobs={filteredData} loading={loading} onSelectJob={(j) => router.push(`/jobs/${j.id}`)} />}
         </motion.div>
       </div>
+
+      <Modal
+        open={bulkActionModal != null}
+        onClose={() => {
+          if (!bulkRunning) setBulkActionModal(null);
+        }}
+        title={
+          bulkActionModal === "start_job"
+            ? "Start selected jobs?"
+            : bulkActionModal === "cancel"
+              ? "Cancel selected jobs?"
+              : bulkActionModal === "mark_paid"
+                ? "Mark selected jobs as paid?"
+                : bulkActionModal === "archive"
+                  ? "Archive selected jobs?"
+                  : ""
+        }
+        size="md"
+      >
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-text-secondary leading-relaxed">
+            {bulkActionModal === "start_job" && (
+              <>
+                You are about to move <strong className="text-text-primary">{selectedIds.size}</strong> job(s) to{" "}
+                <strong className="text-text-primary">In progress (phase 1)</strong>. Each job must have a partner assigned and a scheduled
+                date. Are you sure you want to continue?
+              </>
+            )}
+            {bulkActionModal === "cancel" && (
+              <>
+                You are about to <strong className="text-text-primary">cancel</strong>{" "}
+                <strong className="text-text-primary">{selectedIds.size}</strong> job(s). Completed jobs cannot be cancelled this way.
+                Partners will be notified where applicable. Are you sure?
+              </>
+            )}
+            {bulkActionModal === "mark_paid" && (
+              <>
+                You are about to mark <strong className="text-text-primary">{selectedIds.size}</strong> job(s) as{" "}
+                <strong className="text-text-primary">paid and completed</strong>. Only jobs in{" "}
+                <strong className="text-text-primary">Awaiting payment</strong> or <strong className="text-text-primary">Need attention</strong>{" "}
+                with full customer and partner settlements will be updated. Are you sure?
+              </>
+            )}
+            {bulkActionModal === "archive" && (
+              <>
+                You are about to <strong className="text-text-primary">archive</strong>{" "}
+                <strong className="text-text-primary">{selectedIds.size}</strong> job(s). Linked invoices will be cancelled and hidden from
+                the Invoices list. This cannot be undone from the list. Are you sure?
+              </>
+            )}
+          </p>
+          <div className="flex flex-wrap justify-end gap-2 pt-1">
+            <Button type="button" variant="outline" disabled={bulkRunning} onClick={() => setBulkActionModal(null)}>
+              Go back
+            </Button>
+            <Button
+              type="button"
+              variant={bulkActionModal === "cancel" || bulkActionModal === "archive" ? "danger" : "primary"}
+              loading={bulkRunning}
+              onClick={() => {
+                void (async () => {
+                  if (!bulkActionModal) return;
+                  setBulkRunning(true);
+                  try {
+                    let ok = false;
+                    if (bulkActionModal === "start_job") ok = await handleBulkStartJob();
+                    else if (bulkActionModal === "cancel") ok = await handleBulkCancelJobs();
+                    else if (bulkActionModal === "mark_paid") ok = await handleBulkStatusChange("completed");
+                    else if (bulkActionModal === "archive") ok = await handleBulkArchive();
+                    if (ok) setBulkActionModal(null);
+                  } finally {
+                    setBulkRunning(false);
+                  }
+                })();
+              }}
+            >
+              {bulkActionModal === "start_job"
+                ? "Yes, start jobs"
+                : bulkActionModal === "cancel"
+                  ? "Yes, cancel jobs"
+                  : bulkActionModal === "mark_paid"
+                    ? "Yes, mark as paid"
+                    : bulkActionModal === "archive"
+                      ? "Yes, archive"
+                      : "Confirm"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <CreateJobModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
     </PageTransition>

@@ -19,7 +19,7 @@ import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
 import {
-  Plus, Download, Filter, Receipt, DollarSign, Clock, AlertTriangle,
+  Plus, Download, Filter, Receipt, Clock, AlertTriangle,
   FileText, Send, Calendar, MapPin, User, Briefcase, ArrowRight,
   CheckCircle2, XCircle, CreditCard, Building2, Hash, TrendingUp,
   Banknote, RotateCcw, Loader, Lock,
@@ -112,12 +112,12 @@ export default function InvoicesPage() {
   });
   const [kpis, setKpis] = useState({
     totalInvoiced: 0,
-    pendingAmount: 0,
-    pendingCount: 0,
+    amountReceived: 0,
     overdueAmount: 0,
     overdueCount: 0,
     avgCollectionDays: null as number | null,
   });
+  const [accountNameById, setAccountNameById] = useState<Record<string, string>>({});
   const { profile } = useProfile();
 
   const loadCounts = useCallback(async () => {
@@ -149,9 +149,11 @@ export default function InvoicesPage() {
         paid_date?: string | null;
         created_at: string;
       }[];
-      const totalInvoiced = all.reduce((sum, r) => sum + Number(r.amount), 0);
-      const pending = all.filter((r) => r.status === "pending" || r.status === "partially_paid");
+      const nonCancelled = all.filter((r) => r.status !== "cancelled");
+      const totalInvoiced = nonCancelled.reduce((sum, r) => sum + Number(r.amount), 0);
+      const amountReceived = nonCancelled.reduce((sum, r) => sum + invoiceAmountPaid(r as Invoice), 0);
       const overdue = all.filter((r) => r.status === "overdue");
+      const overdueAmount = overdue.reduce((sum, r) => sum + invoiceBalanceDue(r as Invoice), 0);
       const paidWithDates = all.filter((r) => r.status === "paid" && r.paid_date);
       let avgCollectionDays: number | null = null;
       if (paidWithDates.length > 0) {
@@ -168,9 +170,8 @@ export default function InvoicesPage() {
       }
       setKpis({
         totalInvoiced,
-        pendingAmount: pending.reduce((sum, r) => sum + invoiceBalanceDue(r as Invoice), 0),
-        pendingCount: pending.length,
-        overdueAmount: overdue.reduce((sum, r) => sum + Number(r.amount), 0),
+        amountReceived,
+        overdueAmount,
         overdueCount: overdue.length,
         avgCollectionDays,
       });
@@ -182,11 +183,38 @@ export default function InvoicesPage() {
     loadKpis();
   }, [loadCounts, loadKpis]);
 
+  useEffect(() => {
+    const ids = [...new Set(data.map((inv) => inv.source_account_id).filter((x): x is string => Boolean(x && String(x).trim())))];
+    if (ids.length === 0) return;
+    let cancelled = false;
+    const CHUNK = 50;
+    (async () => {
+      const map: Record<string, string> = {};
+      try {
+        for (let i = 0; i < ids.length; i += CHUNK) {
+          const chunk = ids.slice(i, i + CHUNK);
+          const { data: rows, error } = await getSupabase().from("accounts").select("id, company_name").in("id", chunk);
+          if (error) throw error;
+          for (const row of rows ?? []) {
+            const r = row as { id: string; company_name?: string | null };
+            const nm = (r.company_name ?? "").trim();
+            map[r.id] = nm || "—";
+          }
+        }
+        if (!cancelled) setAccountNameById((prev) => ({ ...prev, ...map }));
+      } catch {
+        /* keep previous cache */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
   const kpiPeriodDesc = useMemo(
     () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
     [periodMode, weekAnchor, rangeFrom, rangeTo]
   );
-  const kpiScoped = periodMode !== "all";
 
   const handleStatusChange = useCallback(async (invoice: Invoice, newStatus: InvoiceStatus) => {
     const supabase = getSupabase();
@@ -361,19 +389,36 @@ export default function InvoicesPage() {
   }, [refresh, loadCounts, loadKpis, profile?.id, profile?.full_name]);
 
   const handleExportCSV = useCallback(() => {
-    const headers = ["Reference", "Client", "Job Reference", "Amount", "Amount Paid", "Balance Due", "Status", "Due Date", "Paid Date", "Created At"];
-    const rows = data.map((inv) => [
-      inv.reference,
-      inv.client_name,
-      inv.job_reference ?? "",
-      String(inv.amount),
-      String(invoiceAmountPaid(inv)),
-      String(invoiceBalanceDue(inv)),
-      inv.status,
-      inv.due_date,
-      inv.paid_date ?? "",
-      inv.created_at,
-    ]);
+    const headers = [
+      "Reference",
+      "Accounts related",
+      "Client",
+      "Job Reference",
+      "Amount",
+      "Amount Paid",
+      "Balance Due",
+      "Status",
+      "Due Date",
+      "Paid Date",
+      "Created At",
+    ];
+    const rows = data.map((inv) => {
+      const accId = inv.source_account_id;
+      const accountLabel = accId ? (accountNameById[accId] ?? "") : "";
+      return [
+        inv.reference,
+        accountLabel,
+        inv.client_name,
+        inv.job_reference ?? "",
+        String(inv.amount),
+        String(invoiceAmountPaid(inv)),
+        String(invoiceBalanceDue(inv)),
+        inv.status,
+        inv.due_date,
+        inv.paid_date ?? "",
+        inv.created_at,
+      ];
+    });
     const csv = [headers, ...rows].map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -385,7 +430,7 @@ export default function InvoicesPage() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     toast.success("CSV exported successfully");
-  }, [data]);
+  }, [data, accountNameById]);
 
   const tabs = [
     { id: "all", label: "All", count: tabCounts.all },
@@ -403,6 +448,35 @@ export default function InvoicesPage() {
     {
       key: "reference", label: "Invoice", width: "140px",
       render: (item) => <p className="text-sm font-semibold text-text-primary">{item.reference}</p>,
+    },
+    {
+      key: "source_account",
+      label: "Accounts related",
+      minWidth: "168px",
+      cellClassName: "align-top",
+      render: (item) => {
+        const id = item.source_account_id?.trim();
+        const name = id ? accountNameById[id] : null;
+        return (
+          <div className="flex items-start gap-2 min-w-0">
+            <Building2 className="h-3.5 w-3.5 text-text-tertiary shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              {!id ? (
+                <p className="text-sm text-text-tertiary">—</p>
+              ) : name ? (
+                <p className="text-sm font-medium text-text-primary truncate" title={name}>
+                  {name}
+                </p>
+              ) : (
+                <p className="text-xs text-text-tertiary">Loading…</p>
+              )}
+              <p className="text-[11px] text-text-tertiary truncate mt-0.5" title={item.client_name}>
+                Client · {item.client_name}
+              </p>
+            </div>
+          </div>
+        );
+      },
     },
     {
       key: "client_name", label: "Client",
@@ -506,43 +580,37 @@ export default function InvoicesPage() {
             title="Total Invoiced"
             value={kpis.totalInvoiced}
             format="currency"
-            change={kpiScoped ? undefined : 18.2}
-            changeLabel={kpiScoped ? undefined : "this quarter"}
-            description={kpiScoped ? kpiPeriodDesc : undefined}
+            description={kpiPeriodDesc}
             icon={Receipt}
             accent="primary"
           />
           <KpiCard
-            title="Pending Collection"
-            value={kpis.pendingAmount}
+            title="Amount Received"
+            value={kpis.amountReceived}
             format="currency"
-            description={`${kpis.pendingCount} invoice${kpis.pendingCount === 1 ? "" : "s"} · ${kpiPeriodDesc}`}
-            icon={DollarSign}
-            accent="amber"
-          />
-          <KpiCard
-            title="Avg Collection Time"
-            value={kpis.avgCollectionDays != null ? `${Math.round(kpis.avgCollectionDays)} Days` : "—"}
-            format="none"
-            change={kpiScoped ? undefined : -8.5}
-            changeLabel={kpiScoped ? undefined : "faster"}
-            description={
-              kpiScoped
-                ? kpis.avgCollectionDays != null
-                  ? `Paid in period · ${kpiPeriodDesc}`
-                  : `No paid invoices · ${kpiPeriodDesc}`
-                : undefined
-            }
-            icon={Clock}
-            accent="blue"
+            description={`From amount paid on invoices · ${kpiPeriodDesc}`}
+            icon={Banknote}
+            accent="emerald"
           />
           <KpiCard
             title="Overdue Amount"
             value={kpis.overdueAmount}
             format="currency"
-            description={`${kpis.overdueCount} overdue · ${kpiPeriodDesc}`}
+            description={`${kpis.overdueCount} overdue · balance still due · ${kpiPeriodDesc}`}
             icon={AlertTriangle}
-            accent="primary"
+            accent="amber"
+          />
+          <KpiCard
+            title="Avg Collection Time"
+            value={kpis.avgCollectionDays != null ? `${Math.round(kpis.avgCollectionDays)} days` : "—"}
+            format="none"
+            description={
+              kpis.avgCollectionDays != null
+                ? `Created → paid date · ${kpiPeriodDesc}`
+                : `No paid invoices in period · ${kpiPeriodDesc}`
+            }
+            icon={Clock}
+            accent="blue"
           />
         </StaggerContainer>
 
