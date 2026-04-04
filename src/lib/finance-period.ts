@@ -1,4 +1,6 @@
+import { parseISO, format, isValid, getISOWeek } from "date-fns";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import type { ListParams } from "@/services/base";
 
 export type FinancePeriodMode = "all" | "week" | "month" | "range";
@@ -55,6 +57,48 @@ export function getFinanceListDateFilter(
   return { dateColumn, dateFrom: bounds.from, dateTo: bounds.to };
 }
 
+/**
+ * Same period as {@link getFinanceListDateFilter} but uses local calendar-day UTC bounds for `timestamptz`
+ * so list rows and KPIs match the invoice “created” date shown in the UI (inclusive end of range).
+ */
+export function getFinanceListCreatedAtFilter(
+  mode: FinancePeriodMode,
+  weekAnchor: Date,
+  rangeFrom: string,
+  rangeTo: string,
+  monthAnchor?: Date
+): Partial<ListParams> {
+  const bounds = getFinancePeriodClosedBounds(mode, weekAnchor, rangeFrom, rangeTo, monthAnchor);
+  if (!bounds) return {};
+  const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
+  return {
+    dateColumn: "created_at",
+    dateFrom: bounds.from,
+    dateTo: bounds.to,
+    dateFromUtcIso: startIso,
+    dateToUtcIso: endIso,
+  };
+}
+
+/**
+ * Invoices page: KPIs, tab counts, and table use the same period as the visible invoice date
+ * (`billing_week_start` for weekly batch rows, otherwise `created_at` local calendar day).
+ */
+export function getFinanceListInvoicePeriodFilter(
+  mode: FinancePeriodMode,
+  weekAnchor: Date,
+  rangeFrom: string,
+  rangeTo: string,
+  monthAnchor?: Date
+): Partial<ListParams> {
+  const bounds = getFinancePeriodClosedBounds(mode, weekAnchor, rangeFrom, rangeTo, monthAnchor);
+  if (!bounds) return {};
+  const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
+  return {
+    invoicePeriodBounds: { from: bounds.from, to: bounds.to, startIso, endIso },
+  };
+}
+
 /** Short line for KPI card footers (matches week / month / range / all). */
 export function formatFinancePeriodKpiDescription(
   mode: FinancePeriodMode,
@@ -65,8 +109,11 @@ export function formatFinancePeriodKpiDescription(
 ): string {
   if (mode === "all") return "All periods";
   if (mode === "week") {
-    const { weekLabel, weekStart, weekEnd } = getWeekBoundsForDate(weekAnchor);
-    return `${weekLabel} · ${weekStart}–${weekEnd}`;
+    const { weekStart, weekEnd } = getWeekBoundsForDate(weekAnchor);
+    const start = parseISO(weekStart);
+    const calYear = isValid(start) ? format(start, "yyyy") : "";
+    const weekNum = isValid(start) ? getISOWeek(start) : 0;
+    return calYear ? `${calYear} · Week ${weekNum} · ${weekStart}–${weekEnd}` : `${weekStart}–${weekEnd}`;
   }
   if (mode === "month") {
     const a = monthAnchor ?? weekAnchor;

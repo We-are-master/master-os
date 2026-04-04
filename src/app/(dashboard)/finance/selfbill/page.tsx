@@ -484,6 +484,7 @@ export default function SelfBillPage() {
       key: "job_value",
       label: "Labour / gross",
       align: "right",
+      minWidth: "128px",
       render: (item) => (
         <span className="text-sm tabular-nums text-text-primary">
           {formatCurrency(item.job_value)}
@@ -497,6 +498,7 @@ export default function SelfBillPage() {
       key: "materials",
       label: "Materials / extras",
       align: "right",
+      minWidth: "140px",
       render: (item) => (
         <span className="text-sm tabular-nums text-text-secondary">
           {formatCurrency(item.materials)}
@@ -532,7 +534,7 @@ export default function SelfBillPage() {
       key: "net_payout",
       label: "Net payout",
       align: "right",
-      width: "100px",
+      minWidth: "108px",
       render: (item) => (
         <div className="text-right">
           <span className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(item.net_payout)}</span>
@@ -550,7 +552,7 @@ export default function SelfBillPage() {
       key: "amount_due",
       label: "Amount due",
       align: "right",
-      width: "104px",
+      minWidth: "112px",
       render: (item) => {
         if (isSelfBillPayoutVoided(item)) {
           return <span className="text-sm text-text-tertiary">—</span>;

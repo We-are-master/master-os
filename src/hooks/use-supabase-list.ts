@@ -58,9 +58,11 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   const scheduleRangeKey = listParams?.scheduleRange
     ? `${listParams.scheduleRange.from}|${listParams.scheduleRange.to}`
     : "";
-  const dateRangeKey = listParams?.dateColumn
-    ? `${listParams.dateColumn}|${listParams.dateFrom ?? ""}|${listParams.dateTo ?? ""}`
-    : "";
+  const dateRangeKey = listParams?.invoicePeriodBounds
+    ? `inv|${listParams.invoicePeriodBounds.from}|${listParams.invoicePeriodBounds.to}|${listParams.invoicePeriodBounds.startIso}|${listParams.invoicePeriodBounds.endIso}`
+    : listParams?.dateColumn
+      ? `${listParams.dateColumn}|${listParams.dateFromUtcIso ?? listParams.dateFrom ?? ""}|${listParams.dateToUtcIso ?? listParams.dateTo ?? ""}`
+      : "";
   const prevRangeKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (prevRangeKeyRef.current === null) {

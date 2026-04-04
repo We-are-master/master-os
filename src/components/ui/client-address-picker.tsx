@@ -57,6 +57,8 @@ interface ClientAddressPickerProps {
   className?: string;
   /** When true and `value.client_id` is set, client cannot be changed (only property address). */
   lockClient?: boolean;
+  /** When true, opening the client dropdown with an empty search loads the first page of all clients (browse). */
+  loadAllClientsOnOpen?: boolean;
 }
 
 export function ClientAddressPicker({
@@ -67,6 +69,7 @@ export function ClientAddressPicker({
   required = true,
   className = "",
   lockClient = false,
+  loadAllClientsOnOpen = false,
 }: ClientAddressPickerProps) {
   const clientSectionLocked = lockClient && !!value.client_id;
   const valueRef = useRef(value);
@@ -111,21 +114,44 @@ export function ClientAddressPicker({
     listClientSourceAccounts().then(setSourceAccounts).catch(() => setSourceAccounts([]));
   }, [createClientOpen]);
 
-  const loadClientResults = useCallback(async (search: string) => {
-    if (!search.trim()) {
-      setClientResults([]);
-      return;
-    }
+  const loadClientResults = useCallback(
+    async (search: string) => {
+      if (!search.trim()) {
+        if (loadAllClientsOnOpen) return;
+        setClientResults([]);
+        return;
+      }
+      setClientLoading(true);
+      try {
+        const res = await listClients({ search: search.trim(), pageSize: 15 });
+        setClientResults(res.data ?? []);
+      } catch {
+        setClientResults([]);
+      } finally {
+        setClientLoading(false);
+      }
+    },
+    [loadAllClientsOnOpen]
+  );
+
+  useEffect(() => {
+    if (!loadAllClientsOnOpen || !clientDropdownOpen || selectedClient || clientSearch.trim()) return;
+    let cancelled = false;
     setClientLoading(true);
-    try {
-      const res = await listClients({ search: search.trim(), pageSize: 15 });
-      setClientResults(res.data ?? []);
-    } catch {
-      setClientResults([]);
-    } finally {
-      setClientLoading(false);
-    }
-  }, []);
+    listClients({ page: 1, pageSize: 200 })
+      .then((res) => {
+        if (!cancelled) setClientResults(res.data ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setClientResults([]);
+      })
+      .finally(() => {
+        if (!cancelled) setClientLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadAllClientsOnOpen, clientDropdownOpen, selectedClient, clientSearch]);
 
   useEffect(() => {
     if (clientSearchDebounce.current) clearTimeout(clientSearchDebounce.current);
@@ -434,7 +460,7 @@ export function ClientAddressPicker({
                 if (next && containerRef.current?.contains(next)) return;
                 window.setTimeout(() => void resolveSearchToClient(), 0);
               }}
-              placeholder="Search by name or email..."
+              placeholder={loadAllClientsOnOpen ? "Search or pick from the list…" : "Search by name or email..."}
               className="w-full h-9 rounded-lg border border-border bg-card px-3 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30"
               autoComplete="off"
               aria-autocomplete="list"
@@ -464,17 +490,25 @@ export function ClientAddressPicker({
                   </div>
                 ) : (
                   <>
-                    {clientResults.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => selectClient(c)}
-                        className="w-full text-left px-3 py-2.5 hover:bg-surface-hover border-b border-border last:border-0 text-sm"
-                      >
-                        <span className="font-medium text-text-primary">{c.full_name}</span>
-                        {c.email && <span className="text-text-tertiary text-xs block">{c.email}</span>}
-                      </button>
-                    ))}
+                    {clientResults.map((c) => {
+                      const addrLine = [c.address?.trim(), c.city?.trim(), c.postcode?.trim()]
+                        .filter(Boolean)
+                        .join(", ");
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => selectClient(c)}
+                          className="w-full text-left px-3 py-2.5 hover:bg-surface-hover border-b border-border last:border-0 text-sm"
+                        >
+                          <span className="font-medium text-text-primary">{c.full_name}</span>
+                          {c.email ? <span className="text-text-tertiary text-xs block truncate">{c.email}</span> : null}
+                          {addrLine ? (
+                            <span className="text-text-secondary text-[11px] block truncate mt-0.5">{addrLine}</span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
                     <button
                       type="button"
                       onClick={() => { setClientDropdownOpen(false); setCreateClientOpen(true); }}
