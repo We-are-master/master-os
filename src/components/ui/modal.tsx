@@ -13,6 +13,8 @@ interface ModalProps {
   children: React.ReactNode;
   size?: "sm" | "md" | "lg";
   className?: string;
+  /** Applied to the outer fixed full-screen wrapper (e.g. z-index above other overlays). */
+  rootClassName?: string;
   scrollBody?: boolean;
 }
 
@@ -30,12 +32,18 @@ export function Modal({
   children,
   size = "md",
   className,
+  rootClassName,
   scrollBody = true,
 }: ModalProps) {
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain py-4 sm:items-center sm:py-6 px-3 sm:px-4">
+        <div
+          className={cn(
+            "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain py-4 sm:items-center sm:py-6 px-3 sm:px-4",
+            rootClassName,
+          )}
+        >
           <motion.div
             variants={overlayTransition}
             initial="hidden"

@@ -34,12 +34,12 @@ import type { Quote, Partner, Job } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import {
-  confirmDespiteDuplicateWarning,
   findDuplicateJobs,
   findDuplicateQuotes,
   formatJobDuplicateLines,
   formatQuoteDuplicateLines,
 } from "@/lib/duplicate-create-warnings";
+import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
 import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
@@ -325,6 +325,7 @@ function QuotesPageContent() {
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { profile } = useProfile();
+  const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [pipelineValue, setPipelineValue] = useState(0);
   const [viewMode, setViewMode] = useState("list");
@@ -440,7 +441,7 @@ function QuotesPageContent() {
         title: formData.title ?? "",
         propertyAddress: formData.property_address,
       });
-      if (!confirmDespiteDuplicateWarning(formatQuoteDuplicateLines(dupQ))) return;
+      if (!(await confirmDespiteDuplicates(formatQuoteDuplicateLines(dupQ)))) return;
 
       const result = await createQuote({
         title: formData.title ?? "",
@@ -478,7 +479,7 @@ function QuotesPageContent() {
       refreshWithKpis();
       trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, { quoteType: formData.quote_type ?? "internal" });
     } catch { toast.error("Failed to create quote"); }
-  }, [refreshWithKpis, profile?.id, profile?.full_name]);
+  }, [refreshWithKpis, profile?.id, profile?.full_name, confirmDespiteDuplicates]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
@@ -550,7 +551,7 @@ function QuotesPageContent() {
           clientId: formData.client_id,
           propertyAddress: formData.property_address,
         });
-        if (!confirmDespiteDuplicateWarning(formatJobDuplicateLines(dupJobs))) return;
+        if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJobs)))) return;
 
         const job = await createJob({
           title: formData.title,
@@ -626,7 +627,7 @@ function QuotesPageContent() {
         toast.error(getErrorMessage(err, "Failed to create job"));
       }
     },
-    [quoteToConvert, refreshWithKpis, profile?.id, profile?.full_name, router]
+    [quoteToConvert, refreshWithKpis, profile?.id, profile?.full_name, router, confirmDespiteDuplicates]
   );
 
   const handleStatusChange = useCallback(

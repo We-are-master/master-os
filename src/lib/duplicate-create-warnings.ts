@@ -1,11 +1,5 @@
 import { getSupabase } from "@/services/base";
-
-/** Ask user to confirm when similar rows already exist (browser `confirm`). */
-export function confirmDespiteDuplicateWarning(lines: string[]): boolean {
-  if (lines.length === 0) return true;
-  const body = `Possible duplicates found:\n\n• ${lines.join("\n• ")}\n\nCreate anyway?`;
-  return window.confirm(body);
-}
+import { isUuid } from "@/lib/utils";
 
 export function normalizeEmailForDedupe(raw?: string | null): string | null {
   const s = String(raw ?? "").trim().toLowerCase();
@@ -140,14 +134,44 @@ export async function findDuplicateClients(input: {
 export type DuplicateRequestHint = { reference: string; client_name: string; status: string };
 
 export async function findDuplicateRequests(input: {
+  /** When set (valid UUID), query by FK — usually far fewer rows than email ilike. */
+  clientId?: string | null;
   clientEmail: string;
   propertyAddress: string;
 }): Promise<DuplicateRequestHint[]> {
-  const email = normalizeEmailForDedupe(input.clientEmail);
   const addr = normalizeAddressForDedupe(input.propertyAddress);
-  if (!email || addr.length < 6) return [];
+  if (addr.length < 6) return [];
 
   const supabase = getSupabase();
+  const terminal = new Set(["converted_to_quote", "converted_to_job", "declined"]);
+  const out: DuplicateRequestHint[] = [];
+
+  const cid = typeof input.clientId === "string" ? input.clientId.trim() : "";
+  if (cid && isUuid(cid)) {
+    const { data, error } = await supabase
+      .from("service_requests")
+      .select("reference, client_name, property_address, status")
+      .is("deleted_at", null)
+      .eq("client_id", cid)
+      .limit(25);
+    if (error) return [];
+    for (const row of data ?? []) {
+      const r = row as {
+        reference: string;
+        client_name: string;
+        property_address: string;
+        status: string;
+      };
+      if (terminal.has(r.status)) continue;
+      if (normalizeAddressForDedupe(r.property_address) !== addr) continue;
+      out.push({ reference: r.reference, client_name: r.client_name, status: r.status });
+    }
+    return out.slice(0, 8);
+  }
+
+  const email = normalizeEmailForDedupe(input.clientEmail);
+  if (!email) return [];
+
   const { data, error } = await supabase
     .from("service_requests")
     .select("reference, client_name, property_address, status")
@@ -156,8 +180,6 @@ export async function findDuplicateRequests(input: {
     .limit(40);
   if (error) return [];
 
-  const terminal = new Set(["converted_to_quote", "converted_to_job", "declined"]);
-  const out: DuplicateRequestHint[] = [];
   for (const row of data ?? []) {
     const r = row as {
       reference: string;

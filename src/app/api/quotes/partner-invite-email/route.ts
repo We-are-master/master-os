@@ -77,10 +77,9 @@ export async function POST(req: NextRequest) {
       })
       .join("");
 
-    let sent = 0;
-    for (const p of partners ?? []) {
+    const sendOne = async (p: { email?: string | null; company_name?: string | null }) => {
       const email = p.email?.trim();
-      if (!email) continue;
+      if (!email) return false;
       const html = `
         <p>Hi ${escapeHtml(p.company_name ?? "there")},</p>
         <p>You have been invited to bid on <strong>${escapeHtml(quote.reference)}</strong> — ${escapeHtml(quote.title ?? "")}</p>
@@ -95,8 +94,11 @@ export async function POST(req: NextRequest) {
         subject: `Quote invitation ${quote.reference} — ${quote.title ?? "Bid request"}`,
         html,
       });
-      if (!error) sent += 1;
-    }
+      return !error;
+    };
+
+    const results = await Promise.all((partners ?? []).map((p) => sendOne(p)));
+    const sent = results.filter(Boolean).length;
 
     return NextResponse.json({ ok: true, sent });
   } catch (e) {

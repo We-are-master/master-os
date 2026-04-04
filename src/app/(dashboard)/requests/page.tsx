@@ -25,7 +25,6 @@ import type { ServiceRequest, Quote, Partner } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listRequests, createRequest, updateRequestStatus, updateRequest, getRequest } from "@/services/requests";
 import {
-  confirmDespiteDuplicateWarning,
   findDuplicateJobs,
   findDuplicateQuotes,
   findDuplicateRequests,
@@ -33,6 +32,7 @@ import {
   formatQuoteDuplicateLines,
   formatRequestDuplicateLines,
 } from "@/lib/duplicate-create-warnings";
+import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { createQuote } from "@/services/quotes";
 import { createJob } from "@/services/jobs";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -186,6 +186,7 @@ export default function RequestsPage() {
   const [convertToJobOpen, setConvertToJobOpen] = useState<ServiceRequest | null>(null);
 
   const { profile } = useProfile();
+  const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const isAdmin = profile?.role === "admin";
 
   const selectedAccountLabel = linkedAccountDisplay(selectedRequest?.source_account_name);
@@ -243,6 +244,11 @@ export default function RequestsPage() {
   useEffect(() => {
     listCatalogServicesForPicker().then(setCatalogServices).catch(() => setCatalogServices([]));
   }, []);
+
+  useEffect(() => {
+    if (!createOpen) return;
+    void import("@/services/quote-invite-images");
+  }, [createOpen]);
 
   useEffect(() => {
     queueMicrotask(() => setDrawerTab("details"));
@@ -474,14 +480,21 @@ export default function RequestsPage() {
   const handleCreate = useCallback(
     async (formData: Partial<ServiceRequest>, photoFiles?: File[]) => {
       const perfStart = performance.now();
+      let dupMs = 0;
+      let insertMs = 0;
+      let photoMs = 0;
       try {
         const isManualSource = (formData.source ?? "manual") === "manual";
+        const tDup = performance.now();
         const dupReq = await findDuplicateRequests({
+          clientId: formData.client_id,
           clientEmail: formData.client_email ?? "",
           propertyAddress: formData.property_address ?? "",
         });
-        if (!confirmDespiteDuplicateWarning(formatRequestDuplicateLines(dupReq))) return;
+        dupMs = performance.now() - tDup;
+        if (!(await confirmDespiteDuplicates(formatRequestDuplicateLines(dupReq)))) return;
 
+        const tIns = performance.now();
         const result = await createRequest({
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
@@ -506,25 +519,25 @@ export default function RequestsPage() {
           in_ccz: formData.in_ccz ?? null,
           has_free_parking: formData.has_free_parking ?? null,
         });
-        const photoPromise = photoFiles?.length
-          ? (async () => {
-              const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
-              const urls = await uploadQuoteInviteImages(photoFiles, result.id);
-              await updateRequest(result.id, { images: urls });
-            })()
-          : Promise.resolve();
-        const [, , refreshedForDrawer] = await Promise.all([
-          logAudit({
-            entityType: "request", entityId: result.id, entityRef: result.reference,
-            action: "created", userId: profile?.id, userName: profile?.full_name,
-          }),
-          photoPromise,
-          isManualSource ? getRequest(result.id, { enrich: false }).catch(() => null) : Promise.resolve(null),
-        ]);
+        insertMs = performance.now() - tIns;
+
+        void logAudit({
+          entityType: "request", entityId: result.id, entityRef: result.reference,
+          action: "created", userId: profile?.id, userName: profile?.full_name,
+        });
+
+        let rowAfterPhotos: ServiceRequest | null = null;
+        if (photoFiles?.length) {
+          const tPh = performance.now();
+          const { uploadQuoteInviteImages } = await import("@/services/quote-invite-images");
+          const urls = await uploadQuoteInviteImages(photoFiles, result.id);
+          rowAfterPhotos = await updateRequest(result.id, { images: urls }, { enrich: false });
+          photoMs = performance.now() - tPh;
+        }
         setCreateOpen(false);
         if (isManualSource) {
           setStatus("approved");
-          const r = refreshedForDrawer ?? result;
+          const r = rowAfterPhotos ?? result;
           setSelectedRequest(r);
           const kind =
             r.request_kind === "work" || r.request_kind === "quote"
@@ -538,15 +551,23 @@ export default function RequestsPage() {
             setConvertChoiceOpen(r);
           }
         }
-        refreshSilent();
-        void loadCounts();
         toast.success("Request created successfully");
-        trackUiPerf("requests.create_request_ms", performance.now() - perfStart, { photos: photoFiles?.length ?? 0 });
+        trackUiPerf("requests.create_request_ms", performance.now() - perfStart, {
+          photos: photoFiles?.length ?? 0,
+          dup_ms: Math.round(dupMs),
+          insert_ms: Math.round(insertMs),
+          photo_ms: Math.round(photoMs),
+          dup_path: formData.client_id && isUuid(String(formData.client_id).trim()) ? "client_id" : "email",
+        });
+        queueMicrotask(() => {
+          refreshSilent();
+          void loadCounts();
+        });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to create request");
       }
     },
-    [refreshSilent, loadCounts, profile?.id, profile?.full_name, setStatus]
+    [refreshSilent, loadCounts, profile?.id, profile?.full_name, setStatus, confirmDespiteDuplicates]
   );
 
   const columns: Column<ServiceRequest>[] = [
@@ -1186,7 +1207,7 @@ export default function RequestsPage() {
               title: quoteTitle,
               propertyAddress: resolvedAddr.property_address,
             });
-            if (!confirmDespiteDuplicateWarning(formatQuoteDuplicateLines(dupQ))) return;
+            if (!(await confirmDespiteDuplicates(formatQuoteDuplicateLines(dupQ)))) return;
 
             const quote = await createQuote({
               title: quoteTitle,
@@ -1218,39 +1239,50 @@ export default function RequestsPage() {
             const photoUrlsForPush = mergedQuoteImages;
             const inviteBody =
               `${req.service_type} — ${resolvedAddr.property_address ?? req.property_address ?? ""}`.trim() || quote.reference;
-            if (sendMethod === "app" || sendMethod === "both") {
-              const pushRes = await fetch("/api/push/notify-partner", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  partnerIds,
-                  title: "New quote invitation",
-                  body: inviteBody,
-                  data: { type: "quote_invite", quoteId: quote.id, photoUrls: photoUrlsForPush },
-                }),
-              }).catch(() => null);
-              if (pushRes?.ok) {
-                const pushBody = (await pushRes.json().catch(() => ({}))) as {
-                  sent?: number;
-                  tokensFound?: number;
-                };
-                if (Number(pushBody.sent ?? 0) <= 0) {
-                  toast.error(
-                    Number(pushBody.tokensFound ?? 0) <= 0
-                      ? "No valid push token found for selected partner(s)."
-                      : "Push accepted but not delivered."
-                  );
-                }
-              }
-            }
-            if (sendMethod === "email" || sendMethod === "both") {
-              await fetch("/api/quotes/partner-invite-email", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ quoteId: quote.id, partnerIds }),
-              }).catch(() => {});
-            }
+
+            const pushTask =
+              sendMethod === "app" || sendMethod === "both"
+                ? (async () => {
+                    const pushRes = await fetch("/api/push/notify-partner", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        partnerIds,
+                        title: "New quote invitation",
+                        body: inviteBody,
+                        data: { type: "quote_invite", quoteId: quote.id, photoUrls: photoUrlsForPush },
+                      }),
+                    }).catch(() => null);
+                    if (pushRes?.ok) {
+                      const pushBody = (await pushRes.json().catch(() => ({}))) as {
+                        sent?: number;
+                        tokensFound?: number;
+                      };
+                      if (Number(pushBody.sent ?? 0) <= 0) {
+                        toast.error(
+                          Number(pushBody.tokensFound ?? 0) <= 0
+                            ? "No valid push token found for selected partner(s)."
+                            : "Push accepted but not delivered."
+                        );
+                      }
+                    }
+                  })()
+                : Promise.resolve();
+
+            const emailTask =
+              sendMethod === "email" || sendMethod === "both"
+                ? fetch("/api/quotes/partner-invite-email", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ quoteId: quote.id, partnerIds }),
+                  })
+                    .then(() => {})
+                    .catch(() => {})
+                : Promise.resolve();
+
             await Promise.all([
+              pushTask,
+              emailTask,
               updateRequestStatus(req.id, "converted_to_quote", { enrich: false }),
               logAudit({
                 entityType: "request", entityId: req.id, entityRef: req.reference,
@@ -1260,11 +1292,14 @@ export default function RequestsPage() {
                 userId: profile?.id, userName: profile?.full_name,
               }),
             ]);
+
             setInvitePartnerOpen(null);
-            refreshSilent();
-            loadCounts();
             toast.success(`Quote ${quote.reference} created. ${partnerIds.length} partner(s) invited via ${sendMethod}.`);
             router.push(`/quotes?quoteId=${encodeURIComponent(quote.id)}&drawerTab=bids`);
+            queueMicrotask(() => {
+              void refreshSilent();
+              void loadCounts();
+            });
             trackUiPerf("requests.invite_partner_convert_ms", performance.now() - perfStart, {
               partners: partnerIds.length,
               photos: invitePhotoFiles?.length ?? 0,
@@ -1315,7 +1350,7 @@ export default function RequestsPage() {
               title: manualQuoteTitle,
               propertyAddress: resolvedAddr.property_address,
             });
-            if (!confirmDespiteDuplicateWarning(formatQuoteDuplicateLines(dupManualQ))) return;
+            if (!(await confirmDespiteDuplicates(formatQuoteDuplicateLines(dupManualQ)))) return;
 
             const quote = await createQuote({
               title: manualQuoteTitle,
@@ -1403,7 +1438,7 @@ export default function RequestsPage() {
               clientId: data.client_id,
               propertyAddress: data.property_address,
             });
-            if (!confirmDespiteDuplicateWarning(formatJobDuplicateLines(dupJ))) return;
+            if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJ)))) return;
 
             const job = await createJob({
               title: `${convertToJobOpen.service_type} — ${data.client_name}`,
@@ -1519,7 +1554,7 @@ function InvitePartnerToQuote({
     sendMethod: string,
     clientAddress: ClientAndAddressValue,
     invitePhotoFiles: File[]
-  ) => void;
+  ) => void | Promise<void>;
 }) {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -1530,6 +1565,12 @@ function InvitePartnerToQuote({
   const [invitePhotoPreviews, setInvitePhotoPreviews] = useState<string[]>([]);
   const [summaryExpanded, setSummaryExpanded] = useState(true);
   const [partnersLoading, setPartnersLoading] = useState(false);
+  const [inviting, setInviting] = useState(false);
+
+  useEffect(() => {
+    if (!request?.id) return;
+    void import("@/services/quote-invite-images");
+  }, [request?.id]);
 
   useEffect(() => {
     if (!request?.id) {
@@ -1840,8 +1881,20 @@ function InvitePartnerToQuote({
               size="sm"
               className="w-full sm:w-auto shrink-0"
               icon={<Send className="h-3.5 w-3.5" />}
-              disabled={selectedIds.size === 0 || !clientAddress.client_id || !clientAddress.property_address}
-              onClick={() => onDone(request, Array.from(selectedIds), sendMethod, clientAddress, invitePhotos)}
+              loading={inviting}
+              disabled={
+                inviting || selectedIds.size === 0 || !clientAddress.client_id || !clientAddress.property_address
+              }
+              onClick={async () => {
+                setInviting(true);
+                try {
+                  await Promise.resolve(
+                    onDone(request, Array.from(selectedIds), sendMethod, clientAddress, invitePhotos),
+                  );
+                } finally {
+                  setInviting(false);
+                }
+              }}
             >
               Invite partners
             </Button>
@@ -2441,6 +2494,7 @@ function CreateRequestModal({
   const [postcode, setPostcode] = useState("");
   const [createPhotos, setCreatePhotos] = useState<File[]>([]);
   const [createPhotoPreviews, setCreatePhotoPreviews] = useState<string[]>([]);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
   const [form, setForm] = useState({
     onsite_contact_name: "",
     client_phone: "",
@@ -2503,8 +2557,9 @@ function CreateRequestModal({
     });
   }, [clientAddress.property_address]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (createSubmitting) return;
     if (form.request_kind !== "work" && form.request_kind !== "quote") {
       toast.error("Request type is required.");
       return;
@@ -2533,32 +2588,37 @@ function CreateRequestModal({
       return;
     }
     const cid = form.catalog_service_id.trim();
-    void onCreate(
-      {
-        client_id: clientAddress.client_id,
-        client_address_id: clientAddress.client_address_id,
-        client_name: clientAddress.client_name,
-        client_email: clientAddress.client_email ?? "",
-        client_phone: form.client_phone || undefined,
-        internal_info: form.onsite_contact_name.trim()
-          ? `On-site contact: ${form.onsite_contact_name.trim()}${form.client_phone.trim() ? ` (${form.client_phone.trim()})` : ""}`
-          : undefined,
-        property_address: clientAddress.property_address,
-        postcode: pc,
-        source: form.source,
-        catalog_service_id: cid && isUuid(cid) ? cid : null,
-        service_type: form.service_type.trim(),
-        description: form.description,
-        priority: form.priority as ServiceRequest["priority"],
-        request_kind: form.request_kind as "quote" | "work",
-        in_ccz:
-          form.request_kind === "work"
-            ? effectiveInCczForAddress(form.in_ccz, clientAddress.property_address)
-            : null,
-        has_free_parking: form.request_kind === "work" ? form.has_free_parking : null,
-      },
-      createPhotos.length > 0 ? createPhotos : undefined
-    );
+    setCreateSubmitting(true);
+    try {
+      await onCreate(
+        {
+          client_id: clientAddress.client_id,
+          client_address_id: clientAddress.client_address_id,
+          client_name: clientAddress.client_name,
+          client_email: clientAddress.client_email ?? "",
+          client_phone: form.client_phone || undefined,
+          internal_info: form.onsite_contact_name.trim()
+            ? `On-site contact: ${form.onsite_contact_name.trim()}${form.client_phone.trim() ? ` (${form.client_phone.trim()})` : ""}`
+            : undefined,
+          property_address: clientAddress.property_address,
+          postcode: pc,
+          source: form.source,
+          catalog_service_id: cid && isUuid(cid) ? cid : null,
+          service_type: form.service_type.trim(),
+          description: form.description,
+          priority: form.priority as ServiceRequest["priority"],
+          request_kind: form.request_kind as "quote" | "work",
+          in_ccz:
+            form.request_kind === "work"
+              ? effectiveInCczForAddress(form.in_ccz, clientAddress.property_address)
+              : null,
+          has_free_parking: form.request_kind === "work" ? form.has_free_parking : null,
+        },
+        createPhotos.length > 0 ? createPhotos : undefined,
+      );
+    } finally {
+      setCreateSubmitting(false);
+    }
   };
 
   const cczEligibleCreate = form.request_kind === "work" && isLikelyCczAddress(clientAddress.property_address);
@@ -2777,8 +2837,12 @@ function CreateRequestModal({
         </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-border-light px-6 py-4">
-          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit">Create Request</Button>
+          <Button variant="outline" onClick={onClose} type="button" disabled={createSubmitting}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={createSubmitting}>
+            Create Request
+          </Button>
         </div>
       </form>
     </Modal>

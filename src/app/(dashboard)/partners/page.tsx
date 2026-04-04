@@ -28,11 +28,8 @@ import { toast } from "sonner";
 import type { Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, createPartner, updatePartner } from "@/services/partners";
-import {
-  confirmDespiteDuplicateWarning,
-  findDuplicatePartners,
-  formatPartnerDuplicateLines,
-} from "@/lib/duplicate-create-warnings";
+import { findDuplicatePartners, formatPartnerDuplicateLines } from "@/lib/duplicate-create-warnings";
+import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import {
   uploadPartnerDocumentFile,
   uploadPartnerDocumentPreview,
@@ -249,6 +246,7 @@ export default function PartnersPage() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [teamLoading, setTeamLoading] = useState(false);
   const { profile } = useProfile();
+  const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const isAdmin = profile?.role === "admin";
 
   const loadTeam = useCallback(() => {
@@ -368,7 +366,7 @@ export default function PartnersPage() {
       email: form.email.trim(),
       companyName: form.company_name.trim(),
     });
-    if (!confirmDespiteDuplicateWarning(formatPartnerDuplicateLines(dupP))) return;
+    if (!(await confirmDespiteDuplicates(formatPartnerDuplicateLines(dupP)))) return;
 
     setSubmitting(true);
     try {

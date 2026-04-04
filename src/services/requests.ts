@@ -18,12 +18,6 @@ function postgrestErrorMessage(err: { message?: string; details?: string; hint?:
   return parts.length ? parts.join(" — ") : "Database request failed";
 }
 
-/** True when API/schema has no `request_kind` column yet (migration 071 not applied). */
-function isMissingRequestKindColumnError(err: { message?: string }): boolean {
-  const m = (err.message ?? "").toLowerCase();
-  return m.includes("request_kind") && (m.includes("schema cache") || m.includes("column"));
-}
-
 /** True when DB has not received ccz/parking migration yet. */
 function isMissingAccessFlagsColumnError(err: { message?: string }): boolean {
   const m = (err.message ?? "").toLowerCase();
@@ -109,12 +103,6 @@ export async function createRequest(
   }
   const payload = buildServiceRequestInsertPayload(input, String(ref));
   let { data, error } = await supabase.from("service_requests").insert(payload).select().single();
-  if (error && isMissingRequestKindColumnError(error) && "request_kind" in payload) {
-    const { request_kind: _rk, ...withoutKind } = payload;
-    const retry = await supabase.from("service_requests").insert(withoutKind).select().single();
-    data = retry.data;
-    error = retry.error;
-  }
   if (error && isMissingAccessFlagsColumnError(error)) {
     const retry = await supabase.from("service_requests").insert(stripAccessFlags(payload)).select().single();
     data = retry.data;
@@ -127,7 +115,8 @@ export async function createRequest(
 
 export async function updateRequest(
   id: string,
-  input: Partial<ServiceRequest>
+  input: Partial<ServiceRequest>,
+  options?: { enrich?: boolean },
 ): Promise<ServiceRequest> {
   const supabase = getSupabase();
   const patch: Record<string, unknown> = { ...input };
@@ -144,17 +133,6 @@ export async function updateRequest(
     .eq("id", id)
     .select()
     .single();
-  if (error && isMissingRequestKindColumnError(error) && "request_kind" in patch) {
-    const { request_kind: _rk, ...withoutKind } = patch;
-    const retry = await supabase
-      .from("service_requests")
-      .update(withoutKind)
-      .eq("id", id)
-      .select()
-      .single();
-    data = retry.data;
-    error = retry.error;
-  }
   if (error && isMissingAccessFlagsColumnError(error)) {
     const retry = await supabase
       .from("service_requests")
@@ -166,6 +144,9 @@ export async function updateRequest(
     error = retry.error;
   }
   if (error) throw new Error(postgrestErrorMessage(error));
+  if (options?.enrich === false) {
+    return data as ServiceRequest;
+  }
   const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
   return enriched ?? (data as ServiceRequest);
 }

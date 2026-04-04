@@ -14,6 +14,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(projectRoot),
   },
+  /** Fewer modules to trace on first compile (many dashboard pages import lucide icons). */
+  experimental: {
+    optimizePackageImports: ["lucide-react"],
+  },
 };
 
 export default nextConfig;
