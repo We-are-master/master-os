@@ -35,11 +35,21 @@ export type CreateJobInvoicePayload = {
  * When the account uses **Every N days** (7 / 15 / 30), invoices for that account in the same
  * calendar week are consolidated into one row (amounts summed; first job’s reference is kept).
  */
-export async function createOrAppendJobInvoice(job: Job, payload: CreateJobInvoicePayload): Promise<Invoice> {
+export type CreateOrAppendJobInvoiceOptions = {
+  /** When set (e.g. Review & approve), due date and weekly batch week use this instant instead of `new Date()`. */
+  financeAnchorDate?: Date;
+};
+
+export async function createOrAppendJobInvoice(
+  job: Job,
+  payload: CreateJobInvoicePayload,
+  options?: CreateOrAppendJobInvoiceOptions,
+): Promise<Invoice> {
+  const anchor = options?.financeAnchorDate ?? new Date();
   const terms = await getPaymentTermsForClient(job.client_id ?? null);
   const accountId = await getSourceAccountIdForClient(job.client_id ?? null);
   const ref = job.reference?.trim();
-  const due = await getInvoiceDueDateIsoForClient(job.client_id ?? null, new Date());
+  const due = await getInvoiceDueDateIsoForClient(job.client_id ?? null, anchor);
 
   if (!ref) {
     return createInvoice({ ...payload, job_reference: job.reference ?? "", due_date: due });
@@ -49,7 +59,7 @@ export async function createOrAppendJobInvoice(job: Job, payload: CreateJobInvoi
     return createInvoice({ ...payload, job_reference: ref, due_date: due });
   }
 
-  const weekStart = isoMondayLocal(new Date());
+  const weekStart = isoMondayLocal(anchor);
   const supabase = getSupabase();
   const { data: existing, error: lookErr } = await supabase
     .from("invoices")

@@ -117,3 +117,32 @@ export async function deleteJobPayment(id: string): Promise<void> {
     await maybeCompleteAwaitingPaymentJob(supabase, jobId);
   }
 }
+
+const CUSTOMER_COLLECTION_TYPES = ["customer_deposit", "customer_final"] as const;
+
+/** Sum of customer_deposit + customer_final rows per job (matches job detail payment ledger). */
+export async function sumCustomerCollectionsByJobIds(jobIds: string[]): Promise<Record<string, number>> {
+  const unique = [...new Set(jobIds.filter(Boolean))];
+  if (unique.length === 0) return {};
+  const supabase = getSupabase();
+  const chunkSize = 200;
+  const map: Record<string, number> = {};
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const slice = unique.slice(i, i + chunkSize);
+    const { data, error } = await supabase
+      .from("job_payments")
+      .select("job_id, type, amount")
+      .in("job_id", slice)
+      .in("type", [...CUSTOMER_COLLECTION_TYPES])
+      .is("deleted_at", null);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const jid = (row as { job_id?: string }).job_id;
+      if (!jid) continue;
+      const t = (row as { type?: string }).type;
+      if (t !== "customer_deposit" && t !== "customer_final") continue;
+      map[jid] = (map[jid] ?? 0) + Number((row as { amount?: unknown }).amount ?? 0);
+    }
+  }
+  return map;
+}
