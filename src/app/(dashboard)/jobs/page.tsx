@@ -39,6 +39,11 @@ import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
+import {
+  confirmDespiteDuplicateWarning,
+  findDuplicateJobs,
+  formatJobDuplicateLines,
+} from "@/lib/duplicate-create-warnings";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, getPreviousJobStatus, isJobOnSiteWorkStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
@@ -440,6 +445,12 @@ function JobsPageContent() {
           hasFreeParking: formData.has_free_parking,
         });
     try {
+      const dupJobs = await findDuplicateJobs({
+        clientId: formData.client_id,
+        propertyAddress: formData.property_address ?? "",
+      });
+      if (!confirmDespiteDuplicateWarning(formatJobDuplicateLines(dupJobs))) return;
+
       const result = await createJob({
         title: formData.title ?? "",
         catalog_service_id: formData.catalog_service_id ?? null,

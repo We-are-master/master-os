@@ -54,6 +54,29 @@ export async function markLateJobs(): Promise<void> {
   const nowIso = new Date().toISOString();
   const today = new Date().toISOString().slice(0, 10);
   await Promise.all([
+    // Drop `late` when the booking was moved forward — slot no longer in the past.
+    supabase
+      .from("jobs")
+      .update({ status: "scheduled" })
+      .eq("status", "late")
+      .not("scheduled_end_at", "is", null)
+      .gte("scheduled_end_at", nowIso),
+    supabase
+      .from("jobs")
+      .update({ status: "scheduled" })
+      .eq("status", "late")
+      .is("scheduled_end_at", null)
+      .not("scheduled_start_at", "is", null)
+      .gte("scheduled_start_at", nowIso),
+    supabase
+      .from("jobs")
+      .update({ status: "scheduled" })
+      .eq("status", "late")
+      .is("scheduled_start_at", null)
+      .not("scheduled_date", "is", null)
+      .gte("scheduled_date", today),
+  ]);
+  await Promise.all([
     // Arrival window set: late only after the window ends (e.g. after 10:00 for 09:00–10:00).
     supabase
       .from("jobs")
@@ -253,14 +276,33 @@ export async function createJob(
   return job;
 }
 
+const JOB_SCHEDULE_PATCH_KEYS = [
+  "scheduled_date",
+  "scheduled_start_at",
+  "scheduled_end_at",
+  "scheduled_finish_date",
+] as const;
+
+function jobPatchTouchesSchedule(patch: Record<string, unknown>): boolean {
+  return JOB_SCHEDULE_PATCH_KEYS.some((k) => Object.prototype.hasOwnProperty.call(patch, k));
+}
+
 /** Use `null` (not `undefined`) on nullable columns you want to clear — `undefined` keys are omitted from the PATCH. */
 export async function updateJob(
   id: string,
   input: Partial<Job>
 ): Promise<Job> {
   const supabase = getSupabase();
+  const before = await getJob(id);
+  if (!before) throw new Error("Job not found");
+
   const basePatch = input as Record<string, unknown>;
-  const patch = prepareJobRowForUpdate(basePatch);
+  /** Reschedule clears `late`: late = missed start on the previous slot; new date/time is a new booking. */
+  const effectivePatch: Record<string, unknown> = { ...basePatch };
+  if (before.status === "late" && jobPatchTouchesSchedule(basePatch)) {
+    effectivePatch.status = "scheduled";
+  }
+  const patch = prepareJobRowForUpdate(effectivePatch);
 
   /**
    * Avoid `.select().single()` on PATCH: PostgREST returns **406 Not Acceptable** when the
@@ -273,7 +315,7 @@ export async function updateJob(
 
   let { data: idRows, error } = await runUpdate(patch);
   if (error && isPostgrestWriteRetryableError(error)) {
-    const retry = await runUpdate(applyJobDbCompat({ ...basePatch }));
+    const retry = await runUpdate(applyJobDbCompat({ ...effectivePatch }));
     idRows = retry.data;
     error = retry.error;
   }

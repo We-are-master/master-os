@@ -14,6 +14,13 @@ import { listClientSourceAccounts, createClientSourceAccount } from "@/services/
 import type { ClientSourceAccount } from "@/types/database";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
 import { isUuid } from "@/lib/utils";
+import {
+  confirmDespiteDuplicateWarning,
+  findDuplicateAccountHints,
+  findDuplicateClients,
+  formatAccountDuplicateLines,
+  formatClientDuplicateLines,
+} from "@/lib/duplicate-create-warnings";
 
 export interface ClientAndAddressValue {
   client_id?: string;
@@ -270,7 +277,18 @@ export function ClientAddressPicker({
         toast.error("Fill company name, contact and email to create the linked account");
         return;
       }
+      const accHints = await findDuplicateAccountHints({
+        companyName: newSourceForm.company_name.trim(),
+        email: newSourceForm.email.trim(),
+      });
+      if (!confirmDespiteDuplicateWarning(formatAccountDuplicateLines(accHints))) return;
     }
+    const dupClients = await findDuplicateClients({
+      email: createClientForm.email,
+      phone: createClientForm.phone,
+    });
+    if (!confirmDespiteDuplicateWarning(formatClientDuplicateLines(dupClients))) return;
+
     setCreating(true);
     try {
       if (sourceAccountId === CREATE_LINKED_ACCOUNT_OPTION) {

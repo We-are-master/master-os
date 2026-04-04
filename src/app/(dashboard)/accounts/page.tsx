@@ -38,6 +38,11 @@ import { uploadAccountLogo, removeAccountLogoFromStorage } from "@/services/acco
 import { uploadAccountContract, removeAccountContractFromStorage } from "@/services/account-contract-storage";
 import { getSupabase } from "@/services/base";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
+import {
+  confirmDespiteDuplicateWarning,
+  findDuplicateAccountHints,
+  formatAccountDuplicateLines,
+} from "@/lib/duplicate-create-warnings";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
@@ -170,6 +175,12 @@ export default function AccountsPage() {
       toast.error("Please fill in all required fields.");
       return;
     }
+
+    const accHints = await findDuplicateAccountHints({
+      companyName: form.company_name.trim(),
+      email: form.email.trim(),
+    });
+    if (!confirmDespiteDuplicateWarning(formatAccountDuplicateLines(accHints))) return;
 
     setSubmitting(true);
     try {

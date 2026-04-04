@@ -29,6 +29,11 @@ import type { Partner, PartnerLegalType, PartnerStatus } from "@/types/database"
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, createPartner, updatePartner } from "@/services/partners";
 import {
+  confirmDespiteDuplicateWarning,
+  findDuplicatePartners,
+  formatPartnerDuplicateLines,
+} from "@/lib/duplicate-create-warnings";
+import {
   uploadPartnerDocumentFile,
   uploadPartnerDocumentPreview,
   removeStorageObjects,
@@ -359,6 +364,12 @@ export default function PartnersPage() {
         return;
       }
     }
+    const dupP = await findDuplicatePartners({
+      email: form.email.trim(),
+      companyName: form.company_name.trim(),
+    });
+    if (!confirmDespiteDuplicateWarning(formatPartnerDuplicateLines(dupP))) return;
+
     setSubmitting(true);
     try {
       const primaryTrade = form.trades[0] ?? TRADES[0];
