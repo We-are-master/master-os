@@ -46,12 +46,12 @@ import { getStatusCounts, getSupabase } from "@/services/base";
 import { clientsJobHistorySelectColumns } from "@/lib/job-schema-compat";
 import { logAudit, logBulkAction } from "@/services/audit";
 import {
-  confirmDespiteDuplicateWarning,
   findDuplicateAccountHints,
   findDuplicateClients,
   formatAccountDuplicateLines,
   formatClientDuplicateLines,
 } from "@/lib/duplicate-create-warnings";
+import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 
 const CLIENT_STATUSES = ["active", "inactive", "vip", "blocked"] as const;
 
@@ -106,6 +106,7 @@ function ClientsPageInner() {
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { profile } = useProfile();
+  const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [totalSpent, setTotalSpent] = useState(0);
   /** Linked clients ÷ distinct `source_account_id` (0 if none). */
@@ -178,7 +179,7 @@ function ClientsPageInner() {
       const mainPostcode = formData.postcode?.trim() || parts?.postcode || undefined;
 
       const dupClients = await findDuplicateClients({ email: formData.email, phone: formData.phone });
-      if (!confirmDespiteDuplicateWarning(formatClientDuplicateLines(dupClients))) return;
+      if (!(await confirmDespiteDuplicates(formatClientDuplicateLines(dupClients)))) return;
 
       const result = await createClient({
         source_account_id: sid,
@@ -219,7 +220,7 @@ function ClientsPageInner() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create client");
     }
-  }, [refresh, loadCounts, loadAggregates, profile?.id, profile?.full_name, loadSourceAccounts]);
+  }, [refresh, loadCounts, loadAggregates, profile?.id, profile?.full_name, loadSourceAccounts, confirmDespiteDuplicates]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
@@ -1234,6 +1235,7 @@ function CreateClientForm({
   onSubmit: (d: Partial<Client> & { property_address_parts?: AddressParts }) => void | Promise<void>;
   onCancel: () => void;
 }) {
+  const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const [form, setForm] = useState({
     full_name: "", email: "", phone: "", address: "", city: "", postcode: "",
     source_account_id: "",
@@ -1265,7 +1267,7 @@ function CreateClientForm({
         companyName: newSourceForm.company_name.trim(),
         email: newSourceForm.email.trim(),
       });
-      if (!confirmDespiteDuplicateWarning(formatAccountDuplicateLines(accHints))) return;
+      if (!(await confirmDespiteDuplicates(formatAccountDuplicateLines(accHints)))) return;
       setCreatingSource(true);
       try {
         const createdAccount = await createClientSourceAccount({

@@ -15,12 +15,12 @@ import type { ClientSourceAccount } from "@/types/database";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
 import { isUuid } from "@/lib/utils";
 import {
-  confirmDespiteDuplicateWarning,
   findDuplicateAccountHints,
   findDuplicateClients,
   formatAccountDuplicateLines,
   formatClientDuplicateLines,
 } from "@/lib/duplicate-create-warnings";
+import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 
 export interface ClientAndAddressValue {
   client_id?: string;
@@ -71,6 +71,7 @@ export function ClientAddressPicker({
   lockClient = false,
   loadAllClientsOnOpen = false,
 }: ClientAddressPickerProps) {
+  const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const clientSectionLocked = lockClient && !!value.client_id;
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -307,13 +308,13 @@ export function ClientAddressPicker({
         companyName: newSourceForm.company_name.trim(),
         email: newSourceForm.email.trim(),
       });
-      if (!confirmDespiteDuplicateWarning(formatAccountDuplicateLines(accHints))) return;
+      if (!(await confirmDespiteDuplicates(formatAccountDuplicateLines(accHints)))) return;
     }
     const dupClients = await findDuplicateClients({
       email: createClientForm.email,
       phone: createClientForm.phone,
     });
-    if (!confirmDespiteDuplicateWarning(formatClientDuplicateLines(dupClients))) return;
+    if (!(await confirmDespiteDuplicates(formatClientDuplicateLines(dupClients)))) return;
 
     setCreating(true);
     try {
@@ -393,7 +394,7 @@ export function ClientAddressPicker({
     } finally {
       setCreating(false);
     }
-  }, [createClientForm, createClientAddressParts, newSourceForm, selectClient, selectAddress]);
+  }, [createClientForm, createClientAddressParts, newSourceForm, selectClient, selectAddress, confirmDespiteDuplicates]);
 
   const clearClient = useCallback(() => {
     selectedClientRef.current = null;

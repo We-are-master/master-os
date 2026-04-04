@@ -40,11 +40,8 @@ import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { logAudit, logBulkAction } from "@/services/audit";
-import {
-  confirmDespiteDuplicateWarning,
-  findDuplicateJobs,
-  formatJobDuplicateLines,
-} from "@/lib/duplicate-create-warnings";
+import { findDuplicateJobs, formatJobDuplicateLines } from "@/lib/duplicate-create-warnings";
+import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, getPreviousJobStatus, isJobOnSiteWorkStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
@@ -166,6 +163,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 function JobsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const anchorDayKey = formatLocalYmd(new Date());
   const [scheduleDatePreset, setScheduleDatePreset] = useState<ScheduleDatePreset>("all");
   const [customScheduleFrom, setCustomScheduleFrom] = useState(() => formatLocalYmd(new Date()));
@@ -490,7 +488,7 @@ function JobsPageContent() {
         clientId: formData.client_id,
         propertyAddress: formData.property_address ?? "",
       });
-      if (!confirmDespiteDuplicateWarning(formatJobDuplicateLines(dupJobs))) return;
+      if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJobs)))) return;
 
       const result = await createJob({
         title: formData.title ?? "",
@@ -563,7 +561,7 @@ function JobsPageContent() {
     } catch (err) {
       toast.error(getErrorMessage(err, "Failed to create job"));
     }
-  }, [refreshSilent, loadDashboardStats, profile?.id, profile?.full_name, router]);
+  }, [refreshSilent, loadDashboardStats, profile?.id, profile?.full_name, router, confirmDespiteDuplicates]);
 
   const handleStatusChange = useCallback(async (job: Job, newStatus: Job["status"]) => {
     const check = canAdvanceJob(job, newStatus);

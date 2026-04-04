@@ -7,6 +7,7 @@ import { SidebarContext } from "@/hooks/use-sidebar";
 import { ProfileContext, useProfileLoader } from "@/hooks/use-profile";
 import { ThemeContext, useThemeProvider } from "@/hooks/use-theme";
 import { AdminConfigProvider } from "@/hooks/use-admin-config";
+import { DuplicateConfirmProvider } from "@/contexts/duplicate-confirm-context";
 import { MasterBrainAssistant } from "@/components/layout/master-brain-assistant";
 import { motion } from "framer-motion";
 
@@ -31,6 +32,7 @@ export default function DashboardLayout({
       >
         <ProfileContext.Provider value={profileState}>
           <AdminConfigProvider>
+          <DuplicateConfirmProvider>
           <div className="min-h-screen bg-surface-secondary">
             <Sidebar />
             <motion.div
@@ -46,6 +48,7 @@ export default function DashboardLayout({
               <MasterBrainAssistant />
             </motion.div>
           </div>
+          </DuplicateConfirmProvider>
           </AdminConfigProvider>
         </ProfileContext.Provider>
       </SidebarContext.Provider>

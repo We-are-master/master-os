@@ -38,11 +38,8 @@ import { uploadAccountLogo, removeAccountLogoFromStorage } from "@/services/acco
 import { uploadAccountContract, removeAccountContractFromStorage } from "@/services/account-contract-storage";
 import { getSupabase } from "@/services/base";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
-import {
-  confirmDespiteDuplicateWarning,
-  findDuplicateAccountHints,
-  formatAccountDuplicateLines,
-} from "@/lib/duplicate-create-warnings";
+import { findDuplicateAccountHints, formatAccountDuplicateLines } from "@/lib/duplicate-create-warnings";
+import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
@@ -139,6 +136,7 @@ export default function AccountsPage() {
   const [form, setForm] = useState(emptyForm);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   useProfile();
+  const { confirmDespiteDuplicates } = useDuplicateConfirm();
 
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [totalJobs, setTotalJobs] = useState(0);
@@ -180,7 +178,7 @@ export default function AccountsPage() {
       companyName: form.company_name.trim(),
       email: form.email.trim(),
     });
-    if (!confirmDespiteDuplicateWarning(formatAccountDuplicateLines(accHints))) return;
+    if (!(await confirmDespiteDuplicates(formatAccountDuplicateLines(accHints)))) return;
 
     setSubmitting(true);
     try {
