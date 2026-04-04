@@ -192,7 +192,7 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
           </>
         ) : null}
         {" "}
-        Record Payment on the job reduces amount due only; this line stays contract gross. Add extra payout on the job increases this gross.
+        Payouts on the job reduce amount due only; extra payout on the job increases this line.
       </p>
       <div className="flex items-center gap-1.5 flex-wrap pt-1">
         <Button
@@ -1963,8 +1963,6 @@ export default function JobDetailPage() {
   const partnerLegacyCostAsPayoutRows = partnerPayments.filter(
     (p) => p.type === "partner" && isLegacyMisclassifiedPartnerPayment(p),
   );
-  const partnerFinanceHistoryVisible =
-    partnerPayoutLedgerRows.length > 0 || partnerLegacyCostAsPayoutRows.length > 0;
   const customerDepositPaid = customerPayments
     .filter((p) => p.type === "customer_deposit")
     .reduce((s, p) => s + Number(p.amount), 0);
@@ -2951,9 +2949,11 @@ export default function JobDetailPage() {
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client (cash in)</p>
                   <div className="text-right min-w-0">
                     <p className="text-[10px] text-text-tertiary">Total job value</p>
-                    <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(billableRevenue)}</p>
-                    <p className="text-[10px] text-text-tertiary leading-snug mt-0.5 max-w-[14rem] ml-auto">
-                      Extra charge and CCZ/parking increase this total and the linked invoice amount. Record Payment is money in: negative in history, reduces amount due and invoice balance due — not invoice total.
+                    <p
+                      className="text-base font-bold tabular-nums text-text-primary"
+                      title="Extra charge / CCZ / parking change this total and the invoice. Record Payment only reduces amount due."
+                    >
+                      {formatCurrency(billableRevenue)}
                     </p>
                   </div>
                 </div>
@@ -3080,9 +3080,6 @@ export default function JobDetailPage() {
                   {customerPayments.length > 0 && (
                     <div className="mt-1 space-y-1">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
-                      <p className="text-[10px] text-text-tertiary leading-snug">
-                        Record Payment = cash received: shown as negative (e.g. −£50). Reduces amount due and linked invoice balance due; does not change total job value or invoice total. Extra charge, CCZ, and parking are positive revenue lines above.
-                      </p>
                       {customerPayments.map((p) => {
                         const ledgerTag = parseJobPaymentLedgerLabel(p.note);
                         const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
@@ -3140,11 +3137,6 @@ export default function JobDetailPage() {
                       {amountDue > 0 ? formatCurrency(amountDue) : formatCurrency(0)}
                     </span>
                   </div>
-                  {amountDue <= 0 && billableRevenue > 0 ? (
-                    <p className="text-[10px] text-text-tertiary text-right -mt-0.5">
-                      Total job value {formatCurrency(billableRevenue)} · invoice total unchanged by payments
-                    </p>
-                  ) : null}
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <Button
@@ -3180,9 +3172,11 @@ export default function JobDetailPage() {
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Cash Out</p>
                   <div className="text-right min-w-0">
                     <p className="text-[10px] text-text-tertiary">Total to pay</p>
-                    <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(partnerCap)}</p>
-                    <p className="text-[10px] text-text-tertiary leading-snug mt-0.5 max-w-[14rem] ml-auto">
-                      Record Payment = cash sent: negative in history (e.g. −£10), reduces amount due only. Total to pay and self-bill job line stay at contract gross. Add extra payout = positive cost: raises partner cost, total to pay, self-bill gross, and amount due — not a payment row.
+                    <p
+                      className="text-base font-bold tabular-nums text-text-primary"
+                      title="Record Payment reduces amount due only. Add extra payout increases this total and self-bill."
+                    >
+                      {formatCurrency(partnerCap)}
                     </p>
                   </div>
                 </div>
@@ -3196,21 +3190,18 @@ export default function JobDetailPage() {
                     </div>
                     <span className="text-sm font-semibold tabular-nums">{formatCurrency(partnerCap)}</span>
                   </div>
-                  <p className="text-[10px] text-text-tertiary leading-snug">
-                    Extra payout increases the Partner cost / Total to pay above (positive cost) and syncs self-bill — it does not add a row here. Only Record Payment adds negative cash-out lines below.
-                  </p>
-                  {/* Partner payment history (transfers) + legacy cost rows mis-filed as payouts */}
-                  {partnerFinanceHistoryVisible && (
+                  {/* Partner payment history: always show header when there is a partner cost so empty state is visible */}
+                  {partnerCap > 0.02 && (
                     <div className="mt-1 space-y-2">
-                      {partnerPayoutLedgerRows.length > 0 ? (
-                        <div className="space-y-1">
-                          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
-                          <p className="text-[10px] text-text-tertiary leading-snug">
-                            Record Payment = money already paid out: shown as negative (e.g. −£10). Reduces amount due only — not Total to pay, not self-bill gross for this job.
-                          </p>
-                          {partnerPayoutLedgerRows.map((p) => {
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
+                        {partnerPayoutLedgerRows.length === 0 && partnerLegacyCostAsPayoutRows.length === 0 ? (
+                          <p className="text-[10px] text-text-tertiary pl-0.5">No payouts recorded yet.</p>
+                        ) : null}
+                        {partnerPayoutLedgerRows.map((p) => {
                             const ledgerTag = parseJobPaymentLedgerLabel(p.note);
                             const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
+                            const primaryLabel = ledgerTag ?? "Partner payout";
                             return (
                               <div
                                 key={p.id}
@@ -3218,9 +3209,7 @@ export default function JobDetailPage() {
                               >
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-1.5 flex-wrap">
-                                    {ledgerTag ? (
-                                      <span className="text-[10px] font-semibold text-text-tertiary uppercase">{ledgerTag}</span>
-                                    ) : null}
+                                    <span className="text-[10px] font-semibold text-text-tertiary uppercase">{primaryLabel}</span>
                                     <Badge variant="outline" size="sm">
                                       Paid
                                     </Badge>
@@ -3244,6 +3233,9 @@ export default function JobDetailPage() {
                                       })}
                                     </span>
                                   </div>
+                                  {ledgerTag ? (
+                                    <p className="text-[10px] text-text-tertiary truncate pl-0.5">Cash out</p>
+                                  ) : null}
                                   {p.bank_reference && (
                                     <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>
                                   )}
@@ -3252,7 +3244,7 @@ export default function JobDetailPage() {
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <span
                                     className="text-sm font-semibold tabular-nums text-sky-700 dark:text-sky-300"
-                                    title="Reduces amount due only; does not lower Total to pay or self-bill gross"
+                                    title="Reduces amount due only"
                                   >
                                     {formatCurrencyPrecise(-Number(p.amount))}
                                   </span>
@@ -3270,15 +3262,11 @@ export default function JobDetailPage() {
                               </div>
                             );
                           })}
-                        </div>
-                      ) : null}
+                      </div>
                       {partnerLegacyCostAsPayoutRows.length > 0 ? (
                         <div className="space-y-1">
                           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">
                             Cost adjustment (legacy)
-                          </p>
-                          <p className="text-[10px] text-text-tertiary leading-snug">
-                            Legacy: extra payout was saved as a partner row. Shown as positive cost; excluded from amount due. New extra cost should use Add extra payout.
                           </p>
                           {partnerLegacyCostAsPayoutRows.map((p) => {
                             const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
@@ -3338,11 +3326,6 @@ export default function JobDetailPage() {
                       </span>
                     </div>
                   )}
-                  {partnerCap > 0 && partnerPayRemaining <= 0 ? (
-                    <p className="text-[10px] text-text-tertiary text-right -mt-0.5">
-                      Total to pay {formatCurrency(partnerCap)} · self-bill gross unchanged by payouts recorded here
-                    </p>
-                  ) : null}
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <Button
