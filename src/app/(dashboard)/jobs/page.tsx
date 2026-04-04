@@ -24,7 +24,14 @@ import {
 import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listJobs, createJob, updateJob, getJob, fetchAllJobsFinancialKpiRows } from "@/services/jobs";
+import {
+  listJobs,
+  createJob,
+  updateJob,
+  getJob,
+  fetchAllJobsFinancialKpiRows,
+  JOB_LIST_ALL_TAB_STATUSES,
+} from "@/services/jobs";
 import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
 import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
@@ -357,7 +364,8 @@ function JobsPageContent() {
         supabase.from("jobs").select("*", { count: "exact", head: true }).not("deleted_at", "is", null),
       ]);
       const archivedCount = archivedHead.error ? 0 : archivedHead.count ?? 0;
-      setTabCounts({ ...counts, archived: archivedCount });
+      const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
+      setTabCounts({ ...counts, all: allTabCount, archived: archivedCount });
       const pipelineRows = rows.filter((r) => r.status !== "cancelled");
       const ticketSum = pipelineRows.reduce((s, r) => s + jobBillableRevenue(r), 0);
       setTotalRevenue(ticketSum);

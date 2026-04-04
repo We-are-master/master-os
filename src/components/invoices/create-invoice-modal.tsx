@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import type { InvoiceStatus, Job, Quote } from "@/types/database";
 import type { CreateInvoiceInput } from "@/services/invoices";
 import { getClient } from "@/services/clients";
-import { listJobs } from "@/services/jobs";
+import { listJobs, JOB_LIST_ALL_TAB_STATUSES } from "@/services/jobs";
 import { listQuotes } from "@/services/quotes";
 import { getInvoiceDueDateIsoForJobReference } from "@/services/invoice-due-date";
 import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
@@ -88,7 +88,12 @@ export function CreateInvoiceModal({
     try {
       const s = q.trim();
       const [jobsRes, quotesRes] = await Promise.all([
-        listJobs({ search: s || undefined, page: 1, pageSize: s ? 16 : 12, status: "all" }),
+        listJobs({
+          search: s || undefined,
+          page: 1,
+          pageSize: s ? 16 : 12,
+          statusIn: [...JOB_LIST_ALL_TAB_STATUSES, "cancelled"],
+        }),
         listQuotes({ search: s || undefined, page: 1, pageSize: s ? 16 : 12 }),
       ]);
       const hits: RefHit[] = [

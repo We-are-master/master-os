@@ -21,12 +21,12 @@ import {
   FileText, Send, Calendar, MapPin, User, Briefcase, ArrowRight,
   CheckCircle2, XCircle, CreditCard, Building2, Hash, TrendingUp,
   Banknote, RotateCcw, Loader, Lock, ChevronDown, ChevronRight,
+  ShieldAlert,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Invoice, InvoiceCollectionStage, InvoiceStatus, Job } from "@/types/database";
-import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listInvoices, createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
+import type { Invoice, InvoiceCollectionStage, InvoiceStatus, Job, JobStatus } from "@/types/database";
+import { createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
 import { COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
@@ -37,20 +37,22 @@ import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
 import { jobBillableRevenue } from "@/lib/job-financials";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
-import { applyInvoicePeriodBoundsToQuery, getStatusCounts, getSupabase, type ListParams } from "@/services/base";
+import { applyInvoicePeriodBoundsToQuery, getSupabase } from "@/services/base";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
-import {
-  getFinanceListInvoicePeriodFilter,
-  getFinancePeriodClosedBounds,
-  formatFinancePeriodKpiDescription,
-} from "@/lib/finance-period";
+import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { useProfile } from "@/hooks/use-profile";
 import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
+import {
+  INVOICE_PIPELINE_TAB_ORDER,
+  invoicePipelineTab,
+  type InvoicePipelineTab,
+} from "@/lib/invoice-pipeline";
+import { weekPeriodHelpText } from "@/lib/self-bill-period";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   draft: { label: "Draft", variant: "default" },
@@ -59,9 +61,66 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   partially_paid: { label: "Partial", variant: "info" },
   overdue: { label: "Overdue", variant: "danger" },
   cancelled: { label: "Cancelled", variant: "default" },
+  audit_required: { label: "Audit required", variant: "danger" },
 };
 
-const INVOICE_STATUSES: InvoiceStatus[] = ["draft", "paid", "pending", "partially_paid", "overdue", "cancelled"];
+const PAGE_SIZE = 10;
+
+async function fetchJobsByReferences(refs: string[]): Promise<Record<string, { status: JobStatus }>> {
+  const map: Record<string, { status: JobStatus }> = {};
+  if (refs.length === 0) return map;
+  const supabase = getSupabase();
+  const CHUNK = 100;
+  for (let i = 0; i < refs.length; i += CHUNK) {
+    const chunk = refs.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from("jobs")
+      .select("reference, status")
+      .in("reference", chunk)
+      .is("deleted_at", null);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const r = row as { reference?: string | null; status?: JobStatus };
+      const ref = (r.reference ?? "").trim();
+      if (ref && r.status) map[ref] = { status: r.status };
+    }
+  }
+  return map;
+}
+
+function computeInvoiceKpis(all: Invoice[]) {
+  const nonCancelled = all.filter((r) => r.status !== "cancelled");
+  const totalInvoiced = nonCancelled.reduce((sum, r) => sum + Number(r.amount), 0);
+  const amountReceived = nonCancelled.reduce((sum, r) => sum + invoiceAmountPaid(r), 0);
+  const overdue = all.filter((r) => r.status === "overdue");
+  const overdueAmount = overdue.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
+  const openStatuses = new Set<Invoice["status"]>(["pending", "partially_paid", "overdue", "draft", "audit_required"]);
+  const openInvoices = all.filter((r) => openStatuses.has(r.status));
+  const balanceDueOpen = openInvoices.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
+  const paidWithDates = all.filter((r) => r.status === "paid" && r.paid_date);
+  let avgCollectionDays: number | null = null;
+  if (paidWithDates.length > 0) {
+    let sumDays = 0;
+    let n = 0;
+    for (const r of paidWithDates) {
+      const c = new Date(invoiceEffectiveDateValue(r)).getTime();
+      const p = new Date(r.paid_date!).getTime();
+      if (!Number.isFinite(c) || !Number.isFinite(p)) continue;
+      sumDays += Math.max(0, (p - c) / 864e5);
+      n += 1;
+    }
+    if (n > 0) avgCollectionDays = sumDays / n;
+  }
+  return {
+    totalInvoiced,
+    amountReceived,
+    balanceDueOpen,
+    openInvoiceCount: openInvoices.length,
+    overdueAmount,
+    overdueCount: overdue.length,
+    avgCollectionDays,
+  };
+}
 
 const COLLECTION_STAGE_OPTIONS: InvoiceCollectionStage[] = [
   "awaiting_deposit",
@@ -121,42 +180,37 @@ interface LinkedJob {
   completed_date?: string;
 }
 
+/** Compare fields job→invoice sync may change — avoids a loop when parent replaces `invoice` after an identical refetch. */
+function invoiceDrawerSyncSignature(inv: Invoice): string {
+  const ap = Math.round(Number(inv.amount_paid ?? 0) * 100);
+  const amt = Math.round(Number(inv.amount ?? 0) * 100);
+  return [
+    inv.status,
+    amt,
+    ap,
+    inv.paid_date ?? "",
+    inv.last_payment_date ?? "",
+    inv.collection_stage,
+    inv.collection_stage_locked ? "1" : "0",
+  ].join("|");
+}
+
 export default function InvoicesPage() {
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
 
-  const invoiceListParams = useMemo(
-    (): Partial<ListParams> => getFinanceListInvoicePeriodFilter(periodMode, weekAnchor, rangeFrom, rangeTo),
-    [periodMode, weekAnchor, rangeFrom, rangeTo]
-  );
-
-  const {
-    data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh,
-  } = useSupabaseList<Invoice>({
-    fetcher: listInvoices,
-    realtimeTable: "invoices",
-    listParams: invoiceListParams,
-    initialStatus: "pending",
-  });
+  const [pipelineTab, setPipelineTab] = useState<InvoicePipelineTab>("ongoing");
+  const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
+  const [jobsByRef, setJobsByRef] = useState<Record<string, { status: JobStatus }>>({});
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [tabCounts, setTabCounts] = useState<Record<string, number>>({
-    all: 0, draft: 0, paid: 0, pending: 0, partially_paid: 0, overdue: 0, cancelled: 0,
-  });
-  const [kpis, setKpis] = useState({
-    totalInvoiced: 0,
-    amountReceived: 0,
-    /** Sum of balance due on pending / partial / overdue / draft in the selected period. */
-    balanceDueOpen: 0,
-    openInvoiceCount: 0,
-    overdueAmount: 0,
-    overdueCount: 0,
-    avgCollectionDays: null as number | null,
-  });
   const [accountNameById, setAccountNameById] = useState<Record<string, string>>({});
   /** `job_reference` → `accounts.id` via job.client_id → clients.source_account_id */
   const [jobRefToSourceAccountId, setJobRefToSourceAccountId] = useState<Record<string, string>>({});
@@ -164,37 +218,14 @@ export default function InvoicesPage() {
   const [clientNameToSourceAccountId, setClientNameToSourceAccountId] = useState<Record<string, string>>({});
   const { profile } = useProfile();
 
-  const loadCounts = useCallback(async () => {
-    try {
-      const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo);
-      const utc =
-        bounds != null ? localYmdBoundsToUtcIso(bounds.from, bounds.to) : null;
-      const counts = await getStatusCounts(
-        "invoices",
-        INVOICE_STATUSES,
-        "status",
-        bounds && utc
-          ? {
-              invoicePeriodBounds: {
-                from: bounds.from,
-                to: bounds.to,
-                startIso: utc.startIso,
-                endIso: utc.endIso,
-              },
-            }
-          : undefined
-      );
-      setTabCounts(counts);
-    } catch { /* cosmetic */ }
-  }, [periodMode, weekAnchor, rangeFrom, rangeTo]);
-
-  const loadKpis = useCallback(async () => {
+  const loadPageData = useCallback(async () => {
+    setLoading(true);
     try {
       const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo);
       const supabase = getSupabase();
-      const pageSize = 500;
+      const chunkSize = 500;
       const all: Invoice[] = [];
-      for (let from = 0; from < 100_000; from += pageSize) {
+      for (let from = 0; from < 100_000; from += chunkSize) {
         let q = supabase.from("invoices").select("*").is("deleted_at", null);
         if (bounds) {
           const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
@@ -205,62 +236,99 @@ export default function InvoicesPage() {
             endIso,
           });
         }
-        const { data: chunk, error } = await q.order("created_at", { ascending: false }).range(from, from + pageSize - 1);
+        const { data: chunk, error } = await q.order("created_at", { ascending: false }).range(from, from + chunkSize - 1);
         if (error) throw error;
         const rows = (chunk ?? []) as Invoice[];
         if (rows.length === 0) break;
         all.push(...rows);
-        if (rows.length < pageSize) break;
+        if (rows.length < chunkSize) break;
       }
-
-      const nonCancelled = all.filter((r) => r.status !== "cancelled");
-      const totalInvoiced = nonCancelled.reduce((sum, r) => sum + Number(r.amount), 0);
-      const amountReceived = nonCancelled.reduce((sum, r) => sum + invoiceAmountPaid(r), 0);
-      const overdue = all.filter((r) => r.status === "overdue");
-      const overdueAmount = overdue.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
-      const openStatuses = new Set<Invoice["status"]>(["pending", "partially_paid", "overdue", "draft"]);
-      const openInvoices = all.filter((r) => openStatuses.has(r.status));
-      const balanceDueOpen = openInvoices.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
-      const paidWithDates = all.filter((r) => r.status === "paid" && r.paid_date);
-      let avgCollectionDays: number | null = null;
-      if (paidWithDates.length > 0) {
-        let sumDays = 0;
-        let n = 0;
-        for (const r of paidWithDates) {
-          const c = new Date(invoiceEffectiveDateValue(r)).getTime();
-          const p = new Date(r.paid_date!).getTime();
-          if (!Number.isFinite(c) || !Number.isFinite(p)) continue;
-          sumDays += Math.max(0, (p - c) / 864e5);
-          n += 1;
-        }
-        if (n > 0) avgCollectionDays = sumDays / n;
-      }
-      setKpis({
-        totalInvoiced,
-        amountReceived,
-        balanceDueOpen,
-        openInvoiceCount: openInvoices.length,
-        overdueAmount,
-        overdueCount: overdue.length,
-        avgCollectionDays,
-      });
+      const refs = [...new Set(all.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)))];
+      const jobMap = await fetchJobsByReferences(refs);
+      setAllInvoices(all);
+      setJobsByRef(jobMap);
     } catch {
-      setKpis({
-        totalInvoiced: 0,
-        amountReceived: 0,
-        balanceDueOpen: 0,
-        openInvoiceCount: 0,
-        overdueAmount: 0,
-        overdueCount: 0,
-        avgCollectionDays: null,
-      });
+      setAllInvoices([]);
+      setJobsByRef({});
+    } finally {
+      setLoading(false);
     }
   }, [periodMode, weekAnchor, rangeFrom, rangeTo]);
 
   useEffect(() => {
-    loadCounts();
-    loadKpis();
-  }, [loadCounts, loadKpis]);
+    void loadPageData();
+  }, [loadPageData]);
+
+  useEffect(() => {
+    const supabase = getSupabase();
+    let t: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      clearTimeout(t);
+      t = setTimeout(() => void loadPageData(), 350);
+    };
+    const ch = supabase
+      .channel("invoices_finance_page")
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, schedule)
+      .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, schedule)
+      .subscribe();
+    return () => {
+      clearTimeout(t);
+      supabase.removeChannel(ch);
+    };
+  }, [loadPageData]);
+
+  const kpis = useMemo(() => computeInvoiceKpis(allInvoices), [allInvoices]);
+
+  const tabCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: allInvoices.length };
+    for (const inv of allInvoices) {
+      const ref = inv.job_reference?.trim();
+      const job = ref ? jobsByRef[ref] : undefined;
+      const tab = invoicePipelineTab(inv, job);
+      counts[tab] = (counts[tab] ?? 0) + 1;
+    }
+    return counts;
+  }, [allInvoices, jobsByRef]);
+
+  const auditQueueCount = tabCounts.audit_required ?? 0;
+  const ongoingCount = tabCounts.ongoing ?? 0;
+
+  const filteredInvoices = useMemo(() => {
+    let rows = allInvoices;
+    if (pipelineTab !== "all") {
+      rows = rows.filter((inv) => {
+        const ref = inv.job_reference?.trim();
+        const job = ref ? jobsByRef[ref] : undefined;
+        return invoicePipelineTab(inv, job) === pipelineTab;
+      });
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      rows = rows.filter(
+        (inv) =>
+          inv.reference.toLowerCase().includes(q) ||
+          inv.client_name.toLowerCase().includes(q) ||
+          (inv.job_reference ?? "").toLowerCase().includes(q),
+      );
+    }
+    return rows;
+  }, [allInvoices, jobsByRef, pipelineTab, search]);
+
+  const totalItems = filteredInvoices.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+  const pagedData = useMemo(() => {
+    const p = Math.min(page, totalPages);
+    const start = (p - 1) * PAGE_SIZE;
+    return filteredInvoices.slice(start, start + PAGE_SIZE);
+  }, [filteredInvoices, page, totalPages]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [pipelineTab, search, periodMode, weekAnchor, rangeFrom, rangeTo]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -271,7 +339,7 @@ export default function InvoicesPage() {
       const nameMap: Record<string, string> = {};
       try {
         const supabase = getSupabase();
-        const refs = [...new Set(data.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)))];
+        const refs = [...new Set(allInvoices.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)))];
         for (let i = 0; i < refs.length; i += REF_CHUNK) {
           const chunk = refs.slice(i, i + REF_CHUNK);
           const { data: jobs, error } = await supabase
@@ -308,7 +376,7 @@ export default function InvoicesPage() {
 
         const namesNeeding = [
           ...new Set(
-            data
+            allInvoices
               .filter((inv) => !inv.source_account_id?.trim() && !inv.job_reference?.trim())
               .map((inv) => inv.client_name.trim())
               .filter(Boolean),
@@ -344,11 +412,11 @@ export default function InvoicesPage() {
     return () => {
       cancelled = true;
     };
-  }, [data]);
+  }, [allInvoices]);
 
   useEffect(() => {
     const idSet = new Set<string>();
-    for (const inv of data) {
+    for (const inv of allInvoices) {
       const eid = effectiveInvoiceSourceAccountId(inv, jobRefToSourceAccountId, clientNameToSourceAccountId);
       if (eid) idSet.add(eid);
     }
@@ -377,7 +445,7 @@ export default function InvoicesPage() {
     return () => {
       cancelled = true;
     };
-  }, [data, jobRefToSourceAccountId, clientNameToSourceAccountId]);
+  }, [allInvoices, jobRefToSourceAccountId, clientNameToSourceAccountId]);
 
   const kpiPeriodDesc = useMemo(
     () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
@@ -417,9 +485,7 @@ export default function InvoicesPage() {
             await maybeCompleteAwaitingPaymentJob(supabase, jid);
           }
         }
-        refresh();
-        loadCounts();
-        loadKpis();
+        void loadPageData();
         return;
       }
 
@@ -474,13 +540,11 @@ export default function InvoicesPage() {
       if (newStatus === "paid") {
         await syncJobAfterInvoicePaidToLedger(supabase, invoice.id, "Manual");
       }
-      refresh();
-      loadCounts();
-      loadKpis();
+      void loadPageData();
     } catch {
       toast.error("Failed to update invoice");
     }
-  }, [refresh, loadCounts, loadKpis, profile?.id, profile?.full_name]);
+  }, [loadPageData, profile?.id, profile?.full_name]);
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
@@ -500,9 +564,7 @@ export default function InvoicesPage() {
         await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
         toast.success(`${ids.length} invoice(s) set to pending`);
         setSelectedIds(new Set());
-        refresh();
-        loadCounts();
-        loadKpis();
+        void loadPageData();
         return;
       }
       if (newStatus === "paid") {
@@ -521,9 +583,7 @@ export default function InvoicesPage() {
         await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
         toast.success(`${ids.length} invoices marked paid`);
         setSelectedIds(new Set());
-        refresh();
-        loadCounts();
-        loadKpis();
+        void loadPageData();
         return;
       }
       const updates: Record<string, unknown> = { status: newStatus };
@@ -532,9 +592,7 @@ export default function InvoicesPage() {
       await logBulkAction("invoice", ids, "status_changed", "status", newStatus, profile?.id, profile?.full_name);
       toast.success(`${ids.length} invoices updated to ${newStatus}`);
       setSelectedIds(new Set());
-      refresh();
-      loadCounts();
-      loadKpis();
+      void loadPageData();
     } catch {
       toast.error("Failed to update invoices");
     }
@@ -553,11 +611,9 @@ export default function InvoicesPage() {
       });
       setCreateOpen(false);
       toast.success("Invoice created successfully");
-      refresh();
-      loadCounts();
-      loadKpis();
+      void loadPageData();
     } catch { toast.error("Failed to create invoice"); }
-  }, [refresh, loadCounts, loadKpis, profile?.id, profile?.full_name]);
+  }, [loadPageData, profile?.id, profile?.full_name]);
 
   const handleExportCSV = useCallback(() => {
     const headers = [
@@ -573,7 +629,7 @@ export default function InvoicesPage() {
       "Paid Date",
       "Created At",
     ];
-    const rows = data.map((inv) => {
+    const rows = filteredInvoices.map((inv) => {
       const accId = effectiveInvoiceSourceAccountId(inv, jobRefToSourceAccountId, clientNameToSourceAccountId);
       const accountLabel = accId ? (accountNameById[accId] ?? "") : "";
       return [
@@ -601,20 +657,32 @@ export default function InvoicesPage() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     toast.success("CSV exported successfully");
-  }, [data, accountNameById, jobRefToSourceAccountId, clientNameToSourceAccountId]);
+  }, [filteredInvoices, accountNameById, jobRefToSourceAccountId, clientNameToSourceAccountId]);
 
-  const tabs = [
-    { id: "all", label: "All", count: tabCounts.all },
-    { id: "draft", label: "Draft", count: tabCounts.draft ?? 0 },
-    {
-      id: "pending",
-      label: "Pending",
-      count: (tabCounts.pending ?? 0) + (tabCounts.partially_paid ?? 0),
-    },
-    { id: "overdue", label: "Overdue", count: tabCounts.overdue },
-    { id: "paid", label: "Paid", count: tabCounts.paid },
-    { id: "cancelled", label: "Cancelled", count: tabCounts.cancelled },
-  ];
+  const pipelineTabs = useMemo(
+    () =>
+      INVOICE_PIPELINE_TAB_ORDER.map((id) => ({
+        id,
+        label:
+          id === "audit_required"
+            ? "Audit required"
+            : id === "ongoing"
+              ? "Ongoing"
+              : id === "review_approve"
+                ? "Review & approve"
+                : id === "awaiting_payment"
+                  ? "Awaiting payment"
+                  : id === "overdue"
+                    ? "Overdue"
+                    : id === "paid"
+                      ? "Paid"
+                      : id === "all"
+                        ? "All"
+                        : "Cancelled",
+        count: tabCounts[id] ?? 0,
+      })),
+    [tabCounts],
+  );
 
   const columns: Column<Invoice>[] = [
     {
@@ -743,25 +811,30 @@ export default function InvoicesPage() {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Invoices" subtitle="Track and manage client invoices and collections.">
+        <PageHeader
+          title="Invoices"
+          subtitle={`Client collection aligned with job lifecycle. Weekly buckets like self-billing; tabs follow open job → completed (review) → awaiting payment → overdue → paid. ${weekPeriodHelpText()}`}
+        >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>Export CSV</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>Create Invoice</Button>
         </PageHeader>
 
-        <FinanceWeekRangeBar
-          mode={periodMode}
-          onModeChange={setPeriodMode}
-          weekAnchor={weekAnchor}
-          onWeekAnchorChange={setWeekAnchor}
-          rangeFrom={rangeFrom}
-          rangeTo={rangeTo}
-          onRangeFromChange={setRangeFrom}
-          onRangeToChange={setRangeTo}
-        />
+        <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
+          <FinanceWeekRangeBar
+            mode={periodMode}
+            onModeChange={setPeriodMode}
+            weekAnchor={weekAnchor}
+            onWeekAnchorChange={setWeekAnchor}
+            rangeFrom={rangeFrom}
+            rangeTo={rangeTo}
+            onRangeFromChange={setRangeFrom}
+            onRangeToChange={setRangeTo}
+          />
+        </div>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard
-            title="Total Invoiced"
+            title="Total invoiced"
             value={kpis.totalInvoiced}
             format="currency"
             description={`Invoice date (billing week or created) · ${kpiPeriodDesc}`}
@@ -769,47 +842,61 @@ export default function InvoicesPage() {
             accent="primary"
           />
           <KpiCard
-            title="Amount Received"
-            value={kpis.amountReceived}
-            format="currency"
-            description={`Amount paid on invoices in this period · ${kpiPeriodDesc}`}
-            icon={Banknote}
-            accent="emerald"
+            title="Ongoing"
+            value={ongoingCount}
+            format="number"
+            description={`Jobs still in pipeline (tab) · ${kpiPeriodDesc}`}
+            icon={Clock}
+            accent="amber"
           />
           <KpiCard
             title="Balance due (open)"
             value={kpis.balanceDueOpen}
             format="currency"
-            description={`${kpis.openInvoiceCount} open invoices · ${kpis.overdueCount} overdue (${formatCurrency(kpis.overdueAmount)}) · ${kpiPeriodDesc}`}
+            description={`${kpis.openInvoiceCount} open · ${kpis.overdueCount} overdue (${formatCurrency(kpis.overdueAmount)}) · ${kpiPeriodDesc}`}
             icon={AlertTriangle}
-            accent="amber"
+            accent="purple"
           />
           <KpiCard
-            title="Avg Collection Time"
-            value={kpis.avgCollectionDays != null ? `${Math.round(kpis.avgCollectionDays)} days` : "—"}
-            format="none"
+            title="Paid / avg days"
+            value={tabCounts.paid ?? 0}
+            format="number"
             description={
               kpis.avgCollectionDays != null
-                ? `Invoice date → paid (in period) · ${kpiPeriodDesc}`
-                : `No paid invoices in period · ${kpiPeriodDesc}`
+                ? `Paid count in period · ~${Math.round(kpis.avgCollectionDays)}d invoice → paid · ${kpiPeriodDesc}`
+                : `Paid in period · ${kpiPeriodDesc}`
             }
-            icon={Clock}
-            accent="blue"
+            icon={CheckCircle2}
+            accent="emerald"
           />
         </StaggerContainer>
 
+        <div className="rounded-xl border border-border-light bg-amber-50/50 dark:bg-amber-950/20 px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
+          <div className="flex items-center gap-2 text-sm text-text-secondary">
+            <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0" />
+            <span>
+              <strong className="text-text-primary">Audit required</strong> when a client contests an invoice (mark via bulk or set status).{" "}
+              <span className="text-text-tertiary">({auditQueueCount} in period)</span>
+            </span>
+          </div>
+        </div>
+
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex items-center justify-between mb-4">
-            <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
-            <div className="flex items-center gap-2">
-              <SearchInput placeholder="Search invoices..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+            <Tabs
+              tabs={pipelineTabs}
+              activeTab={pipelineTab}
+              onChange={(id) => setPipelineTab(id as InvoicePipelineTab)}
+            />
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <SearchInput placeholder="Search ref, client, job…" className="w-52 max-w-full" value={search} onChange={(e) => setSearch(e.target.value)} />
               <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
             </div>
           </div>
 
           <DataTable
             columns={columns}
-            data={data}
+            data={pagedData}
             getRowId={(item) => item.id}
             page={page}
             totalPages={totalPages}
@@ -821,8 +908,9 @@ export default function InvoicesPage() {
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
             bulkActions={
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
+                <BulkBtn label="Audit required" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
                 <BulkBtn label="Mark Paid" onClick={() => handleBulkStatusChange("paid")} variant="success" />
                 <BulkBtn label="Mark Pending" onClick={() => handleBulkStatusChange("pending")} variant="warning" />
                 <BulkBtn label="Mark Overdue" onClick={() => handleBulkStatusChange("overdue")} variant="danger" />
@@ -839,7 +927,7 @@ export default function InvoicesPage() {
         onStatusChange={handleStatusChange}
         onInvoiceUpdated={(inv) => {
           setSelectedInvoice(inv);
-          refresh();
+          void loadPageData();
         }}
       />
 
@@ -943,7 +1031,14 @@ function InvoiceDetailDrawer({
             try {
               await syncInvoicesFromJobCustomerPayments(supabase, jid);
               const { data: freshInv } = await supabase.from("invoices").select("*").eq("id", invoice.id).maybeSingle();
-              if (!cancelled && freshInv) onInvoiceUpdatedRef.current?.(freshInv as Invoice);
+              const fresh = freshInv as Invoice | null;
+              if (
+                !cancelled &&
+                fresh &&
+                invoiceDrawerSyncSignature(fresh) !== invoiceDrawerSyncSignature(invoice)
+              ) {
+                onInvoiceUpdatedRef.current?.(fresh);
+              }
             } catch (e) {
               console.error("Invoice drawer: sync from job payments", e);
             }
@@ -1064,6 +1159,7 @@ function InvoiceDetailDrawer({
     invoice.status !== "paid" &&
     invoice.status !== "cancelled" &&
     invoice.status !== "draft" &&
+    invoice.status !== "audit_required" &&
     new Date(invoice.due_date) < new Date();
   const daysUntilDue = Math.ceil((new Date(invoice.due_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   const hasStripeLink = !!stripeState.linkUrl;
@@ -1083,7 +1179,8 @@ function InvoiceDetailDrawer({
     effectiveBalance > 0.02 &&
     invoice.status !== "paid" &&
     invoice.status !== "cancelled" &&
-    invoice.status !== "draft";
+    invoice.status !== "draft" &&
+    invoice.status !== "audit_required";
 
   const drawerTabs = [
     { id: "details", label: "Details" },
@@ -1115,6 +1212,7 @@ function InvoiceDetailDrawer({
             <div className={`p-4 rounded-xl border ${
               invoice.status === "paid" ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200" :
               invoice.status === "partially_paid" ? "bg-sky-50 dark:bg-sky-950/25 border-sky-200" :
+              invoice.status === "audit_required" ? "bg-red-50 dark:bg-red-950/30 border-red-200" :
               invoice.status === "overdue" || isOverdue ? "bg-red-50 dark:bg-red-950/30 border-red-200" :
               invoice.status === "cancelled" ? "bg-surface-hover border-border" :
               invoice.status === "draft" ? "bg-slate-50 dark:bg-slate-950/30 border-slate-200 dark:border-slate-800" :
@@ -1125,6 +1223,7 @@ function InvoiceDetailDrawer({
                   <div className={`h-10 w-10 shrink-0 rounded-xl flex items-center justify-center ${
                     invoice.status === "paid" ? "bg-emerald-100" :
                     invoice.status === "partially_paid" ? "bg-sky-100 dark:bg-sky-900/40" :
+                    invoice.status === "audit_required" ? "bg-red-100" :
                     invoice.status === "overdue" || isOverdue ? "bg-red-100" :
                     invoice.status === "cancelled" ? "bg-surface-tertiary" :
                     invoice.status === "draft" ? "bg-slate-100 dark:bg-slate-900/50" :
@@ -1132,6 +1231,7 @@ function InvoiceDetailDrawer({
                   }`}>
                     {invoice.status === "paid" ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> :
                      invoice.status === "partially_paid" ? <Banknote className="h-5 w-5 text-sky-600" /> :
+                     invoice.status === "audit_required" ? <ShieldAlert className="h-5 w-5 text-red-600" /> :
                      invoice.status === "overdue" || isOverdue ? <AlertTriangle className="h-5 w-5 text-red-600" /> :
                      invoice.status === "cancelled" ? <XCircle className="h-5 w-5 text-text-secondary" /> :
                      invoice.status === "draft" ? <FileText className="h-5 w-5 text-slate-600" /> :
@@ -1141,6 +1241,7 @@ function InvoiceDetailDrawer({
                     <Badge variant={config.variant} dot size="md">{config.label}</Badge>
                     <p className="text-xs text-text-tertiary mt-0.5">
                       {invoice.status === "paid" && invoice.paid_date ? `Paid on ${formatDate(invoice.paid_date)}` :
+                       invoice.status === "audit_required" ? "Client dispute — review notes and correspondence, then clear audit when ready." :
                        invoice.status === "partially_paid" || showBalanceHero ? `${formatCurrency(effectivePaid)} received · ${formatCurrency(effectiveBalance)} due` :
                        isOverdue ? `Overdue by ${Math.abs(daysUntilDue)} days` :
                        invoice.status === "cancelled"
@@ -1164,40 +1265,7 @@ function InvoiceDetailDrawer({
               </div>
             </div>
 
-            {linkedJob && (
-              <div className="rounded-xl border border-primary/20 bg-primary/[0.06] dark:bg-primary/10 p-4 space-y-3 shadow-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-primary">Linked job · sales &amp; costs</p>
-                  <span className="text-[10px] font-mono text-text-tertiary">{linkedJob.reference}</span>
-                </div>
-                <p className="text-[11px] text-text-secondary leading-relaxed">
-                  Customer billable (ticket + extras) and what you pay the partner — same basis as the job finance card.
-                </p>
-                <div className="rounded-lg bg-card/80 dark:bg-card/40 border border-border-light divide-y divide-border-light overflow-hidden">
-                  <div className="flex justify-between items-center px-3 py-2.5 text-sm">
-                    <span className="text-text-secondary">Customer total (ticket + extras)</span>
-                    <span className="font-semibold text-text-primary tabular-nums">{formatCurrency(linkedJobCustomerTotal)}</span>
-                  </div>
-                  <div className="flex justify-between items-center px-3 py-2.5 text-sm">
-                    <span className="text-text-secondary">Partner cost</span>
-                    <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.partner_cost)}</span>
-                  </div>
-                  <div className="flex justify-between items-center px-3 py-2.5 text-sm">
-                    <span className="text-text-secondary">Materials</span>
-                    <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.materials_cost)}</span>
-                  </div>
-                  <div className="flex justify-between items-center px-3 py-2.5 text-sm bg-surface-hover/50">
-                    <span className="font-semibold text-text-primary">Gross margin</span>
-                    <span className={`font-bold tabular-nums ${linkedJobMarginPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                      {formatCurrency(linkedJobMarginAmount)}{" "}
-                      <span className="text-xs font-semibold">({linkedJobMarginPct.toFixed(1)}%)</span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Invoice Info */}
+            {/* Metadata directly under amount / status banner */}
             <div className="grid grid-cols-2 gap-4">
               <InfoRow icon={Hash} label="Reference" value={invoice.reference} />
               <InfoRow icon={Building2} label="Client" value={invoice.client_name} />
@@ -1288,8 +1356,18 @@ function InvoiceDetailDrawer({
               </div>
             </div>
 
-            {/* Actions */}
+            {/* Status actions — below invoice · customer collections */}
             <div className="flex flex-wrap gap-2 pt-1">
+              {invoice.status === "audit_required" && (
+                <>
+                  <Button size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
+                    Clear audit (pending)
+                  </Button>
+                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>
+                    Cancel invoice
+                  </Button>
+                </>
+              )}
               {invoice.status === "draft" && (
                 <>
                   <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
@@ -1332,7 +1410,7 @@ function InvoiceDetailDrawer({
             {invoice.job_reference &&
               onInvoiceUpdated &&
               (invoice.status === "pending" || invoice.status === "partially_paid" || invoice.status === "overdue") && (
-              <div className="rounded-xl border border-border bg-surface-hover/80 p-4 space-y-3 mt-2">
+              <div className="rounded-xl border border-border bg-surface-hover/80 p-4 space-y-3">
                 <div>
                   <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Record partial payment</p>
                   <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
@@ -1530,7 +1608,10 @@ function InvoiceDetailDrawer({
 
             {/* Generate / Actions */}
             <div className="pt-4 border-t border-border-light space-y-3">
-              {!hasStripeLink && invoice.status !== "paid" && invoice.status !== "cancelled" && (
+              {!hasStripeLink &&
+                invoice.status !== "paid" &&
+                invoice.status !== "cancelled" &&
+                invoice.status !== "audit_required" && (
                 <Button
                   className="w-full"
                   icon={generatingLink ? <Loader className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
@@ -1614,6 +1695,37 @@ function InvoiceDetailDrawer({
                     <Progress value={linkedJob.progress} size="sm" color={linkedJob.progress === 100 ? "emerald" : "primary"} className="flex-1" />
                     <span className="text-xs font-medium text-text-tertiary">{linkedJob.progress}%</span>
                     <span className="text-[10px] text-text-tertiary">Phase {Math.min(linkedJob.current_phase, 2)}/{Math.min(linkedJob.total_phases, 2)}</span>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-primary/20 bg-primary/[0.06] dark:bg-primary/10 p-4 space-y-3 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-primary">Linked job · sales &amp; costs</p>
+                    <span className="text-[10px] font-mono text-text-tertiary">{linkedJob.reference}</span>
+                  </div>
+                  <p className="text-[11px] text-text-secondary leading-relaxed">
+                    Customer billable (ticket + extras) and what you pay the partner — same basis as the job finance card.
+                  </p>
+                  <div className="rounded-lg bg-card/80 dark:bg-card/40 border border-border-light divide-y divide-border-light overflow-hidden">
+                    <div className="flex justify-between items-center px-3 py-2.5 text-sm">
+                      <span className="text-text-secondary">Customer total (ticket + extras)</span>
+                      <span className="font-semibold text-text-primary tabular-nums">{formatCurrency(linkedJobCustomerTotal)}</span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2.5 text-sm">
+                      <span className="text-text-secondary">Partner cost</span>
+                      <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.partner_cost)}</span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2.5 text-sm">
+                      <span className="text-text-secondary">Materials</span>
+                      <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.materials_cost)}</span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2.5 text-sm bg-surface-hover/50">
+                      <span className="font-semibold text-text-primary">Gross margin</span>
+                      <span className={`font-bold tabular-nums ${linkedJobMarginPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                        {formatCurrency(linkedJobMarginAmount)}{" "}
+                        <span className="text-xs font-semibold">({linkedJobMarginPct.toFixed(1)}%)</span>
+                      </span>
+                    </div>
                   </div>
                 </div>
 
