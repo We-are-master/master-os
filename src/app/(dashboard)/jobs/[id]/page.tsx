@@ -745,7 +745,11 @@ export default function JobDetailPage() {
     setScopeDraft(job.scope ?? "");
   }, [job?.id, job?.scope]);
 
-  const handleJobUpdate = useCallback(async (jobId: string, updates: Partial<Job>, opts?: { notifyPartner?: boolean }): Promise<Job | undefined> => {
+  const handleJobUpdate = useCallback(async (
+    jobId: string,
+    updates: Partial<Job>,
+    opts?: { notifyPartner?: boolean; silent?: boolean; skipSelfBillSync?: boolean },
+  ): Promise<Job | undefined> => {
     const current = jobRef.current;
     try {
       let payload: Partial<Job> = { ...updates };
@@ -782,7 +786,7 @@ export default function JobDetailPage() {
           };
         }
       }
-      const updated = await updateJob(jobId, payload);
+      const updated = await updateJob(jobId, payload, { skipSelfBillSync: opts?.skipSelfBillSync });
       setJob(updated);
       if (didAutoFinalCheck) {
         toast.success("All reports validated — job moved to Final check.");
@@ -805,7 +809,7 @@ export default function JobDetailPage() {
             statusLabel: statusConfig.final_check?.label ?? "Final check",
           });
         }
-      } else {
+      } else if (!opts?.silent) {
         toast.success("Job updated");
       }
 
@@ -1649,32 +1653,21 @@ export default function JobDetailPage() {
     try {
       let current = j;
 
-      const approvedPatch = await handleJobUpdate(
-        current.id,
-        {
-          report_submitted: true,
-          report_submitted_at: current.report_submitted_at ?? new Date().toISOString(),
-          internal_report_approved: true,
-          internal_invoice_approved: true,
-        },
-        { notifyPartner: false },
-      );
-      if (approvedPatch) current = approvedPatch;
-
       const r2 = (s: string) => Math.round((parseFloat(s) || 0) * 100) / 100;
       const extrasFromForm = r2(finForm.extras_amount);
       const materialsFromForm = r2(finForm.materials_cost);
       const depositFromForm = r2(finForm.customer_deposit);
-      const withFinanceFromForm = await handleJobUpdate(
-        current.id,
-        {
-          extras_amount: extrasFromForm,
-          materials_cost: materialsFromForm,
-          customer_deposit: depositFromForm,
-        },
-        { notifyPartner: false },
-      );
-      if (withFinanceFromForm) current = withFinanceFromForm;
+
+      /** One round-trip instead of 2–3 sequential updates (each updateJob did 2× getJob + self-bill sync). */
+      const mergedApprovalPatch: Partial<Job> = {
+        report_submitted: true,
+        report_submitted_at: current.report_submitted_at ?? new Date().toISOString(),
+        internal_report_approved: true,
+        internal_invoice_approved: true,
+        extras_amount: extrasFromForm,
+        materials_cost: materialsFromForm,
+        customer_deposit: depositFromForm,
+      };
 
       if (current.job_type === "hourly") {
         const { clientRate, partnerRate } = resolveJobHourlyRates(current);
@@ -1688,14 +1681,15 @@ export default function JobDetailPage() {
           clientHourlyRate: clientRate,
           partnerHourlyRate: partnerRate,
         });
-        const customerDeposit = Number(current.customer_deposit ?? 0);
-        const customerFinal = Math.max(0, totals.clientTotal + Number(current.extras_amount ?? 0) - customerDeposit);
+        const customerFinal = Math.max(0, totals.clientTotal + extrasFromForm - depositFromForm);
         const mergedForDerived = {
           ...current,
           client_price: totals.clientTotal,
           partner_cost: totals.partnerTotal,
+          extras_amount: extrasFromForm,
+          customer_deposit: depositFromForm,
         } as Job;
-        const hourlyPatch: Partial<Job> = {
+        Object.assign(mergedApprovalPatch, {
           billed_hours: totals.billedHours,
           hourly_client_rate: clientRate,
           hourly_partner_rate: partnerRate,
@@ -1703,12 +1697,20 @@ export default function JobDetailPage() {
           partner_cost: totals.partnerTotal,
           customer_final_payment: customerFinal,
           ...deriveStoredJobFinancials(mergedForDerived),
-        };
-        const withHourly = await handleJobUpdate(current.id, hourlyPatch, { notifyPartner: false });
-        if (!withHourly) {
-          throw new Error("Could not save hourly billing totals on the job.");
-        }
-        current = withHourly;
+        });
+      }
+
+      const afterBatch = await handleJobUpdate(current.id, mergedApprovalPatch, {
+        notifyPartner: false,
+        silent: true,
+        skipSelfBillSync: true,
+      });
+      if (!afterBatch) {
+        throw new Error("Could not save approval and billing on the job.");
+      }
+      current = afterBatch;
+      if (current.self_bill_id) {
+        await syncSelfBillAfterJobChange(current);
       }
 
       const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
@@ -1774,12 +1776,17 @@ export default function JobDetailPage() {
         await syncJobAfterInvoicePaidToLedger(getSupabase(), primaryInvoiceId, "Manual");
       }
       if (primaryInvoiceId && primaryInvoiceId !== current.invoice_id) {
-        const withInvoice = await handleJobUpdate(current.id, { invoice_id: primaryInvoiceId }, { notifyPartner: false });
+        const withInvoice = await handleJobUpdate(current.id, { invoice_id: primaryInvoiceId }, {
+          notifyPartner: false,
+          silent: true,
+          skipSelfBillSync: true,
+        });
         if (withInvoice) current = withInvoice;
       }
 
       // Partner self-bill: same idea as invoice, but never block approval if the DB rejects the insert.
       // (Client invoice path above remains the source of truth for closing the job.)
+      const selfBillIdBeforePartnerSection = current.self_bill_id ?? null;
       try {
         let primarySelfBillId = current.self_bill_id ?? null;
         if (current.partner_id?.trim()) {
@@ -1807,7 +1814,11 @@ export default function JobDetailPage() {
             primarySelfBillId = selfBill.id;
           }
           if (primarySelfBillId && primarySelfBillId !== current.self_bill_id) {
-            const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: primarySelfBillId }, { notifyPartner: false });
+            const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: primarySelfBillId }, {
+              notifyPartner: false,
+              silent: true,
+              skipSelfBillSync: true,
+            });
             if (withSelfBill) current = withSelfBill;
           }
         }
@@ -1818,6 +1829,10 @@ export default function JobDetailPage() {
             ? e.message
             : "Partner self-bill could not be linked automatically; you can attach it later from Finance or this job.",
         );
+      }
+
+      if ((current.self_bill_id ?? null) !== selfBillIdBeforePartnerSection) {
+        await syncSelfBillAfterJobChange(current);
       }
 
       // Never re-derive hourly totals from the office timer here — this flow already applied modal hours + rates,
@@ -1848,7 +1863,11 @@ export default function JobDetailPage() {
         });
         const prevNotes = (current.internal_notes ?? "").trim();
         const combined = prevNotes ? `${prevNotes}\n\n${stampLine}` : stampLine;
-        const withNotes = await handleJobUpdate(current.id, { internal_notes: combined }, { notifyPartner: false });
+        const withNotes = await handleJobUpdate(current.id, { internal_notes: combined }, {
+          notifyPartner: false,
+          silent: true,
+          skipSelfBillSync: true,
+        });
         if (withNotes) current = withNotes;
       }
       await refreshJobFinance();

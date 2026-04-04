@@ -150,33 +150,49 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
   const prevNet = Number(before.net_payout) || 0;
   const prevOriginalSnapshot = before.original_net_payout;
 
-  await recomputeSelfBillTotals(selfBillId);
-
-  const sb = await getSelfBill(selfBillId);
-  if (!sb || sb.status === "paid") return;
-
-  const jobSelect1 = await supabase
-    .from("jobs")
-    .select("id, status, deleted_at, partner_cancelled_at")
-    .eq("self_bill_id", selfBillId);
-  let jobRows: JobPayoutRow[] | null = (jobSelect1.data ?? null) as JobPayoutRow[] | null;
-  let jErr = jobSelect1.error;
+  /** One jobs query for both totals recompute and payout-void logic (saves 2 round-trips vs recompute + refetch + second select). */
+  const jobColsFull = "partner_cost, materials_cost, status, deleted_at, partner_cancelled_at";
+  const jobColsLegacy = "partner_cost, materials_cost, status, deleted_at";
+  const jobQuery1 = await supabase.from("jobs").select(jobColsFull).eq("self_bill_id", selfBillId);
+  let jErr = jobQuery1.error;
+  let jobs: JobPayoutRow[];
   if (jErr && isSupabaseMissingColumnError(jErr)) {
-    const jobSelect2 = await supabase
-      .from("jobs")
-      .select("id, status, deleted_at")
-      .eq("self_bill_id", selfBillId);
-    jobRows = (jobSelect2.data ?? null) as JobPayoutRow[] | null;
-    jErr = jobSelect2.error;
+    const retry = await supabase.from("jobs").select(jobColsLegacy).eq("self_bill_id", selfBillId);
+    jErr = retry.error;
+    jobs = (retry.data ?? []) as JobPayoutRow[];
+  } else {
+    if (jErr) throw jErr;
+    jobs = (jobQuery1.data ?? []) as JobPayoutRow[];
   }
-  if (jErr) throw jErr;
-  const jobs = jobRows ?? [];
 
-  const paying = jobs.filter((j) => !j.deleted_at && j.status !== "cancelled");
+  const payable = jobs.filter((r) => !r.deleted_at && r.status !== "cancelled");
+  const jobsCount = payable.length;
+  let jobValue = 0;
+  let materials = 0;
+  for (const r of payable) {
+    jobValue += Number(r.partner_cost) || 0;
+    materials += Number(r.materials_cost) || 0;
+  }
+  const commission = 0;
+  const netPayout = jobValue + materials - commission;
+
+  const { error: uErr } = await supabase
+    .from("self_bills")
+    .update({
+      jobs_count: jobsCount,
+      job_value: jobValue,
+      materials,
+      commission,
+      net_payout: netPayout,
+    })
+    .eq("id", selfBillId);
+  if (uErr) throw uErr;
+
+  const paying = payable;
 
   if (paying.length > 0) {
-    if (SELF_BILL_PAYOUT_VOID_STATUSES.includes(sb.status)) {
-      const net = Number(sb.net_payout) || 0;
+    if (SELF_BILL_PAYOUT_VOID_STATUSES.includes(before.status)) {
+      const net = netPayout;
       if (net > 0.02) {
         const { error: up } = await supabase
           .from("self_bills")

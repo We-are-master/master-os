@@ -83,7 +83,7 @@ export async function listRequests(params: ListParams): Promise<ListResult<Servi
   return { ...result, data };
 }
 
-export async function getRequest(id: string): Promise<ServiceRequest | null> {
+export async function getRequest(id: string, options?: { enrich?: boolean }): Promise<ServiceRequest | null> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("service_requests")
@@ -91,6 +91,9 @@ export async function getRequest(id: string): Promise<ServiceRequest | null> {
     .eq("id", id)
     .single();
   if (error) return null;
+  if (options?.enrich === false) {
+    return data as ServiceRequest;
+  }
   const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
   return enriched ?? null;
 }
@@ -167,7 +170,11 @@ export async function updateRequest(
   return enriched ?? (data as ServiceRequest);
 }
 
-export async function updateRequestStatus(id: string, status: string): Promise<ServiceRequest> {
+export async function updateRequestStatus(
+  id: string,
+  status: string,
+  options?: { enrich?: boolean },
+): Promise<ServiceRequest> {
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("service_requests")
@@ -177,6 +184,9 @@ export async function updateRequestStatus(id: string, status: string): Promise<S
     .single();
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Request not found or update had no effect");
+  if (options?.enrich === false) {
+    return data as ServiceRequest;
+  }
   const [enriched] = await enrichRequestsWithAccountNames([data as ServiceRequest]);
   return enriched ?? (data as ServiceRequest);
 }
