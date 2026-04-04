@@ -398,18 +398,31 @@ export async function listSelfBillsLinkedToJob(
   return rows;
 }
 
-export async function createSelfBillFromJob(job: CreateSelfBillFromJobInput): Promise<SelfBill> {
+export type CreateSelfBillFromJobOptions = {
+  /** When set (e.g. Review & approve), weekly bucket follows this instant instead of scheduled/created date. */
+  weekAnchorDate?: Date;
+};
+
+export async function createSelfBillFromJob(
+  job: CreateSelfBillFromJobInput,
+  options?: CreateSelfBillFromJobOptions,
+): Promise<SelfBill> {
   const supabase = getSupabase();
   const { data: full } = await supabase.from("jobs").select("*").eq("id", job.id).single();
   if (!full) throw new Error("Job not found");
   const j = full as Job;
-  /** Week for the self-bill bucket: scheduled day if set, else job creation (not “today”, which mis-buckets approvals). */
-  const sched = typeof j.scheduled_date === "string" ? j.scheduled_date.trim().slice(0, 10) : "";
-  const anchorDay =
-    sched && /^\d{4}-\d{2}-\d{2}$/.test(sched)
-      ? sched
-      : (j.created_at ? String(j.created_at).slice(0, 10) : "");
-  const weekAnchorDate = anchorDay ? new Date(`${anchorDay}T12:00:00`) : new Date();
+  let weekAnchorDate: Date;
+  if (options?.weekAnchorDate) {
+    weekAnchorDate = options.weekAnchorDate;
+  } else {
+    /** Week for the self-bill bucket: scheduled day if set, else job creation (not “today”, which mis-buckets approvals). */
+    const sched = typeof j.scheduled_date === "string" ? j.scheduled_date.trim().slice(0, 10) : "";
+    const anchorDay =
+      sched && /^\d{4}-\d{2}-\d{2}$/.test(sched)
+        ? sched
+        : (j.created_at ? String(j.created_at).slice(0, 10) : "");
+    weekAnchorDate = anchorDay ? new Date(`${anchorDay}T12:00:00`) : new Date();
+  }
   const id = await ensureWeeklySelfBillForJob(j, { weekAnchorDate });
   if (!id) throw new Error("Partner required for self-bill");
   const row = await getSelfBill(id);

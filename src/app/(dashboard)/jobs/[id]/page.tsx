@@ -56,6 +56,7 @@ import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import type { Invoice, Job, JobPayment, Partner, QuoteLineItem, SelfBill } from "@/types/database";
 import { listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
+import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
 import { getSupabase } from "@/services/base";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
@@ -1579,6 +1580,9 @@ export default function JobDetailPage() {
       const partnerPaid = partnerPayments.reduce((s, p) => s + Number(p.amount), 0);
       const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
 
+      /** Single instant for invoice due date, weekly invoice week, and partner self-bill week (this approve action only). */
+      const financeAnchorDate = new Date();
+
       // Keep this action internal only: no external send/notify workflow.
       let primaryInvoiceId = current.invoice_id ?? null;
       const linked = await listInvoicesLinkedToJob(current.reference, current.invoice_id);
@@ -1598,24 +1602,30 @@ export default function JobDetailPage() {
       const customerDueForStatus = invoiceShowsPaidInDb ? 0 : customerDue;
 
       if (!primaryInvoiceId && customerDue > 0.02) {
-        const inv = await createOrAppendJobInvoice(current, {
-          client_name: current.client_name ?? "Client",
-          amount: Math.max(0, customerDue),
-          status: customerDue <= 0.02 ? "paid" : "pending",
-          paid_date: customerDue <= 0.02 ? new Date().toISOString().slice(0, 10) : undefined,
-          invoice_kind: "combined",
-          collection_stage: customerDue <= 0.02 ? "completed" : "awaiting_final",
-        });
+        const inv = await createOrAppendJobInvoice(
+          current,
+          {
+            client_name: current.client_name ?? "Client",
+            amount: Math.max(0, customerDue),
+            status: customerDue <= 0.02 ? "paid" : "pending",
+            paid_date: customerDue <= 0.02 ? new Date().toISOString().slice(0, 10) : undefined,
+            invoice_kind: "combined",
+            collection_stage: customerDue <= 0.02 ? "completed" : "awaiting_final",
+          },
+          { financeAnchorDate },
+        );
         primaryInvoiceId = inv.id;
         if (inv.status === "paid") {
           await syncJobAfterInvoicePaidToLedger(getSupabase(), inv.id, "Manual");
         }
       } else if (primaryInvoiceId && customerDue > 0.02 && !invoiceShowsPaidInDb) {
         // Keep linked invoice aligned with the latest approved totals (incl. hourly billed-hours changes).
+        const dueForAnchor = await getInvoiceDueDateIsoForClient(current.client_id ?? null, financeAnchorDate);
         await updateInvoice(primaryInvoiceId, {
           amount: Math.max(0, customerDue),
           paid_date: undefined,
           collection_stage: "awaiting_final",
+          due_date: dueForAnchor,
         });
       } else if (customerDue <= 0.02 && primaryInvoiceId) {
         await updateInvoice(primaryInvoiceId, {
@@ -1646,13 +1656,16 @@ export default function JobDetailPage() {
           const shouldCreateSelfBill =
             partnerSelfBillGrossAmount(current) > 0 || partnerDue > 0.02;
           if (!primarySelfBillId && shouldCreateSelfBill) {
-            const selfBill = await createSelfBillFromJob({
-              id: current.id,
-              reference: current.reference,
-              partner_name: current.partner_name ?? "Unassigned",
-              partner_cost: current.partner_cost,
-              materials_cost: current.materials_cost,
-            });
+            const selfBill = await createSelfBillFromJob(
+              {
+                id: current.id,
+                reference: current.reference,
+                partner_name: current.partner_name ?? "Unassigned",
+                partner_cost: current.partner_cost,
+                materials_cost: current.materials_cost,
+              },
+              { weekAnchorDate: financeAnchorDate },
+            );
             primarySelfBillId = selfBill.id;
           }
           if (primarySelfBillId && primarySelfBillId !== current.self_bill_id) {

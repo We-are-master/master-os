@@ -31,6 +31,7 @@ import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, softDeleteById, type ListParams } from "@/services/base";
+import { sumCustomerCollectionsByJobIds } from "@/services/job-payments";
 import { softDeleteInvoicesForArchivedJobs, cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
 import { useProfile } from "@/hooks/use-profile";
 import type { Job, Partner } from "@/types/database";
@@ -63,7 +64,12 @@ import {
 import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
-import { jobBillableRevenue, jobMarginPercent, jobProfit } from "@/lib/job-financials";
+import {
+  jobBillableRevenue,
+  jobCustomerBillableRevenueForCollections,
+  jobMarginPercent,
+  jobProfit,
+} from "@/lib/job-financials";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -249,6 +255,38 @@ function JobsPageContent() {
       return true;
     });
   }, [data, filterPartner, filterScheduled]);
+
+  const [customerPaidByJobId, setCustomerPaidByJobId] = useState<Record<string, number>>({});
+  const [customerPaidSumsReady, setCustomerPaidSumsReady] = useState(true);
+
+  useEffect(() => {
+    // Same job set as the list table rows (`data`), not kanban-only `filteredData`.
+    const ids = data.map((j) => j.id);
+    if (ids.length === 0) {
+      setCustomerPaidByJobId({});
+      setCustomerPaidSumsReady(true);
+      return;
+    }
+    setCustomerPaidSumsReady(false);
+    let cancelled = false;
+    void sumCustomerCollectionsByJobIds(ids).then(
+      (sums) => {
+        if (!cancelled) {
+          setCustomerPaidByJobId(sums);
+          setCustomerPaidSumsReady(true);
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setCustomerPaidByJobId({});
+          setCustomerPaidSumsReady(true);
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
 
   const kanbanColumns = useMemo(() => {
     const ids = [
@@ -913,8 +951,12 @@ function JobsPageContent() {
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap",
       render: (item) => {
-        const paid = (item.customer_deposit_paid ? Number(item.customer_deposit ?? 0) : 0) + (item.customer_final_paid ? Number(item.customer_final_payment ?? 0) : 0);
-        const due = Math.max(0, Number(item.client_price ?? 0) + Number(item.extras_amount ?? 0) - paid);
+        if (!customerPaidSumsReady) {
+          return <span className="text-sm text-text-tertiary">…</span>;
+        }
+        const billable = jobCustomerBillableRevenueForCollections(item);
+        const paid = customerPaidByJobId[item.id] ?? 0;
+        const due = Math.max(0, billable - paid);
         return <span className="text-sm font-semibold text-text-primary">{formatCurrency(due)}</span>;
       },
     },

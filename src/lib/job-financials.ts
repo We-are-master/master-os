@@ -1,4 +1,6 @@
 import type { Job, JobPaymentType } from "@/types/database";
+import { computeHourlyTotals, resolveJobHourlyRates } from "@/lib/job-hourly-billing";
+import { computeOfficeTimerElapsedSeconds } from "@/lib/office-job-timer";
 
 /** Total billable to customer before payment schedule split (deposit + final). */
 export function jobBillableRevenue(j: Pick<Job, "client_price" | "extras_amount">): number {
@@ -41,6 +43,55 @@ export function partnerSelfBillGrossAmount(j: Job): number {
 
 export function customerScheduledTotal(j: Job): number {
   return Number(j.customer_deposit ?? 0) + Number(j.customer_final_payment ?? 0);
+}
+
+type JobCustomerBillableForCollections = Pick<
+  Job,
+  | "job_type"
+  | "client_price"
+  | "extras_amount"
+  | "customer_deposit"
+  | "customer_final_payment"
+  | "billed_hours"
+  | "hourly_client_rate"
+  | "hourly_partner_rate"
+  | "partner_cost"
+  | "internal_invoice_approved"
+  | "status"
+  | "timer_elapsed_seconds"
+  | "timer_last_started_at"
+  | "timer_is_running"
+>;
+
+/**
+ * Customer billable total aligned with the job detail finance card (max of ticket, scheduled total, hourly-derived client+extras).
+ */
+export function jobCustomerBillableRevenueForCollections(j: JobCustomerBillableForCollections): number {
+  const base = jobBillableRevenue(j);
+  const scheduled = customerScheduledTotal(j as Job);
+  if (j.job_type !== "hourly") {
+    return Math.max(base, scheduled);
+  }
+  const { clientRate, partnerRate } = resolveJobHourlyRates(j as Job);
+  const billedH = Number(j.billed_hours ?? 0);
+  const approvedStage =
+    Boolean(j.internal_invoice_approved) ||
+    j.status === "awaiting_payment" ||
+    j.status === "completed";
+  const useOffice =
+    j.timer_is_running ||
+    (Number(j.timer_elapsed_seconds ?? 0) > 0) ||
+    !!j.timer_last_started_at;
+  const officeEquiv = useOffice ? computeOfficeTimerElapsedSeconds(j) : null;
+  const elapsedSeconds =
+    billedH > 0 && approvedStage ? Math.round(billedH * 3600) : officeEquiv ?? (Number(j.timer_elapsed_seconds ?? 0) || 0);
+  const totals = computeHourlyTotals({
+    elapsedSeconds,
+    clientHourlyRate: clientRate,
+    partnerHourlyRate: partnerRate,
+  });
+  const hourlyClientPlusExtras = totals.clientTotal + Number(j.extras_amount ?? 0);
+  return Math.max(base, scheduled, hourlyClientPlusExtras);
 }
 
 /** Rows passed from job_payments when gating “Completed”. */
