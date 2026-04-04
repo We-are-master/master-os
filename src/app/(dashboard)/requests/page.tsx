@@ -24,6 +24,15 @@ import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listRequests, createRequest, updateRequestStatus, updateRequest, getRequest } from "@/services/requests";
+import {
+  confirmDespiteDuplicateWarning,
+  findDuplicateJobs,
+  findDuplicateQuotes,
+  findDuplicateRequests,
+  formatJobDuplicateLines,
+  formatQuoteDuplicateLines,
+  formatRequestDuplicateLines,
+} from "@/lib/duplicate-create-warnings";
 import { createQuote } from "@/services/quotes";
 import { createJob } from "@/services/jobs";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -467,6 +476,12 @@ export default function RequestsPage() {
       const perfStart = performance.now();
       try {
         const isManualSource = (formData.source ?? "manual") === "manual";
+        const dupReq = await findDuplicateRequests({
+          clientEmail: formData.client_email ?? "",
+          propertyAddress: formData.property_address ?? "",
+        });
+        if (!confirmDespiteDuplicateWarning(formatRequestDuplicateLines(dupReq))) return;
+
         const result = await createRequest({
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
@@ -1165,8 +1180,16 @@ export default function RequestsPage() {
               req.catalog_service_id && isUuid(String(req.catalog_service_id).trim())
                 ? String(req.catalog_service_id).trim()
                 : null;
+            const quoteTitle = `${req.service_type} — ${resolvedAddr.client_name}`;
+            const dupQ = await findDuplicateQuotes({
+              clientEmail: resolvedAddr.client_email ?? req.client_email ?? "",
+              title: quoteTitle,
+              propertyAddress: resolvedAddr.property_address,
+            });
+            if (!confirmDespiteDuplicateWarning(formatQuoteDuplicateLines(dupQ))) return;
+
             const quote = await createQuote({
-              title: `${req.service_type} — ${resolvedAddr.client_name}`,
+              title: quoteTitle,
               client_id: resolvedAddr.client_id,
               client_address_id: resolvedAddr.client_address_id,
               client_name: resolvedAddr.client_name,
@@ -1284,8 +1307,16 @@ export default function RequestsPage() {
               const s = String(cid).trim();
               return isUuid(s) ? s : null;
             })();
+            const manualQuoteTitle = `${req.service_type} — ${resolvedAddr.client_name}`;
+            const dupManualQ = await findDuplicateQuotes({
+              clientEmail: resolvedAddr.client_email ?? req.client_email ?? "",
+              title: manualQuoteTitle,
+              propertyAddress: resolvedAddr.property_address,
+            });
+            if (!confirmDespiteDuplicateWarning(formatQuoteDuplicateLines(dupManualQ))) return;
+
             const quote = await createQuote({
-              title: `${req.service_type} — ${resolvedAddr.client_name}`,
+              title: manualQuoteTitle,
               client_id: resolvedAddr.client_id,
               client_address_id: resolvedAddr.client_address_id,
               client_name: resolvedAddr.client_name,
@@ -1365,6 +1396,12 @@ export default function RequestsPage() {
             });
             const margin = clientPrice > 0 ? Math.round(((clientPrice - partnerCost) / clientPrice) * 1000) / 10 : 0;
             const hasPartner = !isAutoAssign && !!(data.partner_id?.trim() || data.partner_name?.trim());
+            const dupJ = await findDuplicateJobs({
+              clientId: data.client_id,
+              propertyAddress: data.property_address,
+            });
+            if (!confirmDespiteDuplicateWarning(formatJobDuplicateLines(dupJ))) return;
+
             const job = await createJob({
               title: `${convertToJobOpen.service_type} — ${data.client_name}`,
               catalog_service_id: data.catalog_service_id ?? null,

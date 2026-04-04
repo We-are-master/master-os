@@ -42,44 +42,61 @@ function GlobalSearch() {
     try {
       const supabase = getSupabase();
       const term = `%${q.trim()}%`;
+      const jobOr = `reference.ilike.${term},title.ilike.${term},client_name.ilike.${term},property_address.ilike.${term}`;
+      const quoteOr = `reference.ilike.${term},title.ilike.${term},client_name.ilike.${term},property_address.ilike.${term},postcode.ilike.${term}`;
+      const requestOr = `reference.ilike.${term},client_name.ilike.${term},property_address.ilike.${term},postcode.ilike.${term},service_type.ilike.${term},description.ilike.${term}`;
       const [{ data: jobs }, { data: quotes }, { data: requests }] = await Promise.all([
         supabase
           .from("jobs")
-          .select("id, reference, title, client_name, status")
-          .or(`reference.ilike.${term},title.ilike.${term},client_name.ilike.${term}`)
+          .select("id, reference, title, client_name, status, property_address")
+          .or(jobOr)
           .is("deleted_at", null)
           .limit(5),
         supabase
           .from("quotes")
-          .select("id, reference, title, client_name, status")
-          .or(`reference.ilike.${term},title.ilike.${term},client_name.ilike.${term}`)
+          .select("id, reference, title, client_name, status, property_address, postcode")
+          .or(quoteOr)
           .is("deleted_at", null)
           .limit(5),
         supabase
           .from("service_requests")
-          .select("id, reference, title, client_name, status")
-          .or(`reference.ilike.${term},title.ilike.${term},client_name.ilike.${term}`)
+          .select("id, reference, client_name, status, property_address, postcode, service_type, description")
+          .or(requestOr)
           .is("deleted_at", null)
           .limit(5),
       ]);
-      type Row = { id: string; reference: string; title: string; client_name: string; status: string };
+      type RowBase = { id: string; reference: string; client_name: string; status: string };
+      type JobRow = RowBase & { title: string; property_address?: string | null };
+      type QuoteRow = RowBase & { title: string; property_address?: string | null; postcode?: string | null };
+      type RequestRow = RowBase & {
+        property_address?: string | null;
+        postcode?: string | null;
+        service_type?: string | null;
+        description?: string | null;
+      };
+      const addrLine = (property_address?: string | null, postcode?: string | null) => {
+        const a = (property_address ?? "").trim();
+        const p = (postcode ?? "").trim();
+        if (a && p) return `${a} · ${p}`;
+        return a || p || "";
+      };
       const mapped: SearchResult[] = [
-        ...((jobs ?? []) as Row[]).map((j) => ({
+        ...((jobs ?? []) as JobRow[]).map((j) => ({
           id: j.id, type: "job" as const,
           title: `${j.reference} – ${j.title}`,
-          subtitle: `${j.client_name} · ${j.status}`,
+          subtitle: [j.client_name, addrLine(j.property_address, null) || null, j.status].filter(Boolean).join(" · "),
           href: `/jobs/${j.id}`,
         })),
-        ...((quotes ?? []) as Row[]).map((q2) => ({
+        ...((quotes ?? []) as QuoteRow[]).map((q2) => ({
           id: q2.id, type: "quote" as const,
           title: `${q2.reference} – ${q2.title}`,
-          subtitle: `${q2.client_name} · ${q2.status}`,
+          subtitle: [q2.client_name, addrLine(q2.property_address, q2.postcode) || null, q2.status].filter(Boolean).join(" · "),
           href: `/quotes?quoteId=${q2.id}`,
         })),
-        ...((requests ?? []) as Row[]).map((r) => ({
+        ...((requests ?? []) as RequestRow[]).map((r) => ({
           id: r.id, type: "request" as const,
-          title: `${r.reference} – ${r.title}`,
-          subtitle: `${r.client_name} · ${r.status}`,
+          title: `${r.reference} – ${(r.service_type ?? "").trim() || "Request"}`,
+          subtitle: [r.client_name, addrLine(r.property_address, r.postcode) || null, r.status].filter(Boolean).join(" · "),
           href: `/requests?requestId=${r.id}`,
         })),
       ];
@@ -153,7 +170,7 @@ function GlobalSearch() {
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => { if (query.trim().length >= 2) setOpen(true); }}
-          placeholder="Search requests, quotes, jobs…"
+          placeholder="Search jobs, quotes, requests, address, postcode…"
           className="h-9 w-72 rounded-xl bg-surface-tertiary border border-border-light pl-9 pr-16 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 transition-colors"
         />
         {query ? (

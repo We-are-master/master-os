@@ -912,9 +912,15 @@ export default function JobDetailPage() {
       toast.error("Property address is required");
       return;
     }
+    if (!propertyEdit.client_id?.trim()) {
+      toast.error("Select a client");
+      return;
+    }
     setSavingProperty(true);
     try {
       await handleJobUpdate(job.id, {
+        client_id: propertyEdit.client_id,
+        client_name: propertyEdit.client_name?.trim() || job.client_name,
         property_address: propertyEdit.property_address.trim(),
         client_address_id: propertyEdit.client_address_id,
       });
@@ -2252,9 +2258,23 @@ export default function JobDetailPage() {
                   </p>
                   <div className="pt-1 border-t border-border-light">
                     {job.client_id && propertyEdit ? (
-                      <div className="space-y-2">
-                        <ClientAddressPicker lockClient value={propertyEdit} onChange={setPropertyEdit} labelClient="Client" labelAddress="Property address" />
-                        <Button type="button" variant="outline" size="sm" loading={savingProperty} onClick={handleSaveLinkedProperty}>Save address</Button>
+                      <div className={cn("space-y-2", job.status === "cancelled" && "pointer-events-none opacity-50")}>
+                        <ClientAddressPicker
+                          value={propertyEdit}
+                          onChange={setPropertyEdit}
+                          labelClient="Client"
+                          labelAddress="Property address"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          loading={savingProperty}
+                          disabled={job.status === "cancelled"}
+                          onClick={handleSaveLinkedProperty}
+                        >
+                          Save client & address
+                        </Button>
                       </div>
                     ) : (
                       <div className="space-y-2">

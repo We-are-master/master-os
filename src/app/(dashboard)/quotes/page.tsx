@@ -33,6 +33,13 @@ import { toast } from "sonner";
 import type { Quote, Partner, Job } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
+import {
+  confirmDespiteDuplicateWarning,
+  findDuplicateJobs,
+  findDuplicateQuotes,
+  formatJobDuplicateLines,
+  formatQuoteDuplicateLines,
+} from "@/lib/duplicate-create-warnings";
 import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
 import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
@@ -428,6 +435,13 @@ function QuotesPageContent() {
   const handleCreate = useCallback(async (formData: Partial<Quote>) => {
     const perfStart = performance.now();
     try {
+      const dupQ = await findDuplicateQuotes({
+        clientEmail: formData.client_email ?? "",
+        title: formData.title ?? "",
+        propertyAddress: formData.property_address,
+      });
+      if (!confirmDespiteDuplicateWarning(formatQuoteDuplicateLines(dupQ))) return;
+
       const result = await createQuote({
         title: formData.title ?? "",
         client_id: formData.client_id,
@@ -532,6 +546,12 @@ function QuotesPageContent() {
         const quotePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
         const quotePartnerName = (formData.partner_name ?? quoteToConvert.partner_name)?.trim();
         const hasPartner = !!(quotePartnerId?.trim() || quotePartnerName);
+        const dupJobs = await findDuplicateJobs({
+          clientId: formData.client_id,
+          propertyAddress: formData.property_address,
+        });
+        if (!confirmDespiteDuplicateWarning(formatJobDuplicateLines(dupJobs))) return;
+
         const job = await createJob({
           title: formData.title,
           client_id: formData.client_id,

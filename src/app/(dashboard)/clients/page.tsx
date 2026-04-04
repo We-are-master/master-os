@@ -45,6 +45,13 @@ import { listClientSourceAccounts, createClientSourceAccount } from "@/services/
 import { getStatusCounts, getSupabase } from "@/services/base";
 import { clientsJobHistorySelectColumns } from "@/lib/job-schema-compat";
 import { logAudit, logBulkAction } from "@/services/audit";
+import {
+  confirmDespiteDuplicateWarning,
+  findDuplicateAccountHints,
+  findDuplicateClients,
+  formatAccountDuplicateLines,
+  formatClientDuplicateLines,
+} from "@/lib/duplicate-create-warnings";
 
 const CLIENT_STATUSES = ["active", "inactive", "vip", "blocked"] as const;
 
@@ -169,6 +176,9 @@ function ClientsPageInner() {
       const mainAddress = formData.address?.trim() || parts?.address || parts?.full_address || undefined;
       const mainCity = formData.city?.trim() || parts?.city || undefined;
       const mainPostcode = formData.postcode?.trim() || parts?.postcode || undefined;
+
+      const dupClients = await findDuplicateClients({ email: formData.email, phone: formData.phone });
+      if (!confirmDespiteDuplicateWarning(formatClientDuplicateLines(dupClients))) return;
 
       const result = await createClient({
         source_account_id: sid,
@@ -1251,6 +1261,11 @@ function CreateClientForm({
         toast.error("Fill company name, contact and email to create the linked account");
         return;
       }
+      const accHints = await findDuplicateAccountHints({
+        companyName: newSourceForm.company_name.trim(),
+        email: newSourceForm.email.trim(),
+      });
+      if (!confirmDespiteDuplicateWarning(formatAccountDuplicateLines(accHints))) return;
       setCreatingSource(true);
       try {
         const createdAccount = await createClientSourceAccount({
