@@ -22,6 +22,7 @@ const JOB_CLOSED_FOR_INVOICE_PIPELINE: ReadonlySet<JobStatus> = new Set([
   "completed",
   "awaiting_payment",
   "cancelled",
+  "deleted",
 ]);
 
 function jobIsNotYetClosed(status: JobStatus): boolean {

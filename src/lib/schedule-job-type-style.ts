@@ -48,6 +48,8 @@ export function scheduleJobStatusColorClasses(status: JobStatus): string {
       "bg-zinc-200 text-zinc-900 border-zinc-400 dark:bg-zinc-700 dark:text-zinc-100 dark:border-zinc-600",
     cancelled:
       "bg-neutral-200 text-neutral-600 border-neutral-300 dark:bg-neutral-800 dark:text-neutral-400 dark:border-neutral-600",
+    deleted:
+      "bg-slate-200 text-slate-600 border-slate-400 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600",
   };
   return map[status] ?? map.scheduled;
 }

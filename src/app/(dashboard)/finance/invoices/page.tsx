@@ -10,7 +10,6 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
-import { Modal } from "@/components/ui/modal";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
@@ -23,7 +22,7 @@ import {
   Banknote, RotateCcw, Loader, Lock, ChevronDown, ChevronRight,
   ShieldAlert,
 } from "lucide-react";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Invoice, InvoiceCollectionStage, InvoiceStatus, Job, JobStatus } from "@/types/database";
 import { createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
@@ -66,8 +65,15 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 
 const PAGE_SIZE = 10;
 
-async function fetchJobsByReferences(refs: string[]): Promise<Record<string, { status: JobStatus }>> {
-  const map: Record<string, { status: JobStatus }> = {};
+/** Linked job fields used on the invoices list (status + schedule for columns). */
+type InvoiceListJobSnapshot = {
+  status: JobStatus;
+  scheduled_date?: string | null;
+  scheduled_start_at?: string | null;
+};
+
+async function fetchJobsByReferences(refs: string[]): Promise<Record<string, InvoiceListJobSnapshot>> {
+  const map: Record<string, InvoiceListJobSnapshot> = {};
   if (refs.length === 0) return map;
   const supabase = getSupabase();
   const CHUNK = 100;
@@ -75,18 +81,61 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, { s
     const chunk = refs.slice(i, i + CHUNK);
     const { data, error } = await supabase
       .from("jobs")
-      .select("reference, status")
+      .select("reference, status, scheduled_date, scheduled_start_at")
       .in("reference", chunk)
       .is("deleted_at", null);
     if (error) throw error;
     for (const row of data ?? []) {
-      const r = row as { reference?: string | null; status?: JobStatus };
+      const r = row as {
+        reference?: string | null;
+        status?: JobStatus;
+        scheduled_date?: string | null;
+        scheduled_start_at?: string | null;
+      };
       const ref = (r.reference ?? "").trim();
-      if (ref && r.status) map[ref] = { status: r.status };
+      if (ref && r.status) {
+        map[ref] = {
+          status: r.status,
+          scheduled_date: r.scheduled_date,
+          scheduled_start_at: r.scheduled_start_at,
+        };
+      }
     }
   }
   return map;
 }
+
+function jobDateYmdForInvoiceList(job: InvoiceListJobSnapshot | undefined): string | null {
+  if (!job) return null;
+  const d = job.scheduled_date?.trim();
+  if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const iso = job.scheduled_start_at?.trim();
+  if (iso) {
+    const slice = iso.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(slice)) return slice;
+  }
+  return null;
+}
+
+/** Badge labels aligned with Jobs management (short list view). */
+const jobStatusColumnConfig: Record<
+  string,
+  { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
+> = {
+  unassigned: { label: "Unassigned", variant: "warning" },
+  auto_assigning: { label: "Assigning", variant: "info" },
+  scheduled: { label: "Scheduled", variant: "info" },
+  late: { label: "Late", variant: "danger" },
+  in_progress_phase1: { label: "In progress", variant: "primary" },
+  in_progress_phase2: { label: "In progress", variant: "primary" },
+  in_progress_phase3: { label: "In progress", variant: "primary" },
+  final_check: { label: "Final check", variant: "warning" },
+  awaiting_payment: { label: "Awaiting payment", variant: "danger" },
+  need_attention: { label: "Need attention", variant: "warning" },
+  completed: { label: "Paid & completed", variant: "success" },
+  cancelled: { label: "Lost & cancelled", variant: "danger" },
+  deleted: { label: "Deleted", variant: "default" },
+};
 
 function computeInvoiceKpis(all: Invoice[]) {
   const nonCancelled = all.filter((r) => r.status !== "cancelled");
@@ -203,7 +252,7 @@ export default function InvoicesPage() {
 
   const [pipelineTab, setPipelineTab] = useState<InvoicePipelineTab>("all");
   const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
-  const [jobsByRef, setJobsByRef] = useState<Record<string, { status: JobStatus }>>({});
+  const [jobsByRef, setJobsByRef] = useState<Record<string, InvoiceListJobSnapshot>>({});
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -618,30 +667,40 @@ export default function InvoicesPage() {
   const handleExportCSV = useCallback(() => {
     const headers = [
       "Reference",
-      "Accounts related",
+      "Account",
       "Client",
       "Job Reference",
+      "Job date",
       "Amount",
       "Amount Paid",
       "Balance Due",
-      "Status",
       "Due Date",
+      "Invoice status",
+      "Job status",
       "Paid Date",
       "Created At",
     ];
     const rows = filteredInvoices.map((inv) => {
       const accId = effectiveInvoiceSourceAccountId(inv, jobRefToSourceAccountId, clientNameToSourceAccountId);
       const accountLabel = accId ? (accountNameById[accId] ?? "") : "";
+      const jref = inv.job_reference?.trim();
+      const jobSnap = jref ? jobsByRef[jref] : undefined;
+      const jobYmd = jobDateYmdForInvoiceList(jobSnap);
+      const jobStatusLabel = jobSnap?.status
+        ? (jobStatusColumnConfig[jobSnap.status]?.label ?? jobSnap.status.replace(/_/g, " "))
+        : "";
       return [
         inv.reference,
         accountLabel,
         inv.client_name,
         inv.job_reference ?? "",
+        jobYmd ?? "",
         String(inv.amount),
         String(invoiceAmountPaid(inv)),
         String(invoiceBalanceDue(inv)),
-        inv.status,
         inv.due_date,
+        inv.status,
+        jobStatusLabel,
         inv.paid_date ?? "",
         inv.created_at,
       ];
@@ -657,7 +716,7 @@ export default function InvoicesPage() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     toast.success("CSV exported successfully");
-  }, [filteredInvoices, accountNameById, jobRefToSourceAccountId, clientNameToSourceAccountId]);
+  }, [filteredInvoices, accountNameById, jobRefToSourceAccountId, clientNameToSourceAccountId, jobsByRef]);
 
   const pipelineTabs = useMemo(
     () =>
@@ -691,7 +750,7 @@ export default function InvoicesPage() {
     },
     {
       key: "source_account",
-      label: "Accounts related",
+      label: "Account",
       minWidth: "168px",
       cellClassName: "align-top",
       render: (item) => {
@@ -731,9 +790,21 @@ export default function InvoicesPage() {
       ),
     },
     {
-      key: "created_at", label: "Date",
+      key: "job_scheduled_date",
+      label: "Date (job date)",
+      render: (item) => {
+        const ref = item.job_reference?.trim();
+        const job = ref ? jobsByRef[ref] : undefined;
+        const ymd = jobDateYmdForInvoiceList(job);
+        return (
+          <span className="text-sm text-text-secondary">{ymd ? formatDate(ymd) : "—"}</span>
+        );
+      },
+    },
+    {
+      key: "amount", label: "Amount", align: "right",
       render: (item) => (
-        <span className="text-sm text-text-secondary">{formatDate(invoiceEffectiveDateValue(item))}</span>
+        <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(item.amount)}</span>
       ),
     },
     {
@@ -745,55 +816,23 @@ export default function InvoicesPage() {
       ),
     },
     {
-      key: "amount", label: "Amount", align: "right",
-      render: (item) => (
-        <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(item.amount)}</span>
-      ),
-    },
-    {
-      key: "balance_due",
-      label: "due",
-      align: "right",
+      key: "job_status", label: "Status",
       render: (item) => {
-        const bal = invoiceBalanceDue(item);
-        if (item.status === "paid" || item.status === "cancelled" || item.status === "draft") {
-          return <span className="text-sm text-text-tertiary tabular-nums">—</span>;
-        }
-        const show = bal > 0.005 || item.status === "partially_paid";
-        return (
-          <span
-            className={`text-sm font-medium tabular-nums ${show ? "text-text-primary" : "text-text-tertiary"}`}
-          >
-            {show ? formatCurrency(bal) : "—"}
-          </span>
-        );
-      },
-    },
-    {
-      key: "collection_stage", label: "Collection", width: "150px",
-      render: (item) =>
-        item.job_reference && item.collection_stage ? (
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[11px] text-text-secondary leading-tight">{COLLECTION_STAGE_LABELS[item.collection_stage]}</span>
-            {item.collection_stage_locked ? (
-              <span className="text-[10px] text-amber-600 flex items-center gap-0.5">
-                <Lock className="h-2.5 w-2.5" /> Manual
-              </span>
-            ) : null}
-          </div>
-        ) : (
-          <span className="text-sm text-text-tertiary">—</span>
-        ),
-    },
-    {
-      key: "status", label: "Status",
-      render: (item) => {
-        const sConf = statusConfig[item.status] ?? statusConfig.pending;
+        const ref = item.job_reference?.trim();
+        const job = ref ? jobsByRef[ref] : undefined;
+        const js = job?.status;
+        const jConf = js ? (jobStatusColumnConfig[js] ?? { label: js.replace(/_/g, " "), variant: "default" as const }) : null;
         const hasLink = !!item.stripe_payment_link_url;
         const stripePd = item.stripe_payment_status === "paid";
         return (
-          <div className="flex items-center gap-1.5">
-            <Badge variant={sConf.variant} dot>{sConf.label}</Badge>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {jConf ? (
+              <Badge variant={jConf.variant} dot>
+                {jConf.label}
+              </Badge>
+            ) : (
+              <span className="text-sm text-text-tertiary">—</span>
+            )}
             {hasLink && (
               <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
                 stripePd ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700" : "bg-blue-50 dark:bg-blue-950/30 text-blue-700"
@@ -968,6 +1007,8 @@ function InvoiceDetailDrawer({
   const [partialPaymentDate, setPartialPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [savingPartial, setSavingPartial] = useState(false);
   const [collectionSectionOpen, setCollectionSectionOpen] = useState(false);
+  /** Linked Job tab: sales & costs breakdown (collapsed by default). */
+  const [linkedJobSalesCostsOpen, setLinkedJobSalesCostsOpen] = useState(false);
   /** Sum of customer_deposit + customer_final on linked job (aligns invoice paid/due with job card). */
   const [jobCustomerPaidSum, setJobCustomerPaidSum] = useState<number | null>(null);
 
@@ -994,6 +1035,7 @@ function InvoiceDetailDrawer({
     setPartialAmount("");
     setPartialPaymentDate(new Date().toISOString().slice(0, 10));
     setCollectionSectionOpen(false);
+    setLinkedJobSalesCostsOpen(false);
     setJobCustomerPaidSum(null);
 
     const supabase = getSupabase();
@@ -1356,57 +1398,6 @@ function InvoiceDetailDrawer({
               </div>
             </div>
 
-            {/* Status actions — below invoice · customer collections */}
-            <div className="flex flex-wrap gap-2 pt-1">
-              {invoice.status === "audit_required" && (
-                <>
-                  <Button size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
-                    Clear audit (pending)
-                  </Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>
-                    Cancel invoice
-                  </Button>
-                </>
-              )}
-              {invoice.status === "draft" && (
-                <>
-                  <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
-                    Issue (mark pending)
-                  </Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>
-                    Cancel
-                  </Button>
-                </>
-              )}
-              {invoice.status === "pending" && (
-                <>
-                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark as Paid</Button>
-                  <Button variant="outline" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => toast.success("Reminder sent")}>Send Reminder</Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Cancel</Button>
-                </>
-              )}
-              {invoice.status === "partially_paid" && (
-                <>
-                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark fully paid</Button>
-                  <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reopen (reset)</Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Cancel</Button>
-                </>
-              )}
-              {invoice.status === "overdue" && (
-                <>
-                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark as Paid</Button>
-                  <Button variant="outline" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => toast.success("Urgent reminder sent")}>Send Urgent Reminder</Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Write Off</Button>
-                </>
-              )}
-              {invoice.status === "paid" && (
-                <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reopen</Button>
-              )}
-              {invoice.status === "cancelled" && (
-                <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reactivate</Button>
-              )}
-            </div>
-
             {invoice.job_reference &&
               onInvoiceUpdated &&
               (invoice.status === "pending" || invoice.status === "partially_paid" || invoice.status === "overdue") && (
@@ -1456,6 +1447,57 @@ function InvoiceDetailDrawer({
                 </Button>
               </div>
             )}
+
+            {/* Status actions — Mark as Paid, reminders, cancel, etc. */}
+            <div className="flex flex-wrap gap-2 pt-1">
+              {invoice.status === "audit_required" && (
+                <>
+                  <Button size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
+                    Clear audit (pending)
+                  </Button>
+                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>
+                    Cancel invoice
+                  </Button>
+                </>
+              )}
+              {invoice.status === "draft" && (
+                <>
+                  <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
+                    Issue (mark pending)
+                  </Button>
+                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>
+                    Cancel
+                  </Button>
+                </>
+              )}
+              {invoice.status === "pending" && (
+                <>
+                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark as Paid</Button>
+                  <Button variant="outline" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => toast.success("Reminder sent")}>Send Reminder</Button>
+                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Cancel</Button>
+                </>
+              )}
+              {invoice.status === "partially_paid" && (
+                <>
+                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark fully paid</Button>
+                  <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reopen (reset)</Button>
+                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Cancel</Button>
+                </>
+              )}
+              {invoice.status === "overdue" && (
+                <>
+                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark as Paid</Button>
+                  <Button variant="outline" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => toast.success("Urgent reminder sent")}>Send Urgent Reminder</Button>
+                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Write Off</Button>
+                </>
+              )}
+              {invoice.status === "paid" && (
+                <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reopen</Button>
+              )}
+              {invoice.status === "cancelled" && (
+                <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reactivate</Button>
+              )}
+            </div>
           </div>
         )}
 
@@ -1674,7 +1716,7 @@ function InvoiceDetailDrawer({
             {!loadingJob && linkedJob && (
               <>
                 {/* Job Header */}
-                <div className="p-4 rounded-xl border border-border-light">
+                <div className="p-4 rounded-xl border border-border-light bg-card shadow-sm">
                   <div className="flex items-center justify-between mb-3">
                     <div>
                       <div className="flex items-center gap-2">
@@ -1698,52 +1740,21 @@ function InvoiceDetailDrawer({
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-primary/20 bg-primary/[0.06] dark:bg-primary/10 p-4 space-y-3 shadow-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-primary">Linked job · sales &amp; costs</p>
-                    <span className="text-[10px] font-mono text-text-tertiary">{linkedJob.reference}</span>
-                  </div>
-                  <p className="text-[11px] text-text-secondary leading-relaxed">
-                    Customer billable (ticket + extras) and what you pay the partner — same basis as the job finance card.
-                  </p>
-                  <div className="rounded-lg bg-card/80 dark:bg-card/40 border border-border-light divide-y divide-border-light overflow-hidden">
-                    <div className="flex justify-between items-center px-3 py-2.5 text-sm">
-                      <span className="text-text-secondary">Customer total (ticket + extras)</span>
-                      <span className="font-semibold text-text-primary tabular-nums">{formatCurrency(linkedJobCustomerTotal)}</span>
-                    </div>
-                    <div className="flex justify-between items-center px-3 py-2.5 text-sm">
-                      <span className="text-text-secondary">Partner cost</span>
-                      <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.partner_cost)}</span>
-                    </div>
-                    <div className="flex justify-between items-center px-3 py-2.5 text-sm">
-                      <span className="text-text-secondary">Materials</span>
-                      <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.materials_cost)}</span>
-                    </div>
-                    <div className="flex justify-between items-center px-3 py-2.5 text-sm bg-surface-hover/50">
-                      <span className="font-semibold text-text-primary">Gross margin</span>
-                      <span className={`font-bold tabular-nums ${linkedJobMarginPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                        {formatCurrency(linkedJobMarginAmount)}{" "}
-                        <span className="text-xs font-semibold">({linkedJobMarginPct.toFixed(1)}%)</span>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Mini Dashboard (Job Amount / Total Cost / Margin) */}
-                <div className="p-4 rounded-xl bg-surface-hover space-y-3">
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Job Financial Snapshot</p>
+                {/* Financial snapshot — directly under job card */}
+                <div className="p-4 rounded-xl border border-border-light bg-surface-hover/60 dark:bg-surface-hover space-y-3">
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Job financial snapshot</p>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="p-3 rounded-xl bg-card border border-border-light">
+                    <div className="p-3 rounded-xl bg-card border border-border-light shadow-sm">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase">Job Amount</p>
                       <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJob.client_price)}</p>
                     </div>
 
-                    <div className="p-3 rounded-xl bg-card border border-border-light">
+                    <div className="p-3 rounded-xl bg-card border border-border-light shadow-sm">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase">Total Cost</p>
                       <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJobTotalCost)}</p>
                     </div>
 
-                    <div className="p-3 rounded-xl bg-card border border-border-light">
+                    <div className="p-3 rounded-xl bg-card border border-border-light shadow-sm">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase">Margin</p>
                       <p
                         className={`text-lg font-bold mt-0.5 ${
@@ -1754,7 +1765,7 @@ function InvoiceDetailDrawer({
                       </p>
                     </div>
 
-                    <div className="p-3 rounded-xl bg-card border border-border-light">
+                    <div className="p-3 rounded-xl bg-card border border-border-light shadow-sm">
                       <p className="text-[10px] font-semibold text-text-tertiary uppercase">Margin %</p>
                       <p
                         className={`text-lg font-bold mt-0.5 ${
@@ -1765,6 +1776,58 @@ function InvoiceDetailDrawer({
                       </p>
                     </div>
                   </div>
+                </div>
+
+                {/* Sales & costs — collapsed by default */}
+                <div className="rounded-xl border border-border-light bg-card overflow-hidden shadow-sm">
+                  <button
+                    type="button"
+                    aria-expanded={linkedJobSalesCostsOpen}
+                    onClick={() => setLinkedJobSalesCostsOpen((o) => !o)}
+                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-hover/80"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-primary">Linked job · sales &amp; costs</p>
+                      <p className="text-[11px] text-text-tertiary mt-0.5 truncate">
+                        Ticket + extras, partner &amp; materials — {linkedJobSalesCostsOpen ? "hide" : "show"} line-by-line breakdown
+                      </p>
+                    </div>
+                    <ChevronRight
+                      className={cn(
+                        "h-5 w-5 shrink-0 text-text-tertiary transition-transform duration-200",
+                        linkedJobSalesCostsOpen && "rotate-90",
+                      )}
+                      aria-hidden
+                    />
+                  </button>
+                  {linkedJobSalesCostsOpen && (
+                    <div className="border-t border-border-light px-4 pb-4 pt-1 space-y-3">
+                      <p className="text-[11px] text-text-secondary leading-relaxed">
+                        Customer billable (ticket + extras) and what you pay the partner — same basis as the job finance card.
+                      </p>
+                      <div className="rounded-lg border border-border-light divide-y divide-border-light overflow-hidden bg-surface-hover/30">
+                        <div className="flex justify-between items-center px-3 py-2.5 text-sm">
+                          <span className="text-text-secondary">Customer total (ticket + extras)</span>
+                          <span className="font-semibold text-text-primary tabular-nums">{formatCurrency(linkedJobCustomerTotal)}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2.5 text-sm">
+                          <span className="text-text-secondary">Partner cost</span>
+                          <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.partner_cost)}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2.5 text-sm">
+                          <span className="text-text-secondary">Materials</span>
+                          <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.materials_cost)}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2.5 text-sm bg-card">
+                          <span className="font-semibold text-text-primary">Gross margin</span>
+                          <span className={`font-bold tabular-nums ${linkedJobMarginPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                            {formatCurrency(linkedJobMarginAmount)}{" "}
+                            <span className="text-xs font-semibold">({linkedJobMarginPct.toFixed(1)}%)</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Job Details */}

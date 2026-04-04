@@ -163,6 +163,7 @@ export function getPreviousJobStatus(job: Job): Job["status"] | null {
   const tp = normalizeTotalPhases(job.total_phases);
   const last = lastInProgressStatusForTotal(tp);
   switch (job.status) {
+    case "deleted":
     case "cancelled":
     case "unassigned":
       return null;
@@ -205,6 +206,10 @@ export function canAdvanceJob(
   financialCtx?: JobAdvanceFinancialContext,
 ): { ok: boolean; message?: string } {
   const tp = normalizeTotalPhases(job.total_phases);
+
+  if (job.status === "deleted") {
+    return { ok: false, message: "This job is in Deleted. Recover it from Jobs → Deleted first." };
+  }
 
   if (isRewindTransition(job, nextStatus)) {
     return { ok: true };

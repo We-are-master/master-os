@@ -87,6 +87,7 @@ type JobPayoutRow = {
 /** Active jobs that still count toward partner payout on a weekly self-bill. */
 export function jobContributesToSelfBillPayout(j: Pick<Job, "status" | "deleted_at">): boolean {
   if (j.deleted_at) return false;
+  if (j.status === "deleted") return false;
   if (j.status === "cancelled") return false;
   return true;
 }
@@ -95,7 +96,7 @@ export function jobContributesToSelfBillPayout(j: Pick<Job, "status" | "deleted_
 export function selfBillJobPayoutStateLabel(
   j: Pick<Job, "status" | "deleted_at" | "partner_cancelled_at">,
 ): string | null {
-  if (j.deleted_at) return "Archived";
+  if (j.deleted_at) return j.status === "deleted" ? "Deleted" : "Archived";
   if (j.status === "cancelled" && j.partner_cancelled_at) return "Lost";
   if (j.status === "cancelled") return "Cancelled";
   return null;
@@ -113,7 +114,7 @@ export async function recomputeSelfBillTotals(selfBillId: string): Promise<void>
     .eq("self_bill_id", selfBillId);
   if (selErr) throw selErr;
   const list = (rows ?? []) as JobPayoutRow[];
-  const payable = list.filter((r) => !r.deleted_at && r.status !== "cancelled");
+  const payable = list.filter((r) => !r.deleted_at && r.status !== "cancelled" && r.status !== "deleted");
   const jobsCount = payable.length;
   let jobValue = 0;
   let materials = 0;
@@ -165,7 +166,7 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
     jobs = (jobQuery1.data ?? []) as JobPayoutRow[];
   }
 
-  const payable = jobs.filter((r) => !r.deleted_at && r.status !== "cancelled");
+  const payable = jobs.filter((r) => !r.deleted_at && r.status !== "cancelled" && r.status !== "deleted");
   const jobsCount = payable.length;
   let jobValue = 0;
   let materials = 0;
