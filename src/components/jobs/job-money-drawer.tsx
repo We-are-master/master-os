@@ -6,21 +6,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import type { Invoice, JobPaymentMethod } from "@/types/database";
-import { cn, formatCurrency } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
 import { Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
 const LS_CLIENT = "mos-job-money-method-client";
 const LS_PARTNER = "mos-job-money-method-partner";
 
-export type JobMoneyDrawerFlow = "client" | "partner";
+export type JobMoneyDrawerFlow = "client_pay" | "client_extra" | "partner_pay" | "partner_extra";
 
 export type JobMoneySubmitPayload = {
+  flow: JobMoneyDrawerFlow;
   amount: number;
   paymentDate: string;
   method: JobPaymentMethod;
   note: string;
-  extra: boolean;
 };
 
 type Props = {
@@ -44,10 +44,31 @@ const PARTNER_METHODS: { value: JobPaymentMethod; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
+function isClientFlow(flow: JobMoneyDrawerFlow): boolean {
+  return flow === "client_pay" || flow === "client_extra";
+}
+
+function flowTitle(flow: JobMoneyDrawerFlow): string {
+  switch (flow) {
+    case "client_pay":
+      return "Add payment";
+    case "client_extra":
+      return "Add extra charge";
+    case "partner_pay":
+      return "Pay partner";
+    case "partner_extra":
+      return "Add extra payout";
+  }
+}
+
+function flowSubmitLabel(flow: JobMoneyDrawerFlow): string {
+  return flowTitle(flow);
+}
+
 function readSavedMethod(flow: JobMoneyDrawerFlow): JobPaymentMethod {
   if (typeof window === "undefined") return "bank_transfer";
-  const raw = window.localStorage.getItem(flow === "client" ? LS_CLIENT : LS_PARTNER);
-  if (flow === "client") {
+  const raw = window.localStorage.getItem(isClientFlow(flow) ? LS_CLIENT : LS_PARTNER);
+  if (isClientFlow(flow)) {
     if (raw === "stripe" || raw === "bank_transfer" || raw === "cash") return raw;
   } else {
     if (raw === "bank_transfer" || raw === "cash" || raw === "other") return raw;
@@ -57,10 +78,14 @@ function readSavedMethod(flow: JobMoneyDrawerFlow): JobPaymentMethod {
 
 function persistMethod(flow: JobMoneyDrawerFlow, m: JobPaymentMethod) {
   try {
-    window.localStorage.setItem(flow === "client" ? LS_CLIENT : LS_PARTNER, m);
+    window.localStorage.setItem(isClientFlow(flow) ? LS_CLIENT : LS_PARTNER, m);
   } catch {
     /* ignore */
   }
+}
+
+function isPayFlow(flow: JobMoneyDrawerFlow): boolean {
+  return flow === "client_pay" || flow === "partner_pay";
 }
 
 export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stripeInvoices }: Props) {
@@ -68,7 +93,6 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [method, setMethod] = useState<JobPaymentMethod>("bank_transfer");
   const [note, setNote] = useState("");
-  const [extra, setExtra] = useState(false);
   const amountRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -76,8 +100,11 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
     setAmount("");
     setPaymentDate(new Date().toISOString().slice(0, 10));
     setNote("");
-    setExtra(false);
-    setMethod(readSavedMethod(flow));
+    if (isPayFlow(flow)) {
+      setMethod(readSavedMethod(flow));
+    } else {
+      setMethod(isClientFlow(flow) ? "bank_transfer" : "other");
+    }
     const id = requestAnimationFrame(() => {
       amountRef.current?.focus();
     });
@@ -85,42 +112,52 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
   }, [open, flow]);
 
   useEffect(() => {
-    if (!open || !flow || method === "stripe") return;
+    if (!open || !flow || !isPayFlow(flow) || method === "stripe") return;
     const id = requestAnimationFrame(() => amountRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [method, open, flow]);
 
   if (!flow) return null;
 
-  const isClientStripe = flow === "client" && method === "stripe";
+  const isClientStripe = flow === "client_pay" && method === "stripe";
   const n = Number(amount);
   const amountOk = amount.trim() !== "" && !Number.isNaN(n) && n > 0;
   const canSubmit = !isClientStripe && amountOk;
 
   const handleMethodChange = (m: JobPaymentMethod) => {
     setMethod(m);
-    persistMethod(flow, m);
+    if (isPayFlow(flow)) persistMethod(flow, m);
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit || !flow) return;
+    if (!canSubmit) return;
+    const pay = isPayFlow(flow);
+    const submitMethod = pay ? method : isClientFlow(flow) ? "bank_transfer" : "other";
     await onSubmit({
+      flow,
       amount: n,
-      paymentDate,
-      method,
+      paymentDate: pay ? paymentDate : new Date().toISOString().slice(0, 10),
+      method: submitMethod,
       note,
-      extra,
     });
   };
 
   const stripeLinks = stripeInvoices.filter((i) => i.stripe_payment_link_url);
 
+  const helpExtra = (
+    <p className="text-[11px] text-text-tertiary leading-relaxed">
+      {flow === "client_extra"
+        ? "Increases the job total and linked invoice. This is not a payment — use Add payment when money is received."
+        : "Increases partner cost on the job. This is not a payout — use Pay partner when you send money."}
+    </p>
+  );
+
   return (
     <Drawer
       open={open && !!flow}
       onClose={onClose}
-      title="Add payment"
+      title={flowTitle(flow)}
       width="w-[min(100vw,400px)]"
       className="bg-surface"
       footer={
@@ -139,22 +176,27 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
               loading={submitting}
               disabled={!canSubmit}
             >
-              Add payment
+              {flowSubmitLabel(flow)}
             </Button>
           </div>
         )
       }
     >
       <form id="job-money-drawer-form" onSubmit={handleFormSubmit} className="px-5 py-5 space-y-5">
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Method</label>
-          <Select
-            value={method}
-            onChange={(e) => handleMethodChange(e.target.value as JobPaymentMethod)}
-            options={flow === "client" ? CLIENT_METHODS : PARTNER_METHODS}
-            className="h-10"
-          />
-        </div>
+        {isPayFlow(flow) ? (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Method</label>
+            <Select
+              value={method}
+              onChange={(e) => handleMethodChange(e.target.value as JobPaymentMethod)}
+              options={isClientFlow(flow) ? CLIENT_METHODS : PARTNER_METHODS}
+              className="h-10"
+            />
+            {flow === "partner_pay" ? (
+              <p className="text-[11px] text-text-tertiary mt-1.5">Record payout — how you sent money to the partner.</p>
+            ) : null}
+          </div>
+        ) : null}
 
         {isClientStripe ? (
           <div className="space-y-3 rounded-xl border border-border-light bg-card/60 px-3 py-3">
@@ -199,42 +241,7 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
           </div>
         ) : (
           <>
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-text-secondary">Type</p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setExtra(false)}
-                  className={cn(
-                    "rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors text-center",
-                    !extra
-                      ? "border-primary bg-primary/10 text-text-primary"
-                      : "border-border-light bg-card/40 text-text-secondary hover:bg-surface-hover",
-                  )}
-                >
-                  Payment received
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setExtra(true)}
-                  className={cn(
-                    "rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors text-center",
-                    extra
-                      ? "border-primary bg-primary/10 text-text-primary"
-                      : "border-border-light bg-card/40 text-text-secondary hover:bg-surface-hover",
-                  )}
-                >
-                  Additional payment
-                </button>
-              </div>
-              {extra ? (
-                <p className="text-[11px] text-text-tertiary leading-relaxed pt-0.5">
-                  {flow === "client"
-                    ? "Extra charge — increases the job total and invoice."
-                    : "Extra payout — beyond planned partner cost."}
-                </p>
-              ) : null}
-            </div>
+            {!isPayFlow(flow) ? helpExtra : null}
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
               <Input
@@ -248,10 +255,12 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
                 placeholder="0.00"
               />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Date</label>
-              <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
-            </div>
+            {isPayFlow(flow) ? (
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Date</label>
+                <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+              </div>
+            ) : null}
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Note</label>
               <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional" className="h-10" />

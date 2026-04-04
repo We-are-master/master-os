@@ -1236,13 +1236,12 @@ export default function JobDetailPage() {
 
   const handleMoneyDrawerSubmit = useCallback(
     async (payload: JobMoneySubmitPayload) => {
-      if (!job || !moneyDrawerFlow) return;
+      if (!job) return;
       setMoneySubmitting(true);
       try {
         const updated = await executeJobMoneyAction({
           job,
-          kind: moneyDrawerFlow,
-          extra: payload.extra,
+          mode: payload.flow,
           amount: payload.amount,
           paymentDate: payload.paymentDate,
           method: payload.method,
@@ -1251,23 +1250,39 @@ export default function JobDetailPage() {
           partnerPayments,
         });
         setJob(updated);
+        const fieldName =
+          payload.flow === "client_pay"
+            ? "customer_payment"
+            : payload.flow === "client_extra"
+              ? "customer_extra_charge"
+              : payload.flow === "partner_pay"
+                ? "partner_payment"
+                : "partner_extra_payout";
         await logAudit({
           entityType: "job",
           entityId: job.id,
           entityRef: job.reference,
-          action: "payment",
-          fieldName: moneyDrawerFlow === "client" ? "customer_payment" : "partner_payment",
+          action: payload.flow === "client_pay" || payload.flow === "partner_pay" ? "payment" : "updated",
+          fieldName,
           newValue: formatCurrency(payload.amount),
           userId: profile?.id,
           userName: profile?.full_name,
           metadata: {
-            extra: payload.extra,
+            mode: payload.flow,
             method: payload.method,
             date: payload.paymentDate,
             ...(payload.note.trim() ? { note: payload.note.trim() } : {}),
           },
         });
-        toast.success("Payment added");
+        const toastMsg =
+          payload.flow === "client_pay"
+            ? "Payment recorded"
+            : payload.flow === "client_extra"
+              ? "Extra charge added"
+              : payload.flow === "partner_pay"
+                ? "Payout recorded"
+                : "Extra payout added";
+        toast.success(toastMsg);
         setMoneyDrawerOpen(false);
         setMoneyDrawerFlow(null);
         await refreshJobFinance();
@@ -1284,7 +1299,7 @@ export default function JobDetailPage() {
         setMoneySubmitting(false);
       }
     },
-    [job, moneyDrawerFlow, customerPayments, partnerPayments, profile?.id, profile?.full_name, refreshJobFinance],
+    [job, customerPayments, partnerPayments, profile?.id, profile?.full_name, refreshJobFinance],
   );
 
   const confirmDeletePayment = useCallback(async () => {
@@ -2759,18 +2774,32 @@ export default function JobDetailPage() {
                     </span>
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-3 w-full"
-                  icon={<Plus className="h-3.5 w-3.5" />}
-                  onClick={() => {
-                    setMoneyDrawerFlow("client");
-                    setMoneyDrawerOpen(true);
-                  }}
-                >
-                  Add payment
-                </Button>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    icon={<Plus className="h-3.5 w-3.5" />}
+                    onClick={() => {
+                      setMoneyDrawerFlow("client_pay");
+                      setMoneyDrawerOpen(true);
+                    }}
+                  >
+                    Add payment
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    icon={<Plus className="h-3.5 w-3.5" />}
+                    onClick={() => {
+                      setMoneyDrawerFlow("client_extra");
+                      setMoneyDrawerOpen(true);
+                    }}
+                  >
+                    Add extra charge
+                  </Button>
+                </div>
               </div>
 
               {/* PARTNER cash out */}
@@ -2833,19 +2862,34 @@ export default function JobDetailPage() {
                     </div>
                   )}
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-3 w-full"
-                  disabled={!job.partner_id?.trim()}
-                  icon={<Plus className="h-3.5 w-3.5" />}
-                  onClick={() => {
-                    setMoneyDrawerFlow("partner");
-                    setMoneyDrawerOpen(true);
-                  }}
-                >
-                  Add payment
-                </Button>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    disabled={!job.partner_id?.trim()}
+                    icon={<Plus className="h-3.5 w-3.5" />}
+                    onClick={() => {
+                      setMoneyDrawerFlow("partner_pay");
+                      setMoneyDrawerOpen(true);
+                    }}
+                  >
+                    Pay partner
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    disabled={!job.partner_id?.trim()}
+                    icon={<Plus className="h-3.5 w-3.5" />}
+                    onClick={() => {
+                      setMoneyDrawerFlow("partner_extra");
+                      setMoneyDrawerOpen(true);
+                    }}
+                  >
+                    Add extra payout
+                  </Button>
+                </div>
               </div>
 
               {/* Net margin */}

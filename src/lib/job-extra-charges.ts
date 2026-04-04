@@ -29,13 +29,13 @@ export function applyCustomerExtraPatch(job: Job, amount: number, allocation: Cu
   };
 }
 
-/** Matches notes written by `executeJobMoneyAction` for client extra charges. */
+/** Legacy: extra charges that incorrectly created a `job_payments` row with this note. */
 export function isCustomerExtraChargePaymentNote(note: string | null | undefined): boolean {
   const n = (note ?? "").trim();
   return n === "Extra charge" || n.startsWith("Extra ·");
 }
 
-/** Matches notes written by `executeJobMoneyAction` for partner extra payouts. */
+/** Legacy: extra payouts that incorrectly created a `job_payments` row with this note. */
 export function isPartnerExtraPayoutPaymentNote(note: string | null | undefined): boolean {
   const n = (note ?? "").trim();
   return n === "Extra payout" || n.startsWith("Extra payout ·");
