@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ import {
   Plus, Download, Filter, Receipt, Clock, AlertTriangle,
   FileText, Send, Calendar, MapPin, User, Briefcase, ArrowRight,
   CheckCircle2, XCircle, CreditCard, Building2, Hash, TrendingUp,
-  Banknote, RotateCcw, Loader, Lock,
+  Banknote, RotateCcw, Loader, Lock, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -745,9 +745,15 @@ function InvoiceDetailDrawer({
   const [partialAmount, setPartialAmount] = useState("");
   const [partialPaymentDate, setPartialPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [savingPartial, setSavingPartial] = useState(false);
+  const [collectionSectionOpen, setCollectionSectionOpen] = useState(false);
+
+  const onInvoiceUpdatedRef = useRef(onInvoiceUpdated);
+  onInvoiceUpdatedRef.current = onInvoiceUpdated;
 
   useEffect(() => {
     if (!invoice) return;
+    let cancelled = false;
+
     setTab("details");
     setLinkedJob(null);
     setRelatedInvoices([]);
@@ -763,18 +769,63 @@ function InvoiceDetailDrawer({
     setCollLocked(!!invoice.collection_stage_locked);
     setPartialAmount("");
     setPartialPaymentDate(new Date().toISOString().slice(0, 10));
+    setCollectionSectionOpen(false);
 
     const supabase = getSupabase();
 
-    if (invoice.job_reference) {
+    if (invoice.job_reference?.trim()) {
       setLoadingJob(true);
-      supabase.from("jobs").select("*").eq("reference", invoice.job_reference).maybeSingle()
-        .then(({ data }) => { setLinkedJob(data as LinkedJob | null); setLoadingJob(false); }, () => setLoadingJob(false));
+      void (async () => {
+        try {
+          const { data: jobData } = await supabase
+            .from("jobs")
+            .select("*")
+            .eq("reference", invoice.job_reference!.trim())
+            .maybeSingle();
+          if (cancelled) return;
+          setLinkedJob((jobData ?? null) as LinkedJob | null);
+
+          const jid = (jobData as { id?: string } | null)?.id;
+          if (jid && onInvoiceUpdatedRef.current) {
+            try {
+              await syncInvoicesFromJobCustomerPayments(supabase, jid);
+              const { data: freshInv } = await supabase.from("invoices").select("*").eq("id", invoice.id).maybeSingle();
+              if (!cancelled && freshInv) onInvoiceUpdatedRef.current?.(freshInv as Invoice);
+            } catch (e) {
+              console.error("Invoice drawer: sync from job payments", e);
+            }
+          }
+        } finally {
+          if (!cancelled) setLoadingJob(false);
+        }
+      })();
+    } else {
+      setLoadingJob(false);
     }
 
     setLoadingRelated(true);
-    supabase.from("invoices").select("*").eq("client_name", invoice.client_name).neq("id", invoice.id).order("created_at", { ascending: false }).limit(5)
-      .then(({ data }) => { setRelatedInvoices((data ?? []) as Invoice[]); setLoadingRelated(false); }, () => setLoadingRelated(false));
+    supabase
+      .from("invoices")
+      .select("*")
+      .eq("client_name", invoice.client_name)
+      .neq("id", invoice.id)
+      .order("created_at", { ascending: false })
+      .limit(5)
+      .then(
+        ({ data }) => {
+          if (!cancelled) {
+            setRelatedInvoices((data ?? []) as Invoice[]);
+            setLoadingRelated(false);
+          }
+        },
+        () => {
+          if (!cancelled) setLoadingRelated(false);
+        },
+      );
+
+    return () => {
+      cancelled = true;
+    };
   }, [invoice]);
 
   const handleGenerateLink = async () => {
@@ -865,6 +916,16 @@ function InvoiceDetailDrawer({
   const hasStripeLink = !!stripeState.linkUrl;
   const stripePaid = stripeState.paymentStatus === "paid";
 
+  const invPaidForHero = invoiceAmountPaid(invoice);
+  const invBalanceForHero = invoiceBalanceDue(invoice);
+  /** Row can lag `status`; job-synced `amount_paid` still means show balance in the hero (same as job “amount due”). */
+  const showBalanceHero =
+    invPaidForHero > 0.02 &&
+    invBalanceForHero > 0.02 &&
+    invoice.status !== "paid" &&
+    invoice.status !== "cancelled" &&
+    invoice.status !== "draft";
+
   const drawerTabs = [
     { id: "details", label: "Details" },
     { id: "stripe", label: "Stripe" },
@@ -917,7 +978,7 @@ function InvoiceDetailDrawer({
                     <Badge variant={config.variant} dot size="md">{config.label}</Badge>
                     <p className="text-xs text-text-tertiary mt-0.5">
                       {invoice.status === "paid" && invoice.paid_date ? `Paid on ${formatDate(invoice.paid_date)}` :
-                       invoice.status === "partially_paid" ? `${formatCurrency(invoiceAmountPaid(invoice))} received · ${formatCurrency(invoiceBalanceDue(invoice))} left` :
+                       invoice.status === "partially_paid" || showBalanceHero ? `${formatCurrency(invoiceAmountPaid(invoice))} received · ${formatCurrency(invoiceBalanceDue(invoice))} left` :
                        isOverdue ? `Overdue by ${Math.abs(daysUntilDue)} days` :
                        invoice.status === "cancelled"
                          ? invoice.cancellation_reason?.trim()
@@ -928,7 +989,7 @@ function InvoiceDetailDrawer({
                   </div>
                 </div>
                 <div className="text-right shrink-0">
-                  {invoice.status === "partially_paid" ? (
+                  {invoice.status === "partially_paid" || showBalanceHero ? (
                     <>
                       <p className="text-2xl font-bold text-text-primary tabular-nums">{formatCurrency(invoiceBalanceDue(invoice))}</p>
                       <p className="text-[11px] text-text-tertiary">due · total {formatCurrency(invoice.amount)}</p>
@@ -951,32 +1012,48 @@ function InvoiceDetailDrawer({
             </div>
 
             {invoice.job_reference && onInvoiceUpdated && (
-              <div className="p-4 rounded-xl border border-border-light space-y-3">
-                <div className="flex items-center gap-2">
-                  <Lock className="h-4 w-4 text-text-tertiary" />
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Customer collection (job)</p>
-                </div>
-                <p className="text-[11px] text-text-tertiary">
-                  Stages follow deposit/final on the job when unlocked. Turn on <strong>Lock</strong> to keep this stage fixed (e.g. paid by bank transfer outside Stripe).
-                </p>
-                <Select
-                  label="Collection stage"
-                  value={collStage}
-                  onChange={(e) => setCollStage(e.target.value as InvoiceCollectionStage)}
-                  options={COLLECTION_STAGE_OPTIONS.map((v) => ({ value: v, label: COLLECTION_STAGE_LABELS[v] }))}
-                />
-                <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border"
-                    checked={collLocked}
-                    onChange={(e) => setCollLocked(e.target.checked)}
-                  />
-                  Lock stage (manual only)
-                </label>
-                <Button type="button" size="sm" onClick={saveCollectionStage} disabled={savingColl}>
-                  {savingColl ? "Saving…" : "Save collection"}
-                </Button>
+              <div className="rounded-xl border border-border-light overflow-hidden">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface-hover/60 transition-colors"
+                  onClick={() => setCollectionSectionOpen((o) => !o)}
+                  aria-expanded={collectionSectionOpen}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Lock className="h-4 w-4 text-text-tertiary shrink-0" />
+                    <span className="text-xs font-semibold text-text-tertiary uppercase tracking-wide truncate">Customer collection (job)</span>
+                  </div>
+                  {collectionSectionOpen ? (
+                    <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
+                  )}
+                </button>
+                {collectionSectionOpen ? (
+                  <div className="px-4 pb-4 pt-0 space-y-3 border-t border-border-light">
+                    <p className="text-[11px] text-text-tertiary pt-3">
+                      Stages follow deposit/final on the job when unlocked. Turn on <strong>Lock</strong> to keep this stage fixed (e.g. paid by bank transfer outside Stripe).
+                    </p>
+                    <Select
+                      label="Collection stage"
+                      value={collStage}
+                      onChange={(e) => setCollStage(e.target.value as InvoiceCollectionStage)}
+                      options={COLLECTION_STAGE_OPTIONS.map((v) => ({ value: v, label: COLLECTION_STAGE_LABELS[v] }))}
+                    />
+                    <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border"
+                        checked={collLocked}
+                        onChange={(e) => setCollLocked(e.target.checked)}
+                      />
+                      Lock stage (manual only)
+                    </label>
+                    <Button type="button" size="sm" onClick={saveCollectionStage} disabled={savingColl}>
+                      {savingColl ? "Saving…" : "Save collection"}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -1065,37 +1142,6 @@ function InvoiceDetailDrawer({
                     </div>
                   </>
                 )}
-              </div>
-            </div>
-
-            {/* Payment Timeline */}
-            <div className="space-y-3">
-              <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Timeline</p>
-              <div className="space-y-0">
-                <TimelineStep done label="Invoice Created" date={formatDate(invoice.created_at)} />
-                <TimelineStep done={invoice.status !== "cancelled"} label="Sent to Client" date={formatDate(invoice.created_at)} />
-                <TimelineStep
-                  done={invoice.status === "paid"}
-                  active={
-                    invoice.status === "pending" ||
-                    invoice.status === "overdue" ||
-                    invoice.status === "partially_paid" ||
-                    invoice.status === "draft"
-                  }
-                  label={
-                    invoice.status === "paid"
-                      ? "Payment Received"
-                      : invoice.status === "partially_paid"
-                        ? "Partially paid"
-                        : invoice.status === "draft"
-                          ? "Draft — not issued"
-                          : isOverdue
-                            ? "Payment Overdue"
-                            : "Awaiting Payment"
-                  }
-                  date={invoice.paid_date ? formatDate(invoice.paid_date) : `Due ${formatDate(invoice.due_date)}`}
-                  danger={isOverdue}
-                />
               </div>
             </div>
 
@@ -1200,12 +1246,12 @@ function InvoiceDetailDrawer({
               </div>
               <div className="p-3 rounded-xl bg-surface-hover">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
-                  {invoice.status === "partially_paid" ? "Balance due" : "Amount"}
+                  {invoice.status === "partially_paid" || showBalanceHero ? "Balance due" : "Amount"}
                 </p>
                 <p className="text-lg font-bold text-text-primary mt-0.5">
-                  {invoice.status === "partially_paid" ? formatCurrency(invoiceBalanceDue(invoice)) : formatCurrency(invoice.amount)}
+                  {invoice.status === "partially_paid" || showBalanceHero ? formatCurrency(invoiceBalanceDue(invoice)) : formatCurrency(invoice.amount)}
                 </p>
-                {invoice.status === "partially_paid" ? (
+                {invoice.status === "partially_paid" || showBalanceHero ? (
                   <p className="text-[10px] text-text-tertiary mt-0.5">of {formatCurrency(invoice.amount)}</p>
                 ) : null}
               </div>
@@ -1539,10 +1585,42 @@ function InvoiceDetailDrawer({
           </div>
         )}
 
-        {/* ===== HISTORY TAB (Audit) ===== */}
+        {/* ===== HISTORY TAB (payment timeline + audit) ===== */}
         {tab === "history" && (
-          <div className="p-6">
-            <AuditTimeline entityType="invoice" entityId={invoice.id} />
+          <div className="p-6 space-y-8">
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Timeline</p>
+              <div className="space-y-0">
+                <TimelineStep done label="Invoice Created" date={formatDate(invoice.created_at)} />
+                <TimelineStep done={invoice.status !== "cancelled"} label="Sent to Client" date={formatDate(invoice.created_at)} />
+                <TimelineStep
+                  done={invoice.status === "paid"}
+                  active={
+                    invoice.status === "pending" ||
+                    invoice.status === "overdue" ||
+                    invoice.status === "partially_paid" ||
+                    invoice.status === "draft"
+                  }
+                  label={
+                    invoice.status === "paid"
+                      ? "Payment Received"
+                      : invoice.status === "partially_paid"
+                        ? "Partially paid"
+                        : invoice.status === "draft"
+                          ? "Draft — not issued"
+                          : isOverdue
+                            ? "Payment Overdue"
+                            : "Awaiting Payment"
+                  }
+                  date={invoice.paid_date ? formatDate(invoice.paid_date) : `Due ${formatDate(invoice.due_date)}`}
+                  danger={isOverdue}
+                />
+              </div>
+            </div>
+            <div className="space-y-3 pt-2 border-t border-border-light">
+              <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Activity</p>
+              <AuditTimeline entityType="invoice" entityId={invoice.id} />
+            </div>
           </div>
         )}
       </div>

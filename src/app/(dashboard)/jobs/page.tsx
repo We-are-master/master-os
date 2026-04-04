@@ -1685,12 +1685,23 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                       key={pid}
                       className={cn(
                         "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                        selected ? "border-primary bg-primary/5" : match ? "border-amber-300 bg-amber-50/40 hover:border-primary/30" : "border-border hover:border-primary/30",
+                        selected
+                          ? "border-primary bg-primary/5"
+                          : match
+                            ? "border-amber-400 bg-amber-50/90 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-primary/30"
+                            : "border-border hover:border-primary/30",
                       )}
                     >
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-text-primary truncate">{p.company_name?.trim() || p.contact_name || "Partner"}</p>
-                        <p className="text-xs text-text-tertiary truncate">{p.trade ?? "—"} · {p.location ?? "—"}</p>
+                        <p
+                          className={cn(
+                            "text-xs truncate",
+                            match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
+                          )}
+                        >
+                          {p.trade ?? "—"} · {p.location ?? "—"}
+                        </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         {match ? <Badge variant="warning" size="sm">Match</Badge> : null}
