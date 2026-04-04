@@ -75,6 +75,27 @@ function invoiceEffectiveDateValue(inv: Pick<Invoice, "billing_week_start" | "cr
   return inv.created_at;
 }
 
+/** Prefer `invoices.source_account_id`; else job → client account; else exact `client_name` match on `clients`. */
+function effectiveInvoiceSourceAccountId(
+  inv: Pick<Invoice, "source_account_id" | "job_reference" | "client_name">,
+  jobRefToAccountId: Record<string, string>,
+  clientNameToAccountId: Record<string, string>,
+): string | null {
+  const direct = inv.source_account_id?.trim();
+  if (direct) return direct;
+  const ref = inv.job_reference?.trim();
+  if (ref) {
+    const fromJob = jobRefToAccountId[ref]?.trim();
+    if (fromJob) return fromJob;
+  }
+  const cn = inv.client_name?.trim();
+  if (cn) {
+    const fromName = clientNameToAccountId[cn]?.trim();
+    if (fromName) return fromName;
+  }
+  return null;
+}
+
 interface LinkedJob {
   id: string;
   reference: string;
@@ -98,7 +119,7 @@ interface LinkedJob {
 }
 
 export default function InvoicesPage() {
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
@@ -126,11 +147,18 @@ export default function InvoicesPage() {
   const [kpis, setKpis] = useState({
     totalInvoiced: 0,
     amountReceived: 0,
+    /** Sum of balance due on pending / partial / overdue / draft in the selected period. */
+    balanceDueOpen: 0,
+    openInvoiceCount: 0,
     overdueAmount: 0,
     overdueCount: 0,
     avgCollectionDays: null as number | null,
   });
   const [accountNameById, setAccountNameById] = useState<Record<string, string>>({});
+  /** `job_reference` → `accounts.id` via job.client_id → clients.source_account_id */
+  const [jobRefToSourceAccountId, setJobRefToSourceAccountId] = useState<Record<string, string>>({});
+  /** `clients.full_name` (exact) → `source_account_id` when invoice has no job ref / no stored account */
+  const [clientNameToSourceAccountId, setClientNameToSourceAccountId] = useState<Record<string, string>>({});
   const { profile } = useProfile();
 
   const loadCounts = useCallback(async () => {
@@ -160,41 +188,43 @@ export default function InvoicesPage() {
   const loadKpis = useCallback(async () => {
     try {
       const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo);
-      let q = getSupabase()
-        .from("invoices")
-        .select("amount, status, amount_paid, paid_date, created_at, billing_week_start")
-        .is("deleted_at", null);
-      if (bounds) {
-        const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
-        q = applyInvoicePeriodBoundsToQuery(q, {
-          from: bounds.from,
-          to: bounds.to,
-          startIso,
-          endIso,
-        });
+      const supabase = getSupabase();
+      const pageSize = 500;
+      const all: Invoice[] = [];
+      for (let from = 0; from < 100_000; from += pageSize) {
+        let q = supabase.from("invoices").select("*").is("deleted_at", null);
+        if (bounds) {
+          const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
+          q = applyInvoicePeriodBoundsToQuery(q, {
+            from: bounds.from,
+            to: bounds.to,
+            startIso,
+            endIso,
+          });
+        }
+        const { data: chunk, error } = await q.order("created_at", { ascending: false }).range(from, from + pageSize - 1);
+        if (error) throw error;
+        const rows = (chunk ?? []) as Invoice[];
+        if (rows.length === 0) break;
+        all.push(...rows);
+        if (rows.length < pageSize) break;
       }
-      const { data: rows, error } = await q;
-      if (error) throw error;
-      const all = (rows ?? []) as {
-        amount: number;
-        status: string;
-        amount_paid?: number;
-        paid_date?: string | null;
-        created_at: string;
-        billing_week_start?: string | null;
-      }[];
+
       const nonCancelled = all.filter((r) => r.status !== "cancelled");
       const totalInvoiced = nonCancelled.reduce((sum, r) => sum + Number(r.amount), 0);
-      const amountReceived = nonCancelled.reduce((sum, r) => sum + invoiceAmountPaid(r as Invoice), 0);
+      const amountReceived = nonCancelled.reduce((sum, r) => sum + invoiceAmountPaid(r), 0);
       const overdue = all.filter((r) => r.status === "overdue");
-      const overdueAmount = overdue.reduce((sum, r) => sum + invoiceBalanceDue(r as Invoice), 0);
+      const overdueAmount = overdue.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
+      const openStatuses = new Set<Invoice["status"]>(["pending", "partially_paid", "overdue", "draft"]);
+      const openInvoices = all.filter((r) => openStatuses.has(r.status));
+      const balanceDueOpen = openInvoices.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
       const paidWithDates = all.filter((r) => r.status === "paid" && r.paid_date);
       let avgCollectionDays: number | null = null;
       if (paidWithDates.length > 0) {
         let sumDays = 0;
         let n = 0;
         for (const r of paidWithDates) {
-          const c = new Date(invoiceEffectiveDateValue(r as Invoice)).getTime();
+          const c = new Date(invoiceEffectiveDateValue(r)).getTime();
           const p = new Date(r.paid_date!).getTime();
           if (!Number.isFinite(c) || !Number.isFinite(p)) continue;
           sumDays += Math.max(0, (p - c) / 864e5);
@@ -205,11 +235,23 @@ export default function InvoicesPage() {
       setKpis({
         totalInvoiced,
         amountReceived,
+        balanceDueOpen,
+        openInvoiceCount: openInvoices.length,
         overdueAmount,
         overdueCount: overdue.length,
         avgCollectionDays,
       });
-    } catch { /* cosmetic */ }
+    } catch {
+      setKpis({
+        totalInvoiced: 0,
+        amountReceived: 0,
+        balanceDueOpen: 0,
+        openInvoiceCount: 0,
+        overdueAmount: 0,
+        overdueCount: 0,
+        avgCollectionDays: null,
+      });
+    }
   }, [periodMode, weekAnchor, rangeFrom, rangeTo]);
 
   useEffect(() => {
@@ -218,7 +260,96 @@ export default function InvoicesPage() {
   }, [loadCounts, loadKpis]);
 
   useEffect(() => {
-    const ids = [...new Set(data.map((inv) => inv.source_account_id).filter((x): x is string => Boolean(x && String(x).trim())))];
+    let cancelled = false;
+    const REF_CHUNK = 80;
+    const NAME_CHUNK = 80;
+    (async () => {
+      const refMap: Record<string, string> = {};
+      const nameMap: Record<string, string> = {};
+      try {
+        const supabase = getSupabase();
+        const refs = [...new Set(data.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)))];
+        for (let i = 0; i < refs.length; i += REF_CHUNK) {
+          const chunk = refs.slice(i, i + REF_CHUNK);
+          const { data: jobs, error } = await supabase
+            .from("jobs")
+            .select("reference, client_id")
+            .in("reference", chunk)
+            .is("deleted_at", null);
+          if (error) throw error;
+          const cids = [
+            ...new Set(
+              (jobs ?? [])
+                .map((j) => (j as { client_id?: string | null }).client_id)
+                .filter((x): x is string => Boolean(x && String(x).trim())),
+            ),
+          ];
+          if (cids.length === 0) continue;
+          const { data: clients, error: cErr } = await supabase.from("clients").select("id, source_account_id").in("id", cids);
+          if (cErr) throw cErr;
+          const cmap = new Map<string, string>();
+          for (const c of clients ?? []) {
+            const row = c as { id: string; source_account_id?: string | null };
+            const aid = (row.source_account_id ?? "").trim();
+            if (aid) cmap.set(row.id, aid);
+          }
+          for (const j of jobs ?? []) {
+            const row = j as { reference?: string | null; client_id?: string | null };
+            const ref = row.reference?.trim();
+            const cid = row.client_id?.trim();
+            if (!ref || !cid) continue;
+            const acc = cmap.get(cid);
+            if (acc) refMap[ref] = acc;
+          }
+        }
+
+        const namesNeeding = [
+          ...new Set(
+            data
+              .filter((inv) => !inv.source_account_id?.trim() && !inv.job_reference?.trim())
+              .map((inv) => inv.client_name.trim())
+              .filter(Boolean),
+          ),
+        ];
+        for (let i = 0; i < namesNeeding.length; i += NAME_CHUNK) {
+          const nc = namesNeeding.slice(i, i + NAME_CHUNK);
+          const { data: clin, error: nErr } = await supabase
+            .from("clients")
+            .select("full_name, source_account_id")
+            .in("full_name", nc)
+            .is("deleted_at", null);
+          if (nErr) throw nErr;
+          for (const row of clin ?? []) {
+            const r = row as { full_name?: string | null; source_account_id?: string | null };
+            const fn = (r.full_name ?? "").trim();
+            const aid = (r.source_account_id ?? "").trim();
+            if (fn && aid) nameMap[fn] = aid;
+          }
+        }
+
+        if (!cancelled) {
+          setJobRefToSourceAccountId(refMap);
+          setClientNameToSourceAccountId(nameMap);
+        }
+      } catch {
+        if (!cancelled) {
+          setJobRefToSourceAccountId({});
+          setClientNameToSourceAccountId({});
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
+  useEffect(() => {
+    const idSet = new Set<string>();
+    for (const inv of data) {
+      const eid = effectiveInvoiceSourceAccountId(inv, jobRefToSourceAccountId, clientNameToSourceAccountId);
+      if (eid) idSet.add(eid);
+    }
+    const ids = [...idSet];
     if (ids.length === 0) return;
     let cancelled = false;
     const CHUNK = 50;
@@ -243,7 +374,7 @@ export default function InvoicesPage() {
     return () => {
       cancelled = true;
     };
-  }, [data]);
+  }, [data, jobRefToSourceAccountId, clientNameToSourceAccountId]);
 
   const kpiPeriodDesc = useMemo(
     () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
@@ -440,7 +571,7 @@ export default function InvoicesPage() {
       "Created At",
     ];
     const rows = data.map((inv) => {
-      const accId = inv.source_account_id;
+      const accId = effectiveInvoiceSourceAccountId(inv, jobRefToSourceAccountId, clientNameToSourceAccountId);
       const accountLabel = accId ? (accountNameById[accId] ?? "") : "";
       return [
         inv.reference,
@@ -467,7 +598,7 @@ export default function InvoicesPage() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     toast.success("CSV exported successfully");
-  }, [data, accountNameById]);
+  }, [data, accountNameById, jobRefToSourceAccountId, clientNameToSourceAccountId]);
 
   const tabs = [
     { id: "all", label: "All", count: tabCounts.all },
@@ -493,7 +624,7 @@ export default function InvoicesPage() {
       minWidth: "168px",
       cellClassName: "align-top",
       render: (item) => {
-        const id = item.source_account_id?.trim();
+        const id = effectiveInvoiceSourceAccountId(item, jobRefToSourceAccountId, clientNameToSourceAccountId);
         const name = id ? accountNameById[id] : null;
         return (
           <div className="flex items-start gap-2 min-w-0">
@@ -643,10 +774,10 @@ export default function InvoicesPage() {
             accent="emerald"
           />
           <KpiCard
-            title="Overdue Amount"
-            value={kpis.overdueAmount}
+            title="Balance due (open)"
+            value={kpis.balanceDueOpen}
             format="currency"
-            description={`${kpis.overdueCount} overdue · balance still due · ${kpiPeriodDesc}`}
+            description={`${kpis.openInvoiceCount} open invoices · ${kpis.overdueCount} overdue (${formatCurrency(kpis.overdueAmount)}) · ${kpiPeriodDesc}`}
             icon={AlertTriangle}
             accent="amber"
           />
