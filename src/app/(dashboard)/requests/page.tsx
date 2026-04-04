@@ -57,7 +57,7 @@ import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { cn, formatCurrency, isUuid } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { computeHourlyTotals, partnerHourlyRateFromCatalogBundle } from "@/lib/job-hourly-billing";
-import { computeAccessSurcharge, isLikelyCczAddress } from "@/lib/ccz";
+import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
@@ -1390,8 +1390,9 @@ export default function RequestsPage() {
             const clientPrice = data.client_price ?? 0;
             const partnerCost = data.partner_cost ?? 0;
             const isAutoAssign = data.assignment_mode === "auto";
+            const inCczEff = effectiveInCczForAddress(data.in_ccz, data.property_address);
             const accessSurcharge = computeAccessSurcharge({
-              inCcz: data.in_ccz,
+              inCcz: inCczEff,
               hasFreeParking: data.has_free_parking,
             });
             const margin = clientPrice > 0 ? Math.round(((clientPrice - partnerCost) / clientPrice) * 1000) / 10 : 0;
@@ -1405,7 +1406,7 @@ export default function RequestsPage() {
             const job = await createJob({
               title: `${convertToJobOpen.service_type} — ${data.client_name}`,
               catalog_service_id: data.catalog_service_id ?? null,
-              in_ccz: data.in_ccz ?? null,
+              in_ccz: inCczEff,
               has_free_parking: data.has_free_parking ?? null,
               client_id: data.client_id,
               client_address_id: data.client_address_id,
@@ -2023,6 +2024,8 @@ function ConvertToJobModal({
       return;
     }
     queueMicrotask(() => {
+      const addrVal = serviceRequestToClientAddressValue(request);
+      const cczOk = isLikelyCczAddress(addrVal.property_address);
       setForm({
         partner_id: "", scope: "", notes: "", internal_notes: "",
         client_price: String(request.estimated_value ?? 0), partner_cost: "", job_type: "fixed",
@@ -2031,11 +2034,11 @@ function ConvertToJobModal({
         hourly_partner_rate: "",
         billed_hours: "1",
         assignment_mode: "manual",
-        in_ccz: !!request.in_ccz,
+        in_ccz: Boolean(request.in_ccz) && cczOk,
         has_free_parking: request.has_free_parking ?? true,
         scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
       });
-      setClientAddress(serviceRequestToClientAddressValue(request));
+      setClientAddress(addrVal);
     });
     loadPartners()
       .then(setPartners)
@@ -2069,8 +2072,13 @@ function ConvertToJobModal({
   }, [partnerSearch, partners, targetWorkType]);
 
   useEffect(() => {
-    const inCcz = isLikelyCczAddress(clientAddress.property_address);
-    queueMicrotask(() => setForm((prev) => ({ ...prev, in_ccz: inCcz })));
+    const eligible = isLikelyCczAddress(clientAddress.property_address);
+    queueMicrotask(() => {
+      setForm((prev) => {
+        if (!eligible && prev.in_ccz) return { ...prev, in_ccz: false };
+        return prev;
+      });
+    });
   }, [clientAddress.property_address]);
 
   useEffect(() => {
@@ -2151,7 +2159,7 @@ function ConvertToJobModal({
       notes: form.notes || undefined,
       internal_notes: form.internal_notes || undefined,
       catalog_service_id: form.catalog_service_id || null,
-      in_ccz: form.in_ccz,
+      in_ccz: effectiveInCczForAddress(form.in_ccz, clientAddress.property_address),
       has_free_parking: form.has_free_parking,
       client_price: Number(form.client_price) || 0,
       partner_cost: Number(form.partner_cost) || 0,
@@ -2169,7 +2177,9 @@ function ConvertToJobModal({
 
   if (!request) return null;
   const requiredFieldClass = "border-red-300 focus:border-red-400 focus:ring-red-100 hover:border-red-300";
-  const accessSurchargePreview = computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking });
+  const cczEligibleConvert = isLikelyCczAddress(clientAddress.property_address);
+  const inCczPreviewConvert = cczEligibleConvert && form.in_ccz;
+  const accessSurchargePreview = computeAccessSurcharge({ inCcz: inCczPreviewConvert, hasFreeParking: form.has_free_parking });
   const hourlyPreview = computeHourlyTotals({
     elapsedSeconds: Math.max(1, Number(form.billed_hours) || 1) * 3600,
     clientHourlyRate: Math.max(0, Number(form.hourly_client_rate) || 0),
@@ -2244,14 +2254,28 @@ function ConvertToJobModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                disabled={!cczEligibleConvert}
+                onClick={() => cczEligibleConvert && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
                 className={cn(
                   "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                  form.in_ccz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
+                  !cczEligibleConvert && "opacity-50 cursor-not-allowed",
+                  form.in_ccz && cczEligibleConvert ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
                 )}
               >
-                <p className="font-medium">{form.in_ccz ? "CCZ fee applied" : "Apply CCZ"}</p>
-                <p className="text-xs opacity-80">{form.in_ccz ? "+£15 applied" : "Adds +£15"}</p>
+                <p className="font-medium">
+                  {!cczEligibleConvert
+                    ? "CCZ (Congestion Charge — central London)"
+                    : inCczPreviewConvert
+                      ? "CCZ fee applied"
+                      : "Apply CCZ"}
+                </p>
+                <p className="text-xs opacity-80">
+                  {!cczEligibleConvert
+                    ? "Only addresses with EC1–4, WC1–2, W1, SW1 or SE1 can turn CCZ on"
+                    : inCczPreviewConvert
+                      ? "+£15 applied"
+                      : "Turn on only inside the central CCZ postcode list"}
+                </p>
               </button>
               <button
                 type="button"
@@ -2468,8 +2492,13 @@ function CreateRequestModal({
   }, [clientAddress.property_address]);
 
   useEffect(() => {
-    const inCcz = isLikelyCczAddress(clientAddress.property_address);
-    queueMicrotask(() => setForm((prev) => ({ ...prev, in_ccz: inCcz })));
+    const eligible = isLikelyCczAddress(clientAddress.property_address);
+    queueMicrotask(() => {
+      setForm((prev) => {
+        if (!eligible && prev.in_ccz) return { ...prev, in_ccz: false };
+        return prev;
+      });
+    });
   }, [clientAddress.property_address]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -2520,12 +2549,18 @@ function CreateRequestModal({
         description: form.description,
         priority: form.priority as ServiceRequest["priority"],
         request_kind: form.request_kind as "quote" | "work",
-        in_ccz: form.request_kind === "work" ? form.in_ccz : null,
+        in_ccz:
+          form.request_kind === "work"
+            ? effectiveInCczForAddress(form.in_ccz, clientAddress.property_address)
+            : null,
         has_free_parking: form.request_kind === "work" ? form.has_free_parking : null,
       },
       createPhotos.length > 0 ? createPhotos : undefined
     );
   };
+
+  const cczEligibleCreate = form.request_kind === "work" && isLikelyCczAddress(clientAddress.property_address);
+  const inCczPreviewCreate = cczEligibleCreate && form.in_ccz;
 
   return (
     <Modal
@@ -2643,14 +2678,28 @@ function CreateRequestModal({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                  disabled={!cczEligibleCreate}
+                  onClick={() => cczEligibleCreate && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
                   className={cn(
                     "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                    form.in_ccz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
+                    !cczEligibleCreate && "opacity-50 cursor-not-allowed",
+                    form.in_ccz && cczEligibleCreate ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
                   )}
                 >
-                  <p className="font-medium">{form.in_ccz ? "CCZ fee applied" : "Apply CCZ"}</p>
-                  <p className="text-xs opacity-80">{form.in_ccz ? "+£15 applied" : "Adds +£15 on job"}</p>
+                  <p className="font-medium">
+                    {!cczEligibleCreate
+                      ? "CCZ (Congestion Charge — central London)"
+                      : inCczPreviewCreate
+                        ? "CCZ fee applied"
+                        : "Apply CCZ"}
+                  </p>
+                  <p className="text-xs opacity-80">
+                    {!cczEligibleCreate
+                      ? "Only addresses with EC1–4, WC1–2, W1, SW1 or SE1 can turn CCZ on"
+                      : inCczPreviewCreate
+                        ? "+£15 applied"
+                        : "Turn on only inside the central CCZ postcode list"}
+                  </p>
                 </button>
                 <button
                   type="button"
@@ -2664,7 +2713,7 @@ function CreateRequestModal({
                   <p className="text-xs opacity-80">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
                 </button>
               </div>
-              <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: form.in_ccz, hasFreeParking: form.has_free_parking }))}</span></p>
+              <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: inCczPreviewCreate, hasFreeParking: form.has_free_parking }))}</span></p>
             </div>
           )}
         </div>

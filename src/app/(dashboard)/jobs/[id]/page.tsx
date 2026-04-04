@@ -81,7 +81,15 @@ import {
   partnerSelfBillGrossAmount,
   customerScheduledTotal,
 } from "@/lib/job-financials";
-import { computeAccessSurcharge } from "@/lib/ccz";
+import {
+  ACCESS_CCZ_FEE_GBP,
+  ACCESS_PARKING_FEE_GBP,
+  computeAccessSurcharge,
+  effectiveInCczForAddress,
+  isLikelyCczAddress,
+} from "@/lib/ccz";
+import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
+import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 import {
@@ -137,12 +145,15 @@ const selfBillStatusConfig: Record<
   rejected: { label: "Rejected", variant: "default" },
 };
 
-function JobDetailSelfBillPanel({ sb }: { sb: SelfBill }) {
+function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
   const weekLine =
     sb.week_start && sb.week_end
       ? `${sb.week_start} → ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
       : sb.week_label ?? sb.period;
+  const jobLabourOnBill = Math.round(partnerPaymentCap(job) * 100) / 100;
+  const jobMaterialsOnBill = Math.round(Math.max(0, Number(job.materials_cost ?? 0)) * 100) / 100;
+  const jobGrossOnBill = Math.round(partnerSelfBillGrossAmount(job) * 100) / 100;
   return (
     <div className="rounded-lg border border-border-light p-3 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
@@ -152,20 +163,26 @@ function JobDetailSelfBillPanel({ sb }: { sb: SelfBill }) {
       <p className="text-[11px] text-text-secondary truncate" title={sb.partner_name}>
         Partner → us · {sb.partner_name}
       </p>
-      <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(sb.net_payout)}</p>
-      <p className="text-[10px] text-text-tertiary uppercase tracking-wide">Net payout (whole bill)</p>
+      <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
+      <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
       <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
         <div>
-          <p className="text-text-tertiary">Labour (bill)</p>
-          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(sb.job_value)}</p>
+          <p className="text-text-tertiary">Labour (this job)</p>
+          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobLabourOnBill)}</p>
         </div>
         <div>
-          <p className="text-text-tertiary">Materials (bill)</p>
-          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(sb.materials)}</p>
+          <p className="text-text-tertiary">Materials (this job)</p>
+          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobMaterialsOnBill)}</p>
         </div>
       </div>
-      <p className="text-[11px] text-text-tertiary pt-0.5">
+      <p className="text-[11px] text-text-tertiary pt-0.5 leading-snug">
         Week: {weekLine} · {sb.jobs_count} job{sb.jobs_count === 1 ? "" : "s"} on this bill
+        {sb.jobs_count > 1 ? (
+          <>
+            {" "}
+            · Whole bill total {formatCurrency(sb.net_payout)}
+          </>
+        ) : null}
       </p>
       <div className="flex items-center gap-1.5 flex-wrap pt-1">
         <Button
@@ -227,6 +244,7 @@ export default function JobDetailPage() {
   const [savingProperty, setSavingProperty] = useState(false);
   const [unlinkedAddressDraft, setUnlinkedAddressDraft] = useState("");
   const [savingUnlinkedAddress, setSavingUnlinkedAddress] = useState(false);
+  const [savingAccessFees, setSavingAccessFees] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
   const [partnerModalOpen, setPartnerModalOpen] = useState(false);
@@ -367,6 +385,22 @@ export default function JobDetailPage() {
       customerFinalPayment: totals.clientTotal - Number(job.customer_deposit ?? 0),
     };
   }, [job, officeTimerDisplaySeconds]);
+
+  const isHousekeepJobDetail = useMemo(() => {
+    if (!job) return false;
+    const v = (job.title ?? "").trim().toLowerCase();
+    return v.includes("housekeep") || v.includes("house keep");
+  }, [job]);
+
+  const cczEligibleAddress = useMemo(
+    () => Boolean(job) && !isHousekeepJobDetail && isLikelyCczAddress(job!.property_address),
+    [job, isHousekeepJobDetail],
+  );
+
+  const effectiveCustomerInCcz = useMemo(
+    () => effectiveInCczForAddress(job?.in_ccz, job?.property_address),
+    [job?.in_ccz, job?.property_address],
+  );
 
   const loadPayments = useCallback(async (jobId: string) => {
     setLoadingPayments(true);
@@ -792,6 +826,43 @@ export default function JobDetailPage() {
     }
   }, [profile?.id, profile?.full_name]);
 
+  const saveAccessFeeFlags = useCallback(
+    async (patch: Partial<Pick<Job, "in_ccz" | "has_free_parking">>) => {
+      if (!job) return;
+      setSavingAccessFees(true);
+      try {
+        const nextInCcz = patch.in_ccz !== undefined ? patch.in_ccz : job.in_ccz;
+        const nextHasFreeParking = patch.has_free_parking !== undefined ? patch.has_free_parking : job.has_free_parking;
+        const effectiveOld = effectiveInCczForAddress(job.in_ccz, job.property_address);
+        const effectiveNew = effectiveInCczForAddress(nextInCcz, job.property_address);
+        const oldAccess = computeAccessSurcharge({ inCcz: effectiveOld, hasFreeParking: job.has_free_parking });
+        const newAccess = computeAccessSurcharge({ inCcz: effectiveNew, hasFreeParking: nextHasFreeParking });
+        const delta = Math.round((newAccess - oldAccess) * 100) / 100;
+        const extras = Math.max(0, Math.round((Number(job.extras_amount ?? 0) + delta) * 100) / 100);
+        const deposit = Number(job.customer_deposit ?? 0);
+        const clientPrice = Number(job.client_price ?? 0);
+        const customer_final_payment = Math.round(Math.max(0, clientPrice + extras - deposit) * 100) / 100;
+        const updated = await handleJobUpdate(job.id, {
+          ...patch,
+          extras_amount: extras,
+          customer_final_payment,
+        });
+        if (updated) {
+          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+          await syncSelfBillAfterJobChange(updated);
+          try {
+            await reconcileJobCustomerPaymentFlags(getSupabase(), job.id);
+          } catch {
+            /* non-blocking */
+          }
+        }
+      } finally {
+        setSavingAccessFees(false);
+      }
+    },
+    [job, handleJobUpdate],
+  );
+
   const reportByPhase = useMemo(() => {
     const map = new Map<number, AppJobReportRow>();
     for (const row of appJobReports) {
@@ -917,13 +988,15 @@ export default function JobDetailPage() {
       toast.error("Select a client");
       return;
     }
+    const trimmed = propertyEdit.property_address.trim();
     setSavingProperty(true);
     try {
       await handleJobUpdate(job.id, {
         client_id: propertyEdit.client_id,
         client_name: propertyEdit.client_name?.trim() || job.client_name,
-        property_address: propertyEdit.property_address.trim(),
+        property_address: trimmed,
         client_address_id: propertyEdit.client_address_id,
+        in_ccz: effectiveInCczForAddress(job.in_ccz, trimmed),
       });
     } finally {
       setSavingProperty(false);
@@ -935,9 +1008,13 @@ export default function JobDetailPage() {
       toast.error("Property address is required");
       return;
     }
+    const trimmed = unlinkedAddressDraft.trim();
     setSavingUnlinkedAddress(true);
     try {
-      await handleJobUpdate(job.id, { property_address: unlinkedAddressDraft.trim() });
+      await handleJobUpdate(job.id, {
+        property_address: trimmed,
+        in_ccz: effectiveInCczForAddress(job.in_ccz, trimmed),
+      });
     } finally {
       setSavingUnlinkedAddress(false);
     }
@@ -1840,15 +1917,15 @@ export default function JobDetailPage() {
   const finalBalanceTotal = Math.max(0, Number(job.customer_final_payment ?? 0));
   /** `extras_amount` = add-ons / “Add extra charge”; CCZ/parking line = access flags only (see `computeAccessSurcharge`). */
   const explicitExtras = Math.max(0, Number(job.extras_amount ?? 0));
-  const accessCczParkingNominal = computeAccessSurcharge({
-    inCcz: job.in_ccz,
-    hasFreeParking: job.has_free_parking,
-  });
+  const cczFeeNominal = effectiveCustomerInCcz ? ACCESS_CCZ_FEE_GBP : 0;
+  const parkingFeeNominal = job.has_free_parking === false ? ACCESS_PARKING_FEE_GBP : 0;
   let finalSplitRemain = finalBalanceTotal;
   const finalExtraCharges = Math.min(explicitExtras, finalSplitRemain);
   finalSplitRemain = Math.max(0, finalSplitRemain - finalExtraCharges);
-  const finalCczParking = Math.min(Math.max(0, accessCczParkingNominal), finalSplitRemain);
-  finalSplitRemain = Math.max(0, finalSplitRemain - finalCczParking);
+  const finalCczLine = Math.min(cczFeeNominal, finalSplitRemain);
+  finalSplitRemain = Math.max(0, finalSplitRemain - finalCczLine);
+  const finalParkingLine = Math.min(parkingFeeNominal, finalSplitRemain);
+  finalSplitRemain = Math.max(0, finalSplitRemain - finalParkingLine);
   const matsCap = Math.max(0, Number(job.materials_cost ?? 0));
   const finalMaterials = Math.min(matsCap, finalSplitRemain);
   finalSplitRemain = Math.max(0, finalSplitRemain - finalMaterials);
@@ -2296,6 +2373,69 @@ export default function JobDetailPage() {
                       </div>
                     )}
                   </div>
+                  {!isHousekeepJobDetail && (
+                    <div className="pt-3 border-t border-border-light space-y-2">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Congestion charge (CCZ)</p>
+                      <p className="text-[11px] text-text-tertiary leading-snug">
+                        CCZ is only available for central London postcodes (TfL Congestion Charge / Zone&nbsp;1 core: EC1–4, WC1–2, W1, SW1, SE1). Outside that list the control stays off. Inside the list you still choose whether to apply the +£15 fee — it is not turned on automatically.
+                      </p>
+                      {!cczEligibleAddress && job.in_ccz ? (
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                          This job has CCZ enabled in the database, but the current address is outside the central London postcode list — no CCZ surcharge is applied until you save an eligible address and turn CCZ on.
+                        </p>
+                      ) : null}
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={
+                            job.status === "cancelled" ||
+                            savingAccessFees ||
+                            (!cczEligibleAddress && !job.in_ccz)
+                          }
+                          onClick={() => {
+                            if (cczEligibleAddress) void saveAccessFeeFlags({ in_ccz: !Boolean(job.in_ccz) });
+                            else if (job.in_ccz) void saveAccessFeeFlags({ in_ccz: false });
+                          }}
+                          className={cn(
+                            "rounded-lg border px-2.5 py-2 text-left transition-colors",
+                            !cczEligibleAddress && !job.in_ccz && "opacity-50 cursor-not-allowed",
+                            effectiveCustomerInCcz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
+                          )}
+                        >
+                          <p className="font-medium text-xs">
+                            {!cczEligibleAddress && job.in_ccz
+                              ? "Clear CCZ (outside zone)"
+                              : !cczEligibleAddress
+                                ? "CCZ (central London only)"
+                                : effectiveCustomerInCcz
+                                  ? "CCZ fee applied"
+                                  : "Apply CCZ"}
+                          </p>
+                          <p className="text-[10px] opacity-80 mt-0.5">
+                            {!cczEligibleAddress && !job.in_ccz
+                              ? "Postcode not in CCZ list"
+                              : !cczEligibleAddress && job.in_ccz
+                                ? "Tap to turn off stored flag"
+                                : effectiveCustomerInCcz
+                                  ? "+£15 on access bundle"
+                                  : "No CCZ charge"}
+                          </p>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={job.status === "cancelled" || savingAccessFees}
+                          onClick={() => void saveAccessFeeFlags({ has_free_parking: !Boolean(job.has_free_parking) })}
+                          className={cn(
+                            "rounded-lg border px-2.5 py-2 text-left transition-colors",
+                            !job.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
+                          )}
+                        >
+                          <p className="font-medium text-xs">{job.has_free_parking ? "Free parking on site" : "Parking fee applied"}</p>
+                          <p className="text-[10px] opacity-80 mt-0.5">{job.has_free_parking ? "No parking charge" : "+£15 on access bundle"}</p>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2 text-xs">
                     {job.quote_id && <Link href="/quotes" className="inline-flex items-center gap-1 text-primary hover:underline">Quote <ExternalLink className="h-3 w-3" /></Link>}
                     {job.self_bill_id && <Link href="/finance/selfbill" className="inline-flex items-center gap-1 text-primary hover:underline">Self-bill <ExternalLink className="h-3 w-3" /></Link>}
@@ -2759,11 +2899,43 @@ export default function JobDetailPage() {
                           <span className="text-sm text-text-primary">Final balance</span>
                           <Badge variant={job.customer_final_paid ? "success" : "default"} size="sm">{job.customer_final_paid ? "Paid" : "Pending"}</Badge>
                         </div>
-                        <div className="text-[11px] text-text-tertiary space-y-0.5 pl-0.5">
+                        <div className="text-[11px] text-text-tertiary space-y-1 pl-0.5">
                           <p>Labour {formatCurrency(finalLabour)}</p>
                           <p>Materials {formatCurrency(finalMaterials)}</p>
                           <p>Extra charges {formatCurrency(finalExtraCharges)}</p>
-                          <p>CCZ / Parking {formatCurrency(finalCczParking)}</p>
+                          {effectiveCustomerInCcz ? (
+                            <div className="flex items-center justify-between gap-2">
+                              <span>CCZ (congestion) {formatCurrency(finalCczLine)}</span>
+                              {job.status !== "cancelled" ? (
+                                <button
+                                  type="button"
+                                  disabled={savingAccessFees}
+                                  onClick={() => void saveAccessFeeFlags({ in_ccz: false })}
+                                  className="shrink-0 text-[10px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50"
+                                >
+                                  Remove
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {job.has_free_parking === false ? (
+                            <div className="flex items-center justify-between gap-2">
+                              <span>Parking access {formatCurrency(finalParkingLine)}</span>
+                              {job.status !== "cancelled" ? (
+                                <button
+                                  type="button"
+                                  disabled={savingAccessFees}
+                                  onClick={() => void saveAccessFeeFlags({ has_free_parking: true })}
+                                  className="shrink-0 text-[10px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50"
+                                >
+                                  Remove
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {!effectiveCustomerInCcz && job.has_free_parking !== false ? (
+                            <p>CCZ / Parking {formatCurrency(0)}</p>
+                          ) : null}
                         </div>
                       </div>
                       <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_final_payment ?? 0)}</span>
@@ -3053,7 +3225,7 @@ export default function JobDetailPage() {
                   ) : loadingSelfBill ? (
                     <p className="text-xs text-text-tertiary">Loading…</p>
                   ) : jobSelfBill ? (
-                    <JobDetailSelfBillPanel sb={jobSelfBill} />
+                    <JobDetailSelfBillPanel sb={jobSelfBill} job={job} />
                   ) : (
                     <div className="space-y-2">
                       <p className="text-xs text-text-tertiary">
