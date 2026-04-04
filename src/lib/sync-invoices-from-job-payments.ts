@@ -1,9 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Invoice, InvoiceCollectionStage, InvoiceStatus, Job } from "@/types/database";
-import { inferInvoiceKind, deriveCollectionStageForInvoice } from "@/lib/invoice-collection";
+import {
+  inferInvoiceKind,
+  deriveCollectionStageForInvoice,
+  syncInvoiceCollectionStagesForJob,
+} from "@/lib/invoice-collection";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 const EPS = 0.02;
+
+/** Match invoice amounts to job totals (same tolerance as inferInvoiceKind). */
+function nearEqualAmounts(a: number, b: number): boolean {
+  return Math.abs(a - b) <= EPS;
+}
 
 function computeStatus(inv: Invoice, amountPaid: number, amount: number): InvoiceStatus {
   if (inv.status === "draft" && amountPaid <= EPS) return "draft";
@@ -83,11 +92,13 @@ async function applyInvoicePaymentUpdates(
   job: Job,
   allocated: number,
   latestDate: string | null,
+  opts?: { preserveCollectionStage?: boolean },
 ): Promise<void> {
   const amt = Number(inv.amount ?? 0);
   const nextStatus = computeStatus(inv, allocated, amt);
   const full = nextStatus === "paid";
   const partial = nextStatus === "partially_paid";
+  const preserveStage = opts?.preserveCollectionStage === true;
 
   const nextStage: InvoiceCollectionStage = deriveCollectionStageForInvoice(job, {
     invoice_kind: inv.invoice_kind === "weekly_batch" ? "combined" : inv.invoice_kind,
@@ -98,8 +109,10 @@ async function applyInvoicePaymentUpdates(
   const updates: Record<string, unknown> = {
     amount_paid: allocated,
     status: nextStatus,
-    collection_stage: nextStage,
   };
+  if (!preserveStage) {
+    updates.collection_stage = nextStage;
+  }
 
   if (full) {
     updates.paid_date = latestDate ?? new Date().toISOString().slice(0, 10);
@@ -114,11 +127,8 @@ async function applyInvoicePaymentUpdates(
 
   const prevPaid = Number(inv.amount_paid ?? 0);
   const prevStatus = inv.status;
-  if (
-    Math.abs(prevPaid - allocated) > EPS ||
-    prevStatus !== nextStatus ||
-    (inv.collection_stage ?? "") !== (nextStage ?? "")
-  ) {
+  const stageWouldChange = !preserveStage && (inv.collection_stage ?? "") !== (nextStage ?? "");
+  if (Math.abs(prevPaid - allocated) > EPS || prevStatus !== nextStatus || stageWouldChange) {
     const { error: upErr } = await client.from("invoices").update(updates).eq("id", inv.id);
     if (upErr) {
       const errStr = JSON.stringify(upErr).toLowerCase();
@@ -133,14 +143,19 @@ async function applyInvoicePaymentUpdates(
   }
 }
 
+function applyOpts(inv: Invoice) {
+  return { preserveCollectionStage: !!inv.collection_stage_locked };
+}
+
 async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: Job): Promise<void> {
+  const opts = applyOpts(inv);
   const linkedSum = await sumLinkedCustomerPayments(client, inv.id);
   const amt = Number(inv.amount ?? 0);
 
   if (linkedSum > EPS) {
     const allocated = Math.min(linkedSum, amt);
     const linkedLatest = await latestLinkedPaymentDate(client, inv.id);
-    await applyInvoicePaymentUpdates(client, inv, job, allocated, linkedLatest);
+    await applyInvoicePaymentUpdates(client, inv, job, allocated, linkedLatest, opts);
     return;
   }
 
@@ -159,9 +174,18 @@ async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: J
     if (d && (!latestDate || d > latestDate)) latestDate = d;
   }
 
+  const totalBillable = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  const schedDep = Number(job.customer_deposit ?? 0);
+  const schedFin = Number(job.customer_final_payment ?? 0);
   const kind = inferInvoiceKind(job, inv);
   let allocated = 0;
-  if (kind === "deposit") {
+  // Invoice covers the full job (or full deposit+final schedule): pool all customer rows so job ledger matches Finance.
+  const fullJobInvoice =
+    (totalBillable > EPS && nearEqualAmounts(amt, totalBillable)) ||
+    (schedDep + schedFin > EPS && nearEqualAmounts(amt, schedDep + schedFin));
+  if (fullJobInvoice) {
+    allocated = Math.min(depSum + finSum, amt);
+  } else if (kind === "deposit") {
     allocated = Math.min(depSum, amt);
   } else if (kind === "final") {
     allocated = Math.min(finSum, amt);
@@ -170,16 +194,17 @@ async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: J
   }
   allocated = Math.round(allocated * 100) / 100;
 
-  await applyInvoicePaymentUpdates(client, inv, job, allocated, latestDate);
+  await applyInvoicePaymentUpdates(client, inv, job, allocated, latestDate, opts);
 }
 
 async function syncWeeklyBatchInvoice(client: SupabaseClient, inv: Invoice, triggerJob: Job): Promise<void> {
+  const opts = applyOpts(inv);
   const linkedDirect = await sumLinkedCustomerPayments(client, inv.id);
   const amt = Number(inv.amount ?? 0);
   if (linkedDirect > EPS) {
     const allocated = Math.min(linkedDirect, amt);
     const linkedLatest = await latestLinkedPaymentDate(client, inv.id);
-    await applyInvoicePaymentUpdates(client, inv, triggerJob, allocated, linkedLatest);
+    await applyInvoicePaymentUpdates(client, inv, triggerJob, allocated, linkedLatest, opts);
     return;
   }
 
@@ -209,13 +234,13 @@ async function syncWeeklyBatchInvoice(client: SupabaseClient, inv: Invoice, trig
   const pool = Math.round((depSum + finSum) * 100) / 100;
   const allocated = Math.min(pool, amt);
 
-  await applyInvoicePaymentUpdates(client, inv, triggerJob, allocated, latestDate);
+  await applyInvoicePaymentUpdates(client, inv, triggerJob, allocated, latestDate, opts);
 }
 
 /**
  * After customer rows are posted on `job_payments`, align linked `invoices`:
  * `amount_paid`, `status` (paid / partially_paid / pending / overdue), `paid_date`, `last_payment_date`,
- * `collection_stage` — so Finance + dashboard match the job financial summary.
+ * `collection_stage` (unless `collection_stage_locked` — then stage is left manual; amounts still sync).
  */
 export async function syncInvoicesFromJobCustomerPayments(client: SupabaseClient, jobId: string): Promise<void> {
   const { data: jobRow, error: jErr } = await client.from("jobs").select("*").eq("id", jobId).maybeSingle();
@@ -242,7 +267,6 @@ export async function syncInvoicesFromJobCustomerPayments(client: SupabaseClient
   if (!unique.length) return;
 
   for (const inv of unique) {
-    if (inv.collection_stage_locked) continue;
     if (inv.status === "cancelled") continue;
 
     if (inv.invoice_kind === "weekly_batch") {
@@ -251,4 +275,27 @@ export async function syncInvoicesFromJobCustomerPayments(client: SupabaseClient
       await syncSingleJobInvoice(client, inv, job);
     }
   }
+}
+
+/**
+ * After inserting an invoice with `job_reference`: attach primary `jobs.invoice_id` when unset,
+ * then pull existing `job_payments` onto all linked invoices (`amount_paid`, status, dates) and
+ * align collection stages from the job — so Finance ↔ Job stay two-way when creating from Invoices.
+ */
+export async function syncJobAfterInvoiceCreated(
+  client: SupabaseClient,
+  invoice: Pick<Invoice, "id" | "job_reference">,
+): Promise<void> {
+  const ref = invoice.job_reference?.trim();
+  if (!ref) return;
+  const { data: jobRow, error } = await client.from("jobs").select("*").eq("reference", ref).is("deleted_at", null).maybeSingle();
+  if (error || !jobRow) return;
+  const job = jobRow as Job;
+
+  if (!job.invoice_id?.trim()) {
+    await client.from("jobs").update({ invoice_id: invoice.id }).eq("id", job.id);
+  }
+
+  await syncInvoicesFromJobCustomerPayments(client, job.id);
+  await syncInvoiceCollectionStagesForJob(client, job.id);
 }

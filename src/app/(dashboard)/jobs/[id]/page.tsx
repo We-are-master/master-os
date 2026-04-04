@@ -113,7 +113,12 @@ import {
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
-import { JobMoneyDrawer, type JobMoneyDrawerFlow, type JobMoneySubmitPayload } from "@/components/jobs/job-money-drawer";
+import {
+  JobMoneyDrawer,
+  type JobMoneyDrawerClientCashContext,
+  type JobMoneyDrawerFlow,
+  type JobMoneySubmitPayload,
+} from "@/components/jobs/job-money-drawer";
 import { executeJobMoneyAction } from "@/services/job-money-actions";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
@@ -1303,6 +1308,13 @@ export default function JobDetailPage() {
     [handleJobUpdate],
   );
 
+  const jobMoneyClientCashContext = useMemo((): JobMoneyDrawerClientCashContext | undefined => {
+    if (!job) return undefined;
+    const sched = Number(job.customer_deposit ?? 0);
+    const paid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
+    return { depositScheduled: sched, depositRemaining: Math.max(0, sched - paid) };
+  }, [job, customerPayments]);
+
   const clientVisibleArrivalPreview = useMemo(() => {
     const d = scheduleDate.trim();
     const t = scheduleTime.trim();
@@ -1333,6 +1345,9 @@ export default function JobDetailPage() {
           note: payload.note,
           customerPayments,
           partnerPayments,
+          ...(payload.flow === "client_pay" && payload.clientPayApplyAs
+            ? { clientPayApplyAs: payload.clientPayApplyAs }
+            : {}),
         });
         setJob(updated);
         const fieldName =
@@ -1357,6 +1372,9 @@ export default function JobDetailPage() {
             method: payload.method,
             date: payload.paymentDate,
             ...(payload.note.trim() ? { note: payload.note.trim() } : {}),
+            ...(payload.flow === "client_pay" && payload.clientPayApplyAs
+              ? { client_pay_apply_as: payload.clientPayApplyAs }
+              : {}),
           },
         });
         const toastMsg =
@@ -2738,6 +2756,12 @@ export default function JobDetailPage() {
                 <ChevronDown className="h-4 w-4 text-text-tertiary transition-transform group-open:rotate-180" />
               </summary>
               <div className="px-4 pb-4 space-y-3 border-t border-border-light pt-4">
+                <p className="text-[11px] text-text-tertiary leading-relaxed">
+                  These fields are saved on the job.{" "}
+                  <span className="text-text-secondary">Billable to client</span> = client price + extras → invoices, collections, amount due.{" "}
+                  <span className="text-text-secondary">Direct costs</span> = partner cost + materials → margin; partner payout & self-bill use partner pay cap when set (&gt; 0), otherwise partner cost, plus materials.{" "}
+                  <span className="text-text-secondary">Schedule</span> = deposit + final (should match billable for a clean split).
+                </p>
                 {customerScheduleMismatch && (
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 flex gap-2 text-xs text-amber-900 dark:text-amber-100">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -2756,35 +2780,68 @@ export default function JobDetailPage() {
                     </p>
                   </div>
                 )}
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client revenue (invoice total)</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price</label><Input type="number" min={0} step="0.01" value={finForm.client_price} onChange={(e) => {
-                    const price = parseFloat(e.target.value) || 0;
-                    const extras = parseFloat(finForm.extras_amount) || 0;
-                    const dep = parseFloat(finForm.customer_deposit) || 0;
-                    const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                    setFinForm((f) => ({ ...f, client_price: e.target.value, customer_final_payment: autoFinal }));
-                  }} /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Extras (add-ons)</label><Input type="number" min={0} step="0.01" value={finForm.extras_amount} onChange={(e) => {
-                    const price = parseFloat(finForm.client_price) || 0;
-                    const extras = parseFloat(e.target.value) || 0;
-                    const dep = parseFloat(finForm.customer_deposit) || 0;
-                    const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                    setFinForm((f) => ({ ...f, extras_amount: e.target.value, customer_final_payment: autoFinal }));
-                  }} /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost</label><Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials cost</label><Input type="number" min={0} step="0.01" value={finForm.materials_cost} onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))} /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner pay cap</label><Input type="number" min={0} step="0.01" value={finForm.partner_agreed_value} onChange={(e) => setFinForm((f) => ({ ...f, partner_agreed_value: e.target.value }))} /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Customer deposit</label><Input type="number" min={0} step="0.01" value={finForm.customer_deposit} onChange={(e) => {
-                    const price = parseFloat(finForm.client_price) || 0;
-                    const extras = parseFloat(finForm.extras_amount) || 0;
-                    const dep = parseFloat(e.target.value) || 0;
-                    const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                    setFinForm((f) => ({ ...f, customer_deposit: e.target.value, customer_final_payment: autoFinal }));
-                  }} /></div>
                   <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Customer final</label>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client price (main sell)</label>
+                    <Input type="number" min={0} step="0.01" value={finForm.client_price} onChange={(e) => {
+                      const price = parseFloat(e.target.value) || 0;
+                      const extras = parseFloat(finForm.extras_amount) || 0;
+                      const dep = parseFloat(finForm.customer_deposit) || 0;
+                      const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                      setFinForm((f) => ({ ...f, client_price: e.target.value, customer_final_payment: autoFinal }));
+                    }} />
+                    <p className="text-[10px] text-text-tertiary mt-1">Labour / core ticket — excludes extras below.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Extras (client add-ons)</label>
+                    <Input type="number" min={0} step="0.01" value={finForm.extras_amount} onChange={(e) => {
+                      const price = parseFloat(finForm.client_price) || 0;
+                      const extras = parseFloat(e.target.value) || 0;
+                      const dep = parseFloat(finForm.customer_deposit) || 0;
+                      const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                      setFinForm((f) => ({ ...f, extras_amount: e.target.value, customer_final_payment: autoFinal }));
+                    }} />
+                    <p className="text-[10px] text-text-tertiary mt-1">Added to client billable total and invoices.</p>
+                  </div>
+                </div>
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Costs & partner payout</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost</label>
+                    <Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} />
+                    <p className="text-[10px] text-text-tertiary mt-1">Subcontract labour — default cap for partner payments & self-bill.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Materials cost</label>
+                    <Input type="number" min={0} step="0.01" value={finForm.materials_cost} onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))} />
+                    <p className="text-[10px] text-text-tertiary mt-1">Your materials spend → margin; included in partner self-bill gross.</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner pay cap (optional)</label>
+                    <Input type="number" min={0} step="0.01" value={finForm.partner_agreed_value} onChange={(e) => setFinForm((f) => ({ ...f, partner_agreed_value: e.target.value }))} />
+                    <p className="text-[10px] text-text-tertiary mt-1">If &gt; 0, limits partner payout & self-bill instead of partner cost alone. Leave 0 to use partner cost.</p>
+                  </div>
+                </div>
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Customer collection schedule</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Deposit (scheduled)</label>
+                    <Input type="number" min={0} step="0.01" value={finForm.customer_deposit} onChange={(e) => {
+                      const price = parseFloat(finForm.client_price) || 0;
+                      const extras = parseFloat(finForm.extras_amount) || 0;
+                      const dep = parseFloat(e.target.value) || 0;
+                      const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                      setFinForm((f) => ({ ...f, customer_deposit: e.target.value, customer_final_payment: autoFinal }));
+                    }} />
+                    <p className="text-[10px] text-text-tertiary mt-1">Upfront portion — maps to deposit payments & invoice split logic.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Final balance (scheduled)</label>
                     <Input type="number" min={0} step="0.01" value={finForm.customer_final_payment} onChange={(e) => setFinForm((f) => ({ ...f, customer_final_payment: e.target.value }))} />
-                    <p className="text-[10px] text-text-tertiary mt-1">Auto-calculated from price − deposit. Edit manually if needed.</p>
+                    <p className="text-[10px] text-text-tertiary mt-1">
+                      Auto: (client price + extras) − deposit. Maps to final-balance payments. Edit if you need a manual split.
+                    </p>
                   </div>
                 </div>
                 <Button type="button" size="sm" variant="primary" loading={savingFin} onClick={handleSaveFinancials}>Save pricing</Button>
@@ -2994,7 +3051,7 @@ export default function JobDetailPage() {
                       setMoneyDrawerOpen(true);
                     }}
                   >
-                    Add payment
+                    Record Payment
                   </Button>
                   <Button
                     size="sm"
@@ -3011,10 +3068,10 @@ export default function JobDetailPage() {
                 </div>
               </div>
 
-              {/* PARTNER cash out */}
+              {/* Cash out (partner payout) */}
               <div className="pt-3 border-t border-border-light">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner (cash out)</p>
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Cash Out</p>
                   <div className="text-right">
                     <p className="text-[10px] text-text-tertiary">Total to pay</p>
                     <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(partnerCap)}</p>
@@ -3083,7 +3140,7 @@ export default function JobDetailPage() {
                       setMoneyDrawerOpen(true);
                     }}
                   >
-                    Pay partner
+                    Record Payment
                   </Button>
                   <Button
                     size="sm"
@@ -3551,7 +3608,7 @@ export default function JobDetailPage() {
           {deletePaymentTarget && (
             <div className="rounded-xl border border-border-light bg-surface-hover/40 px-4 py-3 space-y-1">
               <p className="text-xs text-text-tertiary capitalize">
-                {deletePaymentTarget.type === "customer_deposit" ? "Customer deposit" : deletePaymentTarget.type === "customer_final" ? "Customer final" : "Partner payment"}
+                {deletePaymentTarget.type === "customer_deposit" ? "Deposit" : deletePaymentTarget.type === "customer_final" ? "Final balance" : "Partner payment"}
               </p>
               <p className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(deletePaymentTarget.amount)}</p>
             </div>
@@ -3576,6 +3633,7 @@ export default function JobDetailPage() {
         onSubmit={handleMoneyDrawerSubmit}
         submitting={moneySubmitting}
         stripeInvoices={jobInvoices}
+        clientCashContext={jobMoneyClientCashContext}
       />
 
       <Modal

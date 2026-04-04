@@ -1,6 +1,7 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Invoice, InvoiceCollectionStage, InvoiceStatus } from "@/types/database";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { syncJobAfterInvoiceCreated } from "@/lib/sync-invoices-from-job-payments";
 
 /** Payload for creating an invoice (collection fields default when omitted). */
 export type CreateInvoiceInput = Omit<Invoice, "id" | "reference" | "created_at" | "collection_stage"> & {
@@ -46,7 +47,15 @@ export async function createInvoice(
     .insert({ ...row, reference: ref as string })
     .select()
     .single();
-  if (!error) return data as Invoice;
+  if (!error) {
+    const inv = data as Invoice;
+    try {
+      await syncJobAfterInvoiceCreated(supabase, inv);
+    } catch (e) {
+      console.error("syncJobAfterInvoiceCreated", inv.id, e);
+    }
+    return inv;
+  }
 
   // Compatibility fallback for older DB constraints/schemas in production.
   const code = (error as { code?: string }).code;
@@ -73,7 +82,15 @@ export async function createInvoice(
     .insert({ ...legacyRow, reference: ref })
     .select()
     .single();
-  if (!legacyErr) return legacyData as Invoice;
+  if (!legacyErr) {
+    const inv = legacyData as Invoice;
+    try {
+      await syncJobAfterInvoiceCreated(supabase, inv);
+    } catch (e) {
+      console.error("syncJobAfterInvoiceCreated", inv.id, e);
+    }
+    return inv;
+  }
 
   // Older installations may also lack amount_paid / invoice_kind.
   const minimalRow = {
@@ -90,7 +107,13 @@ export async function createInvoice(
     .select()
     .single();
   if (minimalErr) throw minimalErr;
-  return minimalData as Invoice;
+  const inv = minimalData as Invoice;
+  try {
+    await syncJobAfterInvoiceCreated(supabase, inv);
+  } catch (e) {
+    console.error("syncJobAfterInvoiceCreated", inv.id, e);
+  }
+  return inv;
 }
 
 /** Invoices tied to a job (by reference on the invoice + optional primary invoice id on the job). */
@@ -245,7 +268,7 @@ export async function cancelOpenInvoicesForJobCancellation(options: {
   if (idList.length === 0) return;
 
   const withReason = { status: "cancelled" as const, cancellation_reason: reason };
-  let { error } = await supabase.from("invoices").update(withReason).in("id", idList);
+  const { error } = await supabase.from("invoices").update(withReason).in("id", idList);
   if (error && isSupabaseMissingColumnError(error)) {
     const { error: e2 } = await supabase.from("invoices").update({ status: "cancelled" }).in("id", idList);
     if (e2) throw e2;
