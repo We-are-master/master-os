@@ -40,12 +40,63 @@ import { formatFinancePeriodKpiDescription } from "@/lib/finance-period";
 import { SELF_BILL_FINANCE_VOID_LABEL, selfBillPartnerStatusLine } from "@/lib/self-bill-display";
 import {
   isSelfBillPayoutVoided,
+  jobContributesToSelfBillPayout,
   listJobsForSelfBill,
   listJobsLinkedToSelfBillIds,
   selfBillJobPayoutStateLabel,
   SELF_BILL_PAYOUT_VOID_STATUSES,
 } from "@/services/self-bills";
 import type { Job } from "@/types/database";
+import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
+
+const JOB_PAYMENTS_IN_CHUNK = 80;
+
+async function fetchPartnerPaidTotalsByJobIds(jobIds: string[]): Promise<Record<string, number>> {
+  if (jobIds.length === 0) return {};
+  const supabase = getSupabase();
+  const sums: Record<string, number> = {};
+  for (let i = 0; i < jobIds.length; i += JOB_PAYMENTS_IN_CHUNK) {
+    const chunk = jobIds.slice(i, i + JOB_PAYMENTS_IN_CHUNK);
+    let q = supabase.from("job_payments").select("job_id, amount").eq("type", "partner").in("job_id", chunk).is("deleted_at", null);
+    let { data, error } = await q;
+    if (error) {
+      const retry = await supabase.from("job_payments").select("job_id, amount").eq("type", "partner").in("job_id", chunk);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const id = String((row as { job_id: string }).job_id);
+      sums[id] = (sums[id] ?? 0) + Number((row as { amount: number }).amount);
+    }
+  }
+  return sums;
+}
+
+function jobLinePartnerGross(j: Pick<Job, "partner_cost" | "materials_cost" | "partner_agreed_value">): number {
+  return Math.round(partnerSelfBillGrossAmount(j as Job) * 100) / 100;
+}
+
+/** Partner amount still owed for this weekly self-bill (labour+mat per job − partner payouts recorded on each job). */
+function computeSelfBillAmountDue(
+  sb: SelfBill,
+  jobs: JobLine[] | undefined,
+  partnerPaidByJobId: Record<string, number>,
+): number {
+  if (isSelfBillPayoutVoided(sb)) return 0;
+  if (sb.bill_origin === "internal") {
+    return Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+  }
+  const list = jobs ?? [];
+  let due = 0;
+  for (const j of list) {
+    if (!jobContributesToSelfBillPayout(j)) continue;
+    const cap = jobLinePartnerGross(j);
+    const paid = partnerPaidByJobId[j.id] ?? 0;
+    due += Math.max(0, cap - paid);
+  }
+  return Math.round(due * 100) / 100;
+}
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   accumulating: { label: "Ongoing", variant: "primary" },
@@ -76,7 +127,17 @@ type SelfBillTab = (typeof TAB_ORDER)[number];
 
 type JobLine = Pick<
   Job,
-  "id" | "reference" | "title" | "partner_cost" | "materials_cost" | "status" | "property_address" | "self_bill_id" | "deleted_at" | "partner_cancelled_at"
+  | "id"
+  | "reference"
+  | "title"
+  | "partner_cost"
+  | "partner_agreed_value"
+  | "materials_cost"
+  | "status"
+  | "property_address"
+  | "self_bill_id"
+  | "deleted_at"
+  | "partner_cancelled_at"
 >;
 
 function isPartnerFieldBill(sb: SelfBill): boolean {
@@ -98,13 +159,14 @@ export default function SelfBillPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [jobsModal, setJobsModal] = useState<{ selfBill: SelfBill; jobs: Awaited<ReturnType<typeof listJobsForSelfBill>> } | null>(null);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [jobsBySelfBillId, setJobsBySelfBillId] = useState<Record<string, JobLine[]>>({});
+  const [partnerPaidByJobId, setPartnerPaidByJobId] = useState<Record<string, number>>({});
   const [editSelfBill, setEditSelfBill] = useState<SelfBill | null>(null);
   const [editForm, setEditForm] = useState({ job_value: "", materials: "", commission: "" });
   const [savingEdit, setSavingEdit] = useState(false);
@@ -184,9 +246,10 @@ export default function SelfBillPage() {
 
   useEffect(() => {
     let cancelled = false;
-    const ids = filtered.map((sb) => sb.id);
+    const ids = selfBills.map((sb) => sb.id);
     if (ids.length === 0) {
       setJobsBySelfBillId({});
+      setPartnerPaidByJobId({});
       return;
     }
     (async () => {
@@ -200,10 +263,14 @@ export default function SelfBillPage() {
           map[sid].push(j);
         }
         setJobsBySelfBillId(map);
+        const jobIds = [...new Set(rows.map((r) => r.id))];
+        const paidMap = await fetchPartnerPaidTotalsByJobIds(jobIds);
+        if (!cancelled) setPartnerPaidByJobId(paidMap);
       } catch (e) {
         console.error("Self-bill linked jobs load failed", e);
         if (!cancelled) {
           setJobsBySelfBillId({});
+          setPartnerPaidByJobId({});
           toast.error(e instanceof Error ? e.message : "Failed to load jobs linked to self-bills");
         }
       }
@@ -211,7 +278,7 @@ export default function SelfBillPage() {
     return () => {
       cancelled = true;
     };
-  }, [filtered]);
+  }, [selfBills]);
 
   const kpiPeriodDesc = useMemo(
     () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
@@ -220,15 +287,22 @@ export default function SelfBillPage() {
 
   const totals = useMemo(() => {
     const all = selfBills;
+    let amountDueSum = 0;
+    for (const sb of all) {
+      if (isSelfBillPayoutVoided(sb)) continue;
+      amountDueSum += computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+    }
+    const partnerRows = all.filter((sb) => isPartnerFieldBill(sb) && !isSelfBillPayoutVoided(sb));
     return {
-      totalPayouts: all.reduce((s, sb) => s + Number(sb.net_payout), 0),
+      totalPayouts: partnerRows.reduce((s, sb) => s + Number(sb.net_payout), 0),
       paidCount: all.filter((sb) => sb.status === "paid").length,
       readyCount: all.filter((sb) => sb.status === "ready_to_pay").length,
-      reviewCount: all.filter((sb) => sb.status === "pending_review").length,
       ongoingCount: all.filter((sb) => sb.status === "accumulating").length,
       auditCount: all.filter((sb) => sb.status === "audit_required").length,
+      amountDueSum,
+      readyPaidCount: all.filter((sb) => sb.status === "ready_to_pay" || sb.status === "paid").length,
     };
-  }, [selfBills]);
+  }, [selfBills, jobsBySelfBillId, partnerPaidByJobId]);
 
   const updateSelfBillStatus = async (id: string, newStatus: string) => {
     const supabase = getSupabase();
@@ -366,7 +440,7 @@ export default function SelfBillPage() {
   const columns: Column<SelfBill>[] = [
     {
       key: "reference",
-      label: "Self fill",
+      label: "Self bill",
       minWidth: "200px",
       cellClassName: "!whitespace-nowrap max-w-[min(260px,36vw)] overflow-hidden align-top",
       render: (item) => (
@@ -473,6 +547,25 @@ export default function SelfBillPage() {
       ),
     },
     {
+      key: "amount_due",
+      label: "Amount due",
+      align: "right",
+      width: "104px",
+      render: (item) => {
+        if (isSelfBillPayoutVoided(item)) {
+          return <span className="text-sm text-text-tertiary">—</span>;
+        }
+        const due = computeSelfBillAmountDue(item, jobsBySelfBillId[item.id], partnerPaidByJobId);
+        return (
+          <span
+            className={`text-sm font-semibold tabular-nums ${due > 0.02 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}
+          >
+            {formatCurrency(due)}
+          </span>
+        );
+      },
+    },
+    {
       key: "status",
       label: "Status",
       minWidth: "160px",
@@ -574,35 +667,35 @@ export default function SelfBillPage() {
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard
-            title="Total payouts (loaded)"
+            title="Total payouts"
             value={totals.totalPayouts}
             format="currency"
-            description={kpiPeriodDesc}
+            description={`Partner field self-bills · ${kpiPeriodDesc}`}
             icon={Wallet}
             accent="primary"
           />
           <KpiCard
-            title="Ongoing (this week open)"
+            title="Ongoing"
             value={totals.ongoingCount}
             format="number"
-            description={`Mon–Sun bucket · ${kpiPeriodDesc}`}
+            description={`Accumulating · ${kpiPeriodDesc}`}
             icon={Users}
             accent="amber"
           />
           <KpiCard
-            title="Review and Approve"
-            value={totals.reviewCount}
-            format="number"
-            description={`After week closes · ${kpiPeriodDesc}`}
-            icon={Users}
+            title="Amount due"
+            value={totals.amountDueSum}
+            format="currency"
+            description={`After partner payouts on jobs · ${kpiPeriodDesc}`}
+            icon={DollarSign}
             accent="purple"
           />
           <KpiCard
             title="Ready / paid"
-            value={totals.readyCount + totals.paidCount}
+            value={totals.readyPaidCount}
             format="number"
-            description={`Pay run marks paid here too · ${kpiPeriodDesc}`}
-            icon={DollarSign}
+            description={`Ready to pay + paid · ${kpiPeriodDesc}`}
+            icon={CheckCircle2}
             accent="emerald"
           />
         </StaggerContainer>
@@ -678,6 +771,7 @@ export default function SelfBillPage() {
                     key={sb.id}
                     sb={sb}
                     jobs={jobsBySelfBillId[sb.id] ?? []}
+                    partnerPaidByJobId={partnerPaidByJobId}
                     onApprove={() => void handleApprove(sb)}
                     onReject={() => void handleReject(sb)}
                     onEdit={() => openEdit(sb)}
@@ -700,7 +794,7 @@ export default function SelfBillPage() {
               selectable
               selectedIds={selectedIds}
               onSelectionChange={setSelectedIds}
-              tableClassName="min-w-[1100px]"
+              tableClassName="min-w-[1220px]"
               bulkActions={
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
@@ -736,6 +830,7 @@ export default function SelfBillPage() {
             sb={jobsModal.selfBill}
             jobs={jobsModal.jobs}
             loadingJobs={loadingJobs}
+            partnerPaidByJobId={partnerPaidByJobId}
           />
         ) : null}
       </Drawer>
@@ -802,6 +897,7 @@ export default function SelfBillPage() {
 function SelfBillCard({
   sb,
   jobs,
+  partnerPaidByJobId,
   onApprove,
   onReject,
   onEdit,
@@ -814,12 +910,14 @@ function SelfBillCard({
     | "reference"
     | "title"
     | "partner_cost"
+    | "partner_agreed_value"
     | "materials_cost"
     | "status"
     | "property_address"
     | "deleted_at"
     | "partner_cancelled_at"
   >[];
+  partnerPaidByJobId: Record<string, number>;
   onApprove: () => void;
   onReject: () => void;
   onEdit: () => void;
@@ -831,6 +929,7 @@ function SelfBillCard({
   const voided = isSelfBillPayoutVoided(sb);
   const origSnap =
     sb.original_net_payout != null && Number(sb.original_net_payout) > 0.02 ? Number(sb.original_net_payout) : null;
+  const amountDue = voided ? 0 : computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId);
 
   return (
     <div className="rounded-2xl border border-border-light bg-card shadow-sm overflow-hidden flex flex-col">
@@ -883,7 +982,7 @@ function SelfBillCard({
         </div>
       ) : null}
 
-      <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center border-b border-border-light/80 bg-background/50">
+      <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-center border-b border-border-light/80 bg-background/50">
         <div>
           <p className="text-[10px] font-semibold uppercase text-text-tertiary">{internal ? "Gross" : "Labour"}</p>
           <p className="text-sm font-semibold tabular-nums">{formatCurrency(sb.job_value)}</p>
@@ -905,6 +1004,14 @@ function SelfBillCard({
           <p className="text-[10px] font-semibold uppercase text-text-tertiary">Net payout</p>
           <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(sb.net_payout)}</p>
         </div>
+        <div>
+          <p className="text-[10px] font-semibold uppercase text-text-tertiary">Amount due</p>
+          <p
+            className={`text-sm font-bold tabular-nums ${voided ? "text-text-tertiary" : amountDue > 0.02 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}
+          >
+            {voided ? "—" : formatCurrency(amountDue)}
+          </p>
+        </div>
       </div>
 
       <div className="px-4 py-3 space-y-0.5 flex-1">
@@ -917,6 +1024,9 @@ function SelfBillCard({
           <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
             {jobs.map((j) => {
               const payoutNote = selfBillJobPayoutStateLabel(j);
+              const paid = partnerPaidByJobId[j.id] ?? 0;
+              const cap = jobContributesToSelfBillPayout(j) ? jobLinePartnerGross(j) : 0;
+              const lineDue = jobContributesToSelfBillPayout(j) ? Math.max(0, Math.round((cap - paid) * 100) / 100) : 0;
               return (
                 <div
                   key={j.id}
@@ -937,6 +1047,14 @@ function SelfBillCard({
                     <p>
                       L {formatCurrency(Number(j.partner_cost) || 0)} · M {formatCurrency(Number(j.materials_cost) || 0)}
                     </p>
+                    {jobContributesToSelfBillPayout(j) ? (
+                      <p className="text-text-tertiary">
+                        Paid {formatCurrency(paid)} ·{" "}
+                        <span className={lineDue > 0.02 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-emerald-600 dark:text-emerald-400 font-semibold"}>
+                          Due {formatCurrency(lineDue)}
+                        </span>
+                      </p>
+                    ) : null}
                     <Badge variant="default" size="sm" className="text-[9px]">
                       {j.status}
                     </Badge>
@@ -983,15 +1101,18 @@ function SelfBillLinkedJobsPanel({
   sb,
   jobs,
   loadingJobs,
+  partnerPaidByJobId,
 }: {
   sb: SelfBill;
   jobs: Awaited<ReturnType<typeof listJobsForSelfBill>>;
   loadingJobs: boolean;
+  partnerPaidByJobId: Record<string, number>;
 }) {
   const cfg = statusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
   const voided = isSelfBillPayoutVoided(sb);
   const origSnap =
     sb.original_net_payout != null && Number(sb.original_net_payout) > 0.02 ? Number(sb.original_net_payout) : null;
+  const sheetDue = voided ? 0 : computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId);
 
   return (
     <div className="p-6">
@@ -1021,7 +1142,7 @@ function SelfBillLinkedJobsPanel({
           )}
         </div>
 
-        <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-border-light/80 text-center sm:text-left">
+        <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 border-b border-border-light/80 text-center sm:text-left">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Labour</p>
             <p className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(sb.job_value)}</p>
@@ -1037,6 +1158,17 @@ function SelfBillLinkedJobsPanel({
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Net payout</p>
             <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(sb.net_payout)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Amount due</p>
+            <p
+              className={`text-sm font-bold tabular-nums ${voided ? "text-text-tertiary" : sheetDue > 0.02 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}
+            >
+              {voided ? "—" : formatCurrency(sheetDue)}
+            </p>
+            {!voided && sb.bill_origin !== "internal" ? (
+              <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">After partner payouts on jobs</p>
+            ) : null}
           </div>
         </div>
 
@@ -1079,7 +1211,7 @@ function SelfBillLinkedJobsPanel({
           ) : (
             <div className="space-y-2">
               {jobs.map((j) => (
-                <JobRow key={j.id} j={j} />
+                <JobRow key={j.id} j={j} partnerPaid={partnerPaidByJobId[j.id] ?? 0} />
               ))}
             </div>
           )}
@@ -1103,6 +1235,7 @@ function SelfBillLinkedJobsPanel({
 
 function JobRow({
   j,
+  partnerPaid,
 }: {
   j: Pick<
     Job,
@@ -1110,14 +1243,18 @@ function JobRow({
     | "reference"
     | "title"
     | "partner_cost"
+    | "partner_agreed_value"
     | "materials_cost"
     | "status"
     | "property_address"
     | "deleted_at"
     | "partner_cancelled_at"
   >;
+  partnerPaid: number;
 }) {
   const payoutNote = selfBillJobPayoutStateLabel(j);
+  const cap = jobContributesToSelfBillPayout(j) ? jobLinePartnerGross(j) : 0;
+  const due = jobContributesToSelfBillPayout(j) ? Math.max(0, Math.round((cap - partnerPaid) * 100) / 100) : 0;
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl border border-border-light bg-surface-hover/80">
       <div className="min-w-0">
@@ -1139,6 +1276,16 @@ function JobRow({
         <p>
           Mat. <span className="font-semibold tabular-nums">{formatCurrency(Number(j.materials_cost) || 0)}</span>
         </p>
+        {jobContributesToSelfBillPayout(j) ? (
+          <>
+            <p className="text-text-tertiary">
+              Paid <span className="font-semibold tabular-nums text-text-secondary">{formatCurrency(partnerPaid)}</span>
+            </p>
+            <p className={due > 0.02 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-emerald-600 dark:text-emerald-400 font-semibold"}>
+              Due <span className="tabular-nums">{formatCurrency(due)}</span>
+            </p>
+          </>
+        ) : null}
         <Badge variant="default" size="sm">
           {j.status}
         </Badge>
