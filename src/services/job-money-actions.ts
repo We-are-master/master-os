@@ -2,7 +2,6 @@ import type { Job, JobPayment, JobPaymentMethod } from "@/types/database";
 import { getSupabase } from "./base";
 import { getJob, updateJob } from "./jobs";
 import { createJobPayment } from "./job-payments";
-import { allocateCustomerPaymentToSchedule } from "@/lib/allocate-customer-payment";
 import { applyCustomerExtraPatch, applyPartnerExtraPatch } from "@/lib/job-extra-charges";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
@@ -11,6 +10,8 @@ import { syncSelfBillAfterJobChange } from "@/services/self-bills";
 
 /** Payments (ledger) vs price adjustments (job row + invoice / self-bill only). */
 export type JobMoneyMode = "client_pay" | "client_extra" | "partner_pay" | "partner_extra";
+
+export type ClientPayApplyAs = "deposit" | "final";
 
 export type ExecuteJobMoneyActionInput = {
   job: Job;
@@ -23,13 +24,16 @@ export type ExecuteJobMoneyActionInput = {
   bankReference?: string;
   customerPayments: JobPayment[];
   partnerPayments: JobPayment[];
+  /** When mode is client_pay: post as deposit vs final (otherwise auto-split from schedule). */
+  clientPayApplyAs?: ClientPayApplyAs;
 };
 
 /**
  * Client/partner money: payments only hit `job_payments`; extras only bump job + invoice / self-bill (no mixed rows).
  */
 export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): Promise<Job> {
-  const { job, mode, amount, paymentDate, method, note, bankReference, customerPayments, partnerPayments } = input;
+  const { job, mode, amount, paymentDate, method, note, bankReference, customerPayments, partnerPayments, clientPayApplyAs } =
+    input;
 
   const a = Math.round(amount * 100) / 100;
   if (a <= 0) throw new Error("Enter an amount greater than zero");
@@ -54,14 +58,32 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
   if (mode === "client_pay") {
     const depPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
     const finPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
-    const chunks = allocateCustomerPaymentToSchedule(job, depPaid, finPaid, a);
-    if (chunks.length === 0) throw new Error("Could not apply payment to this job schedule");
+    const depNeed = Number(job.customer_deposit ?? 0);
+    const depRem = Math.max(0, depNeed - depPaid);
 
-    for (const ch of chunks) {
+    const applyAs = clientPayApplyAs ?? (depRem > 0.02 ? "deposit" : "final");
+
+    if (applyAs === "deposit") {
+      if (depRem <= 0.02) {
+        throw new Error("No deposit is due — choose partial payment (final balance).");
+      }
+      if (a > depRem + 1e-6) {
+        throw new Error(`Outstanding deposit is only £${depRem.toFixed(2)}. Lower the amount or use partial payment (final balance).`);
+      }
       await createJobPayment({
         job_id: job.id,
-        type: ch.type,
-        amount: ch.amount,
+        type: "customer_deposit",
+        amount: a,
+        payment_date: paymentDate,
+        note: noteTrim || undefined,
+        payment_method: method,
+        bank_reference: bankTrim || undefined,
+      });
+    } else {
+      await createJobPayment({
+        job_id: job.id,
+        type: "customer_final",
+        amount: a,
         payment_date: paymentDate,
         note: noteTrim || undefined,
         payment_method: method,

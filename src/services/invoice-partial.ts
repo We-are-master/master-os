@@ -7,6 +7,7 @@ import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-jo
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { listJobPayments } from "./job-payments";
 import { allocateCustomerPaymentToSchedule } from "@/lib/allocate-customer-payment";
+import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
 
 const EPS = 0.02;
 
@@ -81,6 +82,7 @@ export async function recordInvoicePartialPayment(
   }
 
   await maybeCompleteAwaitingPaymentJob(supabase, job.id);
+  await syncInvoiceCollectionStagesForJob(supabase, job.id);
 
   const { data: out, error: outErr } = await supabase.from("invoices").select("*").eq("id", invoiceId).single();
   if (outErr || !out) throw new Error("Could not load updated invoice");

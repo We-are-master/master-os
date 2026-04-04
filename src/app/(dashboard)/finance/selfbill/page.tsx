@@ -57,7 +57,7 @@ async function fetchPartnerPaidTotalsByJobIds(jobIds: string[]): Promise<Record<
   const sums: Record<string, number> = {};
   for (let i = 0; i < jobIds.length; i += JOB_PAYMENTS_IN_CHUNK) {
     const chunk = jobIds.slice(i, i + JOB_PAYMENTS_IN_CHUNK);
-    let q = supabase.from("job_payments").select("job_id, amount").eq("type", "partner").in("job_id", chunk).is("deleted_at", null);
+    const q = supabase.from("job_payments").select("job_id, amount").eq("type", "partner").in("job_id", chunk).is("deleted_at", null);
     let { data, error } = await q;
     if (error) {
       const retry = await supabase.from("job_payments").select("job_id, amount").eq("type", "partner").in("job_id", chunk);

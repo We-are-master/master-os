@@ -13,7 +13,11 @@ import { toast } from "sonner";
 const LS_CLIENT = "mos-job-money-method-client";
 const LS_PARTNER = "mos-job-money-method-partner";
 
+const EPS = 0.02;
+
 export type JobMoneyDrawerFlow = "client_pay" | "client_extra" | "partner_pay" | "partner_extra";
+
+export type ClientPayApplyAs = "deposit" | "final";
 
 export type JobMoneySubmitPayload = {
   flow: JobMoneyDrawerFlow;
@@ -21,6 +25,13 @@ export type JobMoneySubmitPayload = {
   paymentDate: string;
   method: JobPaymentMethod;
   note: string;
+  clientPayApplyAs?: ClientPayApplyAs;
+};
+
+/** Deposit scheduled vs still owed (for payment type UI). */
+export type JobMoneyDrawerClientCashContext = {
+  depositScheduled: number;
+  depositRemaining: number;
 };
 
 type Props = {
@@ -30,6 +41,7 @@ type Props = {
   onSubmit: (payload: JobMoneySubmitPayload) => Promise<void>;
   submitting: boolean;
   stripeInvoices: Invoice[];
+  clientCashContext?: JobMoneyDrawerClientCashContext;
 };
 
 const CLIENT_METHODS: { value: JobPaymentMethod; label: string }[] = [
@@ -51,17 +63,17 @@ function isClientFlow(flow: JobMoneyDrawerFlow): boolean {
 function flowTitle(flow: JobMoneyDrawerFlow): string {
   switch (flow) {
     case "client_pay":
-      return "Add payment";
+    case "partner_pay":
+      return "Record Payment";
     case "client_extra":
       return "Add extra charge";
-    case "partner_pay":
-      return "Pay partner";
     case "partner_extra":
       return "Add extra payout";
   }
 }
 
 function flowSubmitLabel(flow: JobMoneyDrawerFlow): string {
+  if (flow === "client_pay" || flow === "partner_pay") return "Record Payment";
   return flowTitle(flow);
 }
 
@@ -88,13 +100,27 @@ function isPayFlow(flow: JobMoneyDrawerFlow): boolean {
   return flow === "client_pay" || flow === "partner_pay";
 }
 
-export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stripeInvoices }: Props) {
+export function JobMoneyDrawer({
+  open,
+  flow,
+  onClose,
+  onSubmit,
+  submitting,
+  stripeInvoices,
+  clientCashContext,
+}: Props) {
   const [amount, setAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [method, setMethod] = useState<JobPaymentMethod>("bank_transfer");
   const [note, setNote] = useState("");
+  const [clientPayApplyAs, setClientPayApplyAs] = useState<ClientPayApplyAs>("final");
   const amountRef = useRef<HTMLInputElement>(null);
 
+  const depositRemaining = clientCashContext?.depositRemaining ?? 0;
+  const depositScheduled = clientCashContext?.depositScheduled ?? 0;
+  const canRecordDeposit = depositRemaining > EPS;
+
+  /* eslint-disable react-hooks/set-state-in-effect -- reset form when drawer opens (same pattern as quotes modal) */
   useEffect(() => {
     if (!open || !flow) return;
     setAmount("");
@@ -105,11 +131,15 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
     } else {
       setMethod(isClientFlow(flow) ? "bank_transfer" : "other");
     }
+    if (flow === "client_pay") {
+      setClientPayApplyAs(canRecordDeposit ? "deposit" : "final");
+    }
     const id = requestAnimationFrame(() => {
       amountRef.current?.focus();
     });
     return () => cancelAnimationFrame(id);
-  }, [open, flow]);
+  }, [open, flow, canRecordDeposit]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (!open || !flow || !isPayFlow(flow) || method === "stripe") return;
@@ -134,12 +164,19 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
     if (!canSubmit) return;
     const pay = isPayFlow(flow);
     const submitMethod = pay ? method : isClientFlow(flow) ? "bank_transfer" : "other";
+    const applyForSubmit: ClientPayApplyAs | undefined =
+      flow === "client_pay"
+        ? clientPayApplyAs === "deposit" && !canRecordDeposit
+          ? "final"
+          : clientPayApplyAs
+        : undefined;
     await onSubmit({
       flow,
       amount: n,
       paymentDate: pay ? paymentDate : new Date().toISOString().slice(0, 10),
       method: submitMethod,
       note,
+      ...(applyForSubmit != null ? { clientPayApplyAs: applyForSubmit } : {}),
     });
   };
 
@@ -148,10 +185,22 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
   const helpExtra = (
     <p className="text-[11px] text-text-tertiary leading-relaxed">
       {flow === "client_extra"
-        ? "Increases the job total and linked invoice. This is not a payment — use Add payment when money is received."
-        : "Increases partner cost on the job. This is not a payout — use Pay partner when you send money."}
+        ? "Increases the job total and linked invoice. This is not a payment — use Record Payment when money is received."
+        : "Increases partner cost on the job. This is not a payout — use Record Payment when you send money."}
     </p>
   );
+
+  const clientPayTypeOptions = [
+    {
+      value: "deposit" as const,
+      label:
+        depositScheduled > EPS
+          ? `Deposit (up to ${formatCurrency(depositRemaining)} due)`
+          : "Deposit (none scheduled)",
+      disabled: !canRecordDeposit,
+    },
+    { value: "final" as const, label: "Partial payment (final balance)", disabled: false },
+  ];
 
   return (
     <Drawer
@@ -183,6 +232,22 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
       }
     >
       <form id="job-money-drawer-form" onSubmit={handleFormSubmit} className="px-5 py-5 space-y-5">
+        {flow === "client_pay" && !isClientStripe ? (
+          <div>
+            <Select
+              label="Payment type"
+              value={clientPayApplyAs}
+              onChange={(e) => setClientPayApplyAs(e.target.value as ClientPayApplyAs)}
+              options={clientPayTypeOptions.map((o) => ({ value: o.value, label: o.label, disabled: o.disabled }))}
+              className="h-10"
+            />
+            <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">
+              Choose whether this receipt applies to the scheduled deposit or to the final balance. Deposit is disabled when
+              nothing is due.
+            </p>
+          </div>
+        ) : null}
+
         {isPayFlow(flow) ? (
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Method</label>
@@ -193,7 +258,7 @@ export function JobMoneyDrawer({ open, flow, onClose, onSubmit, submitting, stri
               className="h-10"
             />
             {flow === "partner_pay" ? (
-              <p className="text-[11px] text-text-tertiary mt-1.5">Record payout — how you sent money to the partner.</p>
+              <p className="text-[11px] text-text-tertiary mt-1.5">How you sent money to the partner (ledger record only).</p>
             ) : null}
           </div>
         ) : null}
