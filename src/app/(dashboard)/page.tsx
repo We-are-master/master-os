@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { dashboardJobsFilterSelectColumns, isLegacyJobSchema } from "@/lib/job-schema-compat";
+import { isCeoDashboardAllowedUser } from "@/lib/ceo-dashboard-access";
 
 // ─── Icon map ────────────────────────────────────────────────────────────────
 const ICON_MAP: Record<string, React.ElementType> = {
@@ -135,6 +136,12 @@ function DashboardInner() {
   const [editingView, setEditingView] = useState<DashboardView | null>(null);
   const [ceoDashboard, setCeoDashboard] = useState(false);
 
+  const canSeeCeoDashboard = useMemo(() => isCeoDashboardAllowedUser(profile), [profile]);
+
+  useEffect(() => {
+    if (!canSeeCeoDashboard && ceoDashboard) setCeoDashboard(false);
+  }, [canSeeCeoDashboard, ceoDashboard]);
+
   // Set default view when views load
   useEffect(() => {
     if (visibleViews.length === 0 || activeViewId) return;
@@ -205,28 +212,30 @@ function DashboardInner() {
 
         {/* ── View picker ──────────────────────────────────────────────── */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => {
-              setCeoDashboard(true);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
+          {canSeeCeoDashboard && (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => {
                 setCeoDashboard(true);
-              }
-            }}
-            className={cn(
-              "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-sm font-medium border transition-all cursor-pointer select-none",
-              ceoDashboard
-                ? "bg-emerald-700 text-white border-emerald-700 shadow-sm dark:bg-emerald-800 dark:border-emerald-800"
-                : "bg-card text-text-secondary border-border hover:bg-surface-hover"
-            )}
-          >
-            <Crown className="h-3.5 w-3.5 flex-shrink-0" />
-            CEO
-          </div>
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setCeoDashboard(true);
+                }
+              }}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-sm font-medium border transition-all cursor-pointer select-none",
+                ceoDashboard
+                  ? "bg-emerald-700 text-white border-emerald-700 shadow-sm dark:bg-emerald-800 dark:border-emerald-800"
+                  : "bg-card text-text-secondary border-border hover:bg-surface-hover"
+              )}
+            >
+              <Crown className="h-3.5 w-3.5 flex-shrink-0" />
+              CEO
+            </div>
+          )}
           {viewsLoading
             ? Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="h-8 w-24 animate-pulse rounded-xl bg-surface-hover" />
