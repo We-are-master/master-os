@@ -9,12 +9,14 @@ import { formatCurrency, cn } from "@/lib/utils";
 import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financials";
 import { listCommissionTiers } from "@/services/tiers";
 import type { CommissionTier } from "@/types/database";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Building2, Layers, Target, Users, CalendarDays } from "lucide-react";
 import {
   buildWeeklyCashPositionBuckets,
   buildWeeklyJobSoldSeries,
+  buildWeeklyOpenInvoiceDueForecast,
   type WeeklyCashPositionRow,
+  type WeeklyInvoiceDueForecastRow,
 } from "@/lib/dashboard-cashflow-buckets";
 import {
   fetchPipelineJobsForDashboard,
@@ -95,6 +97,7 @@ export function OverviewExecutiveBundle() {
   >([]);
   const [cashflow, setCashflow] = useState<WeeklyCashPositionRow[]>([]);
   const [forecastWeeks, setForecastWeeks] = useState<{ label: string; sold: number }[]>([]);
+  const [invoiceDueForecastWeeks, setInvoiceDueForecastWeeks] = useState<WeeklyInvoiceDueForecastRow[]>([]);
   const [funnel, setFunnel] = useState({
     quotesAwaiting: 0,
     quotesAwaitingCount: 0,
@@ -104,6 +107,7 @@ export function OverviewExecutiveBundle() {
     salesBookedValue: 0,
     collectedCash: 0,
     projectedInvoiceBalance: 0,
+    outstandingAr: 0,
   });
   const [monthlySalesGoal, setMonthlySalesGoal] = useState(() => defaultMonthlySalesGoalGbp());
 
@@ -123,7 +127,10 @@ export function OverviewExecutiveBundle() {
           fetchPipelineJobsForDashboard(supabase, bounds),
           listCommissionTiers().catch(() => [] as CommissionTier[]),
           customerPaymentsTotalInRange(supabase, fromIso, toBound),
-          supabase.from("invoices").select("amount, amount_paid, status, due_date, paid_date").is("deleted_at", null),
+          supabase
+            .from("invoices")
+            .select("amount, amount_paid, status, due_date, paid_date, created_at")
+            .is("deleted_at", null),
         ]);
 
         if (cancelled) return;
@@ -139,6 +146,7 @@ export function OverviewExecutiveBundle() {
           status?: string;
           due_date?: string | null;
           paid_date?: string | null;
+          created_at?: string | null;
         }[];
 
         let rev = 0;
@@ -447,6 +455,7 @@ export function OverviewExecutiveBundle() {
         const projectedInvoiceBalance = bounds
           ? sumInvoiceOpenBalanceByDueDateWindow(invoiceRows, fromDay, toDay)
           : sumInvoiceOpenBalanceOutstanding(invoiceRows);
+        const outstandingAr = sumInvoiceOpenBalanceOutstanding(invoiceRows);
 
         setFunnel({
           quotesAwaiting: quotesAwaitingSum,
@@ -457,6 +466,7 @@ export function OverviewExecutiveBundle() {
           salesBookedValue: rev,
           collectedCash: customerCashTotal,
           projectedInvoiceBalance,
+          outstandingAr,
         });
 
         const forecastToIso = toBound;
@@ -488,6 +498,26 @@ export function OverviewExecutiveBundle() {
           ),
         );
 
+        let invForecastFromIso = fromIso;
+        if (bounds) {
+          const days = Math.max(
+            1,
+            Math.round(
+              (new Date(bounds.toIso).getTime() - new Date(bounds.fromIso).getTime()) / 86400000,
+            ) + 1,
+          );
+          if (days > 400) {
+            const cap = new Date(bounds.toIso);
+            cap.setDate(cap.getDate() - 52 * 7);
+            invForecastFromIso = cap.toISOString();
+          }
+        } else {
+          const cap = new Date(toBound);
+          cap.setDate(cap.getDate() - 26 * 7);
+          invForecastFromIso = cap.toISOString();
+        }
+        setInvoiceDueForecastWeeks(buildWeeklyOpenInvoiceDueForecast(invoiceRows, invForecastFromIso, toBound));
+
         const payrollOutstanding = (payrollPendingRes.error ? [] : payrollPendingRes.data ?? []) as {
           amount?: number;
           due_date?: string;
@@ -516,6 +546,7 @@ export function OverviewExecutiveBundle() {
           setTopAccounts([]);
           setCashflow([]);
           setForecastWeeks([]);
+          setInvoiceDueForecastWeeks([]);
           setFunnel({
             quotesAwaiting: 0,
             quotesAwaitingCount: 0,
@@ -525,6 +556,7 @@ export function OverviewExecutiveBundle() {
             salesBookedValue: 0,
             collectedCash: 0,
             projectedInvoiceBalance: 0,
+            outstandingAr: 0,
           });
         }
       } finally {
@@ -558,6 +590,17 @@ export function OverviewExecutiveBundle() {
       net: acc.net + b.net,
     }),
     { collected: 0, partnerToPay: 0, billsToPay: 0, workforceToPay: 0, net: 0 },
+  );
+  const periodAllInCosts = partnerDirect + billsCost + payrollCost;
+
+  const cashflowLegend = useMemo(
+    () => [
+      { key: "in", label: "Cash in", color: "#22c55e" },
+      { key: "bills", label: "Bills", color: "#a855f7" },
+      { key: "partners", label: "Partners", color: "#eab308" },
+      { key: "workforce", label: "Workforce", color: "#fb7185" },
+    ],
+    [],
   );
   const { current, next, fillPct } = tierProgress(billingForTier, tiers);
 
@@ -660,7 +703,9 @@ export function OverviewExecutiveBundle() {
             {
               label: "Projected revenue",
               display: loading ? "—" : formatCurrency(funnel.projectedInvoiceBalance),
-              sub: bounds ? "Open invoice balance · due date in range" : "Total outstanding invoice balance",
+              sub: bounds
+                ? "Open balance · due in range (or invoice date if due missing)"
+                : "Total outstanding invoice balance",
               accent: "text-teal-600",
             },
             {
@@ -770,6 +815,67 @@ export function OverviewExecutiveBundle() {
                 />
               </div>
             </>
+          )}
+        </div>
+      </Card>
+
+      <Card padding="none" className="overflow-hidden border-border-light">
+        <CardHeader className="px-4 pt-3 pb-2">
+          <div className="flex items-start gap-2.5">
+            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-teal-500/20 to-cyan-500/10 flex items-center justify-center shrink-0">
+              <CalendarDays className="h-3.5 w-3.5 text-teal-600" />
+            </div>
+            <div>
+              <CardTitle className="text-sm font-semibold">Invoice due — cash forecast</CardTitle>
+              <p className="text-[10px] text-text-tertiary mt-0.5">
+                Open invoice balance by <strong className="text-text-secondary">week of due date</strong> (uses invoice{" "}
+                <strong className="text-text-secondary">created</strong> when due is missing) · {bounds ? rangeLabel : "last ~26 weeks"}
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+        <div className="px-2 sm:px-3 pb-4">
+          {loading ? (
+            <div className="h-48 animate-pulse rounded-xl bg-surface-hover" />
+          ) : invoiceDueForecastWeeks.length === 0 ? (
+            <div className="h-32 flex items-center justify-center text-sm text-text-tertiary">No open invoices in range</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={invoiceDueForecastWeeks} margin={{ top: 8, right: 8, left: 4, bottom: 8 }} barCategoryGap="16%">
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border-light/50" />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 9, fill: "var(--color-text-tertiary)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  interval="preserveStartEnd"
+                  height={48}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: "var(--color-text-tertiary)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v) => (Math.abs(v) >= 1000 ? `£${(v / 1000).toFixed(0)}k` : `£${v}`)}
+                />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload?.length) return null;
+                    const row = payload[0]!.payload as WeeklyInvoiceDueForecastRow;
+                    return (
+                      <div
+                        className="rounded-lg border border-border-light px-3 py-2 text-xs shadow-md"
+                        style={{ background: "var(--color-card)" }}
+                      >
+                        <p className="font-semibold text-text-primary mb-1">{String(label)}</p>
+                        <p className="font-bold tabular-nums text-teal-600">Due {formatCurrency(row.dueOpen)}</p>
+                        <p className="text-[10px] text-text-tertiary mt-1">Open balance attributed to this week</p>
+                      </div>
+                    );
+                  }}
+                />
+                <Bar dataKey="dueOpen" name="Open due" fill="#14b8a6" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           )}
         </div>
       </Card>
@@ -916,7 +1022,57 @@ export function OverviewExecutiveBundle() {
             )}
           </div>
         </CardHeader>
-        <div className="px-2 sm:px-3 pb-4 pt-2">
+        <div className="px-3 sm:px-4 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-border-light/50">
+          {cashflowLegend.map((item) => (
+            <div key={item.key} className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: item.color }} aria-hidden />
+              <span className="text-[10px] font-medium text-text-secondary">{item.label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="px-2 sm:px-3 py-2">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-px rounded-lg overflow-hidden border border-border-light/70 bg-border-light/50 mb-2">
+            {[
+              {
+                k: "sales",
+                label: "Sales (booked)",
+                main: loading ? "—" : formatCurrency(funnel.salesBookedValue),
+                sub: loading ? "—" : `${funnel.salesJobCount} jobs`,
+                accent: "text-emerald-600",
+              },
+              {
+                k: "rev",
+                label: "Revenue",
+                main: loading ? "—" : formatCurrency(revenue),
+                sub: bounds ? "Booked · jobs in range" : "Booked · all pipeline",
+                accent: "text-emerald-700 dark:text-emerald-400",
+              },
+              {
+                k: "costs",
+                label: "Projected costs",
+                main: loading ? "—" : formatCurrency(periodAllInCosts),
+                sub: "Direct + bills + payroll · period",
+                accent: "text-amber-600",
+              },
+              {
+                k: "net",
+                label: "Period net (cash)",
+                main: loading ? "—" : formatCurrency(cashflowTotals.net),
+                sub: loading
+                  ? "—"
+                  : `Σ weekly net · open AR ${formatCurrency(funnel.outstandingAr)}`,
+                accent: cashflowTotals.net >= 0 ? "text-emerald-600" : "text-rose-600",
+              },
+            ].map((cell) => (
+              <div key={cell.k} className="bg-card px-2.5 py-2 min-w-0">
+                <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide truncate">{cell.label}</p>
+                <p className={cn("text-sm font-bold tabular-nums leading-tight mt-0.5 truncate", cell.accent)}>{cell.main}</p>
+                <p className="text-[9px] text-text-tertiary leading-snug mt-0.5 line-clamp-2">{cell.sub}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="px-2 sm:px-3 pb-4 pt-0">
           {loading ? (
             <div className="h-56 animate-pulse rounded-xl bg-surface-hover" />
           ) : cashflow.length === 0 ? (
@@ -961,10 +1117,6 @@ export function OverviewExecutiveBundle() {
                       </div>
                     );
                   }}
-                />
-                <Legend
-                  wrapperStyle={{ fontSize: 11, paddingTop: 4 }}
-                  formatter={(value) => <span className="text-text-secondary">{String(value)}</span>}
                 />
                 <Bar dataKey="collected" name="Cash in" stackId="cf" fill="#22c55e" radius={[0, 0, 0, 0]} />
                 <Bar dataKey="billsToPay" name="Bills" stackId="cf" fill="#a855f7" />
