@@ -23,15 +23,20 @@ const SELECT_LEGACY =
   "id, client_id, partner_name, title, client_price, partner_cost, materials_cost, commission, status, created_at";
 
 /**
- * Same universe as Jobs Management list: excludes cancelled (incl. lost & cancelled tab).
- * Date filter: `created_at` within dashboard bounds (matches dashboard job filter chips). All time = no date filter.
+ * CEO / dashboard “Sales”: jobs whose `created_at` falls in the range (official sale date).
+ * Same broad universe as pipeline KPIs: not soft-deleted, not cancelled, not trash status.
  */
 export async function fetchPipelineJobsForDashboard(
   supabase: ReturnType<typeof getSupabase>,
   bounds: { fromIso: string; toIso: string } | null,
 ): Promise<OverviewPipelineJobRow[]> {
   async function run(cols: string) {
-    let q = supabase.from("jobs").select(cols).is("deleted_at", null).neq("status", "cancelled");
+    let q = supabase
+      .from("jobs")
+      .select(cols)
+      .is("deleted_at", null)
+      .neq("status", "cancelled")
+      .neq("status", "deleted");
     if (bounds) {
       q = q.gte("created_at", bounds.fromIso).lte("created_at", bounds.toIso);
     }

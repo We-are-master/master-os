@@ -17,7 +17,11 @@ import { getSupabase } from "@/services/base";
 import { formatCurrency, cn } from "@/lib/utils";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { jobBillableRevenue, jobDirectCost } from "@/lib/job-financials";
-import { invoiceBalanceDue } from "@/lib/invoice-balance";
+import {
+  formatYmdLocal,
+  isJobCeoWorkInProgress,
+  splitInvoiceOpenBalanceAwaitingVsOverdue,
+} from "@/lib/ceo-financial-metrics";
 import { getCompanySettings } from "@/services/company";
 import {
   fetchPipelineJobsForDashboard,
@@ -76,9 +80,9 @@ function grossMarginPct(sales: number, cos: number): number {
   return Math.round(((sales - cos) / sales) * 1000) / 10;
 }
 
-function netMarginPct(sales: number, cos: number, bills: number): number {
+function netMarginPct(sales: number, cos: number, bills: number, workforce: number): number {
   if (sales <= 0) return 0;
-  return Math.round(((sales - cos - bills) / sales) * 1000) / 10;
+  return Math.round(((sales - cos - bills - workforce) / sales) * 1000) / 10;
 }
 
 export function CeoFinancialDashboard() {
@@ -89,11 +93,13 @@ export function CeoFinancialDashboard() {
   const [sales, setSales] = useState(0);
   const [costOfSales, setCostOfSales] = useState(0);
   const [billsInPeriod, setBillsInPeriod] = useState(0);
+  const [workforceInPeriod, setWorkforceInPeriod] = useState(0);
   const [prevSales, setPrevSales] = useState(0);
   const [prevCos, setPrevCos] = useState(0);
   const [prevBills, setPrevBills] = useState(0);
+  const [prevWorkforce, setPrevWorkforce] = useState(0);
 
-  const [ongoingUninvoiced, setOngoingUninvoiced] = useState(0);
+  const [workInProgress, setWorkInProgress] = useState(0);
   const [awaitingPayment, setAwaitingPayment] = useState(0);
   const [overduePayment, setOverduePayment] = useState(0);
   const [collected, setCollected] = useState(0);
@@ -127,16 +133,17 @@ export function CeoFinancialDashboard() {
       const prevB = bounds ? previousPeriodBounds(bounds) : null;
 
       try {
-        const [companySettings, pipelineRows, pipelinePrev, jobsForOngoing, invoicesRes, billsRes] =
+        const [companySettings, pipelineRows, pipelinePrev, jobsForWip, invoicesRes, billsRes, payrollRes] =
           await Promise.all([
             getCompanySettings(),
             fetchPipelineJobsForDashboard(supabase, bounds),
             prevB ? fetchPipelineJobsForDashboard(supabase, prevB) : Promise.resolve([] as OverviewPipelineJobRow[]),
             supabase
               .from("jobs")
-              .select("reference, status, client_price, extras_amount, title")
+              .select("reference, status, client_price, extras_amount, title, partner_cancelled_at")
               .is("deleted_at", null)
-              .neq("status", "cancelled"),
+              .neq("status", "cancelled")
+              .neq("status", "deleted"),
             supabase.from("invoices").select("amount, amount_paid, status, due_date, job_reference").is("deleted_at", null),
             (async () => {
               let q = supabase
@@ -146,6 +153,13 @@ export function CeoFinancialDashboard() {
                 .neq("status", "rejected");
               if (bounds) {
                 q = q.gte("due_date", fromDay).lte("due_date", toDay);
+              }
+              return q;
+            })(),
+            (async () => {
+              let q = supabase.from("payroll_internal_costs").select("amount");
+              if (bounds) {
+                q = q.not("due_date", "is", null).gte("due_date", fromDay).lte("due_date", toDay);
               }
               return q;
             })(),
@@ -173,55 +187,63 @@ export function CeoFinancialDashboard() {
         const billsSum = billRows.reduce((acc, r) => acc + Number(r.amount ?? 0), 0);
 
         let prevBillsSum = 0;
+        let prevPayrollSum = 0;
         if (prevB) {
           const pFrom = prevB.fromIso.slice(0, 10);
           const pTo = prevB.toIso.slice(0, 10);
-          const { data: pb } = await supabase
-            .from("bills")
-            .select("amount")
-            .is("archived_at", null)
-            .neq("status", "rejected")
-            .gte("due_date", pFrom)
-            .lte("due_date", pTo);
-          prevBillsSum = (pb ?? []).reduce((acc, r) => acc + Number((r as { amount?: number }).amount ?? 0), 0);
+          const [pbRes, ppRes] = await Promise.all([
+            supabase
+              .from("bills")
+              .select("amount")
+              .is("archived_at", null)
+              .neq("status", "rejected")
+              .gte("due_date", pFrom)
+              .lte("due_date", pTo),
+            supabase
+              .from("payroll_internal_costs")
+              .select("amount")
+              .not("due_date", "is", null)
+              .gte("due_date", pFrom)
+              .lte("due_date", pTo),
+          ]);
+          prevBillsSum = (pbRes.data ?? []).reduce(
+            (acc, r) => acc + Number((r as { amount?: number }).amount ?? 0),
+            0,
+          );
+          prevPayrollSum = (ppRes.data ?? []).reduce(
+            (acc, r) => acc + Number((r as { amount?: number }).amount ?? 0),
+            0,
+          );
         }
 
         const invoices = (invoicesRes.data ?? []) as InvoiceRow[];
-        const refsWithInvoice = new Set(
-          invoices.map((i) => i.job_reference?.trim()).filter((x): x is string => Boolean(x))
-        );
 
-        const jobs = (jobsForOngoing.error ? [] : jobsForOngoing.data ?? []) as {
+        const jobs = (jobsForWip.error ? [] : jobsForWip.data ?? []) as {
           reference: string;
           status: string;
           client_price: number;
           extras_amount?: number | null;
           title?: string;
+          partner_cancelled_at?: string | null;
         }[];
 
-        let ongoing = 0;
+        let wip = 0;
         for (const j of jobs) {
-          const ref = j.reference?.trim();
-          if (!ref || refsWithInvoice.has(ref)) continue;
-          if (j.status === "cancelled") continue;
-          ongoing += jobBillableRevenue({
+          if (!isJobCeoWorkInProgress(j)) continue;
+          wip += jobBillableRevenue({
             client_price: Number(j.client_price ?? 0),
             extras_amount: j.extras_amount != null ? Number(j.extras_amount) : undefined,
           });
         }
 
-        let awaitAmt = 0;
-        let overdueAmt = 0;
-        for (const inv of invoices) {
-          const st = inv.status ?? "";
-          if (st === "paid" || st === "cancelled") continue;
-          const bal = invoiceBalanceDue({
-            amount: Number(inv.amount ?? 0),
-            amount_paid: Number(inv.amount_paid ?? 0),
-          });
-          if (st === "overdue") overdueAmt += bal;
-          else if (st === "pending" || st === "partially_paid" || st === "draft") awaitAmt += bal;
-        }
+        const todayLocal = formatYmdLocal(clock);
+        const { awaiting: awaitAmt, overdue: overdueAmt } = splitInvoiceOpenBalanceAwaitingVsOverdue(
+          invoices,
+          todayLocal,
+        );
+
+        const payrollRows = (payrollRes.error ? [] : payrollRes.data ?? []) as { amount?: number }[];
+        const workforceSum = payrollRows.reduce((acc, r) => acc + Number(r.amount ?? 0), 0);
 
         const collectedAmt = await customerCashInRange(supabase, fromDay, toDay);
 
@@ -283,7 +305,7 @@ export function CeoFinancialDashboard() {
         );
 
         let stuck = 0;
-        const awaitingJobs = (jobsForOngoing.error ? [] : jobsForOngoing.data ?? []) as {
+        const awaitingJobs = (jobsForWip.error ? [] : jobsForWip.data ?? []) as {
           status: string;
           client_price: number;
           extras_amount?: number | null;
@@ -300,10 +322,12 @@ export function CeoFinancialDashboard() {
         setSales(s);
         setCostOfSales(cos);
         setBillsInPeriod(billsSum);
+        setWorkforceInPeriod(workforceSum);
         setPrevSales(ps);
         setPrevCos(pcos);
         setPrevBills(prevBillsSum);
-        setOngoingUninvoiced(ongoing);
+        setPrevWorkforce(prevPayrollSum);
+        setWorkInProgress(wip);
         setAwaitingPayment(awaitAmt);
         setOverduePayment(overdueAmt);
         setCollected(collectedAmt);
@@ -324,10 +348,12 @@ export function CeoFinancialDashboard() {
           setSales(0);
           setCostOfSales(0);
           setBillsInPeriod(0);
+          setWorkforceInPeriod(0);
           setPrevSales(0);
           setPrevCos(0);
           setPrevBills(0);
-          setOngoingUninvoiced(0);
+          setPrevWorkforce(0);
+          setWorkInProgress(0);
           setAwaitingPayment(0);
           setOverduePayment(0);
           setCollected(0);
@@ -350,12 +376,12 @@ export function CeoFinancialDashboard() {
   }, [boundsKey, bounds]);
 
   const gross = sales - costOfSales;
-  const net = sales - costOfSales - billsInPeriod;
+  const net = sales - costOfSales - billsInPeriod - workforceInPeriod;
   const grossPct = grossMarginPct(sales, costOfSales);
-  const netPct = netMarginPct(sales, costOfSales, billsInPeriod);
+  const netPct = netMarginPct(sales, costOfSales, billsInPeriod, workforceInPeriod);
 
   const prevGross = prevSales - prevCos;
-  const prevNet = prevSales - prevCos - prevBills;
+  const prevNet = prevSales - prevCos - prevBills - prevWorkforce;
 
   const tierChartData = useMemo(() => {
     const main = ["Quick Fix", "Multi Task", "Standard", "Project", "Emergency"] as const;
@@ -399,15 +425,15 @@ export function CeoFinancialDashboard() {
     if (stuckAwaitingPayment > 50_000) {
       items.push({
         level: "amber",
-        text: "High value in Awaiting Payment jobs (WIP)",
+        text: "High billable value on jobs in Awaiting Payment status",
         amount: stuckAwaitingPayment,
       });
     }
-    if (ongoingUninvoiced > 100_000) {
+    if (workInProgress > 100_000) {
       items.push({
         level: "yellow",
-        text: "Large uninvoiced WIP",
-        amount: ongoingUninvoiced,
+        text: "Large work in progress (operational jobs)",
+        amount: workInProgress,
       });
     }
     if (items.length === 0) {
@@ -419,7 +445,7 @@ export function CeoFinancialDashboard() {
     partnerUnpaid,
     cashTotals.net,
     stuckAwaitingPayment,
-    ongoingUninvoiced,
+    workInProgress,
   ]);
 
   return (
@@ -446,7 +472,7 @@ export function CeoFinancialDashboard() {
             changeLabel="vs prior period"
             icon={CircleDollarSign}
             accent="blue"
-            description="Billable value on jobs in period"
+            description="Jobs created in period (billable value, by job created_at)"
           />
           <KpiCard
             title="Cost of sales"
@@ -476,7 +502,7 @@ export function CeoFinancialDashboard() {
             changeLabel="vs prior period"
             icon={PiggyBank}
             accent="purple"
-            description="Sales − (cost of sales + bills due in period)"
+            description="Sales − cost of sales − supplier bills − workforce (payroll) due in period"
           />
         </div>
       </section>
@@ -488,12 +514,12 @@ export function CeoFinancialDashboard() {
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <KpiCard
-            title="Ongoing (uninvoiced)"
-            value={ongoingUninvoiced}
+            title="Work in progress"
+            value={workInProgress}
             format="currency"
             icon={Wallet}
             accent="amber"
-            description="Jobs without an invoice · WIP exposure"
+            description="Billable value on operational jobs (excl. completed, cancelled, deleted, partner-lost)"
           />
           <KpiCard
             title="Awaiting payment"
@@ -501,15 +527,15 @@ export function CeoFinancialDashboard() {
             format="currency"
             icon={Banknote}
             accent="blue"
-            description="Open invoice balance (excl. overdue status)"
+            description="Open invoice balance_due with due_date on or after today"
           />
           <KpiCard
-            title="Overdue payment"
+            title="Overdue"
             value={overduePayment}
             format="currency"
             icon={AlertTriangle}
             accent="primary"
-            description="Invoices marked overdue"
+            description="Open invoice balance_due with due_date before today"
           />
           <KpiCard
             title="Collected"
@@ -517,7 +543,7 @@ export function CeoFinancialDashboard() {
             format="currency"
             icon={CircleDollarSign}
             accent="emerald"
-            description="Customer cash in (deposit + final) in period"
+            description="Client payments from job_payments (deposit + final) in period"
           />
         </div>
       </section>
@@ -589,8 +615,8 @@ export function CeoFinancialDashboard() {
         {/* Section 4 — Tier vs revenue */}
         <Card className="border-border-light shadow-sm min-h-[320px] flex flex-col">
           <CardHeader className="border-b border-border-light/60 shrink-0">
-            <CardTitle className="text-base">Revenue by service tier</CardTitle>
-            <p className="text-xs text-text-tertiary mt-0.5">Job titles mapped to Quick Fix → Emergency</p>
+            <CardTitle className="text-base">Sales by service tier</CardTitle>
+            <p className="text-xs text-text-tertiary mt-0.5">Period sales by job title mapping (Quick Fix → Emergency)</p>
           </CardHeader>
           <div className="flex-1 min-h-[260px] p-3 pb-5">
             {loading ? (
@@ -624,7 +650,7 @@ export function CeoFinancialDashboard() {
                         background: "var(--color-card)",
                       }}
                     />
-                    <Bar dataKey="revenue" name="Revenue" fill="var(--color-primary)" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="revenue" name="Sales" fill="var(--color-primary)" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
