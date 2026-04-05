@@ -1,5 +1,17 @@
 import { invoiceBalanceDue } from "@/lib/invoice-balance";
 
+/** Local calendar month bounds (YYYY-MM-DD), inclusive, for tier / payment windows. */
+export function localCalendarMonthYmdBounds(d = new Date()): { fromDay: string; toDay: string; monthLabel: string } {
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  const last = new Date(y, m + 1, 0).getDate();
+  const mm = String(m + 1).padStart(2, "0");
+  const fromDay = `${y}-${mm}-01`;
+  const toDay = `${y}-${mm}-${String(last).padStart(2, "0")}`;
+  const monthLabel = d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  return { fromDay, toDay, monthLabel };
+}
+
 type InvoiceKpiRow = {
   amount?: number;
   amount_paid?: number;
