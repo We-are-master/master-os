@@ -104,10 +104,14 @@ export function prepareJobRowForUpdate(patch: Record<string, unknown>): Record<s
 
 
 /** Dashboard job list select — avoid unknown columns in PostgREST select list. */
-export function dashboardJobsFilterSelectColumns(): string {
+export function dashboardJobsFilterSelectColumns(opts?: { periodOverlap?: boolean }): string {
+  const base = isLegacyJobSchema()
+    ? "id, reference, status, partner_id, partner_name, margin_percent, finance_status, report_submitted, commission, created_at"
+    : "id, reference, status, partner_id, partner_name, quote_id, margin_percent, finance_status, report_submitted, commission, created_at";
+  if (!opts?.periodOverlap) return base;
   return isLegacyJobSchema()
-    ? "id, status, partner_id, partner_name, margin_percent, finance_status, report_submitted, commission, created_at"
-    : "id, status, partner_id, partner_name, quote_id, margin_percent, finance_status, report_submitted, commission, created_at";
+    ? `${base},scheduled_date,scheduled_start_at,scheduled_end_at,completed_date`
+    : `${base},scheduled_date,scheduled_start_at,scheduled_end_at,scheduled_finish_date,completed_date`;
 }
 
 /** Client profile job history select */

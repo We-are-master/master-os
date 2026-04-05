@@ -28,9 +28,9 @@ import {
   type WeeklyCashPositionRow,
 } from "@/lib/dashboard-cashflow-buckets";
 import { BestSellersByOwner } from "@/components/dashboard/best-sellers-by-owner";
+import { jobExecutionStartYmd } from "@/lib/job-period-overlap";
 import {
   fetchExecutiveRevenueJobsForDashboard,
-  jobExecutionStartYmd,
   defaultMonthlySalesGoalGbp,
   periodSalesGoalGbp,
   resolveMonthlySalesGoalFromCompany,

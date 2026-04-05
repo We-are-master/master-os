@@ -41,6 +41,7 @@ import { isJobForcePaid } from "@/lib/job-force-paid";
 import { jobBillableRevenue } from "@/lib/job-financials";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { applyInvoicePeriodBoundsToQuery, getSupabase } from "@/services/base";
+import { fetchJobReferencesOverlappingPeriod } from "@/services/job-period-overlap-queries";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
 import {
@@ -383,7 +384,40 @@ export default function InvoicesPage() {
         return acc;
       }
 
-      const [active, deleted] = await Promise.all([fetchInvoicePages(false), fetchInvoicePages(true)]);
+      async function mergeInvoicesForLinkedJobsInPeriod(
+        initial: Invoice[],
+        onlyDeleted: boolean,
+      ): Promise<Invoice[]> {
+        if (!bounds) return initial;
+        const byId = new Map(initial.map((i) => [i.id, i]));
+        const loadedRefs = new Set(
+          initial.map((i) => i.job_reference?.trim()).filter((x): x is string => Boolean(x)),
+        );
+        const overlappingRefs = await fetchJobReferencesOverlappingPeriod(bounds);
+        const needRefs = overlappingRefs.filter((r) => !loadedRefs.has(r));
+        if (needRefs.length === 0) return initial;
+        const REF_CHUNK = 90;
+        for (let i = 0; i < needRefs.length; i += REF_CHUNK) {
+          const slice = needRefs.slice(i, i + REF_CHUNK);
+          let q = supabase.from("invoices").select("*").in("job_reference", slice);
+          if (onlyDeleted) q = q.not("deleted_at", "is", null);
+          else q = q.is("deleted_at", null);
+          const { data, error } = await q;
+          if (error) continue;
+          for (const inv of (data ?? []) as Invoice[]) {
+            if (!byId.has(inv.id)) byId.set(inv.id, inv);
+          }
+        }
+        return [...byId.values()].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        );
+      }
+
+      const [activeRaw, deletedRaw] = await Promise.all([fetchInvoicePages(false), fetchInvoicePages(true)]);
+      const [active, deleted] = await Promise.all([
+        mergeInvoicesForLinkedJobsInPeriod(activeRaw, false),
+        mergeInvoicesForLinkedJobsInPeriod(deletedRaw, true),
+      ]);
       const refs = [
         ...new Set(
           [...active, ...deleted].map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)),

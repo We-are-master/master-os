@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
+import { getJobStatusCountsWithScheduleOverlap } from "./job-period-overlap-queries";
 
 export type SortDirection = "asc" | "desc";
 
@@ -22,8 +23,8 @@ export interface ListParams {
   /** Column used for date range filtering (e.g. `scheduled_date`). */
   dateColumn?: string;
   /**
-   * Jobs only: inclusive schedule window on local calendar days.
-   * Matches if `scheduled_date` is in range OR `scheduled_start_at` falls within local start/end of range.
+   * Jobs only: overlap with selected local-day range (execution / booking window — same rules as Executive snapshot).
+   * Listing uses chunked fetch + client filter; counts use the same overlap helper.
    */
   scheduleRange?: { from: string; to: string };
   /** Soft-deleted rows only (`deleted_at` set). Used for the Jobs "Archived" tab. */
@@ -46,7 +47,10 @@ export function applyJobsScheduleRangeToQuery<T extends { or: (filters: string) 
   return query.or(`${byDate},${byStart}`);
 }
 
-/** Invoices list/KPIs: align period with displayed invoice date (billing week vs created). */
+/**
+ * Invoices: rows with any “activity” touching the period — billing week, created (non-weekly),
+ * due date, last customer payment, or paid date.
+ */
 export function applyInvoicePeriodBoundsToQuery<T extends { or: (filters: string) => T }>(
   query: T,
   bounds: { from: string; to: string; startIso: string; endIso: string }
@@ -54,7 +58,10 @@ export function applyInvoicePeriodBoundsToQuery<T extends { or: (filters: string
   const { from, to, startIso, endIso } = bounds;
   const byWeek = `and(billing_week_start.gte.${from},billing_week_start.lte.${to})`;
   const byCreated = `and(billing_week_start.is.null,created_at.gte."${startIso}",created_at.lte."${endIso}")`;
-  return query.or(`${byWeek},${byCreated}`);
+  const byDue = `and(due_date.gte.${from},due_date.lte.${to})`;
+  const byLastPay = `and(last_payment_date.gte.${from},last_payment_date.lte.${to})`;
+  const byPaid = `and(paid_date.gte.${from},paid_date.lte.${to})`;
+  return query.or(`${byWeek},${byCreated},${byDue},${byLastPay},${byPaid}`);
 }
 
 export interface ListResult<T> {
@@ -164,6 +171,10 @@ export async function getStatusCounts(
   const supabase = getSupabase();
   const counts: Record<string, number> = {};
   const canUseRpc = !options?.scheduleRange && !options?.invoicePeriodBounds;
+
+  if (table === "jobs" && options?.scheduleRange) {
+    return getJobStatusCountsWithScheduleOverlap(statuses, options.scheduleRange);
+  }
 
   if (canUseRpc) {
     const { data: rpcRows, error: rpcErr } = await supabase.rpc("get_status_counts", {
