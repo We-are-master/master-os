@@ -30,7 +30,7 @@ import {
   Timer,
   X,
 } from "lucide-react";
-import { cn, formatCurrency, formatCurrencyPrecise } from "@/lib/utils";
+import { cn, formatCurrency, formatCurrencyPrecise, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
 import { listQuoteLineItems } from "@/services/quotes";
@@ -93,6 +93,7 @@ import { patchJobFinancialsForAccessTransition } from "@/lib/job-access-fee-fina
 import { jobPaymentNoteWithoutLedgerPrefix, parseJobPaymentLedgerLabel } from "@/lib/job-payment-history-label";
 import { isLegacyMisclassifiedPartnerPayment, sumPartnerRecordedPayoutsForCap } from "@/lib/job-payment-ledger";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
+import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
@@ -156,6 +157,9 @@ const selfBillStatusConfig: Record<
 
 function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
+  const partnerFieldBill = sb.bill_origin !== "internal";
+  const paymentDueYmd =
+    partnerFieldBill && sb.week_end?.trim() ? partnerFieldSelfBillPaymentDueDate(sb.week_end.trim()) : null;
   const weekLine =
     sb.week_start && sb.week_end
       ? `${sb.week_start} → ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
@@ -195,6 +199,11 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
         {" "}
         Payouts on the job reduce amount due only; extra payout on the job increases this line.
       </p>
+      {paymentDueYmd ? (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium pt-0.5">
+          Office payment due: {formatDate(paymentDueYmd)} (Friday after the week ends)
+        </p>
+      ) : null}
       <div className="flex items-center gap-1.5 flex-wrap pt-1">
         <Button
           size="sm"

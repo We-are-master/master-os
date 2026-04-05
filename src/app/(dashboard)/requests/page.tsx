@@ -63,6 +63,13 @@ import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-f
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
 import { mergeImageUrlLists, normalizeJsonImageArray } from "@/lib/request-attachment-images";
+import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
+import {
+  DEFAULT_FINANCE_PERIOD_MODE,
+  getFinancePeriodClosedBounds,
+  getMonthBoundsForDate,
+  type FinancePeriodMode,
+} from "@/lib/finance-period";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
@@ -118,8 +125,30 @@ const serviceColors: Record<string, string> = {
 
 export default function RequestsPage() {
   const router = useRouter();
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
+  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
+  const [periodRangeFrom, setPeriodRangeFrom] = useState("");
+  const [periodRangeTo, setPeriodRangeTo] = useState("");
+  const [dateFrom, setDateFrom] = useState(() => getMonthBoundsForDate(new Date()).from);
+  const [dateTo, setDateTo] = useState(() => getMonthBoundsForDate(new Date()).to);
+
+  useEffect(() => {
+    const bounds = getFinancePeriodClosedBounds(
+      periodMode,
+      weekAnchor,
+      periodRangeFrom,
+      periodRangeTo,
+      monthAnchor,
+    );
+    if (!bounds) {
+      setDateFrom("");
+      setDateTo("");
+    } else {
+      setDateFrom(bounds.from);
+      setDateTo(bounds.to);
+    }
+  }, [periodMode, weekAnchor, monthAnchor, periodRangeFrom, periodRangeTo]);
 
   const createdAtRangeFilter = useMemo(() => {
     let fromY = dateFrom.trim();
@@ -656,10 +685,10 @@ export default function RequestsPage() {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Requests" subtitle="Manage incoming service requests and leads.">
+        <PageHeader title="Requests" subtitle="Manage incoming service requests and leads. Period defaults to the current calendar month (same as Finance: All · Monthly · Week · Date range).">
           <div className="relative flex items-center gap-2" ref={filterRef}>
             <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-            {(filterPriority !== "all" || filterService !== "all" || dateFrom || dateTo) && (
+            {(filterPriority !== "all" || filterService !== "all" || periodMode !== DEFAULT_FINANCE_PERIOD_MODE) && (
               <span className="text-[10px] font-medium text-primary">Active</span>
             )}
             {filterOpen && (
@@ -668,27 +697,9 @@ export default function RequestsPage() {
                   <CalendarRange className="h-3.5 w-3.5 shrink-0" />
                   Created date
                 </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] text-text-tertiary mb-1">From</label>
-                    <input
-                      type="date"
-                      value={dateFrom}
-                      onChange={(e) => setDateFrom(e.target.value)}
-                      className="w-full h-8 rounded-lg border border-border bg-card text-xs text-text-primary px-2"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-text-tertiary mb-1">To</label>
-                    <input
-                      type="date"
-                      value={dateTo}
-                      onChange={(e) => setDateTo(e.target.value)}
-                      className="w-full h-8 rounded-lg border border-border bg-card text-xs text-text-primary px-2"
-                    />
-                  </div>
-                </div>
-                <p className="text-[10px] text-text-tertiary leading-snug">Filters the list and KPI counts by request creation date (inclusive).</p>
+                <p className="text-[10px] text-text-tertiary leading-snug">
+                  Use the <strong className="text-text-secondary">Period</strong> bar above (All · Monthly · Week · Date range). List and KPIs follow creation date in that window (inclusive).
+                </p>
                 <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Priority</p>
                 <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value as "all" | "high" | "urgent")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
                   <option value="all">All</option>
@@ -709,8 +720,11 @@ export default function RequestsPage() {
                   onClick={() => {
                     setFilterPriority("all");
                     setFilterService("all");
-                    setDateFrom("");
-                    setDateTo("");
+                    setPeriodMode(DEFAULT_FINANCE_PERIOD_MODE);
+                    setWeekAnchor(new Date());
+                    setMonthAnchor(new Date());
+                    setPeriodRangeFrom("");
+                    setPeriodRangeTo("");
                   }}
                 >
                   Clear filters
@@ -720,6 +734,21 @@ export default function RequestsPage() {
           </div>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Request</Button>
         </PageHeader>
+
+        <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
+          <FinanceWeekRangeBar
+            mode={periodMode}
+            onModeChange={setPeriodMode}
+            weekAnchor={weekAnchor}
+            onWeekAnchorChange={setWeekAnchor}
+            monthAnchor={monthAnchor}
+            onMonthAnchorChange={setMonthAnchor}
+            rangeFrom={periodRangeFrom}
+            rangeTo={periodRangeTo}
+            onRangeFromChange={setPeriodRangeFrom}
+            onRangeToChange={setPeriodRangeTo}
+          />
+        </div>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
           <KpiCard

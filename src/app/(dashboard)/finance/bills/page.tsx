@@ -39,7 +39,11 @@ import {
 import { useProfile } from "@/hooks/use-profile";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
-import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
+import {
+  DEFAULT_FINANCE_PERIOD_MODE,
+  getFinancePeriodClosedBounds,
+  formatFinancePeriodKpiDescription,
+} from "@/lib/finance-period";
 import { BILL_CATEGORY_OPTIONS, billCategoryLabel } from "@/lib/bill-categories";
 import { RECURRENCE_GENERATION_COUNTS, recurrenceLabel } from "@/lib/bill-recurrence";
 import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
@@ -81,7 +85,7 @@ export default function BillsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [saving, setSaving] = useState(false);
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("month");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
   const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
@@ -440,7 +444,7 @@ export default function BillsPage() {
       <div className="space-y-5">
         <PageHeader
           title="Bills & expenses"
-          subtitle="Filter by All, One-off, or Recurring; then by workflow. KPIs and the list match the bill type and the period above."
+          subtitle="Filter by All, One-off, or Recurring; then by workflow. Period: All · Monthly · Week · Date range (default: current month). KPIs and the list match the bill type and the period."
         >
           <Button
             size="sm"

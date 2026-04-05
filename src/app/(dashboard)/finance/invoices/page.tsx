@@ -43,7 +43,11 @@ import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { applyInvoicePeriodBoundsToQuery, getSupabase } from "@/services/base";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
-import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
+import {
+  DEFAULT_FINANCE_PERIOD_MODE,
+  getFinancePeriodClosedBounds,
+  formatFinancePeriodKpiDescription,
+} from "@/lib/finance-period";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
@@ -307,8 +311,9 @@ function invoiceDrawerSyncSignature(inv: Invoice): string {
 }
 
 export default function InvoicesPage() {
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
 
@@ -334,7 +339,7 @@ export default function InvoicesPage() {
   const loadPageData = useCallback(async () => {
     setLoading(true);
     try {
-      const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo);
+      const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor);
       const supabase = getSupabase();
       const chunkSize = 500;
       const all: Invoice[] = [];
@@ -370,7 +375,7 @@ export default function InvoicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [periodMode, weekAnchor, rangeFrom, rangeTo]);
+  }, [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]);
 
   useEffect(() => {
     void loadPageData();
@@ -459,7 +464,7 @@ export default function InvoicesPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [pipelineTab, search, periodMode, weekAnchor, rangeFrom, rangeTo]);
+  }, [pipelineTab, search, periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -583,8 +588,8 @@ export default function InvoicesPage() {
   }, [allInvoices, jobRefToSourceAccountId, clientNameToSourceAccountId]);
 
   const kpiPeriodDesc = useMemo(
-    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
-    [periodMode, weekAnchor, rangeFrom, rangeTo]
+    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
+    [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]
   );
 
   const handleStatusChange = useCallback(async (invoice: Invoice, newStatus: InvoiceStatus) => {
@@ -966,7 +971,7 @@ export default function InvoicesPage() {
       <div className="space-y-5">
         <PageHeader
           title="Invoices"
-          subtitle={`Period defaults to All time. Tabs: Ongoing = job still open (not completed, awaiting payment, or cancelled); Review & approve = job completed; Awaiting payment = job awaiting payment after approve. ${weekPeriodHelpText()}`}
+          subtitle={`Period bar: All · Monthly · Week · Date range — default is the current calendar month. Tabs: Ongoing = job still open (not completed, awaiting payment, or cancelled); Review & approve = job completed; Awaiting payment = job awaiting payment after approve. ${weekPeriodHelpText()}`}
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>Export CSV</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>Create Invoice</Button>
@@ -978,6 +983,8 @@ export default function InvoicesPage() {
             onModeChange={setPeriodMode}
             weekAnchor={weekAnchor}
             onWeekAnchorChange={setWeekAnchor}
+            monthAnchor={monthAnchor}
+            onMonthAnchorChange={setMonthAnchor}
             rangeFrom={rangeFrom}
             rangeTo={rangeTo}
             onRangeFromChange={setRangeFrom}

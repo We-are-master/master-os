@@ -1,6 +1,6 @@
 import { getSupabase } from "./base";
 import type { PayRun, PayRunItem } from "@/types/database";
-import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { getWeekBoundsForDate, partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isPostgrestSelectSchemaError } from "@/lib/postgrest-errors";
 
 /** Get week bounds (Monday–Sunday, local calendar) for a given date — matches Finance week UI / due_date filters. */
@@ -130,13 +130,13 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     seenSb.add(r.id);
     const net = Number(r.net_payout) || 0;
     if (net <= 0.02) continue;
-    const due = (r.week_end && r.week_end.trim()) || weekEnd;
+    const weekEndYmd = (r.week_end && r.week_end.trim()) || weekEnd;
     out.push({
       item_type: "self_bill",
       source_id: r.id,
       source_label: encodePayRunLabel(r.partner_name?.trim() || "Partner", r.reference?.trim() || "—"),
       amount: net,
-      due_date: due,
+      due_date: partnerFieldSelfBillPaymentDueDate(weekEndYmd),
     });
   }
 

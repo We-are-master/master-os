@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Tabs } from "@/components/ui/tabs";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
-import type { FinancePeriodMode } from "@/lib/finance-period";
+import { type FinancePeriodMode, DEFAULT_FINANCE_PERIOD_MODE } from "@/lib/finance-period";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import { CalendarClock, DollarSign, Download, Loader2, CheckCircle2 } from "lucide-react";
@@ -30,8 +30,9 @@ import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 type TypeFilter = "all" | "partner" | "workforce" | "bill";
 
 export default function PayRunPage() {
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [items, setItems] = useState<PayRunItem[]>([]);
@@ -45,8 +46,11 @@ export default function PayRunPage() {
       const d = parseISO(rangeFrom.trim());
       if (isValid(d)) return d;
     }
+    if (periodMode === "month") {
+      return new Date(monthAnchor.getFullYear(), monthAnchor.getMonth(), 1);
+    }
     return weekAnchor;
-  }, [periodMode, rangeFrom, weekAnchor]);
+  }, [periodMode, rangeFrom, weekAnchor, monthAnchor]);
 
   const { week_start, week_end } = getWeekBounds(boundsDate);
 
@@ -196,7 +200,7 @@ export default function PayRunPage() {
       <div className="space-y-5">
         <PageHeader
           title="Pay Run"
-          subtitle={`${weekNumberLine} · Execute payments for items already in Finance — partner self-bills, workforce payroll lines, and supplier bills. Pick any week; unpaid lines for that week stay visible even if you are in a later week.`}
+          subtitle={`${weekNumberLine} · Execute payments for items already in Finance — partner self-bills, workforce payroll lines, and supplier bills. Period: All · Monthly · Week · Date range (default: current month). Pick any week; unpaid lines for that week stay visible even if you are in a later week.`}
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>
             Export CSV
@@ -209,11 +213,13 @@ export default function PayRunPage() {
           onModeChange={handlePeriodModeChange}
           weekAnchor={weekAnchor}
           onWeekAnchorChange={setWeekAnchor}
+          monthAnchor={monthAnchor}
+          onMonthAnchorChange={setMonthAnchor}
           rangeFrom={rangeFrom}
           rangeTo={rangeTo}
           onRangeFromChange={handleRangeFromChange}
           onRangeToChange={setRangeTo}
-          rangeHelperText="Pay run is weekly. In date range mode, the week containing “From” is used (adjust “From” to jump to another week)."
+          rangeHelperText="Pay run is weekly. Monthly picks the week that contains the 1st of that month. In date range mode, the week containing “From” is used (adjust “From” to jump to another week)."
         />
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-3 gap-4">

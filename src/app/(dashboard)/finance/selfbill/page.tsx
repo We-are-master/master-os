@@ -33,10 +33,19 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
-import { weekPeriodHelpText, parseDateRangeOrWeek, getWeekBoundsForDate } from "@/lib/self-bill-period";
+import {
+  weekPeriodHelpText,
+  partnerFieldSelfBillPaymentDueHelpText,
+  parseDateRangeOrWeek,
+  getWeekBoundsForDate,
+} from "@/lib/self-bill-period";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
-import { formatFinancePeriodKpiDescription } from "@/lib/finance-period";
+import {
+  DEFAULT_FINANCE_PERIOD_MODE,
+  formatFinancePeriodKpiDescription,
+  getMonthBoundsForDate,
+} from "@/lib/finance-period";
 import { SELF_BILL_FINANCE_VOID_LABEL, selfBillPartnerStatusLine } from "@/lib/self-bill-display";
 import {
   isSelfBillPayoutVoided,
@@ -159,8 +168,9 @@ export default function SelfBillPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("week");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [jobsModal, setJobsModal] = useState<{ selfBill: SelfBill; jobs: Awaited<ReturnType<typeof listJobsForSelfBill>> } | null>(null);
@@ -180,6 +190,9 @@ export default function SelfBillPage() {
       if (periodMode === "week") {
         const { weekLabel } = getWeekBoundsForDate(weekAnchor);
         q = q.eq("week_label", weekLabel);
+      } else if (periodMode === "month") {
+        const { from, to } = getMonthBoundsForDate(monthAnchor);
+        q = q.gte("week_start", from).lte("week_start", to);
       } else if (periodMode === "range") {
         const range = parseDateRangeOrWeek({
           from: rangeFrom.trim() || undefined,
@@ -197,7 +210,7 @@ export default function SelfBillPage() {
     } finally {
       setLoading(false);
     }
-  }, [periodMode, weekAnchor, rangeFrom, rangeTo]);
+  }, [periodMode, weekAnchor, monthAnchor, rangeFrom, rangeTo]);
 
   useEffect(() => {
     loadData();
@@ -281,8 +294,8 @@ export default function SelfBillPage() {
   }, [selfBills]);
 
   const kpiPeriodDesc = useMemo(
-    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
-    [periodMode, weekAnchor, rangeFrom, rangeTo]
+    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
+    [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]
   );
 
   const totals = useMemo(() => {
@@ -647,7 +660,7 @@ export default function SelfBillPage() {
       <div className="space-y-5">
         <PageHeader
           title="Self-billing"
-          subtitle={`Partner field jobs and internal People (contractors). Weekly buckets; after the week closes, bills move to Review and Approve. ${weekPeriodHelpText()}`}
+          subtitle={`Partner field jobs and internal People (contractors). Period: All · Monthly · Week · Date range (default: current month). Weekly buckets; after the week closes, bills move to Review and Approve. ${weekPeriodHelpText()} ${partnerFieldSelfBillPaymentDueHelpText()}`}
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>
             Export CSV
@@ -660,6 +673,8 @@ export default function SelfBillPage() {
             onModeChange={setPeriodMode}
             weekAnchor={weekAnchor}
             onWeekAnchorChange={setWeekAnchor}
+            monthAnchor={monthAnchor}
+            onMonthAnchorChange={setMonthAnchor}
             rangeFrom={rangeFrom}
             rangeTo={rangeTo}
             onRangeFromChange={setRangeFrom}
