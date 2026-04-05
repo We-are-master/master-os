@@ -16,18 +16,18 @@ import {
   PRESET_OPTIONS,
 } from "@/lib/dashboard-date-range";
 
-/** Bump when default preset should reset for all users (e.g. align with Finance default = Monthly). */
-const PRESET_STORAGE_KEY = "master-os-dashboard-date-preset-v6";
+/** Bump when default preset should reset for all users (e.g. default = All time). */
+const PRESET_STORAGE_KEY = "master-os-dashboard-date-preset-v7";
 
 function readStoredPreset(): DateRangePreset {
-  if (typeof window === "undefined") return "mtd";
+  if (typeof window === "undefined") return "all";
   try {
     const v = localStorage.getItem(PRESET_STORAGE_KEY);
     if (v && PRESET_OPTIONS.some((o) => o.id === v)) return v as DateRangePreset;
   } catch {
     /* ignore */
   }
-  return "mtd";
+  return "all";
 }
 
 interface DashboardDateRangeContextValue {

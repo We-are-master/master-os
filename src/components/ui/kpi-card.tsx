@@ -18,7 +18,7 @@ interface KpiCardProps {
   changeLabel?: string;
   icon?: LucideIcon;
   iconColor?: string;
-  accent?: "primary" | "emerald" | "blue" | "amber" | "purple";
+  accent?: "primary" | "emerald" | "blue" | "amber" | "purple" | "stone";
   description?: string;
   className?: string;
 }
@@ -29,6 +29,7 @@ const accentStyles = {
   blue: "bg-blue-50 text-blue-600",
   amber: "bg-amber-50 text-amber-600",
   purple: "bg-purple-50 text-purple-600",
+  stone: "bg-stone-100 text-stone-600 dark:bg-stone-900/50 dark:text-stone-400",
 };
 
 export function KpiCard({

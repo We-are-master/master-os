@@ -176,7 +176,8 @@ export async function getStatusCounts(
     return getJobStatusCountsWithScheduleOverlap(statuses, options.scheduleRange);
   }
 
-  if (canUseRpc) {
+  /** `jobs`: `get_status_counts` can return an empty set while per-status SQL counts match the list — use fallback below. */
+  if (canUseRpc && table !== "jobs") {
     const { data: rpcRows, error: rpcErr } = await supabase.rpc("get_status_counts", {
       p_table_name: table,
       p_statuses: statuses,
