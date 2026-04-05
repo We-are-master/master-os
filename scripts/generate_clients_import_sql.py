@@ -87,9 +87,7 @@ def row_values(row: dict[str, str]) -> str:
 
 
 def main() -> None:
-    csv_path = Path(
-        "/Users/guilhermedantaspereira/Downloads/master_os_data_from_others_saas.xlsx - All Contacts.csv"
-    )
+    csv_path = Path.home() / "Downloads" / "All Contacts.csv"
     out_path = Path(__file__).resolve().parent / "import-all-contacts-insert.sql.example"
     if len(sys.argv) >= 2:
         csv_path = Path(sys.argv[1])
