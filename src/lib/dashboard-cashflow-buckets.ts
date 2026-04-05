@@ -1,3 +1,5 @@
+import { invoiceBalanceDue } from "@/lib/invoice-balance";
+
 /** Shared cashflow bucketing for dashboard (week / month). */
 
 export interface CashflowBucketRow {
@@ -178,6 +180,65 @@ export function listWeekStartsBetween(fromDay: string, toDay: string, maxWeeks =
     w = addDaysYmd(w, 7);
   }
   return weekStarts;
+}
+
+export interface WeeklyInvoiceDueForecastRow {
+  label: string;
+  weekStart?: string;
+  /** Open balance summed by week of effective due date (due_date, else created_at). */
+  dueOpen: number;
+}
+
+/** Open invoice balance per calendar week (Monday start), keyed by effective due date with created_at fallback. */
+export function buildWeeklyOpenInvoiceDueForecast(
+  rows: {
+    amount?: number;
+    amount_paid?: number;
+    status?: string;
+    due_date?: string | null;
+    created_at?: string | null;
+  }[],
+  fromIso: string,
+  toIso: string,
+): WeeklyInvoiceDueForecastRow[] {
+  const fromDay = fromIso.slice(0, 10);
+  const toDay = toIso.slice(0, 10);
+  const weekStarts = listWeekStartsBetween(fromDay, toDay);
+  const keyToIdx = new Map(weekStarts.map((k, i) => [k, i]));
+  const buckets: WeeklyInvoiceDueForecastRow[] = weekStarts.map((k) => ({
+    label: weekRangeLabel(k, true),
+    weekStart: k,
+    dueOpen: 0,
+  }));
+
+  const ymdRe = /^\d{4}-\d{2}-\d{2}$/;
+  function effectiveYmd(inv: (typeof rows)[number]): string | null {
+    const d = (inv.due_date ?? "").trim().slice(0, 10);
+    if (d.length === 10 && ymdRe.test(d)) return d;
+    const c = (inv.created_at ?? "").trim().slice(0, 10);
+    if (c.length === 10 && ymdRe.test(c)) return c;
+    return null;
+  }
+
+  for (const inv of rows) {
+    const st = inv.status ?? "";
+    if (st === "paid" || st === "cancelled") continue;
+    const bal = invoiceBalanceDue({
+      amount: Number(inv.amount ?? 0),
+      amount_paid: Number(inv.amount_paid ?? 0),
+    });
+    if (bal <= 0.02) continue;
+    const ymd = effectiveYmd(inv);
+    if (!ymd) continue;
+    const ws = startOfWeekMondayFromYmd(ymd);
+    const i = keyToIdx.get(ws);
+    if (i !== undefined) buckets[i]!.dueOpen += bal;
+  }
+
+  for (const b of buckets) {
+    b.dueOpen = Math.round(b.dueOpen * 100) / 100;
+  }
+  return buckets;
 }
 
 export function buildWeeklyJobSoldSeries<T>(
