@@ -35,7 +35,6 @@ import {
   invoiceBalanceDue,
   invoiceBalanceDueWithJobCustomerPaid,
   invoiceAmountPaid,
-  invoiceCollectedAmount,
 } from "@/lib/invoice-balance";
 import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
@@ -156,6 +155,21 @@ function invoiceListBalanceDue(
   return invoiceBalanceDueWithJobCustomerPaid(inv, ledgerSum);
 }
 
+/** Collected = invoice amount − list balance due (same job-ledger bridge); `paid` keeps legacy floor at full amount. */
+function invoiceListCollectedAmount(
+  inv: Invoice,
+  jobsByRef: Record<string, InvoiceListJobSnapshot>,
+  customerPaidByJobId: Record<string, number>,
+): number {
+  const invAmt = Math.round((Number(inv.amount ?? 0) || 0) * 100) / 100;
+  const due = invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
+  const collected = Math.max(0, Math.round((invAmt - due) * 100) / 100);
+  if (inv.status === "paid") {
+    return Math.max(collected, invAmt);
+  }
+  return collected;
+}
+
 function jobDateYmdForInvoiceList(job: InvoiceListJobSnapshot | undefined): string | null {
   if (!job) return null;
   const d = job.scheduled_date?.trim();
@@ -202,8 +216,13 @@ function computeInvoiceKpis(
     (sum, r) => sum + invoiceListBalanceDue(r, jobsByRef, customerPaidByJobId),
     0,
   );
-  const collectedTotal = nonCancelled.reduce((sum, r) => sum + invoiceCollectedAmount(r), 0);
-  const collectedInvoiceCount = nonCancelled.filter((r) => invoiceCollectedAmount(r) > 0.02).length;
+  const collectedTotal = nonCancelled.reduce(
+    (sum, r) => sum + invoiceListCollectedAmount(r, jobsByRef, customerPaidByJobId),
+    0,
+  );
+  const collectedInvoiceCount = nonCancelled.filter(
+    (r) => invoiceListCollectedAmount(r, jobsByRef, customerPaidByJobId) > 0.02,
+  ).length;
   return {
     balanceDueOpen,
     openInvoiceCount: openInvoices.length,
