@@ -379,8 +379,9 @@ export function OverviewExecutiveBundle() {
           <div>
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider">Executive snapshot</p>
             <p className="text-xs text-text-tertiary mt-0.5">
-              Revenue = billable value on jobs whose execution window overlaps the selected period (schedule /
-              completion; otherwise booking date). Excl. cancelled, deleted · {bounds ? rangeLabel : "All time"}
+              Revenue = billable value on jobs overlapping the period (scheduled or completed dates when set;
+              open jobs without a finish date count through the end of this range). Excl. cancelled, deleted ·{" "}
+              {bounds ? rangeLabel : "All time"}
             </p>
           </div>
         </div>

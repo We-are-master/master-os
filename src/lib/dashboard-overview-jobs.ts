@@ -93,7 +93,39 @@ export function jobExecutionWindowYmd(row: OverviewPipelineJobRow): { start: str
   return { start, end };
 }
 
+const TERMINAL_JOB_STATUSES = new Set<string>(["completed", "cancelled", "deleted"]);
+
+function hasExecutionScheduleSignal(row: OverviewPipelineJobRow): boolean {
+  return Boolean(
+    ymdFromDbField(row.scheduled_date) ||
+      ymdFromDbField(row.scheduled_start_at) ||
+      ymdFromDbField(row.scheduled_finish_date) ||
+      ymdFromDbField(row.scheduled_end_at) ||
+      ymdFromDbField(row.completed_date),
+  );
+}
+
+/**
+ * True if the job’s work is treated as overlapping [fromDay, toDay] (inclusive YYYY-MM-DD).
+ * - With schedule/completion signals: strict interval overlap from {@link jobExecutionWindowYmd}.
+ * - Active jobs with **no** schedule/finish/completion: treat as still running through **end of the
+ *   selected period** (so March bookings still show in April when they remain open — matches ops reality).
+ * - Otherwise: strict window (e.g. completed jobs with only created_at).
+ */
 export function jobExecutionOverlapsYmdRange(row: OverviewPipelineJobRow, fromDay: string, toDay: string): boolean {
+  const active = !TERMINAL_JOB_STATUSES.has(row.status);
+
+  if (hasExecutionScheduleSignal(row)) {
+    const { start, end } = jobExecutionWindowYmd(row);
+    return start <= toDay && end >= fromDay;
+  }
+
+  if (active) {
+    const start = ymdFromDbField(row.created_at) ?? "1970-01-01";
+    const effectiveEnd = toDay;
+    return start <= toDay && effectiveEnd >= fromDay;
+  }
+
   const { start, end } = jobExecutionWindowYmd(row);
   return start <= toDay && end >= fromDay;
 }
@@ -104,8 +136,9 @@ export function jobExecutionStartYmd(row: OverviewPipelineJobRow): string {
 }
 
 /**
- * Executive / operations revenue: jobs whose execution window overlaps the dashboard range
- * (scheduled start/finish, completion, else booking/created date).
+ * Executive / operations revenue: jobs whose execution window overlaps the dashboard range.
+ * Loads all eligible jobs (no server-side date prefilter): previous AND-of-OR filters dropped rows
+ * created before the period but still active in it.
  */
 export async function fetchExecutiveRevenueJobsForDashboard(
   supabase: ReturnType<typeof getSupabase>,
@@ -113,36 +146,14 @@ export async function fetchExecutiveRevenueJobsForDashboard(
 ): Promise<OverviewPipelineJobRow[]> {
   const fromDay = bounds?.fromIso.slice(0, 10) ?? "1900-01-01";
   const toDay = bounds?.toIso.slice(0, 10) ?? "2099-12-31";
-  const fromIso = bounds?.fromIso ?? "1900-01-01T00:00:00.000Z";
-  const toIso = bounds?.toIso ?? "2099-12-31T23:59:59.999Z";
 
   async function run(cols: string) {
-    let q = supabase
+    return supabase
       .from("jobs")
       .select(cols)
       .is("deleted_at", null)
       .neq("status", "cancelled")
       .neq("status", "deleted");
-
-    if (bounds) {
-      const endGteFrom = [
-        `scheduled_finish_date.gte.${fromDay}`,
-        `completed_date.gte.${fromDay}`,
-        `scheduled_date.gte.${fromDay}`,
-        `scheduled_start_at.gte.${fromIso}`,
-        `created_at.gte.${fromIso}`,
-      ].join(",");
-      const startLteTo = [
-        `scheduled_finish_date.lte.${toDay}`,
-        `completed_date.lte.${toDay}`,
-        `scheduled_date.lte.${toDay}`,
-        `scheduled_start_at.lte.${toIso}`,
-        `created_at.lte.${toIso}`,
-      ].join(",");
-      q = q.or(endGteFrom).or(startLteTo);
-    }
-
-    return q;
   }
 
   let res = await run(SELECT_EXEC_FULL);
