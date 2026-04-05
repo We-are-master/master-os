@@ -20,7 +20,7 @@ import {
   FileText, Send, Calendar, MapPin, User, Briefcase, ArrowRight,
   CheckCircle2, XCircle, CreditCard, Building2, Hash, TrendingUp,
   Banknote, RotateCcw, Loader, Lock, ChevronDown, ChevronRight,
-  ShieldAlert,
+  ShieldAlert, CircleAlert,
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -140,34 +140,17 @@ const jobStatusColumnConfig: Record<
 function computeInvoiceKpis(all: Invoice[]) {
   const nonCancelled = all.filter((r) => r.status !== "cancelled");
   const totalInvoiced = nonCancelled.reduce((sum, r) => sum + Number(r.amount), 0);
-  const amountReceived = nonCancelled.reduce((sum, r) => sum + invoiceAmountPaid(r), 0);
   const overdue = all.filter((r) => r.status === "overdue");
   const overdueAmount = overdue.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
   const openStatuses = new Set<Invoice["status"]>(["pending", "partially_paid", "overdue", "draft", "audit_required"]);
   const openInvoices = all.filter((r) => openStatuses.has(r.status));
   const balanceDueOpen = openInvoices.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
-  const paidWithDates = all.filter((r) => r.status === "paid" && r.paid_date);
-  let avgCollectionDays: number | null = null;
-  if (paidWithDates.length > 0) {
-    let sumDays = 0;
-    let n = 0;
-    for (const r of paidWithDates) {
-      const c = new Date(invoiceEffectiveDateValue(r)).getTime();
-      const p = new Date(r.paid_date!).getTime();
-      if (!Number.isFinite(c) || !Number.isFinite(p)) continue;
-      sumDays += Math.max(0, (p - c) / 864e5);
-      n += 1;
-    }
-    if (n > 0) avgCollectionDays = sumDays / n;
-  }
   return {
     totalInvoiced,
-    amountReceived,
     balanceDueOpen,
     openInvoiceCount: openInvoices.length,
     overdueAmount,
     overdueCount: overdue.length,
-    avgCollectionDays,
   };
 }
 
@@ -340,7 +323,21 @@ export default function InvoicesPage() {
   }, [allInvoices, jobsByRef]);
 
   const auditQueueCount = tabCounts.audit_required ?? 0;
-  const ongoingCount = tabCounts.ongoing ?? 0;
+
+  /** Sum of invoice amounts for rows in the Ongoing pipeline tab with a linked job. */
+  const ongoingInvoicedTotal = useMemo(() => {
+    let sum = 0;
+    let n = 0;
+    for (const inv of allInvoices) {
+      const ref = inv.job_reference?.trim();
+      if (!ref) continue;
+      const job = jobsByRef[ref];
+      if (invoicePipelineTab(inv, job) !== "ongoing") continue;
+      sum += Number(inv.amount);
+      n += 1;
+    }
+    return { sum, count: n };
+  }, [allInvoices, jobsByRef]);
 
   const filteredInvoices = useMemo(() => {
     let rows = allInvoices;
@@ -882,9 +879,13 @@ export default function InvoicesPage() {
           />
           <KpiCard
             title="Ongoing"
-            value={ongoingCount}
-            format="number"
-            description={`Jobs still in pipeline (tab) · ${kpiPeriodDesc}`}
+            value={ongoingInvoicedTotal.sum}
+            format="currency"
+            description={
+              ongoingInvoicedTotal.count > 0
+                ? `${ongoingInvoicedTotal.count} invoice${ongoingInvoicedTotal.count === 1 ? "" : "s"} · linked jobs in Ongoing tab · ${kpiPeriodDesc}`
+                : `Linked jobs in Ongoing tab · ${kpiPeriodDesc}`
+            }
             icon={Clock}
             accent="amber"
           />
@@ -897,16 +898,16 @@ export default function InvoicesPage() {
             accent="purple"
           />
           <KpiCard
-            title="Paid / avg days"
-            value={tabCounts.paid ?? 0}
-            format="number"
+            title="Overdue"
+            value={kpis.overdueAmount}
+            format="currency"
             description={
-              kpis.avgCollectionDays != null
-                ? `Paid count in period · ~${Math.round(kpis.avgCollectionDays)}d invoice → paid · ${kpiPeriodDesc}`
-                : `Paid in period · ${kpiPeriodDesc}`
+              kpis.overdueCount > 0
+                ? `${kpis.overdueCount} overdue · balance due · ${kpiPeriodDesc}`
+                : `No overdue in period · ${kpiPeriodDesc}`
             }
-            icon={CheckCircle2}
-            accent="emerald"
+            icon={CircleAlert}
+            accent="primary"
           />
         </StaggerContainer>
 

@@ -37,6 +37,30 @@ export function partnerPaymentCap(j: Job): number {
   return agreed > 0 ? agreed : cost;
 }
 
+/**
+ * Split partner cash-out cap for the finance card: base labour vs extra payout line.
+ * Uses `partner_extras_amount` when set; otherwise infers from hourly partner total vs cap (legacy extras).
+ */
+export function partnerCashOutDisplaySplit(
+  job: Pick<Job, "partner_extras_amount" | "job_type">,
+  partnerCap: number,
+  hourlyPartnerLabour: number | null,
+): { base: number; extra: number } {
+  const recorded = Math.max(0, Number(job.partner_extras_amount ?? 0));
+  const hourlyDelta =
+    hourlyPartnerLabour != null && Number.isFinite(hourlyPartnerLabour)
+      ? Math.round(Math.max(0, partnerCap - hourlyPartnerLabour) * 100) / 100
+      : 0;
+  const extra =
+    recorded > 0.02
+      ? Math.min(recorded, partnerCap)
+      : hourlyDelta > 0.02
+        ? hourlyDelta
+        : 0;
+  const base = Math.round(Math.max(0, partnerCap - extra) * 100) / 100;
+  return { base, extra };
+}
+
 /** Partner payout + materials — rolls into weekly self-bill (even when partner is already marked paid). */
 export function partnerSelfBillGrossAmount(j: Job): number {
   return partnerPaymentCap(j) + Number(j.materials_cost ?? 0);

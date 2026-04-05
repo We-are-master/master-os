@@ -225,6 +225,8 @@ export interface Job {
   /** Add-ons / upsells on top of client_price (included in revenue & margin). */
   extras_amount?: number;
   partner_cost: number;
+  /** Cumulative partner-side extras from "Add extra payout" (labour); Cash Out UI splits from cap. */
+  partner_extras_amount?: number | null;
   materials_cost: number;
   margin_percent: number;
   scheduled_date?: string;

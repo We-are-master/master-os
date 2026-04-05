@@ -86,7 +86,9 @@ export function applyPartnerExtraPatch(
   }
   const partner_cost = Number(job.partner_cost ?? 0) + a;
   const agreed = Number(job.partner_agreed_value ?? 0);
-  const patch: Partial<Job> = { partner_cost };
+  const prevExtras = Number(job.partner_extras_amount ?? 0);
+  const partner_extras_amount = Math.round((prevExtras + a) * 100) / 100;
+  const patch: Partial<Job> = { partner_cost, partner_extras_amount };
   if (agreed > 0.02) patch.partner_agreed_value = agreed + a;
   const merged = { ...job, ...patch } as Job;
   return { ...patch, ...deriveStoredJobFinancials(merged) };
@@ -107,7 +109,9 @@ export function reversePartnerExtraPatch(
   }
   const partner_cost = Math.max(0, Number(job.partner_cost ?? 0) - a);
   const agreed = Number(job.partner_agreed_value ?? 0);
-  const patch: Partial<Job> = { partner_cost };
+  const prevExtras = Number(job.partner_extras_amount ?? 0);
+  const partner_extras_amount = Math.round(Math.max(0, prevExtras - a) * 100) / 100;
+  const patch: Partial<Job> = { partner_cost, partner_extras_amount };
   if (agreed > 0.02) patch.partner_agreed_value = Math.max(0, agreed - a);
   const merged = { ...job, ...patch } as Job;
   return { ...patch, ...deriveStoredJobFinancials(merged) };

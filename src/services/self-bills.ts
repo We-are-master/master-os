@@ -398,6 +398,7 @@ export async function listSelfBillsLinkedToJob(
     .from("jobs")
     .select("self_bill_id")
     .eq("reference", jobReference)
+    .is("deleted_at", null)
     .maybeSingle();
   if (jobErr) throw jobErr;
   const ids = new Set<string>();
@@ -425,7 +426,8 @@ export async function createSelfBillFromJob(
   options?: CreateSelfBillFromJobOptions,
 ): Promise<SelfBill> {
   const supabase = getSupabase();
-  const { data: full } = await supabase.from("jobs").select("*").eq("id", job.id).single();
+  const { data: full, error: fullErr } = await supabase.from("jobs").select("*").eq("id", job.id).single();
+  if (fullErr) throw fullErr;
   if (!full) throw new Error("Job not found");
   const j = full as Job;
   let weekAnchorDate: Date;

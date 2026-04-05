@@ -1526,6 +1526,14 @@ function serviceRequestToClientAddressValue(req: ServiceRequest): ClientAndAddre
   };
 }
 
+/** Single line for invite list: primary `trade`, else first `trades[]` entry. */
+function partnerPrimaryTradeDisplay(p: Partner): string {
+  const single = (p.trade ?? "").trim();
+  if (single) return single;
+  const first = (p.trades ?? []).find((t): t is string => typeof t === "string" && t.trim().length > 0);
+  return first?.trim() || "—";
+}
+
 /** Persist a typed-only address (no saved row yet) so quote insert gets a valid client_address_id. */
 async function ensureClientAddressForQuote(ca: ClientAndAddressValue): Promise<ClientAndAddressValue> {
   const cid = ca.client_id;
@@ -1831,8 +1839,21 @@ function InvitePartnerToQuote({
             if (!p.id) return null;
             const isSelected = selectedIds.has(p.id);
             const isMatch = matchIdSet.has(p.id);
+            const loc = (p.location ?? "").trim() || "—";
+            const requestType = (request.service_type ?? "").trim() || "—";
+            const typeLine = isMatch ? requestType : partnerPrimaryTradeDisplay(p);
             return (
-              <label key={p.id} className={`flex items-start sm:items-center gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-xl border cursor-pointer transition-all ${isSelected ? "border-primary bg-primary/5" : isMatch ? "border-amber-200 bg-amber-50/30 hover:border-primary/30" : "border-border hover:border-primary/30 hover:bg-surface-hover"}`}>
+              <label
+                key={p.id}
+                className={cn(
+                  "flex items-start sm:items-center gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-xl border cursor-pointer transition-all",
+                  isSelected
+                    ? "border-primary bg-primary/5 dark:bg-primary/15 dark:border-primary/60"
+                    : isMatch
+                      ? "border-amber-200 bg-amber-50/40 hover:border-primary/30 dark:border-amber-500/45 dark:bg-amber-950/30 dark:hover:border-amber-400/50 dark:hover:bg-amber-950/40"
+                      : "border-border hover:border-primary/30 hover:bg-surface-hover dark:border-border dark:hover:bg-surface-tertiary/80",
+                )}
+              >
                 <input type="checkbox" checked={isSelected} onChange={(e) => {
                   setSelectedIds((prev) => {
                     const next = new Set(prev);
@@ -1843,8 +1864,9 @@ function InvitePartnerToQuote({
                 <Avatar name={p.company_name} size="md" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-text-primary break-words">{p.company_name}</p>
-                  <p className="text-xs text-text-tertiary break-words">
-                    {(p.trade ?? "—")} — {p.location ?? "—"}
+                  <p className="text-xs font-medium text-text-secondary dark:text-neutral-200 break-words">
+                    {typeLine}
+                    <span className="font-normal text-text-tertiary dark:text-neutral-400"> · {loc}</span>
                   </p>
                 </div>
                 {isMatch && <Badge variant="warning" size="sm" className="shrink-0 self-start sm:self-center">Match</Badge>}
