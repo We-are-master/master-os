@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { dashboardJobsFilterSelectColumns, isLegacyJobSchema } from "@/lib/job-schema-compat";
+import { jobExecutionOverlapsYmdRange } from "@/lib/job-period-overlap";
 import { isCeoDashboardAllowedUser } from "@/lib/ceo-dashboard-access";
 
 // ─── Icon map ────────────────────────────────────────────────────────────────
@@ -165,24 +166,50 @@ function DashboardInner() {
   const loadFilterCounts = useCallback(async () => {
     const supabase = getSupabase();
     try {
-      let jobsQuery = supabase.from("jobs").select(dashboardJobsFilterSelectColumns());
+      const col = dashboardJobsFilterSelectColumns({ periodOverlap: Boolean(bounds) });
+      const CHUNK = 600;
+      let jobs: {
+        id: string;
+        reference?: string;
+        status: string;
+        partner_id?: string;
+        partner_name?: string;
+        quote_id?: string;
+        margin_percent: number;
+        finance_status?: string;
+        report_submitted?: boolean;
+        commission?: number;
+      }[] = [];
+
       if (bounds) {
-        jobsQuery = jobsQuery.gte("created_at", bounds.fromIso).lte("created_at", bounds.toIso);
+        const fromD = bounds.fromIso.slice(0, 10);
+        const toD = bounds.toIso.slice(0, 10);
+        for (let off = 0; ; off += CHUNK) {
+          const { data, error } = await supabase
+            .from("jobs")
+            .select(col)
+            .is("deleted_at", null)
+            .range(off, off + CHUNK - 1);
+          if (error) break;
+          const batch = (data ?? []) as unknown as typeof jobs;
+          for (const j of batch) {
+            if (jobExecutionOverlapsYmdRange(j, fromD, toD)) jobs.push(j);
+          }
+          if (batch.length < CHUNK) break;
+        }
+      } else {
+        const { data } = await supabase.from("jobs").select(col).is("deleted_at", null);
+        jobs = (data ?? []) as unknown as typeof jobs;
       }
-      const [jobsRes, invoicesRes] = await Promise.all([
-        jobsQuery,
-        supabase.from("invoices").select("id, job_reference"),
-      ]);
-      const jobs = (jobsRes.data ?? []) as unknown as {
-        id: string; status: string; partner_id?: string; partner_name?: string;
-        quote_id?: string; margin_percent: number; finance_status?: string;
-        report_submitted?: boolean; commission?: number;
-      }[];
-      const invoiceRefs = new Set((invoicesRes.data ?? []).map((i: { job_reference?: string }) => i.job_reference).filter(Boolean));
+
+      const { data: invData } = await supabase.from("invoices").select("id, job_reference");
+      const invoiceRefs = new Set(
+        (invData ?? []).map((i: { job_reference?: string }) => i.job_reference?.trim()).filter(Boolean) as string[],
+      );
       setFilterCounts({
         commission_pending: jobs.filter((j) => (j.commission ?? 0) > 0 && j.finance_status !== "paid").length,
         awaiting_payment:   jobs.filter((j) => j.status === "awaiting_payment").length,
-        without_invoice:    jobs.filter((j) => !invoiceRefs.has(j.id) && j.status !== "completed").length,
+        without_invoice:    jobs.filter((j) => !invoiceRefs.has(j.reference ?? "") && j.status !== "completed").length,
         without_selfbill:   jobs.filter((j) => !!j.partner_name && j.status === "completed").length,
         without_report:     jobs.filter((j) => !j.report_submitted && !["completed", "scheduled"].includes(j.status)).length,
         without_partner:    jobs.filter((j) => !j.partner_id && !j.partner_name).length,

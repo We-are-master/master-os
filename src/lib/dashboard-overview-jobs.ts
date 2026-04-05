@@ -1,5 +1,12 @@
 import { getSupabase } from "@/services/base";
 import { isPostgrestSelectSchemaError, isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { jobExecutionOverlapsYmdRange } from "@/lib/job-period-overlap";
+
+export {
+  jobExecutionOverlapsYmdRange,
+  jobExecutionWindowYmd,
+  jobExecutionStartYmd,
+} from "@/lib/job-period-overlap";
 
 /** Jobs aligned with Jobs Management: not deleted, not cancelled/lost, optional created_at window. */
 export type OverviewPipelineJobRow = {
@@ -65,74 +72,6 @@ export async function fetchPipelineJobsForDashboard(
     seen.add(r.id);
     return true;
   });
-}
-
-function ymdFromDbField(s: string | null | undefined): string | null {
-  if (s == null || !String(s).trim()) return null;
-  const t = String(s).trim();
-  return t.length >= 10 ? t.slice(0, 10) : null;
-}
-
-/**
- * Best-effort execution window for overlap with a selected period:
- * start = scheduled_start_at → scheduled_date → created_at;
- * end = scheduled_finish_date → scheduled_end_at → completed_date → start.
- */
-export function jobExecutionWindowYmd(row: OverviewPipelineJobRow): { start: string; end: string } {
-  const created = ymdFromDbField(row.created_at) ?? "1970-01-01";
-  const start =
-    ymdFromDbField(row.scheduled_start_at) ??
-    ymdFromDbField(row.scheduled_date) ??
-    created;
-  let end =
-    ymdFromDbField(row.scheduled_finish_date) ??
-    ymdFromDbField(row.scheduled_end_at) ??
-    ymdFromDbField(row.completed_date) ??
-    start;
-  if (end < start) end = start;
-  return { start, end };
-}
-
-const TERMINAL_JOB_STATUSES = new Set<string>(["completed", "cancelled", "deleted"]);
-
-function hasExecutionScheduleSignal(row: OverviewPipelineJobRow): boolean {
-  return Boolean(
-    ymdFromDbField(row.scheduled_date) ||
-      ymdFromDbField(row.scheduled_start_at) ||
-      ymdFromDbField(row.scheduled_finish_date) ||
-      ymdFromDbField(row.scheduled_end_at) ||
-      ymdFromDbField(row.completed_date),
-  );
-}
-
-/**
- * True if the job’s work is treated as overlapping [fromDay, toDay] (inclusive YYYY-MM-DD).
- * - With schedule/completion signals: strict interval overlap from {@link jobExecutionWindowYmd}.
- * - Active jobs with **no** schedule/finish/completion: treat as still running through **end of the
- *   selected period** (so March bookings still show in April when they remain open — matches ops reality).
- * - Otherwise: strict window (e.g. completed jobs with only created_at).
- */
-export function jobExecutionOverlapsYmdRange(row: OverviewPipelineJobRow, fromDay: string, toDay: string): boolean {
-  const active = !TERMINAL_JOB_STATUSES.has(row.status);
-
-  if (hasExecutionScheduleSignal(row)) {
-    const { start, end } = jobExecutionWindowYmd(row);
-    return start <= toDay && end >= fromDay;
-  }
-
-  if (active) {
-    const start = ymdFromDbField(row.created_at) ?? "1970-01-01";
-    const effectiveEnd = toDay;
-    return start <= toDay && effectiveEnd >= fromDay;
-  }
-
-  const { start, end } = jobExecutionWindowYmd(row);
-  return start <= toDay && end >= fromDay;
-}
-
-/** YYYY-MM-DD of execution start (for weekly charts). */
-export function jobExecutionStartYmd(row: OverviewPipelineJobRow): string {
-  return jobExecutionWindowYmd(row).start;
 }
 
 /**

@@ -1,4 +1,6 @@
-import { getSupabase, queryList, applyJobsScheduleRangeToQuery, type ListParams, type ListResult } from "./base";
+import { getSupabase, queryList, type ListParams, type ListResult, type SortDirection } from "./base";
+import { loadAllJobsForPeriodOverlap } from "./job-period-overlap-queries";
+import { jobExecutionOverlapsYmdRange } from "@/lib/job-period-overlap";
 import type { Job } from "@/types/database";
 import { cancelOpenInvoicesForJobCancellation, createInvoice } from "./invoices";
 import { getInvoiceDueDateIsoForClient } from "./invoice-due-date";
@@ -17,31 +19,56 @@ import { jobHasPartnerSet } from "@/lib/job-partner-assign";
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
   Job,
-  "status" | "client_price" | "extras_amount" | "partner_cost" | "materials_cost"
+  | "status"
+  | "client_price"
+  | "extras_amount"
+  | "partner_cost"
+  | "materials_cost"
+  | "created_at"
+  | "scheduled_date"
+  | "scheduled_finish_date"
+  | "scheduled_start_at"
+  | "scheduled_end_at"
+  | "completed_date"
 >;
+
+const KPI_CHUNK_COLS_FULL =
+  "status,client_price,extras_amount,partner_cost,materials_cost,created_at,scheduled_date,scheduled_finish_date,scheduled_start_at,scheduled_end_at,completed_date";
+const KPI_CHUNK_COLS_LEGACY =
+  "status,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
 
 export async function fetchAllJobsFinancialKpiRows(
   scheduleRange?: { from: string; to: string } | null
 ): Promise<JobFinancialKpiRow[]> {
   const supabase = getSupabase();
   const chunk = 1000;
-  let columns = "status,client_price,extras_amount,partner_cost,materials_cost";
+  let columns = KPI_CHUNK_COLS_FULL;
   const all: JobFinancialKpiRow[] = [];
+  const fromY = scheduleRange?.from;
+  const toY = scheduleRange?.to;
   for (let from = 0; ; from += chunk) {
     const run = async (cols: string) => {
-      let q = supabase.from("jobs").select(cols).is("deleted_at", null);
-      if (scheduleRange) q = applyJobsScheduleRangeToQuery(q, scheduleRange);
+      const q = supabase.from("jobs").select(cols).is("deleted_at", null);
       return q.order("created_at", { ascending: false }).range(from, from + chunk - 1);
     };
     let { data, error } = await run(columns);
+    if (error && isPostgrestWriteRetryableError(error) && columns === KPI_CHUNK_COLS_FULL) {
+      columns = KPI_CHUNK_COLS_LEGACY;
+      ({ data, error } = await run(columns));
+    }
     if (error && isPostgrestWriteRetryableError(error) && columns.includes("extras_amount")) {
-      columns = "status,client_price,partner_cost,materials_cost";
+      columns =
+        "status,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
       ({ data, error } = await run(columns));
     }
     if (error) throw error;
-    const batch = (data ?? []) as unknown as JobFinancialKpiRow[];
+    const rawBatch = (data ?? []) as unknown as JobFinancialKpiRow[];
+    const batch =
+      scheduleRange && fromY && toY
+        ? rawBatch.filter((r) => jobExecutionOverlapsYmdRange(r, fromY, toY))
+        : rawBatch;
     all.push(...batch);
-    if (batch.length < chunk) break;
+    if (rawBatch.length < chunk) break;
   }
   return all;
 }
@@ -119,6 +146,48 @@ export async function markLateJobs(): Promise<void> {
   lastMarkLateAt = Date.now();
 }
 
+function jobMatchesSearchKeyword(j: Job, search: string): boolean {
+  const s = search.trim().toLowerCase();
+  return [j.reference, j.title, j.client_name, j.partner_name, j.property_address].some((f) =>
+    String(f ?? "").toLowerCase().includes(s),
+  );
+}
+
+function compareJobsForSort(a: Job, b: Job, sortKey: string, sortDir: SortDirection): number {
+  const av = (a as unknown as Record<string, unknown>)[sortKey];
+  const bv = (b as unknown as Record<string, unknown>)[sortKey];
+  const sa = av != null ? String(av) : "";
+  const sb = bv != null ? String(bv) : "";
+  const cmp = sa < sb ? -1 : sa > sb ? 1 : 0;
+  return sortDir === "asc" ? cmp : -cmp;
+}
+
+async function listJobsWithSchedulePeriodOverlap(params: ListParams): Promise<ListResult<Job>> {
+  const range = params.scheduleRange!;
+  let statusIn: string[];
+  if (params.statusIn && params.statusIn.length > 0) statusIn = [...params.statusIn];
+  else if (params.status === "in_progress") statusIn = [...JOB_ONSITE_PROGRESS_STATUSES];
+  else if (params.status === "scheduled") statusIn = ["scheduled", "late"];
+  else if (params.status === "unassigned") statusIn = ["unassigned", "auto_assigning"];
+  else if (!params.status || params.status === "all") statusIn = [...JOB_LIST_ALL_TAB_STATUSES];
+  else statusIn = [params.status];
+
+  const all = await loadAllJobsForPeriodOverlap(statusIn, range);
+  const search = params.search?.trim();
+  const filtered = search ? all.filter((j) => jobMatchesSearchKeyword(j, search)) : all;
+  const sortKey = params.sortBy ?? "created_at";
+  const sortDir = (params.sortDir ?? "desc") as SortDirection;
+  const rows = [...filtered].sort((a, b) => compareJobsForSort(a, b, sortKey, sortDir));
+
+  const page = params.page ?? 1;
+  const pageSize = params.pageSize ?? 10;
+  const start = (page - 1) * pageSize;
+  const data = rows.slice(start, start + pageSize);
+  const count = rows.length;
+  const totalPages = Math.max(1, Math.ceil(count / pageSize));
+  return { data, count, page, pageSize, totalPages };
+}
+
 export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
   const shouldRunMarkLate =
     (params.page ?? 1) <= 1 &&
@@ -149,6 +218,10 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
         defaultSort: "deleted_at",
       },
     );
+  }
+
+  if (params.scheduleRange) {
+    return listJobsWithSchedulePeriodOverlap(params);
   }
 
   if (params.statusIn && params.statusIn.length > 0) {
