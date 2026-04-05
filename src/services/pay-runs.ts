@@ -1,6 +1,7 @@
 import { getSupabase } from "./base";
 import type { PayRun, PayRunItem } from "@/types/database";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { isPostgrestSelectSchemaError } from "@/lib/postgrest-errors";
 
 /** Get week bounds (Monday–Sunday, local calendar) for a given date — matches Finance week UI / due_date filters. */
 export function getWeekBounds(date: Date): { week_start: string; week_end: string } {
@@ -88,14 +89,16 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
   const supabase = getSupabase();
   const out: PayRunDesiredLine[] = [];
 
-  const sbSelect =
+  const sbSelectWithOrigin =
     "id, reference, partner_name, net_payout, week_start, week_end, created_at, bill_origin";
+  const sbSelectBase =
+    "id, reference, partner_name, net_payout, week_start, week_end, created_at";
   const sbStatuses = [...PARTNER_SELF_BILL_STATUSES];
 
+  /** Partner field self-bills only (exclude workforce `bill_origin=internal`). Retries if `bill_origin` is missing on older DBs. */
   async function fetchPartnerSelfBillsChunk(opts: { mode: "week_match" | "legacy_created" }): Promise<SelfBillRow[]> {
-    const parts: SelfBillRow[] = [];
-    for (const origin of ["partner", null] as const) {
-      let q = supabase.from("self_bills").select(sbSelect).in("status", sbStatuses).gt("net_payout", 0.02);
+    const baseQuery = (selectList: string) => {
+      let q = supabase.from("self_bills").select(selectList).in("status", sbStatuses).gt("net_payout", 0.02);
       if (opts.mode === "week_match") {
         q = q.eq("week_start", weekStart);
       } else {
@@ -104,13 +107,18 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
           .gte("created_at", `${weekStart}T00:00:00.000Z`)
           .lte("created_at", `${weekEnd}T23:59:59.999Z`);
       }
-      if (origin === "partner") q = q.eq("bill_origin", "partner");
-      else q = q.is("bill_origin", null);
-      const { data, error } = await q;
-      if (error) throw error;
-      parts.push(...((data ?? []) as SelfBillRow[]));
+      return q;
+    };
+
+    let { data, error } = await baseQuery(sbSelectWithOrigin).or("bill_origin.eq.partner,bill_origin.is.null");
+
+    if (error && isPostgrestSelectSchemaError(error)) {
+      ({ data, error } = await baseQuery(sbSelectBase));
     }
-    return parts;
+    if (error) throw error;
+
+    const rows = (data ?? []) as unknown as SelfBillRow[];
+    return rows.filter((r) => (r as { bill_origin?: string | null }).bill_origin !== "internal");
   }
 
   const sbWeek = await fetchPartnerSelfBillsChunk({ mode: "week_match" });
@@ -132,17 +140,61 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     });
   }
 
-  const { data: internalRows, error: internalErr } = await supabase
+  const payrollSelectFull = "id, payee_name, description, amount, due_date, status";
+  const payrollSelectBase = "id, description, amount, due_date, status";
+
+  type PayrollFetchRow = {
+    id: string;
+    payee_name?: string | null;
+    description: string;
+    amount: number;
+    due_date: string | null;
+  };
+
+  let internalRows: PayrollFetchRow[] | null = null;
+  const rPay1 = await supabase
     .from("payroll_internal_costs")
-    .select("id, payee_name, description, amount, due_date, status")
+    .select(payrollSelectFull)
     .eq("status", "pending")
     .not("due_date", "is", null)
     .gte("due_date", weekStart)
     .lte("due_date", weekEnd)
     .gt("amount", 0);
+  let internalErr = rPay1.error;
+  internalRows = (rPay1.data ?? null) as PayrollFetchRow[] | null;
+
+  if (internalErr && isPostgrestSelectSchemaError(internalErr)) {
+    const rPay2 = await supabase
+      .from("payroll_internal_costs")
+      .select(payrollSelectBase)
+      .eq("status", "pending")
+      .not("due_date", "is", null)
+      .gte("due_date", weekStart)
+      .lte("due_date", weekEnd)
+      .gt("amount", 0);
+    internalErr = rPay2.error;
+    internalRows = (rPay2.data ?? null) as PayrollFetchRow[] | null;
+  }
+  if (internalErr && isPostgrestSelectSchemaError(internalErr)) {
+    const rPay3 = await supabase
+      .from("payroll_internal_costs")
+      .select(payrollSelectBase)
+      .eq("status", "pending")
+      .gte("due_date", weekStart)
+      .lte("due_date", weekEnd);
+    internalErr = rPay3.error;
+    internalRows = (rPay3.data ?? null) as PayrollFetchRow[] | null;
+  }
   if (internalErr) throw internalErr;
 
-  for (const r of internalRows ?? []) {
+  const payrollFiltered = (internalRows ?? []).filter((r) => {
+    const row = r as { amount?: number; due_date?: string | null };
+    if (row.due_date == null || String(row.due_date).trim() === "") return false;
+    if (Number(row.amount ?? 0) <= 0) return false;
+    return true;
+  });
+
+  for (const r of payrollFiltered) {
     const row = r as {
       id: string;
       payee_name?: string | null;
@@ -161,17 +213,56 @@ export async function loadPayRunDesiredLines(weekStart: string, weekEnd: string)
     });
   }
 
-  const { data: billsRows, error: billsErr } = await supabase
+  type BillFetchRow = {
+    id: string;
+    description: string;
+    amount: number;
+    due_date: string;
+    archived_at?: string | null;
+  };
+
+  const rBill1 = await supabase
     .from("bills")
-    .select("id, description, amount, due_date")
+    .select("id, description, amount, due_date, archived_at")
     .eq("status", "approved")
     .is("archived_at", null)
     .gte("due_date", weekStart)
     .lte("due_date", weekEnd)
     .gt("amount", 0);
+  let billsErr = rBill1.error;
+  let billsRows = (rBill1.data ?? null) as BillFetchRow[] | null;
+
+  if (billsErr && isPostgrestSelectSchemaError(billsErr)) {
+    const rBill2 = await supabase
+      .from("bills")
+      .select("id, description, amount, due_date")
+      .eq("status", "approved")
+      .gte("due_date", weekStart)
+      .lte("due_date", weekEnd)
+      .gt("amount", 0);
+    billsErr = rBill2.error;
+    billsRows = (rBill2.data ?? null) as BillFetchRow[] | null;
+  }
+  if (billsErr && isPostgrestSelectSchemaError(billsErr)) {
+    const rBill3 = await supabase
+      .from("bills")
+      .select("id, description, amount, due_date")
+      .eq("status", "approved")
+      .gte("due_date", weekStart)
+      .lte("due_date", weekEnd);
+    billsErr = rBill3.error;
+    billsRows = (rBill3.data ?? null) as BillFetchRow[] | null;
+  }
   if (billsErr) throw billsErr;
 
-  for (const r of billsRows ?? []) {
+  const billsFiltered = (billsRows ?? []).filter((r) => {
+    const row = r as { amount?: number; archived_at?: string | null };
+    if (Number(row.amount ?? 0) <= 0) return false;
+    if (row.archived_at) return false;
+    return true;
+  });
+
+  for (const r of billsFiltered) {
     const row = r as { id: string; description: string; amount: number; due_date: string };
     const desc = row.description?.trim() || "Bill";
     out.push({
