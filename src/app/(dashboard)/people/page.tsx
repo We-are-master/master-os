@@ -30,6 +30,7 @@ import {
 import { getPayrollDocumentSignedUrl } from "@/services/payroll-documents-storage";
 import { WorkforcePersonDrawer } from "@/components/people/workforce-person-drawer";
 import { buildPayLineDescription, WORKFORCE_DEPARTMENT_SELECT_OPTIONS } from "@/lib/workforce-departments";
+import { insertPayrollInternalCostWithCompat } from "@/lib/payroll-internal-insert-compat";
 
 function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocumentFileMeta> {
   if (!raw || typeof raw !== "object") return {};
@@ -264,15 +265,22 @@ export default function PeoplePage() {
         created_at: now,
         updated_at: now,
       };
-      let { data: inserted, error } = await supabase.from("payroll_internal_costs").insert(row).select("*").single();
-      if (error && String(error.message ?? "").toLowerCase().includes("squad")) {
-        const { squad_id: _s, ...noSq } = row as typeof row & { squad_id?: string | null };
-        const retry = await supabase.from("payroll_internal_costs").insert(noSq).select("*").single();
-        inserted = retry.data;
-        error = retry.error;
-        if (!error) toast.warning("Person created — apply migration 096 to enable squads.");
+      const { data: inserted, error: insErr, compatLevel } = await insertPayrollInternalCostWithCompat(
+        supabase,
+        row as Record<string, unknown>,
+      );
+      if (insErr) {
+        throw new Error(insErr.message || "Insert failed");
       }
-      if (error) throw error;
+      if (compatLevel === 1) {
+        toast.warning("Person created — apply migration 096 to enable squads.");
+      } else if (compatLevel >= 2 && compatLevel <= 3) {
+        toast.warning("Person created — DB missing lifecycle/profile columns; run migration 093 when you can.");
+      } else if (compatLevel >= 4 && compatLevel <= 5) {
+        toast.warning("Person created — DB missing pay_frequency / document files columns; run migration 092 when you can.");
+      } else if (compatLevel >= 6) {
+        toast.warning("Person created with minimal payroll row — apply migrations 092–096 to match the full Workforce model.");
+      }
       toast.success("Person added — complete profile in the drawer");
       setAddOpen(false);
       setFormPayee("");
