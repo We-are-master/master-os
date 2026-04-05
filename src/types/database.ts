@@ -434,6 +434,8 @@ export interface Invoice {
   /** Last customer payment date (partial or full); set from job ledger sync. */
   last_payment_date?: string | null;
   created_at: string;
+  /** Soft-delete (Finance list); null = active row. */
+  deleted_at?: string | null;
   collection_stage: InvoiceCollectionStage;
   collection_stage_locked?: boolean;
   invoice_kind?: InvoiceKind | null;

@@ -13,6 +13,7 @@ export const INVOICE_PIPELINE_TAB_ORDER = [
   "overdue",
   "paid",
   "cancelled",
+  "deleted",
 ] as const;
 
 export type InvoicePipelineTab = (typeof INVOICE_PIPELINE_TAB_ORDER)[number];
@@ -43,6 +44,7 @@ export function invoicePipelineTab(
   inv: Invoice,
   job: { status: JobStatus } | null | undefined
 ): Exclude<InvoicePipelineTab, "all"> {
+  if (inv.deleted_at) return "deleted";
   if (inv.status === "cancelled") return "cancelled";
   if (inv.status === "audit_required") return "audit_required";
   if (inv.status === "paid") return "paid";

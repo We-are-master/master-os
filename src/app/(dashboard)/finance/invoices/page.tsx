@@ -91,8 +91,7 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, Inv
     const { data, error } = await supabase
       .from("jobs")
       .select("id, reference, status, scheduled_date, scheduled_start_at")
-      .in("reference", chunk)
-      .is("deleted_at", null);
+      .in("reference", chunk);
     if (error) throw error;
     for (const row of data ?? []) {
       const r = row as {
@@ -181,6 +180,20 @@ function jobDateYmdForInvoiceList(job: InvoiceListJobSnapshot | undefined): stri
   const iso = job.scheduled_start_at?.trim();
   if (iso) {
     const slice = iso.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(slice)) return slice;
+  }
+  return null;
+}
+
+/** Date column: job schedule first, then weekly batch week start, then invoice created (local YYYY-MM-DD). */
+function displayDateYmdForInvoiceRow(inv: Invoice, job: InvoiceListJobSnapshot | undefined): string | null {
+  const fromJob = jobDateYmdForInvoiceList(job);
+  if (fromJob) return fromJob;
+  const bw = inv.billing_week_start?.trim();
+  if (bw && /^\d{4}-\d{2}-\d{2}$/.test(bw)) return bw;
+  const c = inv.created_at?.trim();
+  if (c) {
+    const slice = c.slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}$/.test(slice)) return slice;
   }
   return null;
@@ -319,6 +332,8 @@ export default function InvoicesPage() {
 
   const [pipelineTab, setPipelineTab] = useState<InvoicePipelineTab>("all");
   const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
+  /** Soft-deleted rows (same period filter as active); shown only on Deleted tab. */
+  const [deletedInvoices, setDeletedInvoices] = useState<Invoice[]>([]);
   const [jobsByRef, setJobsByRef] = useState<Record<string, InvoiceListJobSnapshot>>({});
   /** `jobs.id` → sum(customer_deposit + customer_final), aligned with invoice drawer ledger bridge. */
   const [customerPaidByJobId, setCustomerPaidByJobId] = useState<Record<string, number>>({});
@@ -342,34 +357,48 @@ export default function InvoicesPage() {
       const bounds = getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor);
       const supabase = getSupabase();
       const chunkSize = 500;
-      const all: Invoice[] = [];
-      for (let from = 0; from < 100_000; from += chunkSize) {
-        let q = supabase.from("invoices").select("*").is("deleted_at", null);
-        if (bounds) {
-          const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
-          q = applyInvoicePeriodBoundsToQuery(q, {
-            from: bounds.from,
-            to: bounds.to,
-            startIso,
-            endIso,
-          });
+
+      async function fetchInvoicePages(onlyDeleted: boolean): Promise<Invoice[]> {
+        const acc: Invoice[] = [];
+        for (let from = 0; from < 100_000; from += chunkSize) {
+          let q = supabase.from("invoices").select("*");
+          if (onlyDeleted) q = q.not("deleted_at", "is", null);
+          else q = q.is("deleted_at", null);
+          if (bounds) {
+            const { startIso, endIso } = localYmdBoundsToUtcIso(bounds.from, bounds.to);
+            q = applyInvoicePeriodBoundsToQuery(q, {
+              from: bounds.from,
+              to: bounds.to,
+              startIso,
+              endIso,
+            });
+          }
+          const { data: chunk, error } = await q.order("created_at", { ascending: false }).range(from, from + chunkSize - 1);
+          if (error) throw error;
+          const rows = (chunk ?? []) as Invoice[];
+          if (rows.length === 0) break;
+          acc.push(...rows);
+          if (rows.length < chunkSize) break;
         }
-        const { data: chunk, error } = await q.order("created_at", { ascending: false }).range(from, from + chunkSize - 1);
-        if (error) throw error;
-        const rows = (chunk ?? []) as Invoice[];
-        if (rows.length === 0) break;
-        all.push(...rows);
-        if (rows.length < chunkSize) break;
+        return acc;
       }
-      const refs = [...new Set(all.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)))];
+
+      const [active, deleted] = await Promise.all([fetchInvoicePages(false), fetchInvoicePages(true)]);
+      const refs = [
+        ...new Set(
+          [...active, ...deleted].map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)),
+        ),
+      ];
       const jobMap = await fetchJobsByReferences(refs);
       const jobIds = [...new Set(Object.values(jobMap).map((j) => j.id))];
       const paidMap = await fetchCustomerPaidSumByJobIds(jobIds);
-      setAllInvoices(all);
+      setAllInvoices(active);
+      setDeletedInvoices(deleted);
       setJobsByRef(jobMap);
       setCustomerPaidByJobId(paidMap);
     } catch {
       setAllInvoices([]);
+      setDeletedInvoices([]);
       setJobsByRef({});
       setCustomerPaidByJobId({});
     } finally {
@@ -406,7 +435,10 @@ export default function InvoicesPage() {
   );
 
   const tabCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: allInvoices.length };
+    const counts: Record<string, number> = {
+      all: allInvoices.length,
+      deleted: deletedInvoices.length,
+    };
     for (const inv of allInvoices) {
       const ref = inv.job_reference?.trim();
       const job = ref ? jobsByRef[ref] : undefined;
@@ -414,9 +446,14 @@ export default function InvoicesPage() {
       counts[tab] = (counts[tab] ?? 0) + 1;
     }
     return counts;
-  }, [allInvoices, jobsByRef]);
+  }, [allInvoices, deletedInvoices, jobsByRef]);
 
   const auditQueueCount = tabCounts.audit_required ?? 0;
+
+  const allInvoicesForAux = useMemo(
+    () => [...allInvoices, ...deletedInvoices],
+    [allInvoices, deletedInvoices],
+  );
 
   /** Sum of invoice amounts for rows in the Ongoing pipeline tab with a linked job. */
   const ongoingInvoicedTotal = useMemo(() => {
@@ -434,8 +471,8 @@ export default function InvoicesPage() {
   }, [allInvoices, jobsByRef]);
 
   const filteredInvoices = useMemo(() => {
-    let rows = allInvoices;
-    if (pipelineTab !== "all") {
+    let rows = pipelineTab === "deleted" ? deletedInvoices : allInvoices;
+    if (pipelineTab !== "all" && pipelineTab !== "deleted") {
       rows = rows.filter((inv) => {
         const ref = inv.job_reference?.trim();
         const job = ref ? jobsByRef[ref] : undefined;
@@ -452,7 +489,7 @@ export default function InvoicesPage() {
       );
     }
     return rows;
-  }, [allInvoices, jobsByRef, pipelineTab, search]);
+  }, [allInvoices, deletedInvoices, jobsByRef, pipelineTab, search]);
 
   const totalItems = filteredInvoices.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
@@ -467,6 +504,10 @@ export default function InvoicesPage() {
   }, [pipelineTab, search, periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]);
 
   useEffect(() => {
+    if (pipelineTab === "deleted") setSelectedIds(new Set());
+  }, [pipelineTab]);
+
+  useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
@@ -479,14 +520,15 @@ export default function InvoicesPage() {
       const nameMap: Record<string, string> = {};
       try {
         const supabase = getSupabase();
-        const refs = [...new Set(allInvoices.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)))];
+        const refs = [
+          ...new Set(allInvoicesForAux.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x))),
+        ];
         for (let i = 0; i < refs.length; i += REF_CHUNK) {
           const chunk = refs.slice(i, i + REF_CHUNK);
           const { data: jobs, error } = await supabase
             .from("jobs")
             .select("reference, client_id")
-            .in("reference", chunk)
-            .is("deleted_at", null);
+            .in("reference", chunk);
           if (error) throw error;
           const cids = [
             ...new Set(
@@ -516,7 +558,7 @@ export default function InvoicesPage() {
 
         const namesNeeding = [
           ...new Set(
-            allInvoices
+            allInvoicesForAux
               .filter((inv) => !inv.source_account_id?.trim() && !inv.job_reference?.trim())
               .map((inv) => inv.client_name.trim())
               .filter(Boolean),
@@ -552,11 +594,11 @@ export default function InvoicesPage() {
     return () => {
       cancelled = true;
     };
-  }, [allInvoices]);
+  }, [allInvoicesForAux]);
 
   useEffect(() => {
     const idSet = new Set<string>();
-    for (const inv of allInvoices) {
+    for (const inv of allInvoicesForAux) {
       const eid = effectiveInvoiceSourceAccountId(inv, jobRefToSourceAccountId, clientNameToSourceAccountId);
       if (eid) idSet.add(eid);
     }
@@ -585,7 +627,7 @@ export default function InvoicesPage() {
     return () => {
       cancelled = true;
     };
-  }, [allInvoices, jobRefToSourceAccountId, clientNameToSourceAccountId]);
+  }, [allInvoicesForAux, jobRefToSourceAccountId, clientNameToSourceAccountId]);
 
   const kpiPeriodDesc = useMemo(
     () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
@@ -776,7 +818,7 @@ export default function InvoicesPage() {
       const accountLabel = accId ? (accountNameById[accId] ?? "") : "";
       const jref = inv.job_reference?.trim();
       const jobSnap = jref ? jobsByRef[jref] : undefined;
-      const jobYmd = jobDateYmdForInvoiceList(jobSnap);
+      const jobYmd = displayDateYmdForInvoiceRow(inv, jobSnap);
       const jobStatusLabel = jobSnap?.status
         ? (jobStatusColumnConfig[jobSnap.status]?.label ?? jobSnap.status.replace(/_/g, " "))
         : "";
@@ -835,7 +877,9 @@ export default function InvoicesPage() {
                       ? "Paid"
                       : id === "all"
                         ? "All"
-                        : "Cancelled",
+                        : id === "deleted"
+                          ? "Deleted"
+                          : "Cancelled",
         count: tabCounts[id] ?? 0,
       })),
     [tabCounts],
@@ -893,7 +937,7 @@ export default function InvoicesPage() {
       render: (item) => {
         const ref = item.job_reference?.trim();
         const job = ref ? jobsByRef[ref] : undefined;
-        const ymd = jobDateYmdForInvoiceList(job);
+        const ymd = displayDateYmdForInvoiceRow(item, job);
         return (
           <span className="text-sm text-text-secondary">{ymd ? formatDate(ymd) : "—"}</span>
         );
@@ -1072,18 +1116,20 @@ export default function InvoicesPage() {
             onPageChange={setPage}
             loading={loading}
             onRowClick={(item) => setSelectedInvoice(item)}
-            selectable
+            selectable={pipelineTab !== "deleted"}
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
             bulkActions={
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
-                <BulkBtn label="Audit required" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
-                <BulkBtn label="Mark Paid" onClick={() => handleBulkStatusChange("paid")} variant="success" />
-                <BulkBtn label="Mark Pending" onClick={() => handleBulkStatusChange("pending")} variant="warning" />
-                <BulkBtn label="Mark Overdue" onClick={() => handleBulkStatusChange("overdue")} variant="danger" />
-                <BulkBtn label="Cancel" onClick={() => handleBulkStatusChange("cancelled")} variant="danger" />
-              </div>
+              pipelineTab === "deleted" ? undefined : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
+                  <BulkBtn label="Audit required" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
+                  <BulkBtn label="Mark Paid" onClick={() => handleBulkStatusChange("paid")} variant="success" />
+                  <BulkBtn label="Mark Pending" onClick={() => handleBulkStatusChange("pending")} variant="warning" />
+                  <BulkBtn label="Mark Overdue" onClick={() => handleBulkStatusChange("overdue")} variant="danger" />
+                  <BulkBtn label="Cancel" onClick={() => handleBulkStatusChange("cancelled")} variant="danger" />
+                </div>
+              )
             }
           />
         </motion.div>

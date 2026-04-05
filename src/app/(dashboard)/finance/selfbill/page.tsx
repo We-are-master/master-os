@@ -36,6 +36,7 @@ import { getSupabase } from "@/services/base";
 import {
   weekPeriodHelpText,
   partnerFieldSelfBillPaymentDueHelpText,
+  partnerFieldSelfBillPaymentDueDate,
   parseDateRangeOrWeek,
   getWeekBoundsForDate,
 } from "@/lib/self-bill-period";
@@ -494,6 +495,29 @@ export default function SelfBillPage() {
       render: (item) => <span className="text-sm text-text-secondary whitespace-nowrap">{formatDate(item.created_at)}</span>,
     },
     {
+      key: "payment_due",
+      label: "Due date",
+      width: "108px",
+      render: (item) => {
+        if (isSelfBillPayoutVoided(item)) {
+          return <span className="text-sm text-text-tertiary whitespace-nowrap">—</span>;
+        }
+        const we = item.week_end?.trim() ?? "";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(we)) {
+          return <span className="text-sm text-text-tertiary whitespace-nowrap">—</span>;
+        }
+        const dueYmd = partnerFieldSelfBillPaymentDueDate(we);
+        return (
+          <span
+            className="text-sm text-text-secondary whitespace-nowrap"
+            title="Payment due (Friday after the Monday–Sunday week ends)"
+          >
+            {formatDate(dueYmd)}
+          </span>
+        );
+      },
+    },
+    {
       key: "job_value",
       label: "Labour / gross",
       align: "right",
@@ -947,6 +971,10 @@ function SelfBillCard({
   const origSnap =
     sb.original_net_payout != null && Number(sb.original_net_payout) > 0.02 ? Number(sb.original_net_payout) : null;
   const amountDue = voided ? 0 : computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId);
+  const cardDueYmd =
+    !voided && /^\d{4}-\d{2}-\d{2}$/.test(sb.week_end?.trim() ?? "")
+      ? partnerFieldSelfBillPaymentDueDate(sb.week_end!.trim())
+      : null;
 
   return (
     <div className="rounded-2xl border border-border-light bg-card shadow-sm overflow-hidden flex flex-col">
@@ -964,6 +992,10 @@ function SelfBillCard({
             </div>
             <p className="text-[11px] text-text-tertiary font-mono truncate">
               {sb.reference} · {sb.week_label ?? sb.period}
+            </p>
+            <p className="text-[11px] text-text-tertiary mt-0.5">
+              Created {formatDate(sb.created_at)}
+              {cardDueYmd ? ` · Due ${formatDate(cardDueYmd)}` : null}
             </p>
           </div>
         </div>
@@ -1130,6 +1162,10 @@ function SelfBillLinkedJobsPanel({
   const origSnap =
     sb.original_net_payout != null && Number(sb.original_net_payout) > 0.02 ? Number(sb.original_net_payout) : null;
   const sheetDue = voided ? 0 : computeSelfBillAmountDue(sb, jobs, partnerPaidByJobId);
+  const dueYmd =
+    !voided && /^\d{4}-\d{2}-\d{2}$/.test(sb.week_end?.trim() ?? "")
+      ? partnerFieldSelfBillPaymentDueDate(sb.week_end!.trim())
+      : null;
 
   return (
     <div className="p-6">
@@ -1142,6 +1178,7 @@ function SelfBillLinkedJobsPanel({
               <p className="text-[11px] text-text-tertiary">
                 Created {formatDate(sb.created_at)}
                 {sb.week_label ? ` · ${sb.week_label}` : null}
+                {dueYmd ? ` · Due ${formatDate(dueYmd)}` : null}
               </p>
             </div>
           </div>
