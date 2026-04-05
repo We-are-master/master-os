@@ -1,6 +1,16 @@
 /** Presets for dashboard filtering (jobs, quotes, invoices, activity). */
 
-export type DateRangePreset = "7d" | "30d" | "90d" | "mtd" | "ytd" | "custom" | "all";
+export type DateRangePreset =
+  | "1d"
+  | "wtd"
+  | "7d"
+  | "30d"
+  | "90d"
+  | "mtd"
+  | "qtd"
+  | "ytd"
+  | "custom"
+  | "all";
 
 export interface DashboardDateBounds {
   fromIso: string;
@@ -32,6 +42,21 @@ export function getBoundsForPreset(
   let start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
   switch (preset) {
+    case "1d":
+      /* Today only — same as start */
+      break;
+    case "wtd": {
+      const day = start.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      start.setDate(start.getDate() - diff);
+      break;
+    }
+    case "qtd": {
+      const m = now.getMonth();
+      const qStartMonth = Math.floor(m / 3) * 3;
+      start = new Date(now.getFullYear(), qStartMonth, 1, 0, 0, 0, 0);
+      break;
+    }
     case "7d":
       start.setDate(start.getDate() - 6);
       break;
@@ -55,12 +80,15 @@ export function getBoundsForPreset(
 }
 
 export const PRESET_OPTIONS: { id: DateRangePreset; label: string }[] = [
+  { id: "1d", label: "Today" },
+  { id: "wtd", label: "Week to date" },
   { id: "mtd", label: "This month" },
+  { id: "qtd", label: "Quarter to date" },
   { id: "7d", label: "7 days" },
   { id: "30d", label: "30 days" },
   { id: "90d", label: "90 days" },
   { id: "ytd", label: "Year to date" },
-  { id: "custom", label: "Custom" },
+  { id: "custom", label: "Custom range" },
   { id: "all", label: "All time" },
 ];
 

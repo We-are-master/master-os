@@ -10,9 +10,11 @@ import { Select } from "@/components/ui/select";
 interface DashboardDateToolbarProps {
   /** Renders on the same row as the preset (e.g. job filters) to keep one compact bar. */
   trailing?: ReactNode;
+  /** Overrides the default footnote under the preset row (e.g. CEO dashboard). */
+  footnote?: ReactNode;
 }
 
-export function DashboardDateToolbar({ trailing }: DashboardDateToolbarProps) {
+export function DashboardDateToolbar({ trailing, footnote }: DashboardDateToolbarProps) {
   const {
     preset,
     setPreset,
@@ -54,9 +56,13 @@ export function DashboardDateToolbar({ trailing }: DashboardDateToolbarProps) {
         </div>
       )}
       <p className="text-[11px] text-text-tertiary">
-        Widgets and job filter counts use: <strong className="text-text-secondary">{rangeLabel}</strong>
-        {preset === "custom" && (!customFrom || !customTo) && (
-          <span className="text-amber-600 dark:text-amber-400 ml-1">— pick both dates</span>
+        {footnote ?? (
+          <>
+            Widgets and job filter counts use: <strong className="text-text-secondary">{rangeLabel}</strong>
+            {preset === "custom" && (!customFrom || !customTo) && (
+              <span className="text-amber-600 dark:text-amber-400 ml-1">— pick both dates</span>
+            )}
+          </>
         )}
       </p>
     </div>

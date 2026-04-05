@@ -7,6 +7,7 @@ export type OverviewPipelineJobRow = {
   client_id?: string | null;
   owner_name?: string | null;
   partner_name?: string | null;
+  title?: string | null;
   client_price: number;
   extras_amount?: number | null;
   partner_cost: number;
@@ -17,9 +18,9 @@ export type OverviewPipelineJobRow = {
 };
 
 const SELECT_FULL =
-  "id, client_id, owner_name, partner_name, client_price, extras_amount, partner_cost, materials_cost, commission, status, created_at";
+  "id, client_id, owner_name, partner_name, title, client_price, extras_amount, partner_cost, materials_cost, commission, status, created_at";
 const SELECT_LEGACY =
-  "id, client_id, partner_name, client_price, partner_cost, materials_cost, commission, status, created_at";
+  "id, client_id, partner_name, title, client_price, partner_cost, materials_cost, commission, status, created_at";
 
 /**
  * Same universe as Jobs Management list: excludes cancelled (incl. lost & cancelled tab).
