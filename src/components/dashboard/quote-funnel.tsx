@@ -105,9 +105,24 @@ export function QuoteFunnel() {
         const top = Math.max(requests, 1);
         setSteps([
           { label: "Requests", count: requests, color: "bg-blue-400", pct: 100 },
-          { label: "Quotes", count: quotes, color: "bg-violet-400", pct: Math.round((quotes / top) * 100) },
-          { label: "Quotes → Jobs", count: quotesConverted, color: "bg-amber-400", pct: Math.round((quotesConverted / top) * 100) },
-          { label: "Jobs", count: jobs, color: "bg-emerald-400", pct: Math.round((jobs / top) * 100) },
+          {
+            label: "Quotes",
+            count: quotes,
+            color: "bg-violet-400",
+            pct: Math.min(100, Math.round((quotes / top) * 100)),
+          },
+          {
+            label: "Quotes → Jobs",
+            count: jobsFromQuotes,
+            color: "bg-amber-400",
+            pct: quotes > 0 ? Math.min(100, Math.round((jobsFromQuotes / quotes) * 100)) : 0,
+          },
+          {
+            label: "Jobs",
+            count: jobs,
+            color: "bg-emerald-400",
+            pct: Math.min(100, Math.round((jobs / top) * 100)),
+          },
         ]);
 
         const quoteToJobRate = quotes > 0 ? Math.round((jobsFromQuotes / quotes) * 1000) / 10 : 0;
@@ -139,9 +154,16 @@ export function QuoteFunnel() {
   return (
     <Card padding="none" className="h-full">
       <CardHeader className="px-5 pt-5">
-        <div>
-          <CardTitle>Request → Job Funnel</CardTitle>
-          <p className="text-xs text-text-tertiary mt-0.5">End-to-end conversion</p>
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <CardTitle>Request → Job Funnel</CardTitle>
+            {!loading && (
+              <span className="text-[11px] font-bold tabular-nums px-2 py-0.5 rounded-md bg-violet-500/15 text-violet-800 dark:text-violet-200">
+                Quotes→Jobs {meta.quoteToJobRate}% · Req→Jobs {meta.requestsToJobsRate}%
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-text-tertiary">End-to-end conversion · bar width vs requests in period</p>
         </div>
       </CardHeader>
       <div className="px-5 pb-5 space-y-3">
@@ -154,18 +176,18 @@ export function QuoteFunnel() {
             ))
           : steps.map((step, i) => (
               <div key={step.label} className="space-y-1">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">{step.label}</span>
-                  <span className="text-xs font-bold text-text-primary">{step.count}</span>
+                  <span className="text-xs font-bold tabular-nums text-text-primary shrink-0">{step.pct}%</span>
                 </div>
                 <div className="h-7 w-full rounded-lg bg-surface-hover overflow-hidden">
                   <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${step.pct}%` }}
                     transition={{ duration: 0.7, delay: i * 0.1, ease: [0.25, 0.46, 0.45, 0.94] }}
-                    className={`h-full rounded-lg ${step.color} flex items-center px-2`}
+                    className={`h-full rounded-lg ${step.color} flex items-center justify-center px-2 min-w-0`}
                   >
-                    <span className="text-[10px] font-bold text-white">{step.pct}%</span>
+                    <span className="text-xs font-bold text-white tabular-nums drop-shadow-sm">{step.count}</span>
                   </motion.div>
                 </div>
               </div>
