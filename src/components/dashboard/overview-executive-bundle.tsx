@@ -9,7 +9,7 @@ import { formatCurrency, cn } from "@/lib/utils";
 import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financials";
 import { listCommissionTiers } from "@/services/tiers";
 import type { CommissionTier } from "@/types/database";
-import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Building2, Layers, Target, Users, CalendarDays } from "lucide-react";
 import {
   buildWeeklyCashPositionBuckets,
@@ -628,19 +628,27 @@ export function OverviewExecutiveBundle() {
           ))}
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 divide-y sm:divide-y-0 divide-border-light sm:divide-x">
+          <div className="p-3 sm:p-4">
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+              Quotes awaiting customer
+            </p>
+            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-sky-600")}>
+              {loading ? "—" : formatCurrency(funnel.quotesAwaiting)}
+            </p>
+            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
+              {loading ? "—" : `${funnel.quotesAwaitingCount} open (not accepted)`}
+            </p>
+          </div>
+          <div className="p-3 sm:p-4">
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">Sales</p>
+            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-emerald-600")}>
+              {loading ? "—" : formatCurrency(funnel.salesBookedValue)}
+            </p>
+            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
+              {loading ? "—" : `${funnel.salesJobCount} booked`}
+            </p>
+          </div>
           {[
-            {
-              label: "Quotes awaiting customer",
-              display: loading ? "—" : String(funnel.quotesAwaitingCount),
-              sub: loading ? "—" : `${formatCurrency(funnel.quotesAwaiting)} · open (not accepted)`,
-              accent: "text-sky-600",
-            },
-            {
-              label: "Sales",
-              display: loading ? "—" : String(funnel.salesJobCount),
-              sub: loading ? "—" : `${formatCurrency(funnel.salesBookedValue)} booked`,
-              accent: "text-emerald-600",
-            },
             {
               label: "Conversion rate",
               display: loading ? "—" : `${conversionPct}%`,
@@ -891,8 +899,9 @@ export function OverviewExecutiveBundle() {
             <div>
               <CardTitle className="text-sm font-semibold">Cash flow</CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5 max-w-xl">
-                One bar per week: <strong className="text-text-secondary">net</strong> = cash in − partners − bills − workforce
-                (pending payroll due in week).
+                One column per week: <strong className="text-text-secondary">stacked</strong> cash in (green), bills (violet), partners
+                (amber), workforce (rose). Heights are each line’s amount for that week;{" "}
+                <strong className="text-text-secondary">net</strong> = in − partners − bills − workforce (see tooltip).
               </p>
             </div>
             {!loading && cashflow.length > 0 && (
@@ -913,7 +922,7 @@ export function OverviewExecutiveBundle() {
           ) : cashflow.length === 0 ? (
             <div className="h-40 flex items-center justify-center text-sm text-text-tertiary">No data in range</div>
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
+            <ResponsiveContainer width="100%" height={280}>
               <BarChart data={cashflow} margin={{ top: 8, right: 8, left: 4, bottom: 8 }} barCategoryGap="18%">
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border-light/50" />
                 <XAxis
@@ -944,20 +953,23 @@ export function OverviewExecutiveBundle() {
                           Net {formatCurrency(w.net)}
                         </p>
                         <p className="text-[10px] text-text-tertiary mt-1 space-y-0.5">
-                          <span className="block">In {formatCurrency(w.collected)}</span>
-                          <span className="block">Partner −{formatCurrency(w.partnerToPay)}</span>
-                          <span className="block">Bills −{formatCurrency(w.billsToPay)}</span>
-                          <span className="block">Workforce −{formatCurrency(w.workforceToPay)}</span>
+                          <span className="block">Cash in {formatCurrency(w.collected)}</span>
+                          <span className="block">Bills {formatCurrency(w.billsToPay)}</span>
+                          <span className="block">Partners {formatCurrency(w.partnerToPay)}</span>
+                          <span className="block">Workforce {formatCurrency(w.workforceToPay)}</span>
                         </p>
                       </div>
                     );
                   }}
                 />
-                <Bar dataKey="net" name="Net" radius={[4, 4, 0, 0]}>
-                  {cashflow.map((entry, index) => (
-                    <Cell key={`net-${entry.weekStart ?? index}`} fill={entry.net >= 0 ? "#34d399" : "#f87171"} />
-                  ))}
-                </Bar>
+                <Legend
+                  wrapperStyle={{ fontSize: 11, paddingTop: 4 }}
+                  formatter={(value) => <span className="text-text-secondary">{String(value)}</span>}
+                />
+                <Bar dataKey="collected" name="Cash in" stackId="cf" fill="#22c55e" radius={[0, 0, 0, 0]} />
+                <Bar dataKey="billsToPay" name="Bills" stackId="cf" fill="#a855f7" />
+                <Bar dataKey="partnerToPay" name="Partners" stackId="cf" fill="#eab308" />
+                <Bar dataKey="workforceToPay" name="Workforce" stackId="cf" fill="#fb7185" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}

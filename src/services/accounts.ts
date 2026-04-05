@@ -126,7 +126,20 @@ export async function ensureSourceAccountForClient(
     email?: string | null;
     source_account_id?: string | null;
   };
-  if (row.source_account_id) return row.source_account_id;
+  if (row.source_account_id) {
+    const { data: active } = await supabase
+      .from("accounts")
+      .select("id")
+      .eq("id", row.source_account_id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (active?.id) return row.source_account_id;
+    const { error: clearErr } = await supabase
+      .from("clients")
+      .update({ source_account_id: null })
+      .eq("id", clientId);
+    if (clearErr) return null;
+  }
 
   const company = row.full_name?.trim() || "Client";
   const safeEmail = (
