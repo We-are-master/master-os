@@ -256,7 +256,7 @@ export function CeoFinancialDashboard() {
           tiers[tier] = (tiers[tier] ?? 0) + rev;
         }
 
-        const [customerCashRes, sbOutstandingRes, billsOutstandingRes] = await Promise.all([
+        const [customerCashRes, sbOutstandingRes, billsOutstandingRes, payrollPendingRes] = await Promise.all([
           supabase
             .from("job_payments")
             .select("amount, payment_date")
@@ -275,6 +275,13 @@ export function CeoFinancialDashboard() {
             .is("archived_at", null)
             .gte("due_date", fromDay)
             .lte("due_date", toDay),
+          supabase
+            .from("payroll_internal_costs")
+            .select("amount, due_date")
+            .eq("status", "pending")
+            .not("due_date", "is", null)
+            .gte("due_date", fromDay)
+            .lte("due_date", toDay),
         ]);
 
         const buckets = buildWeeklyCashPositionBuckets(
@@ -290,9 +297,13 @@ export function CeoFinancialDashboard() {
             amount?: number;
             due_date?: string;
           }[],
+          (payrollPendingRes.error ? [] : payrollPendingRes.data ?? []) as {
+            amount?: number;
+            due_date?: string;
+          }[],
         );
         const cin = buckets.reduce((a, b) => a + b.collected, 0);
-        const pout = buckets.reduce((a, b) => a + b.partnerToPay + b.billsToPay, 0);
+        const pout = buckets.reduce((a, b) => a + b.partnerToPay + b.billsToPay + b.workforceToPay, 0);
         const n = buckets.reduce((a, b) => a + b.net, 0);
 
         const { data: sbAll } = await supabase
@@ -396,7 +407,7 @@ export function CeoFinancialDashboard() {
   const forecastPct = goalForBar > 0 ? Math.min(150, (forecast / goalForBar) * 100) : 0;
 
   const cashOutflows = useMemo(() => {
-    return cashflow.reduce((s, b) => s + b.partnerToPay + b.billsToPay, 0);
+    return cashflow.reduce((s, b) => s + b.partnerToPay + b.billsToPay + b.workforceToPay, 0);
   }, [cashflow]);
 
   const alertItems = useMemo(() => {
@@ -738,6 +749,7 @@ export function CeoFinancialDashboard() {
                     <Bar dataKey="collected" name="Customer cash in" fill="#34d399" radius={[4, 4, 0, 0]} />
                     <Bar dataKey="partnerToPay" name="Partner to pay" fill="#f87171" radius={[4, 4, 0, 0]} />
                     <Bar dataKey="billsToPay" name="Bills to pay" fill="#a78bfa" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="workforceToPay" name="Workforce to pay" fill="#fb923c" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

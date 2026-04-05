@@ -9,6 +9,7 @@ function normalizeAccountInsert(input: AccountInsert): AccountInsert {
     email: input.email.trim().toLowerCase(),
     company_name: input.company_name.trim(),
     contact_name: input.contact_name.trim(),
+    owner_name: input.owner_name?.trim() || null,
     address: input.address?.trim() || null,
     crn: input.crn?.trim() || null,
     contact_number: input.contact_number?.trim() || null,
@@ -21,6 +22,10 @@ function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
   if (next.email !== undefined) next.email = next.email.trim().toLowerCase();
   if (next.company_name !== undefined) next.company_name = next.company_name.trim();
   if (next.contact_name !== undefined) next.contact_name = next.contact_name.trim();
+  if (next.owner_name !== undefined) {
+    const t = typeof next.owner_name === "string" ? next.owner_name.trim() : "";
+    next.owner_name = t.length > 0 ? t : null;
+  }
   if (next.address !== undefined) next.address = next.address?.trim() || null;
   if (next.crn !== undefined) next.crn = next.crn?.trim() || null;
   if (next.contact_number !== undefined) next.contact_number = next.contact_number?.trim() || null;
@@ -60,7 +65,7 @@ export function formatAccountDbError(error: unknown): Error {
 
 export async function listAccounts(params: ListParams): Promise<ListResult<Account>> {
   return queryList<Account>("accounts", params, {
-    searchColumns: ["company_name", "contact_name", "email", "industry"],
+    searchColumns: ["company_name", "contact_name", "owner_name", "email", "industry"],
     defaultSort: "created_at",
   });
 }

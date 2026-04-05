@@ -10,7 +10,7 @@ export interface CashflowBucketRow {
   net: number;
 }
 
-/** Weekly cash position: money in (invoices paid) vs obligations (partner + bills to pay). */
+/** Weekly cash position: money in (job payments) vs obligations (partner + bills + pending payroll due). */
 export interface WeeklyCashPositionRow {
   label: string;
   weekStart?: string;
@@ -20,7 +20,9 @@ export interface WeeklyCashPositionRow {
   partnerToPay: number;
   /** Company bills not yet paid (bucketed by due date week) */
   billsToPay: number;
-  /** collected − partnerToPay − billsToPay */
+  /** Pending internal payroll lines due in this week */
+  workforceToPay: number;
+  /** collected − partnerToPay − billsToPay − workforceToPay */
   net: number;
 }
 
@@ -217,14 +219,15 @@ export function pickCashflowGranularity(bounds: { fromIso: string; toIso: string
 
 /**
  * Cash position by calendar week: **customer cash in** from `job_payments` (deposit + final by `payment_date`)
- * vs partner self-bills **to pay** vs company bills **to pay** (due week).
+ * vs partner self-bills **to pay** vs company bills **to pay** (due week) vs **pending payroll** (`payroll_internal_costs` by due week).
  */
 export function buildWeeklyCashPositionBuckets(
   fromIso: string,
   toIso: string,
   customerCashIn: { payment_date?: string; amount?: number }[] | null,
   selfBillsOutstanding: { net_payout?: number; week_start?: string | null; created_at?: string }[] | null,
-  billsOutstanding: { amount?: number; due_date?: string }[] | null
+  billsOutstanding: { amount?: number; due_date?: string }[] | null,
+  payrollOutstanding?: { amount?: number; due_date?: string }[] | null,
 ): WeeklyCashPositionRow[] {
   const fromDay = fromIso.slice(0, 10);
   const toDay = toIso.slice(0, 10);
@@ -243,6 +246,7 @@ export function buildWeeklyCashPositionBuckets(
     collected: 0,
     partnerToPay: 0,
     billsToPay: 0,
+    workforceToPay: 0,
     net: 0,
   }));
 
@@ -270,8 +274,16 @@ export function buildWeeklyCashPositionBuckets(
     if (i !== undefined) buckets[i]!.billsToPay += Number(bill.amount ?? 0);
   }
 
+  for (const pr of payrollOutstanding ?? []) {
+    const dd = pr.due_date?.slice(0, 10);
+    if (!dd) continue;
+    const ws = startOfWeekMondayFromYmd(dd);
+    const i = keyToIdxW.get(ws);
+    if (i !== undefined) buckets[i]!.workforceToPay += Number(pr.amount ?? 0);
+  }
+
   for (const b of buckets) {
-    b.net = b.collected - b.partnerToPay - b.billsToPay;
+    b.net = b.collected - b.partnerToPay - b.billsToPay - b.workforceToPay;
   }
   return buckets;
 }

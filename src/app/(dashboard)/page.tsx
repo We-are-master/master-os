@@ -92,7 +92,17 @@ function getWidgetGridClass(widget: WidgetConfig, orderedWidgets: WidgetConfig[]
 const DASHBOARD_HIDDEN_WIDGET_TYPES = new Set<WidgetConfig["type"]>(["activity_feed", "quick_actions"]);
 
 /** Hidden on the Overview tab only (other views keep full widget set). */
-const OVERVIEW_HIDDEN_WIDGET_TYPES = new Set<WidgetConfig["type"]>(["priority_tasks", "custom_chart"]);
+const OVERVIEW_HIDDEN_WIDGET_TYPES = new Set<WidgetConfig["type"]>([
+  "priority_tasks",
+  "custom_chart",
+  "revenue_chart",
+  "margin_chart",
+  "pipeline_summary",
+  "partner_payout_top5",
+  "partner_margin_top5",
+  "partner_performance",
+  "finance_flow",
+]);
 
 function isOverviewView(view: DashboardView | null): boolean {
   return (view?.name?.trim().toLowerCase() ?? "") === "overview";

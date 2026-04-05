@@ -13,7 +13,13 @@ export function FinanceFlow() {
   const boundsKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
   const [data, setData] = useState<WeeklyCashPositionRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [totals, setTotals] = useState({ collected: 0, partnerToPay: 0, billsToPay: 0, net: 0 });
+  const [totals, setTotals] = useState({
+    collected: 0,
+    partnerToPay: 0,
+    billsToPay: 0,
+    workforceToPay: 0,
+    net: 0,
+  });
 
   useEffect(() => {
     async function load() {
@@ -27,7 +33,7 @@ export function FinanceFlow() {
         const fromDay = fromIso.slice(0, 10);
         const toDay = toBound.slice(0, 10);
 
-        const [{ data: customerCashRows }, { data: sbOutstanding }, billRes] = await Promise.all([
+        const [{ data: customerCashRows }, { data: sbOutstanding }, billRes, payrollRes] = await Promise.all([
           supabase
             .from("job_payments")
             .select("amount, payment_date")
@@ -46,8 +52,19 @@ export function FinanceFlow() {
             .is("archived_at", null)
             .gte("due_date", fromDay)
             .lte("due_date", toDay),
+          supabase
+            .from("payroll_internal_costs")
+            .select("amount, due_date")
+            .eq("status", "pending")
+            .not("due_date", "is", null)
+            .gte("due_date", fromDay)
+            .lte("due_date", toDay),
         ]);
         const billsOutstanding = (billRes.error ? [] : billRes.data ?? []) as { amount?: number; due_date?: string }[];
+        const payrollOutstanding = (payrollRes.error ? [] : payrollRes.data ?? []) as {
+          amount?: number;
+          due_date?: string;
+        }[];
 
         const buckets = buildWeeklyCashPositionBuckets(
           fromIso,
@@ -55,6 +72,7 @@ export function FinanceFlow() {
           (customerCashRows ?? []) as { payment_date?: string; amount?: number }[],
           (sbOutstanding ?? []) as { net_payout?: number; week_start?: string | null; created_at?: string }[],
           billsOutstanding,
+          payrollOutstanding,
         );
 
         setData(buckets);
@@ -62,11 +80,12 @@ export function FinanceFlow() {
           collected: buckets.reduce((s, b) => s + b.collected, 0),
           partnerToPay: buckets.reduce((s, b) => s + b.partnerToPay, 0),
           billsToPay: buckets.reduce((s, b) => s + b.billsToPay, 0),
+          workforceToPay: buckets.reduce((s, b) => s + b.workforceToPay, 0),
           net: buckets.reduce((s, b) => s + b.net, 0),
         });
       } catch {
         setData([]);
-        setTotals({ collected: 0, partnerToPay: 0, billsToPay: 0, net: 0 });
+        setTotals({ collected: 0, partnerToPay: 0, billsToPay: 0, workforceToPay: 0, net: 0 });
       } finally {
         setLoading(false);
       }
@@ -100,11 +119,12 @@ export function FinanceFlow() {
       </CardHeader>
 
       {!loading && (
-        <div className="px-5 pb-3 grid grid-cols-2 sm:grid-cols-4 gap-2 shrink-0">
+        <div className="px-5 pb-3 grid grid-cols-2 sm:grid-cols-5 gap-2 shrink-0">
           {[
             { label: "Invoices paid", value: totals.collected, color: "text-emerald-600" },
             { label: "Partner to pay", value: totals.partnerToPay, color: "text-rose-500" },
             { label: "Bills to pay", value: totals.billsToPay, color: "text-violet-500" },
+            { label: "Workforce to pay", value: totals.workforceToPay, color: "text-orange-500" },
             {
               label: "Net",
               value: totals.net,
@@ -163,6 +183,7 @@ export function FinanceFlow() {
                   <Bar dataKey="collected" name="Invoices paid" fill="#34d399" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="partnerToPay" name="Partner to pay" fill="#f87171" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="billsToPay" name="Bills to pay" fill="#a78bfa" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="workforceToPay" name="Workforce to pay" fill="#fb923c" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

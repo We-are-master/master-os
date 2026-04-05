@@ -109,6 +109,7 @@ function invoiceStatusBadge(status: string) {
 const emptyForm = {
   company_name: "",
   contact_name: "",
+  owner_name: "",
   email: "",
   address: "",
   crn: "",
@@ -185,6 +186,7 @@ export default function AccountsPage() {
       const created = await createAccount({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
+        owner_name: form.owner_name.trim() || null,
         email: form.email.trim(),
         address: form.address.trim() || null,
         crn: form.crn.trim() || null,
@@ -248,6 +250,15 @@ export default function AccountsPage() {
             <p className="text-[11px] text-text-tertiary">{item.contact_name}</p>
           </div>
         </div>
+      ),
+    },
+    {
+      key: "owner_name",
+      label: "Account owner",
+      render: (item) => (
+        <span className="text-sm text-text-secondary">
+          {item.owner_name?.trim() ? item.owner_name.trim() : <span className="text-text-tertiary">—</span>}
+        </span>
       ),
     },
     {
@@ -383,6 +394,16 @@ export default function AccountsPage() {
           </div>
 
           <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Account owner</label>
+            <Input
+              value={form.owner_name}
+              onChange={(e) => setForm((f) => ({ ...f, owner_name: e.target.value }))}
+              placeholder="Internal owner (sales / AM)"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">Who owns this account internally — same idea as job owner.</p>
+          </div>
+
+          <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Email *</label>
             <Input
               type="email"
@@ -494,6 +515,7 @@ function AccountDetailDrawer({
   const [edit, setEdit] = useState({
     company_name: "",
     contact_name: "",
+    owner_name: "",
     email: "",
     address: "",
     crn: "",
@@ -511,6 +533,7 @@ function AccountDetailDrawer({
     setEdit({
       company_name: account.company_name,
       contact_name: account.contact_name,
+      owner_name: account.owner_name ?? "",
       email: account.email,
       address: account.address ?? "",
       crn: account.crn ?? "",
@@ -653,6 +676,7 @@ function AccountDetailDrawer({
       const updated = await updateAccount(account.id, {
         company_name: edit.company_name.trim(),
         contact_name: edit.contact_name.trim(),
+        owner_name: edit.owner_name.trim() || null,
         email: edit.email.trim(),
         address: edit.address.trim() || null,
         crn: edit.crn.trim() || null,
@@ -689,6 +713,12 @@ function AccountDetailDrawer({
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-text-primary truncate">{account.company_name}</p>
             <p className="text-xs text-text-tertiary truncate">{account.contact_name}</p>
+            {account.owner_name?.trim() ? (
+              <p className="text-[11px] text-text-secondary mt-1 inline-flex items-center gap-1">
+                <User className="h-3 w-3 shrink-0" />
+                <span className="font-medium text-text-primary">Account owner:</span> {account.owner_name.trim()}
+              </p>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-text-tertiary">
               <span className="inline-flex items-center gap-1">
                 <Users className="h-3 w-3" />
@@ -823,6 +853,15 @@ function AccountDetailDrawer({
                     <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contact</label>
                     <Input value={edit.contact_name} onChange={(e) => setEdit((p) => ({ ...p, contact_name: e.target.value }))} />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Account owner</label>
+                  <Input
+                    value={edit.owner_name}
+                    onChange={(e) => setEdit((p) => ({ ...p, owner_name: e.target.value }))}
+                    placeholder="Internal owner (sales / AM)"
+                  />
+                  <p className="text-[10px] text-text-tertiary mt-1">Same concept as job owner — for dashboards and reporting.</p>
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contract</label>
@@ -1040,6 +1079,9 @@ function AccountDetailDrawer({
             ) : (
               <div className="rounded-xl border border-border-light bg-surface-hover/50 divide-y divide-border-light">
                 <DetailRow icon={User} label="Contact">{account.contact_name}</DetailRow>
+                <DetailRow icon={User} label="Account owner">
+                  {account.owner_name?.trim() || "—"}
+                </DetailRow>
                 <DetailRow icon={Mail} label="Email">
                   <a href={`mailto:${account.email}`} className="text-primary hover:underline break-all">{account.email}</a>
                 </DetailRow>
