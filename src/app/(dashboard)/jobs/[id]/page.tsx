@@ -78,6 +78,7 @@ import {
   jobDirectCost,
   deriveStoredJobFinancials,
   partnerPaymentCap,
+  partnerCashOutDisplaySplit,
   partnerSelfBillGrossAmount,
   customerScheduledTotal,
   jobCustomerBillableRevenueForCollections,
@@ -1941,6 +1942,19 @@ export default function JobDetailPage() {
     return partnerCapForApproval;
   }, [job, approvalModalHourlyTotals, partnerCapForApproval]);
 
+  /** Partner “extra payout” slice for the same cap shown in this modal (recorded extras or hourly delta). */
+  const approvalPartnerExtrasSplit = useMemo(() => {
+    if (!job) return { base: 0, extra: 0 };
+    const hourlyBasis = job.job_type === "hourly" && approvalModalHourlyTotals ? approvalModalHourlyTotals.partnerTotal : null;
+    return partnerCashOutDisplaySplit(job, approvalPartnerCap, hourlyBasis);
+  }, [job, approvalPartnerCap, approvalModalHourlyTotals]);
+
+  /** Client-side add-ons included in billable (field extras_amount; may include access fees). */
+  const approvalClientExtrasAmount = useMemo(
+    () => (job ? Math.round(Math.max(0, Number(job.extras_amount ?? 0)) * 100) / 100 : 0),
+    [job?.extras_amount, job?.id],
+  );
+
   if (loading || !id) {
     return (
       <PageTransition>
@@ -1967,6 +1981,13 @@ export default function JobDetailPage() {
     job.job_type === "hourly" && hourlyAutoBilling
       ? Math.max(partnerPaymentCap(job), hourlyAutoBilling.partnerTotal)
       : partnerPaymentCap(job);
+  const hourlyPartnerLabourForCashOut =
+    job.job_type === "hourly" && hourlyAutoBilling ? hourlyAutoBilling.partnerTotal : null;
+  const { base: partnerCashOutBase, extra: partnerCashOutExtra } = partnerCashOutDisplaySplit(
+    job,
+    partnerCap,
+    hourlyPartnerLabourForCashOut,
+  );
   const directCost =
     job.job_type === "hourly" && hourlyAutoBilling
       ? hourlyAutoBilling.partnerTotal + Number(job.materials_cost ?? 0)
@@ -2819,13 +2840,36 @@ export default function JobDetailPage() {
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Financial setup</p>
                 <ChevronDown className="h-4 w-4 text-text-tertiary transition-transform group-open:rotate-180" />
               </summary>
-              <div className="px-4 pb-4 space-y-3 border-t border-border-light pt-4">
-                <p className="text-[11px] text-text-tertiary leading-relaxed">
-                  These fields are saved on the job.{" "}
-                  <span className="text-text-secondary">Billable to client</span> = client price + extras → invoices, collections, amount due.{" "}
-                  <span className="text-text-secondary">Direct costs</span> = partner cost + materials → margin; partner payout & self-bill use partner pay cap when set (&gt; 0), otherwise partner cost, plus materials.{" "}
-                  <span className="text-text-secondary">Schedule</span> = deposit + final (should match billable for a clean split).
-                </p>
+              <div className="px-4 pb-4 space-y-4 border-t border-border-light pt-4">
+                <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">How this maps in code</p>
+                  <ul className="text-[11px] text-text-tertiary leading-relaxed space-y-1.5 list-disc pl-4">
+                    <li>
+                      <span className="font-medium text-text-secondary">Client billable</span> —{" "}
+                      <span className="font-mono text-[10px] text-text-secondary">client_price</span> +{" "}
+                      <span className="font-mono text-[10px] text-text-secondary">extras_amount</span>
+                      {" "}(same as <span className="font-mono text-[10px] text-text-secondary">jobBillableRevenue</span>). Drives invoices, collections, and the customer “amount due” on this job.
+                    </li>
+                    <li>
+                      <span className="font-medium text-text-secondary">Your direct cost</span> —{" "}
+                      <span className="font-mono text-[10px] text-text-secondary">partner_cost</span> +{" "}
+                      <span className="font-mono text-[10px] text-text-secondary">materials_cost</span>
+                      {" "}(same as <span className="font-mono text-[10px] text-text-secondary">jobDirectCost</span>). Subtracted from client billable for margin; both lines roll into the weekly self-bill (labour + materials).
+                    </li>
+                    <li>
+                      <span className="font-medium text-text-secondary">Partner labour cap (cash out / self-bill labour)</span> —{" "}
+                      <span className="font-mono text-[10px] text-text-secondary">partner_agreed_value</span> if &gt; 0, otherwise{" "}
+                      <span className="font-mono text-[10px] text-text-secondary">partner_cost</span>
+                      {" "}(<span className="font-mono text-[10px] text-text-secondary">partnerPaymentCap</span>). Materials are separate on the self-bill.
+                    </li>
+                    <li>
+                      <span className="font-medium text-text-secondary">Deposit / final</span> —{" "}
+                      <span className="font-mono text-[10px] text-text-secondary">customer_deposit</span> +{" "}
+                      <span className="font-mono text-[10px] text-text-secondary">customer_final_payment</span>
+                      {" "}should match client billable for a clean payment schedule.
+                    </li>
+                  </ul>
+                </div>
                 {customerScheduleMismatch && (
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 flex gap-2 text-xs text-amber-900 dark:text-amber-100">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -2844,68 +2888,85 @@ export default function JobDetailPage() {
                     </p>
                   </div>
                 )}
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client revenue (invoice total)</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client price (main sell)</label>
-                    <Input type="number" min={0} step="0.01" value={finForm.client_price} onChange={(e) => {
-                      const price = parseFloat(e.target.value) || 0;
-                      const extras = parseFloat(finForm.extras_amount) || 0;
-                      const dep = parseFloat(finForm.customer_deposit) || 0;
-                      const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                      setFinForm((f) => ({ ...f, client_price: e.target.value, customer_final_payment: autoFinal }));
-                    }} />
-                    <p className="text-[10px] text-text-tertiary mt-1">Labour / core ticket — excludes extras below.</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Extras (client add-ons)</label>
-                    <Input type="number" min={0} step="0.01" value={finForm.extras_amount} onChange={(e) => {
-                      const price = parseFloat(finForm.client_price) || 0;
-                      const extras = parseFloat(e.target.value) || 0;
-                      const dep = parseFloat(finForm.customer_deposit) || 0;
-                      const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                      setFinForm((f) => ({ ...f, extras_amount: e.target.value, customer_final_payment: autoFinal }));
-                    }} />
-                    <p className="text-[10px] text-text-tertiary mt-1">Added to client billable total and invoices.</p>
+                <div className="space-y-2">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">1 · Client billing (what we invoice / collect)</p>
+                  <p className="text-[10px] text-text-tertiary">Not paid to the partner directly — this is revenue from the customer.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Core ticket — client_price</label>
+                      <Input type="number" min={0} step="0.01" value={finForm.client_price} onChange={(e) => {
+                        const price = parseFloat(e.target.value) || 0;
+                        const extras = parseFloat(finForm.extras_amount) || 0;
+                        const dep = parseFloat(finForm.customer_deposit) || 0;
+                        const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                        setFinForm((f) => ({ ...f, client_price: e.target.value, customer_final_payment: autoFinal }));
+                      }} />
+                      <p className="text-[10px] text-text-tertiary mt-1">Main labour / sell price before add-ons (field <span className="font-mono text-[10px]">client_price</span>).</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Add-ons — extras_amount</label>
+                      <Input type="number" min={0} step="0.01" value={finForm.extras_amount} onChange={(e) => {
+                        const price = parseFloat(finForm.client_price) || 0;
+                        const extras = parseFloat(e.target.value) || 0;
+                        const dep = parseFloat(finForm.customer_deposit) || 0;
+                        const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                        setFinForm((f) => ({ ...f, extras_amount: e.target.value, customer_final_payment: autoFinal }));
+                      }} />
+                      <p className="text-[10px] text-text-tertiary mt-1">Surcharges / upsells billed to the client (field <span className="font-mono text-[10px]">extras_amount</span>; CCZ/parking may also sit here).</p>
+                    </div>
                   </div>
                 </div>
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Costs & partner payout</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost</label>
-                    <Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} />
-                    <p className="text-[10px] text-text-tertiary mt-1">Subcontract labour — default cap for partner payments & self-bill.</p>
+
+                <div className="space-y-2 pt-1 border-t border-border-light/80">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">2 · Internal cost (margin)</p>
+                  <p className="text-[10px] text-text-tertiary">What the job costs you — subtracted from client billable for margin. Feeds self-bill lines (partner labour + materials).</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Subcontract labour — partner_cost</label>
+                      <Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} />
+                      <p className="text-[10px] text-text-tertiary mt-1">Amount owed to the partner for work (field <span className="font-mono text-[10px]">partner_cost</span>). “Add extra payout” in Cash Out increases this and <span className="font-mono text-[10px]">partner_extras_amount</span>.</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Your materials spend — materials_cost</label>
+                      <Input type="number" min={0} step="0.01" value={finForm.materials_cost} onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))} />
+                      <p className="text-[10px] text-text-tertiary mt-1">Materials you pay for (field <span className="font-mono text-[10px]">materials_cost</span>). Included in self-bill gross; not client revenue unless you also add to client side.</p>
+                    </div>
                   </div>
+                </div>
+
+                <div className="space-y-2 pt-1 border-t border-border-light/80">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">3 · Partner labour cap (Cash Out / self-bill labour line)</p>
                   <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Materials cost</label>
-                    <Input type="number" min={0} step="0.01" value={finForm.materials_cost} onChange={(e) => setFinForm((f) => ({ ...f, materials_cost: e.target.value }))} />
-                    <p className="text-[10px] text-text-tertiary mt-1">Your materials spend → margin; included in partner self-bill gross.</p>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner pay cap (optional)</label>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Optional override — partner_agreed_value</label>
                     <Input type="number" min={0} step="0.01" value={finForm.partner_agreed_value} onChange={(e) => setFinForm((f) => ({ ...f, partner_agreed_value: e.target.value }))} />
-                    <p className="text-[10px] text-text-tertiary mt-1">If &gt; 0, limits partner payout & self-bill instead of partner cost alone. Leave 0 to use partner cost.</p>
+                    <p className="text-[10px] text-text-tertiary mt-1">
+                      Leave <span className="font-semibold text-text-secondary">0</span> so <span className="font-mono text-[10px]">partnerPaymentCap</span> = <span className="font-mono text-[10px]">partner_cost</span>. If &gt; 0, Cash Out and self-bill use this number for labour instead (still add <span className="font-mono text-[10px]">materials_cost</span> on the bill).
+                    </p>
                   </div>
                 </div>
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Customer collection schedule</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Deposit (scheduled)</label>
-                    <Input type="number" min={0} step="0.01" value={finForm.customer_deposit} onChange={(e) => {
-                      const price = parseFloat(finForm.client_price) || 0;
-                      const extras = parseFloat(finForm.extras_amount) || 0;
-                      const dep = parseFloat(e.target.value) || 0;
-                      const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                      setFinForm((f) => ({ ...f, customer_deposit: e.target.value, customer_final_payment: autoFinal }));
-                    }} />
-                    <p className="text-[10px] text-text-tertiary mt-1">Upfront portion — maps to deposit payments & invoice split logic.</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Final balance (scheduled)</label>
-                    <Input type="number" min={0} step="0.01" value={finForm.customer_final_payment} onChange={(e) => setFinForm((f) => ({ ...f, customer_final_payment: e.target.value }))} />
-                    <p className="text-[10px] text-text-tertiary mt-1">
-                      Auto: (client price + extras) − deposit. Maps to final-balance payments. Edit if you need a manual split.
-                    </p>
+
+                <div className="space-y-2 pt-1 border-t border-border-light/80">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">4 · Client payment schedule</p>
+                  <p className="text-[10px] text-text-tertiary">How the customer pays over time (deposit vs final) — must line up with client billable above.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Deposit — customer_deposit</label>
+                      <Input type="number" min={0} step="0.01" value={finForm.customer_deposit} onChange={(e) => {
+                        const price = parseFloat(finForm.client_price) || 0;
+                        const extras = parseFloat(finForm.extras_amount) || 0;
+                        const dep = parseFloat(e.target.value) || 0;
+                        const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
+                        setFinForm((f) => ({ ...f, customer_deposit: e.target.value, customer_final_payment: autoFinal }));
+                      }} />
+                      <p className="text-[10px] text-text-tertiary mt-1">Upfront portion; maps to deposit payments and invoice stages.</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Final balance — customer_final_payment</label>
+                      <Input type="number" min={0} step="0.01" value={finForm.customer_final_payment} onChange={(e) => setFinForm((f) => ({ ...f, customer_final_payment: e.target.value }))} />
+                      <p className="text-[10px] text-text-tertiary mt-1">
+                        Auto from (client_price + extras_amount) − deposit; maps to final-balance collections. Adjust only if you need a manual split.
+                      </p>
+                    </div>
                   </div>
                 </div>
                 <Button type="button" size="sm" variant="primary" loading={savingFin} onClick={handleSaveFinancials}>Save pricing</Button>
@@ -3200,14 +3261,29 @@ export default function JobDetailPage() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-text-primary">Partner cost</span>
-                      <Badge variant={partnerPaidTotal >= partnerCap && partnerCap > 0 ? "success" : partnerPaidTotal > 0 ? "warning" : "default"} size="sm">
-                        {partnerPaidTotal >= partnerCap && partnerCap > 0 ? "Paid" : partnerPaidTotal > 0 ? "Partial" : "Pending"}
-                      </Badge>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-text-primary">
+                          {partnerCashOutExtra > 0.02 ? "Partner labour" : "Partner cost"}
+                        </span>
+                        <Badge variant={partnerPaidTotal >= partnerCap && partnerCap > 0 ? "success" : partnerPaidTotal > 0 ? "warning" : "default"} size="sm">
+                          {partnerPaidTotal >= partnerCap && partnerCap > 0 ? "Paid" : partnerPaidTotal > 0 ? "Partial" : "Pending"}
+                        </Badge>
+                      </div>
+                      {partnerCashOutExtra > 0.02 ? (
+                        <div className="text-[11px] text-text-tertiary space-y-1 pl-0.5">
+                          <p>
+                            {job.job_type === "hourly" ? "Labour (hourly)" : "Labour"}{" "}
+                            {formatCurrency(partnerCashOutBase)}
+                          </p>
+                          <p className="text-emerald-700 dark:text-emerald-500/90 font-medium">
+                            Extra payout +{formatCurrency(partnerCashOutExtra)}
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
-                    <span className="text-sm font-semibold tabular-nums">{formatCurrency(partnerCap)}</span>
+                    <span className="text-sm font-semibold tabular-nums shrink-0 pt-0.5">{formatCurrency(partnerCap)}</span>
                   </div>
                   {/* Partner payment history: always show header when there is a partner cost so empty state is visible */}
                   {partnerCap > 0.02 && (
@@ -3586,6 +3662,43 @@ export default function JobDetailPage() {
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Operating margin</p>
               <p className={cn("text-2xl font-bold mt-1", approvalProfit >= 0 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalProfit)}</p>
               <p className="text-[11px] text-text-tertiary mt-1">{formatCurrency(approvalProfit)} / {Math.max(0, approvalMarginPct).toFixed(1)}%</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="rounded-xl border border-border-light bg-card p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client extra charges</p>
+                <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
+                  Included in total price · <span className="font-mono text-[10px] text-text-secondary">extras_amount</span>
+                  {" "}(add-ons / upsells; CCZ or parking may be folded in here).
+                </p>
+              </div>
+              <p
+                className={cn(
+                  "text-xl sm:text-2xl font-bold tabular-nums shrink-0 text-right",
+                  approvalClientExtrasAmount > 0.02 ? "text-emerald-600" : "text-text-tertiary",
+                )}
+              >
+                {approvalClientExtrasAmount > 0.02 ? `+${formatCurrency(approvalClientExtrasAmount)}` : "—"}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border-light bg-card p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner extra payout</p>
+                <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
+                  On top of base labour cap · <span className="font-mono text-[10px] text-text-secondary">partner_extras_amount</span>
+                  {" "}or hourly vs cap delta (same as Cash Out breakdown).
+                </p>
+              </div>
+              <p
+                className={cn(
+                  "text-xl sm:text-2xl font-bold tabular-nums shrink-0 text-right",
+                  approvalPartnerExtrasSplit.extra > 0.02 ? "text-emerald-600" : "text-text-tertiary",
+                )}
+              >
+                {approvalPartnerExtrasSplit.extra > 0.02 ? `+${formatCurrency(approvalPartnerExtrasSplit.extra)}` : "—"}
+              </p>
             </div>
           </div>
 
