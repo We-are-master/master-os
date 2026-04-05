@@ -2901,8 +2901,8 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'Teste Teste',
-  'test@teste.com',
+  'Test User',
+  'test.user@example.com',
   '07508801803',
   '4 Versatile House London UB7 7SE United Kingd',
   NULL::text,
@@ -3063,8 +3063,8 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'Guilherme Teste',
-  'guilkherme@gmail.com',
+  'James Wilson (test)',
+  'james.wilson-test@example.com',
   '07508801908',
   '124 City Rd London EC1V 2NP United Kingdom',
   NULL::text,
@@ -6159,8 +6159,8 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'Guilherme Dantas',
-  'guilhermedantas778@gmail.com',
+  'James Mitchell',
+  'james.mitchell@example.com',
   '07508801803',
   NULL,
   NULL::text,
@@ -39914,12 +39914,12 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'GUILHERME DANTAS PEREIRA DO NASCIME',
+  'James Mitchell',
   NULL,
   '+44 7508 801803',
-  'UB77SE',
+  '18 Porters Way, West Drayton, Middlesex',
   NULL::text,
-  'UB77SE',
+  'UB7 7SE',
   'residential',
   'direct',
   'active',
@@ -40040,9 +40040,9 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'Guilherme Dantas',
+  'James Mitchell',
   NULL,
-  '+5511990106379',
+  '+44 7700 900445',
   NULL,
   NULL::text,
   NULL,
@@ -40616,12 +40616,12 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'GUILHERME DANTAS PEREIRA DO NASCIME',
+  'James Mitchell',
   NULL,
   '+44 7508 801803',
-  'Rua capitão eugênio de macedo São Paulo UB77S',
+  '18 Porters Way, West Drayton, Middlesex',
   NULL::text,
-  'UB77SE',
+  'UB7 7SE',
   'residential',
   'direct',
   'active',
@@ -41462,7 +41462,7 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'Orlando teste',
+  'Orlando Test',
   NULL,
   NULL,
   '86045640',
@@ -42020,12 +42020,12 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'Guilherme Dantas',
+  'James Mitchell',
   NULL,
-  '11990106379',
-  'RUA TAL London UB77SE London',
+  '+44 7700 900322',
+  '14 Station Road, West Drayton, Middlesex',
   NULL::text,
-  'UB77SE',
+  'UB7 7SE',
   'residential',
   'direct',
   'active',
@@ -42092,12 +42092,12 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'Guilherme Dantas',
+  'James Mitchell',
   NULL,
   '+44 7508 801803',
-  'UB77SE',
+  '16 Porters Way, West Drayton, Middlesex',
   NULL::text,
-  'UB77SE',
+  'UB7 7SE',
   'residential',
   'direct',
   'active',
@@ -42110,12 +42110,12 @@ INSERT INTO public.clients (
   NULL::timestamptz
 ),
 (
-  'GUILHERME DANTAS PEREIRA DO NASCIME',
+  'James Mitchell',
   NULL,
-  '11990106379',
-  'ruta tal london UB77SE London',
+  '+44 7700 900321',
+  '12 Church Lane, West Drayton, Middlesex',
   NULL::text,
-  'UB77SE',
+  'UB7 7SE',
   'residential',
   'direct',
   'active',
