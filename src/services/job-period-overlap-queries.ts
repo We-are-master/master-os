@@ -1,10 +1,14 @@
 import { createClient } from "@/lib/supabase/client";
-import { jobExecutionOverlapsYmdRange, type JobPeriodOverlapRow } from "@/lib/job-period-overlap";
+import {
+  jobExecutionOverlapsYmdRange,
+  jobScheduleStartInYmdRange,
+  type JobPeriodOverlapRow,
+} from "@/lib/job-period-overlap";
 import type { Job } from "@/types/database";
 
 const CHUNK = 800;
 
-/** Full rows for Jobs Management list when filtering by schedule period (client-side overlap). */
+/** Full rows for Jobs Management when the schedule window filters by **start day** in range. */
 export async function loadAllJobsForPeriodOverlap(statusIn: string[], range: { from: string; to: string }): Promise<Job[]> {
   const supabase = createClient();
   const { from, to } = range;
@@ -20,14 +24,14 @@ export async function loadAllJobsForPeriodOverlap(statusIn: string[], range: { f
     if (error) throw error;
     const batch = (data ?? []) as Job[];
     for (const j of batch) {
-      if (jobExecutionOverlapsYmdRange(j, from, to)) out.push(j);
+      if (jobScheduleStartInYmdRange(j, from, to)) out.push(j);
     }
     if (batch.length < CHUNK) break;
   }
   return out;
 }
 
-/** Tab counts when a schedule period is active — same overlap semantics as the job list. */
+/** Tab counts when a schedule window is active — same **start-day** semantics as the job list. */
 export async function getJobStatusCountsWithScheduleOverlap(
   statuses: string[],
   range: { from: string; to: string },
@@ -47,13 +51,41 @@ export async function getJobStatusCountsWithScheduleOverlap(
     if (error) throw error;
     const batch = (data ?? []) as JobPeriodOverlapRow[];
     for (const row of batch) {
-      if (!jobExecutionOverlapsYmdRange(row, range.from, range.to)) continue;
+      if (!jobScheduleStartInYmdRange(row, range.from, range.to)) continue;
       const s = row.status;
       if (typeof counts[s] === "number") counts[s] += 1;
       counts["all"] += 1;
     }
     if (batch.length < CHUNK) break;
   }
+  return counts;
+}
+
+/**
+ * Tab counts with no schedule filter — chunked `select` of `status` only, same RLS as the job list.
+ * Prefer this over `count: exact` + `head: true` per status, which often returns 0 on some PostgREST stacks.
+ */
+export async function getJobStatusCountsByChunkedSelect(statuses: string[]): Promise<Record<string, number>> {
+  const supabase = createClient();
+  const counts: Record<string, number> = Object.fromEntries(statuses.map((s) => [s, 0]));
+
+  for (let offset = 0; ; offset += CHUNK) {
+    const { data, error } = await supabase
+      .from("jobs")
+      .select("status")
+      .is("deleted_at", null)
+      .in("status", statuses)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + CHUNK - 1);
+    if (error) throw error;
+    const batch = (data ?? []) as { status?: string }[];
+    for (const row of batch) {
+      const s = row.status;
+      if (typeof s === "string" && typeof counts[s] === "number") counts[s] += 1;
+    }
+    if (batch.length < CHUNK) break;
+  }
+
   return counts;
 }
 

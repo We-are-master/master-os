@@ -394,28 +394,34 @@ function JobsPageContent() {
     try {
       const countOpts = scheduleRange ? { scheduleRange } : undefined;
       const supabase = getSupabase();
-      const [counts, rows, deletedHead] = await Promise.all([
-        getStatusCounts("jobs", [...JOB_STATUSES], "status", countOpts),
-        fetchAllJobsFinancialKpiRows(scheduleRange),
-        supabase
-          .from("jobs")
-          .select("*", { count: "exact", head: true })
-          .eq("status", "deleted")
-          .not("deleted_at", "is", null),
-      ]);
-      const deletedCount = deletedHead.error ? 0 : deletedHead.count ?? 0;
-      const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
-      setTabCounts({ ...counts, all: allTabCount, deleted: deletedCount });
-      const pipelineRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
-      const ticketSum = pipelineRows.reduce((s, r) => s + jobBillableRevenue(r), 0);
-      setTotalRevenue(ticketSum);
-      setAvgTicket(pipelineRows.length ? ticketSum / pipelineRows.length : 0);
-      const activeRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted");
-      const margins = activeRows.map((r) => jobMarginPercent(r));
-      const avgM = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
-      setAvgMarginPct(Math.round(avgM * 10) / 10);
-    } catch {
-      /* cosmetic */
+      try {
+        const [counts, deletedHead] = await Promise.all([
+          getStatusCounts("jobs", [...JOB_STATUSES], "status", countOpts),
+          supabase
+            .from("jobs")
+            .select("*", { count: "exact", head: true })
+            .eq("status", "deleted")
+            .not("deleted_at", "is", null),
+        ]);
+        const deletedCount = deletedHead.error ? 0 : deletedHead.count ?? 0;
+        const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
+        setTabCounts({ ...counts, all: allTabCount, deleted: deletedCount });
+      } catch {
+        /* tab badges — keep prior counts */
+      }
+      try {
+        const rows = await fetchAllJobsFinancialKpiRows(scheduleRange);
+        const pipelineRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
+        const ticketSum = pipelineRows.reduce((s, r) => s + jobBillableRevenue(r), 0);
+        setTotalRevenue(ticketSum);
+        setAvgTicket(pipelineRows.length ? ticketSum / pipelineRows.length : 0);
+        const activeRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted");
+        const margins = activeRows.map((r) => jobMarginPercent(r));
+        const avgM = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
+        setAvgMarginPct(Math.round(avgM * 10) / 10);
+      } catch {
+        /* KPI strip — cosmetic */
+      }
     } finally {
       setKpiFinancialLoading(false);
     }

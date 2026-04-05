@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
-import { getJobStatusCountsWithScheduleOverlap } from "./job-period-overlap-queries";
+import { getJobStatusCountsByChunkedSelect, getJobStatusCountsWithScheduleOverlap } from "./job-period-overlap-queries";
 
 export type SortDirection = "asc" | "desc";
 
@@ -36,15 +36,19 @@ export interface ListParams {
   invoicePeriodBounds?: { from: string; to: string; startIso: string; endIso: string };
 }
 
-/** PostgREST `or` filter for jobs table schedule window (pairs with deleted_at / status filters via AND). */
+/**
+ * PostgREST `or` filter: job **start** falls in the window — same priority as `jobExecutionStartYmd`:
+ * `scheduled_start_at` (instant in local-day UTC bounds), else `scheduled_date`, else `created_at`.
+ */
 export function applyJobsScheduleRangeToQuery<T extends { or: (filters: string) => T }>(
   query: T,
   range: { from: string; to: string }
 ): T {
   const { startIso, endIso } = localYmdBoundsToUtcIso(range.from, range.to);
-  const byDate = `and(scheduled_date.gte.${range.from},scheduled_date.lte.${range.to})`;
-  const byStart = `and(scheduled_start_at.gte."${startIso}",scheduled_start_at.lte."${endIso}")`;
-  return query.or(`${byDate},${byStart}`);
+  const byStartAt = `and(scheduled_start_at.not.is.null,scheduled_start_at.gte."${startIso}",scheduled_start_at.lte."${endIso}")`;
+  const byDateOnly = `and(scheduled_start_at.is.null,scheduled_date.not.is.null,scheduled_date.gte.${range.from},scheduled_date.lte.${range.to})`;
+  const byCreated = `and(scheduled_start_at.is.null,scheduled_date.is.null,created_at.gte."${startIso}",created_at.lte."${endIso}")`;
+  return query.or(`${byStartAt},${byDateOnly},${byCreated}`);
 }
 
 /**
@@ -176,7 +180,17 @@ export async function getStatusCounts(
     return getJobStatusCountsWithScheduleOverlap(statuses, options.scheduleRange);
   }
 
-  /** `jobs`: `get_status_counts` can return an empty set while per-status SQL counts match the list — use fallback below. */
+  const jobsNoDateFilter =
+    !options?.dateColumn &&
+    !options?.dateFrom &&
+    !options?.dateTo &&
+    !options?.dateFromUtcIso &&
+    !options?.dateToUtcIso;
+
+  if (table === "jobs" && canUseRpc && jobsNoDateFilter) {
+    return getJobStatusCountsByChunkedSelect(statuses);
+  }
+
   if (canUseRpc && table !== "jobs") {
     const { data: rpcRows, error: rpcErr } = await supabase.rpc("get_status_counts", {
       p_table_name: table,
