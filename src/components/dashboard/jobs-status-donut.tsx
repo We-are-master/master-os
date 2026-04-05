@@ -6,8 +6,25 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabase } from "@/services/base";
 import { useDashboardDateRangeOptional } from "@/hooks/use-dashboard-date-range";
 
+/** Donut shows in-flight work only (excludes completed, cancelled, deleted, draft). */
+const JOBS_DONUT_ACTIVE_STATUSES = new Set([
+  "unassigned",
+  "auto_assigning",
+  "scheduled",
+  "late",
+  "in_progress_phase1",
+  "in_progress_phase2",
+  "in_progress_phase3",
+  "final_check",
+  "awaiting_payment",
+  "need_attention",
+  "on_hold",
+  "in_progress",
+]);
+
 const STATUS_COLORS: Record<string, string> = {
   unassigned: "#fbbf24",
+  auto_assigning: "#fcd34d",
   scheduled: "#60a5fa",
   late: "#fb923c",
   in_progress_phase1: "#f97316",
@@ -25,6 +42,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 const STATUS_LABELS: Record<string, string> = {
   unassigned: "Unassigned",
+  auto_assigning: "Assigning",
   scheduled: "Scheduled",
   late: "Late",
   in_progress_phase1: "In progress (P1)",
@@ -62,6 +80,7 @@ export function JobsStatusDonut() {
         const counts: Record<string, number> = {};
         for (const j of jobs ?? []) {
           const s = (j as { status: string }).status;
+          if (!JOBS_DONUT_ACTIVE_STATUSES.has(s)) continue;
           counts[s] = (counts[s] ?? 0) + 1;
         }
         const chartData = Object.entries(counts)

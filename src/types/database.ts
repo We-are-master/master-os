@@ -399,6 +399,8 @@ export interface Account {
   id: string;
   company_name: string;
   contact_name: string;
+  /** Internal account owner (sales / AM), same idea as jobs.owner_name. */
+  owner_name?: string | null;
   email: string;
   address?: string | null;
   crn?: string | null;

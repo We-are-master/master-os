@@ -27,11 +27,16 @@ export type OverviewPipelineJobRow = {
   scheduled_start_at?: string | null;
   scheduled_end_at?: string | null;
   completed_date?: string | null;
+  /** Set when the job was created from an accepted quote (conversion funnel). */
+  quote_id?: string | null;
 };
 
 const SELECT_FULL =
-  "id, client_id, owner_name, partner_name, title, client_price, extras_amount, partner_cost, materials_cost, commission, status, created_at";
+  "id, client_id, owner_name, partner_name, title, client_price, extras_amount, partner_cost, materials_cost, commission, status, created_at, quote_id";
 const SELECT_LEGACY =
+  "id, client_id, partner_name, title, client_price, partner_cost, materials_cost, commission, status, created_at, quote_id";
+/** Oldest job rows may not have `quote_id`; omit for schema compatibility. */
+const SELECT_LEGACY_NO_QUOTE =
   "id, client_id, partner_name, title, client_price, partner_cost, materials_cost, commission, status, created_at";
 
 const SELECT_EXEC_FULL =
@@ -62,6 +67,9 @@ export async function fetchPipelineJobsForDashboard(
   let res = await run(SELECT_FULL);
   if (res.error && isPostgrestWriteRetryableError(res.error)) {
     res = await run(SELECT_LEGACY);
+  }
+  if (res.error && isPostgrestSelectSchemaError(res.error)) {
+    res = await run(SELECT_LEGACY_NO_QUOTE);
   }
   if (res.error) throw res.error;
 
