@@ -41,3 +41,9 @@ export async function listAssignableUsers(): Promise<AssignableUser[]> {
 
   return mapped;
 }
+
+/** Internal assignees with `is_active` — for account owner, job owner, etc. (excludes deactivated Team users). */
+export async function listActiveAssignableUsers(): Promise<AssignableUser[]> {
+  const all = await listAssignableUsers();
+  return all.filter((u) => u.is_active);
+}

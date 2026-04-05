@@ -40,6 +40,8 @@ import { getSupabase } from "@/services/base";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { findDuplicateAccountHints, formatAccountDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
+import { JobOwnerSelect } from "@/components/ui/job-owner-select";
+import { listActiveAssignableUsers, type AssignableUser } from "@/services/profiles";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
@@ -109,7 +111,7 @@ function invoiceStatusBadge(status: string) {
 const emptyForm = {
   company_name: "",
   contact_name: "",
-  owner_name: "",
+  account_owner_id: "",
   email: "",
   address: "",
   crn: "",
@@ -135,6 +137,7 @@ export default function AccountsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [createAssignableUsers, setCreateAssignableUsers] = useState<AssignableUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   useProfile();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
@@ -165,6 +168,11 @@ export default function AccountsPage() {
     loadKpis();
   }, [loadKpis]);
 
+  useEffect(() => {
+    if (!createOpen) return;
+    void listActiveAssignableUsers().then(setCreateAssignableUsers).catch(() => setCreateAssignableUsers([]));
+  }, [createOpen]);
+
   const avgDeal = totalAccounts > 0 ? Math.round(totalRevenue / totalAccounts) : 0;
 
   async function handleCreate(e: React.FormEvent) {
@@ -183,10 +191,13 @@ export default function AccountsPage() {
 
     setSubmitting(true);
     try {
+      const ownerId = form.account_owner_id.trim();
+      const ownerRow = ownerId ? createAssignableUsers.find((u) => u.id === ownerId) : undefined;
       const created = await createAccount({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
-        owner_name: form.owner_name.trim() || null,
+        owner_name: ownerRow?.full_name?.trim() || null,
+        account_owner_id: ownerId || null,
         email: form.email.trim(),
         address: form.address.trim() || null,
         crn: form.crn.trim() || null,
@@ -395,12 +406,20 @@ export default function AccountsPage() {
 
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Account owner</label>
-            <Input
-              value={form.owner_name}
-              onChange={(e) => setForm((f) => ({ ...f, owner_name: e.target.value }))}
-              placeholder="Internal owner (sales / AM)"
+            <JobOwnerSelect
+              value={form.account_owner_id || undefined}
+              users={createAssignableUsers}
+              emptyLabel="Select internal owner (optional)"
+              onChange={(id) =>
+                setForm((f) => ({
+                  ...f,
+                  account_owner_id: id ?? "",
+                }))
+              }
             />
-            <p className="text-[10px] text-text-tertiary mt-1">Who owns this account internally — same idea as job owner.</p>
+            <p className="text-[10px] text-text-tertiary mt-1">
+              Active users on the platform (sales / AM) — same idea as job owner, used for dashboards.
+            </p>
           </div>
 
           <div>
@@ -510,12 +529,14 @@ function AccountDetailDrawer({
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingContract, setUploadingContract] = useState(false);
+  const [drawerAssignableUsers, setDrawerAssignableUsers] = useState<AssignableUser[]>([]);
   const logoFileRef = useRef<HTMLInputElement>(null);
   const contractFileRef = useRef<HTMLInputElement>(null);
   const [edit, setEdit] = useState({
     company_name: "",
     contact_name: "",
     owner_name: "",
+    account_owner_id: "",
     email: "",
     address: "",
     crn: "",
@@ -534,6 +555,7 @@ function AccountDetailDrawer({
       company_name: account.company_name,
       contact_name: account.contact_name,
       owner_name: account.owner_name ?? "",
+      account_owner_id: account.account_owner_id ?? "",
       email: account.email,
       address: account.address ?? "",
       crn: account.crn ?? "",
@@ -546,6 +568,11 @@ function AccountDetailDrawer({
       contract_url: account.contract_url ?? "",
     });
   }, [account]);
+
+  useEffect(() => {
+    if (!account) return;
+    void listActiveAssignableUsers().then(setDrawerAssignableUsers).catch(() => setDrawerAssignableUsers([]));
+  }, [account?.id]);
 
   useEffect(() => {
     if (!account?.id) return;
@@ -677,6 +704,7 @@ function AccountDetailDrawer({
         company_name: edit.company_name.trim(),
         contact_name: edit.contact_name.trim(),
         owner_name: edit.owner_name.trim() || null,
+        account_owner_id: edit.account_owner_id.trim() || null,
         email: edit.email.trim(),
         address: edit.address.trim() || null,
         crn: edit.crn.trim() || null,
@@ -856,12 +884,24 @@ function AccountDetailDrawer({
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Account owner</label>
-                  <Input
-                    value={edit.owner_name}
-                    onChange={(e) => setEdit((p) => ({ ...p, owner_name: e.target.value }))}
-                    placeholder="Internal owner (sales / AM)"
+                  <JobOwnerSelect
+                    value={edit.account_owner_id || undefined}
+                    fallbackName={edit.owner_name?.trim() || undefined}
+                    users={drawerAssignableUsers}
+                    emptyLabel="No internal owner"
+                    disabled={saving}
+                    onChange={(id) => {
+                      const u = drawerAssignableUsers.find((x) => x.id === id);
+                      setEdit((p) => ({
+                        ...p,
+                        account_owner_id: id ?? "",
+                        owner_name: id ? (u?.full_name ?? "") : "",
+                      }));
+                    }}
                   />
-                  <p className="text-[10px] text-text-tertiary mt-1">Same concept as job owner — for dashboards and reporting.</p>
+                  <p className="text-[10px] text-text-tertiary mt-1">
+                    Active platform users — links to profiles for dashboard rollups; name stays in sync when you pick someone.
+                  </p>
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contract</label>

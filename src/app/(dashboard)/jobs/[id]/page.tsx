@@ -302,6 +302,8 @@ export default function JobDetailPage() {
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   /** Job invoice cards: collapsed shows amount only; expand for ref, status, Stripe, actions. */
   const [expandedInvoiceIds, setExpandedInvoiceIds] = useState<Set<string>>(new Set());
+  const [invoiceDueDateDrafts, setInvoiceDueDateDrafts] = useState<Record<string, string>>({});
+  const [savingInvoiceDueDateId, setSavingInvoiceDueDateId] = useState<string | null>(null);
   const [jobSelfBill, setJobSelfBill] = useState<SelfBill | null>(null);
   const [loadingSelfBill, setLoadingSelfBill] = useState(false);
   const [linkingSelfBill, setLinkingSelfBill] = useState(false);
@@ -618,7 +620,37 @@ export default function JobDetailPage() {
 
   useEffect(() => {
     setExpandedInvoiceIds(new Set());
+    setInvoiceDueDateDrafts({});
   }, [job?.id]);
+
+  const saveInvoiceDueDate = useCallback(
+    async (inv: Invoice, draftValue: string) => {
+      if (!job) return;
+      const trimmed = draftValue.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        toast.error("Enter a valid due date");
+        return;
+      }
+      const prev = inv.due_date ? String(inv.due_date).slice(0, 10) : "";
+      if (trimmed === prev) return;
+      setSavingInvoiceDueDateId(inv.id);
+      try {
+        await updateInvoice(inv.id, { due_date: trimmed });
+        setInvoiceDueDateDrafts((d) => {
+          const next = { ...d };
+          delete next[inv.id];
+          return next;
+        });
+        await loadJobInvoices(job);
+        toast.success("Due date updated");
+      } catch {
+        toast.error("Failed to update due date");
+      } finally {
+        setSavingInvoiceDueDateId(null);
+      }
+    },
+    [job, loadJobInvoices],
+  );
 
   useEffect(() => {
     if (!job?.reference?.trim()) {
@@ -3508,6 +3540,11 @@ export default function JobDetailPage() {
                   jobInvoices.map((inv) => {
                       const stripePaid = inv.stripe_payment_status === "paid";
                       const invOpen = expandedInvoiceIds.has(inv.id);
+                      const canEditInvoiceDueDate = inv.status !== "paid" && inv.status !== "cancelled";
+                      const dueDraft =
+                        invoiceDueDateDrafts[inv.id] ??
+                        (inv.due_date ? String(inv.due_date).slice(0, 10) : "");
+                      const duePrev = inv.due_date ? String(inv.due_date).slice(0, 10) : "";
                       return (
                         <div key={inv.id} className="rounded-lg border border-border-light p-3">
                           <div className="flex items-start gap-2">
@@ -3529,9 +3566,16 @@ export default function JobDetailPage() {
                             </button>
                             <div className="min-w-0 flex-1 space-y-2">
                               {!invOpen ? (
-                                <div className="flex items-center justify-between gap-2 pt-0.5">
-                                  <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
-                                  <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(inv.amount)}</p>
+                                <div className="flex items-start justify-between gap-2 pt-0.5">
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
+                                    {inv.due_date ? (
+                                      <p className="text-[10px] text-text-tertiary mt-0.5">Due {formatDate(inv.due_date)}</p>
+                                    ) : null}
+                                  </div>
+                                  <p className="text-lg font-bold tabular-nums text-primary tracking-tight shrink-0">
+                                    {formatCurrency(inv.amount)}
+                                  </p>
                                 </div>
                               ) : (
                                 <>
@@ -3551,6 +3595,40 @@ export default function JobDetailPage() {
                                     </Badge>
                                   </div>
                                   <p className="text-sm font-bold tabular-nums">{formatCurrency(inv.amount)}</p>
+                                  <div className="space-y-1.5 pt-0.5">
+                                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
+                                      Due date
+                                    </p>
+                                    {canEditInvoiceDueDate ? (
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Input
+                                          type="date"
+                                          className="w-full min-w-[9.5rem] max-w-[11rem]"
+                                          value={dueDraft}
+                                          onChange={(e) =>
+                                            setInvoiceDueDateDrafts((d) => ({ ...d, [inv.id]: e.target.value }))
+                                          }
+                                          aria-label={`Invoice due date (${inv.reference})`}
+                                        />
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="secondary"
+                                          loading={savingInvoiceDueDateId === inv.id}
+                                          disabled={
+                                            savingInvoiceDueDateId === inv.id || dueDraft.trim() === duePrev
+                                          }
+                                          onClick={() => void saveInvoiceDueDate(inv, dueDraft)}
+                                        >
+                                          Save
+                                        </Button>
+                                      </div>
+                                    ) : (
+                                      <p className="text-sm text-text-secondary">
+                                        {inv.due_date ? formatDate(inv.due_date) : "—"}
+                                      </p>
+                                    )}
+                                  </div>
                                   {(inv.status === "partially_paid" || invoiceAmountPaid(inv) > 0.02) && inv.status !== "paid" ? (
                                     <p className="text-[11px] text-text-tertiary">
                                       Paid {formatCurrency(invoiceAmountPaid(inv))} · Due {formatCurrency(invoiceBalanceDue(inv))}

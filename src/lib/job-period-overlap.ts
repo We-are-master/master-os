@@ -75,3 +75,12 @@ export function jobExecutionOverlapsYmdRange(row: JobPeriodOverlapRow, fromDay: 
 export function jobExecutionStartYmd(row: JobPeriodOverlapRow): string {
   return jobExecutionWindowYmd(row).start;
 }
+
+/**
+ * True if the job's schedule **start day** ({@link jobExecutionStartYmd}) is within [fromDay, toDay] inclusive.
+ * Used by Jobs Management "Schedule window" (Today / This week / …), not execution-span overlap.
+ */
+export function jobScheduleStartInYmdRange(row: JobPeriodOverlapRow, fromDay: string, toDay: string): boolean {
+  const start = jobExecutionStartYmd(row);
+  return start >= fromDay && start <= toDay;
+}

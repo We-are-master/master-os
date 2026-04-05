@@ -1,6 +1,6 @@
 import { getSupabase, queryList, type ListParams, type ListResult, type SortDirection } from "./base";
 import { loadAllJobsForPeriodOverlap } from "./job-period-overlap-queries";
-import { jobExecutionOverlapsYmdRange } from "@/lib/job-period-overlap";
+import { jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
 import type { Job } from "@/types/database";
 import { cancelOpenInvoicesForJobCancellation, createInvoice } from "./invoices";
 import { getInvoiceDueDateIsoForClient } from "./invoice-due-date";
@@ -65,7 +65,7 @@ export async function fetchAllJobsFinancialKpiRows(
     const rawBatch = (data ?? []) as unknown as JobFinancialKpiRow[];
     const batch =
       scheduleRange && fromY && toY
-        ? rawBatch.filter((r) => jobExecutionOverlapsYmdRange(r, fromY, toY))
+        ? rawBatch.filter((r) => jobScheduleStartInYmdRange(r, fromY, toY))
         : rawBatch;
     all.push(...batch);
     if (rawBatch.length < chunk) break;
