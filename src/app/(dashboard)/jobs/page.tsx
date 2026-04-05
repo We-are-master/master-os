@@ -99,6 +99,20 @@ const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
 
 type ScheduleDatePreset = "all" | "today" | "tomorrow" | "week" | "month" | "custom";
 
+const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v1";
+const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "custom"];
+
+function readStoredJobsSchedulePreset(): ScheduleDatePreset {
+  if (typeof window === "undefined") return "all";
+  try {
+    const v = localStorage.getItem(JOBS_SCHEDULE_PRESET_STORAGE_KEY);
+    if (v && (SCHEDULE_PRESET_IDS as readonly string[]).includes(v)) return v as ScheduleDatePreset;
+  } catch {
+    /* ignore */
+  }
+  return "all";
+}
+
 function formatMediumYmd(ymd: string): string {
   const [y, m, d] = ymd.split("-").map(Number);
   if (!y || !m || !d) return ymd;
@@ -181,7 +195,20 @@ function JobsPageContent() {
   const router = useRouter();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const anchorDayKey = formatLocalYmd(new Date());
-  const [scheduleDatePreset, setScheduleDatePreset] = useState<ScheduleDatePreset>("all");
+  const [scheduleDatePreset, setScheduleDatePresetState] = useState<ScheduleDatePreset>("all");
+  const setScheduleDatePreset = useCallback((p: ScheduleDatePreset) => {
+    setScheduleDatePresetState(p);
+    try {
+      localStorage.setItem(JOBS_SCHEDULE_PRESET_STORAGE_KEY, p);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    const stored = readStoredJobsSchedulePreset();
+    if (stored !== "all") setScheduleDatePresetState(stored);
+  }, []);
   const [customScheduleFrom, setCustomScheduleFrom] = useState(() => formatLocalYmd(new Date()));
   const [customScheduleTo, setCustomScheduleTo] = useState(() => formatLocalYmd(new Date()));
   const [dateFilterOpen, setDateFilterOpen] = useState(false);

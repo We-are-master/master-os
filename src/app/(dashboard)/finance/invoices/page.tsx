@@ -1215,6 +1215,8 @@ function InvoiceDetailDrawer({
   const [partialAmount, setPartialAmount] = useState("");
   const [partialPaymentDate, setPartialPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [savingPartial, setSavingPartial] = useState(false);
+  const [dueDateEdit, setDueDateEdit] = useState("");
+  const [savingDueDate, setSavingDueDate] = useState(false);
   const [collectionSectionOpen, setCollectionSectionOpen] = useState(false);
   /** Linked Job tab: sales & costs breakdown (collapsed by default). */
   const [linkedJobSalesCostsOpen, setLinkedJobSalesCostsOpen] = useState(false);
@@ -1243,6 +1245,8 @@ function InvoiceDetailDrawer({
     setCollLocked(!!invoice.collection_stage_locked);
     setPartialAmount("");
     setPartialPaymentDate(new Date().toISOString().slice(0, 10));
+    setDueDateEdit(invoice.due_date ? String(invoice.due_date).slice(0, 10) : "");
+    setSavingDueDate(false);
     setCollectionSectionOpen(false);
     setLinkedJobSalesCostsOpen(false);
     setJobCustomerPaidSum(null);
@@ -1394,6 +1398,27 @@ function InvoiceDetailDrawer({
     }
   };
 
+  const saveDueDate = async () => {
+    if (!invoice || !onInvoiceUpdated) return;
+    const trimmed = dueDateEdit.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      toast.error("Enter a valid due date");
+      return;
+    }
+    const prev = invoice.due_date ? String(invoice.due_date).slice(0, 10) : "";
+    if (trimmed === prev) return;
+    setSavingDueDate(true);
+    try {
+      const updated = await updateInvoice(invoice.id, { due_date: trimmed });
+      onInvoiceUpdated(updated);
+      toast.success("Due date updated");
+    } catch {
+      toast.error("Failed to update due date");
+    } finally {
+      setSavingDueDate(false);
+    }
+  };
+
   const handleCopyLink = () => {
     if (stripeState.linkUrl) {
       navigator.clipboard.writeText(stripeState.linkUrl);
@@ -1448,6 +1473,11 @@ function InvoiceDetailDrawer({
   const linkedJobMarginAmount = linkedJob ? linkedJobCustomerTotal - linkedJobTotalCost : 0;
   const linkedJobMarginPct = linkedJobCustomerTotal > 0.01 ? (linkedJobMarginAmount / linkedJobCustomerTotal) * 100 : 0;
   const linkedJobForcedPaidBySystemOwner = linkedJob ? isJobForcePaid(linkedJob.internal_notes) : false;
+
+  const canEditDueDate =
+    Boolean(onInvoiceUpdated) &&
+    invoice.status !== "paid" &&
+    invoice.status !== "cancelled";
 
   return (
     <Drawer open={!!invoice} onClose={onClose} title={invoice.reference} subtitle={invoice.client_name} width="w-[580px]">
@@ -1521,7 +1551,40 @@ function InvoiceDetailDrawer({
               <InfoRow icon={Hash} label="Reference" value={invoice.reference} />
               <InfoRow icon={Building2} label="Client" value={invoice.client_name} />
               <InfoRow icon={Calendar} label="Issue Date" value={formatDate(invoiceEffectiveDateValue(invoice))} />
-              <InfoRow icon={Calendar} label="Due Date" value={formatDate(invoice.due_date)} highlight={isOverdue} />
+              {canEditDueDate ? (
+                <div className="space-y-1.5 min-w-0">
+                  <div className="flex items-center gap-2 text-text-secondary">
+                    <Calendar className="h-4 w-4 shrink-0 text-text-tertiary" />
+                    <span className="text-xs font-medium text-text-secondary">Due date</span>
+                    {isOverdue ? (
+                      <span className="text-[10px] font-semibold text-red-600 dark:text-red-400">Overdue</span>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      type="date"
+                      className="w-full min-w-[9.5rem] max-w-[11rem]"
+                      value={dueDateEdit}
+                      onChange={(e) => setDueDateEdit(e.target.value)}
+                      aria-label="Invoice due date"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={
+                        savingDueDate ||
+                        dueDateEdit.trim() === (invoice.due_date ? String(invoice.due_date).slice(0, 10) : "")
+                      }
+                      onClick={() => void saveDueDate()}
+                    >
+                      {savingDueDate ? "Saving…" : "Save"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <InfoRow icon={Calendar} label="Due Date" value={formatDate(invoice.due_date)} highlight={isOverdue} />
+              )}
               {invoice.paid_date && <InfoRow icon={CheckCircle2} label="Paid Date" value={formatDate(invoice.paid_date)} />}
               {invoice.job_reference && <InfoRow icon={Briefcase} label="Job Reference" value={invoice.job_reference} />}
             </div>

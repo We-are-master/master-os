@@ -680,9 +680,9 @@ export default function PartnersPage() {
         </PageHeader>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Total Partners" value={totalPartners} format="number" icon={Users} accent="blue" />
           <KpiCard title="Active" value={activeCount} format="number" icon={Briefcase} accent="emerald" />
-          <KpiCard title="Needs Attention" value={needsAttentionCount} format="number" icon={AlertTriangle} accent="amber" />
+          <KpiCard title="Inactive" value={inactiveStageCount} format="number" icon={XCircle} accent="stone" />
+          <KpiCard title="Total" value={totalPartners} format="number" icon={Users} accent="blue" />
           <KpiCard
             title="Avg compliance"
             value={complianceAvg == null ? "—" : Math.round(complianceAvg)}
