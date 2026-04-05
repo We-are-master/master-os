@@ -29,7 +29,8 @@ import {
 } from "@/lib/dashboard-cashflow-buckets";
 import { BestSellersByOwner } from "@/components/dashboard/best-sellers-by-owner";
 import {
-  fetchPipelineJobsForDashboard,
+  fetchExecutiveRevenueJobsForDashboard,
+  jobExecutionStartYmd,
   defaultMonthlySalesGoalGbp,
   periodSalesGoalGbp,
   resolveMonthlySalesGoalFromCompany,
@@ -116,7 +117,7 @@ export function OverviewExecutiveBundle() {
 
         const [companySettings, pipelineRows, tiersList, customerCashTotal] = await Promise.all([
           getCompanySettings(),
-          fetchPipelineJobsForDashboard(supabase, bounds),
+          fetchExecutiveRevenueJobsForDashboard(supabase, bounds),
           listCommissionTiers().catch(() => [] as CommissionTier[]),
           customerPaymentsTotalInRange(supabase, fromIso, toBound),
         ]);
@@ -309,6 +310,7 @@ export function OverviewExecutiveBundle() {
             (row) => jobBillableRevenue(row as Parameters<typeof jobBillableRevenue>[0]),
             forecastFromIso,
             forecastToIso,
+            (row) => jobExecutionStartYmd(row as OverviewPipelineJobRow),
           ),
         );
 
@@ -377,24 +379,35 @@ export function OverviewExecutiveBundle() {
           <div>
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider">Executive snapshot</p>
             <p className="text-xs text-text-tertiary mt-0.5">
-              Pipeline billable value · jobs created in range (excl. cancelled) · {bounds ? rangeLabel : "All time"}
+              Revenue = billable value on jobs whose execution window overlaps the selected period (schedule /
+              completion; otherwise booking date). Excl. cancelled, deleted · {bounds ? rangeLabel : "All time"}
             </p>
           </div>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-border-light">
           {[
-            { label: "Sales amount", value: revenue, sub: "Customer total (client price + extras)", accent: "text-emerald-600" },
-            { label: "Partner & materials", value: partnerDirect, sub: "Direct job cost", accent: "text-amber-600" },
+            {
+              label: "Revenue",
+              value: revenue,
+              sub: "Customer total (client price + extras) on jobs executed in period",
+              accent: "text-emerald-600",
+            },
+            {
+              label: "Partner & materials",
+              value: partnerDirect,
+              sub: "Direct cost on those same jobs",
+              accent: "text-amber-600",
+            },
             {
               label: "Gross margin",
               value: grossProfit,
-              sub: `${grossPct}% of sales amount`,
+              sub: `${grossPct}% of revenue`,
               accent: grossPct >= 20 ? "text-emerald-600" : "text-rose-600",
             },
             {
               label: "Net margin",
               value: netProfit,
-              sub: `${netPct}% of sales amount · after bills & payroll (in range)`,
+              sub: `${netPct}% of revenue · after bills and payroll (in range)`,
               accent: netPct >= 15 ? "text-sky-600" : "text-rose-600",
             },
           ].map((cell) => (
@@ -426,16 +439,16 @@ export function OverviewExecutiveBundle() {
               icon: FileText,
             },
             {
-              label: "Sales (pipeline)",
+              label: "Revenue",
               value: funnel.sales,
-              sub: "Billable in range",
+              sub: "Billable · execution window overlaps range",
               accent: "text-emerald-600",
               icon: TrendingUp,
             },
             {
-              label: "Jobs booked",
+              label: "Jobs in period",
               value: funnel.jobsBooked,
-              sub: "Jobs created in range",
+              sub: "Same job set as revenue above",
               accent: "text-violet-600",
               icon: Briefcase,
             },
@@ -454,7 +467,7 @@ export function OverviewExecutiveBundle() {
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">{cell.label}</p>
                 <p className={cn("text-xl sm:text-2xl font-bold tabular-nums mt-1", cell.accent)}>
-                  {loading ? "—" : cell.label === "Jobs booked" ? (cell.value as number) : formatCurrency(cell.value as number)}
+                  {loading ? "—" : cell.label === "Jobs in period" ? (cell.value as number) : formatCurrency(cell.value as number)}
                 </p>
                 <p className="text-[11px] text-text-tertiary mt-1 leading-snug">{cell.sub}</p>
               </div>

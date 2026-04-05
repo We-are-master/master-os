@@ -17,7 +17,7 @@ import {
 } from "@/lib/dashboard-date-range";
 
 /** Bump when default preset should reset for all users (e.g. align with Finance default = Monthly). */
-const PRESET_STORAGE_KEY = "master-os-dashboard-date-preset-v5";
+const PRESET_STORAGE_KEY = "master-os-dashboard-date-preset-v6";
 
 function readStoredPreset(): DateRangePreset {
   if (typeof window === "undefined") return "mtd";

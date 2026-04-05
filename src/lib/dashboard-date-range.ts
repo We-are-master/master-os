@@ -29,7 +29,7 @@ export function getBoundsForPreset(
   if (preset === "all") return null;
 
   const now = new Date();
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  let end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
   if (preset === "custom") {
     if (!customFrom?.trim() || !customTo?.trim()) return null;
@@ -66,9 +66,12 @@ export function getBoundsForPreset(
     case "90d":
       start.setDate(start.getDate() - 89);
       break;
-    case "mtd":
+    case "mtd": {
+      /** Full calendar month (not month-to-date through today). */
       start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
       break;
+    }
     case "ytd":
       start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
       break;
@@ -82,7 +85,7 @@ export function getBoundsForPreset(
 export const PRESET_OPTIONS: { id: DateRangePreset; label: string }[] = [
   { id: "1d", label: "Today" },
   { id: "wtd", label: "Week to date" },
-  { id: "mtd", label: "This month" },
+  { id: "mtd", label: "This month (full)" },
   { id: "qtd", label: "Quarter to date" },
   { id: "7d", label: "7 days" },
   { id: "30d", label: "30 days" },
