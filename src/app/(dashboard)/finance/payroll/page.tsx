@@ -47,6 +47,7 @@ import { useProfile } from "@/hooks/use-profile";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
 import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
+import { insertPayrollInternalCostWithCompat } from "@/lib/payroll-internal-insert-compat";
 
 const INTERNAL_COST_STATUSES: InternalCostStatus[] = ["pending", "paid"];
 const RECURRING_FREQUENCIES: RecurringBillFrequency[] = ["monthly", "quarterly", "yearly"];
@@ -413,13 +414,19 @@ export default function PayrollPage() {
           created_at: now,
           updated_at: now,
         };
-        const { data: inserted, error: insErr } = await supabase
-          .from("payroll_internal_costs")
-          .insert(row)
-          .select("id")
-          .single();
-        if (insErr) throw insErr;
-        const newId = inserted?.id as string;
+        const { data: inserted, error: insErr, compatLevel } = await insertPayrollInternalCostWithCompat(
+          supabase,
+          row as Record<string, unknown>,
+        );
+        if (insErr) throw new Error(insErr.message || "Insert failed");
+        if (compatLevel > 0) {
+          toast.warning(
+            compatLevel >= 6
+              ? "Saved with minimal payroll columns — apply migrations 092–096 when possible."
+              : "Saved — your database may be missing newer payroll columns (see migrations 092+).",
+          );
+        }
+        const newId = (inserted as { id?: string } | null)?.id as string;
         if (Object.keys(pendingFiles).length > 0 && newId) {
           const mergedFiles = await mergeUploaded(newId, {});
           const { error: upErr } = await supabase

@@ -807,6 +807,27 @@ export default function InvoicesPage() {
       ),
     },
     {
+      key: "amount_due",
+      label: "Amount due",
+      align: "right",
+      render: (item) => {
+        const due = invoiceBalanceDue(item);
+        const settled = due <= 0.02;
+        return (
+          <span
+            className={cn(
+              "text-sm font-medium tabular-nums",
+              settled && "text-text-tertiary",
+              !settled && item.status === "overdue" && "text-red-600",
+              !settled && item.status !== "overdue" && "text-text-primary",
+            )}
+          >
+            {formatCurrency(due)}
+          </span>
+        );
+      },
+    },
+    {
       key: "due_date", label: "Due Date",
       render: (item) => (
         <span className={`text-sm ${item.status === "overdue" ? "text-red-600 font-medium" : "text-text-secondary"}`}>
