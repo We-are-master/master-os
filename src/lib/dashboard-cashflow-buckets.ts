@@ -178,11 +178,13 @@ export function listWeekStartsBetween(fromDay: string, toDay: string, maxWeeks =
   return weekStarts;
 }
 
-export function buildWeeklyJobSoldSeries<T extends { created_at?: string }>(
+export function buildWeeklyJobSoldSeries<T>(
   jobs: T[],
   getRevenue: (j: T) => number,
   fromIso: string,
   toIso: string,
+  /** Defaults to job `created_at` date (legacy “sold” week). */
+  getBucketYmd?: (j: T) => string | null | undefined,
 ): { label: string; sold: number }[] {
   const fromDay = fromIso.slice(0, 10);
   const toDay = toIso.slice(0, 10);
@@ -193,9 +195,11 @@ export function buildWeeklyJobSoldSeries<T extends { created_at?: string }>(
     sold: 0,
   }));
   for (const j of jobs) {
-    const ca = j.created_at?.slice(0, 10);
-    if (!ca) continue;
-    const ws = startOfWeekMondayFromYmd(ca);
+    const raw =
+      getBucketYmd?.(j) ??
+      (j as { created_at?: string }).created_at?.slice(0, 10);
+    if (!raw) continue;
+    const ws = startOfWeekMondayFromYmd(raw.slice(0, 10));
     const i = keyToIdx.get(ws);
     if (i !== undefined) buckets[i]!.sold += getRevenue(j);
   }
