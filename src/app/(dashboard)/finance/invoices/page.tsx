@@ -31,7 +31,7 @@ import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-jo
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import { reopenInvoiceToPending } from "@/lib/invoice-reopen";
-import { invoiceBalanceDue, invoiceAmountPaid } from "@/lib/invoice-balance";
+import { invoiceBalanceDue, invoiceAmountPaid, invoiceCollectedAmount } from "@/lib/invoice-balance";
 import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
 import { jobBillableRevenue } from "@/lib/job-financials";
@@ -139,18 +139,20 @@ const jobStatusColumnConfig: Record<
 
 function computeInvoiceKpis(all: Invoice[]) {
   const nonCancelled = all.filter((r) => r.status !== "cancelled");
-  const totalInvoiced = nonCancelled.reduce((sum, r) => sum + Number(r.amount), 0);
   const overdue = all.filter((r) => r.status === "overdue");
   const overdueAmount = overdue.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
   const openStatuses = new Set<Invoice["status"]>(["pending", "partially_paid", "overdue", "draft", "audit_required"]);
   const openInvoices = all.filter((r) => openStatuses.has(r.status));
   const balanceDueOpen = openInvoices.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
+  const collectedTotal = nonCancelled.reduce((sum, r) => sum + invoiceCollectedAmount(r), 0);
+  const collectedInvoiceCount = nonCancelled.filter((r) => invoiceCollectedAmount(r) > 0.02).length;
   return {
-    totalInvoiced,
     balanceDueOpen,
     openInvoiceCount: openInvoices.length,
     overdueAmount,
     overdueCount: overdue.length,
+    collectedTotal,
+    collectedInvoiceCount,
   };
 }
 
@@ -870,12 +872,12 @@ export default function InvoicesPage() {
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard
-            title="Total invoiced"
-            value={kpis.totalInvoiced}
+            title="Open invoices"
+            value={kpis.balanceDueOpen}
             format="currency"
-            description={`Invoice date (billing week or created) · ${kpiPeriodDesc}`}
+            description={`${kpis.openInvoiceCount} unpaid (open balance) · ${kpiPeriodDesc}`}
             icon={Receipt}
-            accent="primary"
+            accent="purple"
           />
           <KpiCard
             title="Ongoing"
@@ -890,12 +892,16 @@ export default function InvoicesPage() {
             accent="amber"
           />
           <KpiCard
-            title="Balance due (open)"
-            value={kpis.balanceDueOpen}
+            title="Collected"
+            value={kpis.collectedTotal}
             format="currency"
-            description={`${kpis.openInvoiceCount} open · ${kpis.overdueCount} overdue (${formatCurrency(kpis.overdueAmount)}) · ${kpiPeriodDesc}`}
-            icon={AlertTriangle}
-            accent="purple"
+            description={
+              kpis.collectedInvoiceCount > 0
+                ? `${kpis.collectedInvoiceCount} invoice${kpis.collectedInvoiceCount === 1 ? "" : "s"} · paid + partial payments · ${kpiPeriodDesc}`
+                : `Paid & partial (amount paid) · ${kpiPeriodDesc}`
+            }
+            icon={Banknote}
+            accent="emerald"
           />
           <KpiCard
             title="Overdue"

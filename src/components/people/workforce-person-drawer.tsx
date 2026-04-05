@@ -69,6 +69,7 @@ function parsePayrollProfile(raw: unknown): PayrollInternalProfile {
   if (!raw || typeof raw !== "object") return {};
   const o = raw as Record<string, unknown>;
   const str = (k: string) => (typeof o[k] === "string" ? (o[k] as string) : undefined);
+  const vatReg = o.vat_registered;
   return {
     email: str("email"),
     utr: str("utr"),
@@ -78,6 +79,7 @@ function parsePayrollProfile(raw: unknown): PayrollInternalProfile {
     phone: str("phone"),
     address: str("address"),
     vat_number: str("vat_number"),
+    vat_registered: vatReg === true || vatReg === "true",
   };
 }
 
@@ -434,7 +436,7 @@ export function WorkforcePersonDrawer({
             <div className="flex flex-col sm:flex-row gap-4 items-start">
               <div className="flex flex-col items-center gap-2">
                 <Avatar name={payeeName || "?"} size="xl" src={photoUrl ?? undefined} />
-                <label className="text-xs text-text-secondary cursor-pointer">
+                <label className="text-xs text-text-secondary cursor-pointer text-center max-w-[140px]">
                   <span className="text-primary font-medium">Change photo</span>
                   <input
                     type="file"
@@ -445,6 +447,9 @@ export function WorkforcePersonDrawer({
                       if (f) handleDocPick(PROFILE_PHOTO_DOC_KEY, f);
                     }}
                   />
+                  <span className="block text-[10px] text-text-tertiary mt-1 leading-snug">
+                    Saved with <strong className="font-medium text-text-secondary">Save profile</strong> below
+                  </span>
                 </label>
               </div>
               <div className="flex-1 space-y-3 w-full min-w-0">
