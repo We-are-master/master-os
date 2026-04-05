@@ -493,6 +493,8 @@ export interface SelfBill {
   commission: number;
   net_payout: number;
   status: SelfBillStatus;
+  /** Set when marked paid (e.g. Pay Run); optional on older DBs. */
+  paid_at?: string | null;
   created_at: string;
   /** Snapshot before payout was voided (audit / partner PDF). */
   original_net_payout?: number | null;

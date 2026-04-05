@@ -31,7 +31,12 @@ import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-jo
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import { reopenInvoiceToPending } from "@/lib/invoice-reopen";
-import { invoiceBalanceDue, invoiceAmountPaid, invoiceCollectedAmount } from "@/lib/invoice-balance";
+import {
+  invoiceBalanceDue,
+  invoiceBalanceDueWithJobCustomerPaid,
+  invoiceAmountPaid,
+  invoiceCollectedAmount,
+} from "@/lib/invoice-balance";
 import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
 import { jobBillableRevenue } from "@/lib/job-financials";
@@ -67,6 +72,7 @@ const PAGE_SIZE = 10;
 
 /** Linked job fields used on the invoices list (status + schedule for columns). */
 type InvoiceListJobSnapshot = {
+  id: string;
   status: JobStatus;
   scheduled_date?: string | null;
   scheduled_start_at?: string | null;
@@ -81,20 +87,23 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, Inv
     const chunk = refs.slice(i, i + CHUNK);
     const { data, error } = await supabase
       .from("jobs")
-      .select("reference, status, scheduled_date, scheduled_start_at")
+      .select("id, reference, status, scheduled_date, scheduled_start_at")
       .in("reference", chunk)
       .is("deleted_at", null);
     if (error) throw error;
     for (const row of data ?? []) {
       const r = row as {
+        id?: string;
         reference?: string | null;
         status?: JobStatus;
         scheduled_date?: string | null;
         scheduled_start_at?: string | null;
       };
       const ref = (r.reference ?? "").trim();
-      if (ref && r.status) {
+      const jid = r.id?.trim();
+      if (ref && r.status && jid) {
         map[ref] = {
+          id: jid,
           status: r.status,
           scheduled_date: r.scheduled_date,
           scheduled_start_at: r.scheduled_start_at,
@@ -103,6 +112,48 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, Inv
     }
   }
   return map;
+}
+
+/** Same aggregation as `InvoiceDetailDrawer` (customer_deposit + customer_final, minus legacy rows). */
+async function fetchCustomerPaidSumByJobIds(jobIds: string[]): Promise<Record<string, number>> {
+  const sums: Record<string, number> = {};
+  for (const id of jobIds) sums[id] = 0;
+  const unique = [...new Set(jobIds.filter(Boolean))];
+  if (unique.length === 0) return sums;
+  const supabase = getSupabase();
+  const CHUNK = 100;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from("job_payments")
+      .select("job_id, amount, type, note")
+      .in("job_id", chunk)
+      .in("type", ["customer_deposit", "customer_final"])
+      .is("deleted_at", null);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      const p = row as { job_id?: string; amount?: number; type?: string; note?: string | null };
+      const jid = p.job_id?.trim();
+      if (!jid) continue;
+      if (isLegacyMisclassifiedCustomerPayment(p as { type: string; note?: string | null })) continue;
+      sums[jid] = (sums[jid] ?? 0) + Number(p.amount ?? 0);
+    }
+  }
+  for (const id of Object.keys(sums)) {
+    sums[id] = Math.round(sums[id] * 100) / 100;
+  }
+  return sums;
+}
+
+function invoiceListBalanceDue(
+  inv: Invoice,
+  jobsByRef: Record<string, InvoiceListJobSnapshot>,
+  customerPaidByJobId: Record<string, number>,
+): number {
+  const ref = inv.job_reference?.trim();
+  const jid = ref ? jobsByRef[ref]?.id : undefined;
+  const ledgerSum = jid !== undefined ? customerPaidByJobId[jid] : undefined;
+  return invoiceBalanceDueWithJobCustomerPaid(inv, ledgerSum);
 }
 
 function jobDateYmdForInvoiceList(job: InvoiceListJobSnapshot | undefined): string | null {
@@ -137,13 +188,20 @@ const jobStatusColumnConfig: Record<
   deleted: { label: "Deleted", variant: "default" },
 };
 
-function computeInvoiceKpis(all: Invoice[]) {
+function computeInvoiceKpis(
+  all: Invoice[],
+  jobsByRef: Record<string, InvoiceListJobSnapshot>,
+  customerPaidByJobId: Record<string, number>,
+) {
   const nonCancelled = all.filter((r) => r.status !== "cancelled");
   const overdue = all.filter((r) => r.status === "overdue");
-  const overdueAmount = overdue.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
+  const overdueAmount = overdue.reduce((sum, r) => sum + invoiceListBalanceDue(r, jobsByRef, customerPaidByJobId), 0);
   const openStatuses = new Set<Invoice["status"]>(["pending", "partially_paid", "overdue", "draft", "audit_required"]);
   const openInvoices = all.filter((r) => openStatuses.has(r.status));
-  const balanceDueOpen = openInvoices.reduce((sum, r) => sum + invoiceBalanceDue(r), 0);
+  const balanceDueOpen = openInvoices.reduce(
+    (sum, r) => sum + invoiceListBalanceDue(r, jobsByRef, customerPaidByJobId),
+    0,
+  );
   const collectedTotal = nonCancelled.reduce((sum, r) => sum + invoiceCollectedAmount(r), 0);
   const collectedInvoiceCount = nonCancelled.filter((r) => invoiceCollectedAmount(r) > 0.02).length;
   return {
@@ -238,6 +296,8 @@ export default function InvoicesPage() {
   const [pipelineTab, setPipelineTab] = useState<InvoicePipelineTab>("all");
   const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
   const [jobsByRef, setJobsByRef] = useState<Record<string, InvoiceListJobSnapshot>>({});
+  /** `jobs.id` → sum(customer_deposit + customer_final), aligned with invoice drawer ledger bridge. */
+  const [customerPaidByJobId, setCustomerPaidByJobId] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -279,11 +339,15 @@ export default function InvoicesPage() {
       }
       const refs = [...new Set(all.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)))];
       const jobMap = await fetchJobsByReferences(refs);
+      const jobIds = [...new Set(Object.values(jobMap).map((j) => j.id))];
+      const paidMap = await fetchCustomerPaidSumByJobIds(jobIds);
       setAllInvoices(all);
       setJobsByRef(jobMap);
+      setCustomerPaidByJobId(paidMap);
     } catch {
       setAllInvoices([]);
       setJobsByRef({});
+      setCustomerPaidByJobId({});
     } finally {
       setLoading(false);
     }
@@ -304,6 +368,7 @@ export default function InvoicesPage() {
       .channel("invoices_finance_page")
       .on("postgres_changes", { event: "*", schema: "public", table: "invoices" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, schedule)
+      .on("postgres_changes", { event: "*", schema: "public", table: "job_payments" }, schedule)
       .subscribe();
     return () => {
       clearTimeout(t);
@@ -311,7 +376,10 @@ export default function InvoicesPage() {
     };
   }, [loadPageData]);
 
-  const kpis = useMemo(() => computeInvoiceKpis(allInvoices), [allInvoices]);
+  const kpis = useMemo(
+    () => computeInvoiceKpis(allInvoices, jobsByRef, customerPaidByJobId),
+    [allInvoices, jobsByRef, customerPaidByJobId],
+  );
 
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = { all: allInvoices.length };
@@ -696,7 +764,7 @@ export default function InvoicesPage() {
         jobYmd ?? "",
         String(inv.amount),
         String(invoiceAmountPaid(inv)),
-        String(invoiceBalanceDue(inv)),
+        String(invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId)),
         inv.due_date,
         inv.status,
         jobStatusLabel,
@@ -715,7 +783,14 @@ export default function InvoicesPage() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     toast.success("CSV exported successfully");
-  }, [filteredInvoices, accountNameById, jobRefToSourceAccountId, clientNameToSourceAccountId, jobsByRef]);
+  }, [
+    filteredInvoices,
+    accountNameById,
+    jobRefToSourceAccountId,
+    clientNameToSourceAccountId,
+    jobsByRef,
+    customerPaidByJobId,
+  ]);
 
   const pipelineTabs = useMemo(
     () =>
@@ -811,7 +886,7 @@ export default function InvoicesPage() {
       label: "Amount due",
       align: "right",
       render: (item) => {
-        const due = invoiceBalanceDue(item);
+        const due = invoiceListBalanceDue(item, jobsByRef, customerPaidByJobId);
         const settled = due <= 0.02;
         return (
           <span

@@ -26,6 +26,26 @@ export function invoiceBalanceDue(inv: Pick<Invoice, "amount" | "amount_paid">):
   return Math.max(0, Math.round((total - paid) * 100) / 100);
 }
 
+/**
+ * Matches Invoice drawer “ledger bridge”: when the invoice is linked to a job and we know total
+ * customer payments on that job (`customer_deposit` + `customer_final`), effective paid is
+ * `min(invoice amount, max(amount_paid on invoice row, job ledger sum))` — same as `InvoiceDetailDrawer`.
+ */
+export function invoiceBalanceDueWithJobCustomerPaid(
+  inv: Pick<Invoice, "amount" | "amount_paid" | "job_reference">,
+  jobCustomerPaidSum: number | undefined,
+): number {
+  const ref = inv.job_reference?.trim();
+  if (!ref || jobCustomerPaidSum === undefined || !Number.isFinite(jobCustomerPaidSum)) {
+    return invoiceBalanceDue(inv);
+  }
+  const invAmt = Math.round((Number(inv.amount ?? 0) || 0) * 100) / 100;
+  const rowPaid = Math.round(invoiceAmountPaid(inv) * 100) / 100;
+  const ledger = Math.round(jobCustomerPaidSum * 100) / 100;
+  const effectivePaid = Math.min(invAmt, Math.max(rowPaid, ledger));
+  return Math.max(0, Math.round((invAmt - effectivePaid) * 100) / 100);
+}
+
 export function isInvoiceFullyPaidByAmount(inv: Pick<Invoice, "amount" | "amount_paid">): boolean {
   return invoiceBalanceDue(inv) <= EPS;
 }
