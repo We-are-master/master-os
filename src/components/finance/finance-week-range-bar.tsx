@@ -8,8 +8,15 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
-import { getMonthBoundsForDate } from "@/lib/finance-period";
+import { FINANCE_PERIOD_MODES_ORDER, getMonthBoundsForDate } from "@/lib/finance-period";
 import type { FinancePeriodMode } from "@/lib/finance-period";
+
+const PERIOD_PILL_LABEL: Record<FinancePeriodMode, string> = {
+  all: "All",
+  month: "Monthly",
+  week: "Week",
+  range: "Date range",
+};
 
 export type { FinancePeriodMode };
 
@@ -24,10 +31,12 @@ export interface FinanceWeekRangeBarProps {
   onRangeToChange: (v: string) => void;
   className?: string;
   showAllOption?: boolean;
-  /** When true, shows “This month” next to Week (Bills tab). */
+  /** When false, hides Monthly (e.g. minimal embed). Default true. */
   showMonthOption?: boolean;
   monthAnchor?: Date;
   onMonthAnchorChange?: (d: Date) => void;
+  /** Replaces the default “Showing all periods…” line when mode is All. */
+  allPeriodDescription?: string;
   /** Shown under the date inputs in range mode (e.g. pay run is one week at a time). */
   rangeHelperText?: string;
 }
@@ -48,11 +57,13 @@ export function FinanceWeekRangeBar({
   onRangeToChange,
   className,
   showAllOption = true,
-  showMonthOption = false,
+  showMonthOption = true,
   monthAnchor,
   onMonthAnchorChange,
+  allPeriodDescription,
   rangeHelperText,
 }: FinanceWeekRangeBarProps) {
+  const effectiveMonthAnchor = monthAnchor ?? weekAnchor;
   const { weekStart, weekEnd, weekLabel } = useMemo(
     () => getWeekBoundsForDate(weekAnchor),
     [weekAnchor]
@@ -63,10 +74,7 @@ export function FinanceWeekRangeBar({
   }, [weekStart]);
   const prettyRange = `${fmtRangeLine(weekStart)} – ${fmtRangeLine(weekEnd)}`;
 
-  const monthBounds = useMemo(
-    () => (monthAnchor ? getMonthBoundsForDate(monthAnchor) : null),
-    [monthAnchor]
-  );
+  const monthBounds = useMemo(() => getMonthBoundsForDate(effectiveMonthAnchor), [effectiveMonthAnchor]);
 
   const goPrev = () => {
     const x = new Date(weekAnchor);
@@ -80,16 +88,14 @@ export function FinanceWeekRangeBar({
   };
 
   const goPrevMonth = () => {
-    if (!monthAnchor || !onMonthAnchorChange) return;
-    const x = new Date(monthAnchor);
+    const x = new Date(effectiveMonthAnchor);
     x.setMonth(x.getMonth() - 1);
-    onMonthAnchorChange(x);
+    (onMonthAnchorChange ?? onWeekAnchorChange)(x);
   };
   const goNextMonth = () => {
-    if (!monthAnchor || !onMonthAnchorChange) return;
-    const x = new Date(monthAnchor);
+    const x = new Date(effectiveMonthAnchor);
     x.setMonth(x.getMonth() + 1);
-    onMonthAnchorChange(x);
+    (onMonthAnchorChange ?? onWeekAnchorChange)(x);
   };
 
   const pill = (active: boolean) =>
@@ -119,26 +125,17 @@ export function FinanceWeekRangeBar({
           Period
         </span>
         <div className="flex flex-wrap gap-1.5">
-          {showAllOption && (
-            <button type="button" className={pill(mode === "all")} onClick={() => handleMode("all")}>
-              All
+          {FINANCE_PERIOD_MODES_ORDER.filter(
+            (m) => (showAllOption || m !== "all") && (showMonthOption || m !== "month"),
+          ).map((m) => (
+            <button key={m} type="button" className={pill(mode === m)} onClick={() => handleMode(m)}>
+              {PERIOD_PILL_LABEL[m]}
             </button>
-          )}
-          <button type="button" className={pill(mode === "week")} onClick={() => handleMode("week")}>
-            Week
-          </button>
-          {showMonthOption && (
-            <button type="button" className={pill(mode === "month")} onClick={() => handleMode("month")}>
-              This month
-            </button>
-          )}
-          <button type="button" className={pill(mode === "range")} onClick={() => handleMode("range")}>
-            Date range
-          </button>
+          ))}
         </div>
       </div>
 
-      {mode === "month" && showMonthOption && monthBounds && monthAnchor && onMonthAnchorChange && (
+      {mode === "month" && showMonthOption && monthBounds && (
         <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
           <Button
             type="button"
@@ -151,7 +148,7 @@ export function FinanceWeekRangeBar({
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <div className="min-w-0 flex-1 rounded-xl border border-border-light bg-background px-3 py-3 text-center shadow-sm sm:px-5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">This month</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Monthly</p>
             <p className="mt-0.5 text-xs font-semibold text-text-secondary">{monthBounds.monthLabel}</p>
             <p className="mt-1 break-words text-base font-bold leading-snug text-text-primary sm:text-lg">
               {fmtRangeLine(monthBounds.from)} – {fmtRangeLine(monthBounds.to)}
@@ -221,7 +218,9 @@ export function FinanceWeekRangeBar({
       )}
 
       {mode === "all" && showAllOption && (
-        <p className="text-sm text-text-secondary">Showing all periods (no date filter on the list).</p>
+        <p className="text-sm text-text-secondary">
+          {allPeriodDescription ?? "Showing all periods (no date filter on the list)."}
+        </p>
       )}
     </div>
   );

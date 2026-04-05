@@ -19,6 +19,8 @@ export interface SelfBillPdfData {
   weekLabel?: string;
   weekStart?: string;
   weekEnd?: string;
+  /** Partner field: Friday after week_end (YYYY-MM-DD). Omitted for internal workforce bills. */
+  paymentDueDate?: string;
   period: string;
   jobsCount: number;
   jobValue: number;
@@ -105,6 +107,7 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
         {data.weekStart && data.weekEnd ? (
           <Text style={{ marginBottom: 12, fontSize: 9 }}>
             Period: {data.weekStart} → {data.weekEnd} (Mon–Sun)
+            {data.paymentDueDate ? ` · Payment due: ${data.paymentDueDate} (Friday after week ends)` : ""}
           </Text>
         ) : null}
 

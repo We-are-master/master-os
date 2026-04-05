@@ -6,6 +6,7 @@ import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { SELF_BILL_FINANCE_VOID_LABEL } from "@/lib/self-bill-display";
+import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isSelfBillPayoutVoided, selfBillJobPayoutStateLabel } from "@/services/self-bills";
 import type { Job, SelfBill } from "@/types/database";
 
@@ -70,6 +71,12 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   });
 
   const voided = isSelfBillPayoutVoided({ status: sb.status as SelfBill["status"] });
+  const billOrigin = (sb as { bill_origin?: string | null }).bill_origin;
+  const weekEndStr = (sb.week_end as string) ?? "";
+  const paymentDueDate =
+    billOrigin !== "internal" && weekEndStr.trim()
+      ? partnerFieldSelfBillPaymentDueDate(weekEndStr.trim())
+      : undefined;
 
   const buffer = await renderToBuffer(
     <SelfBillPDF
@@ -78,7 +85,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
         partnerName: sb.partner_name as string,
         weekLabel: (sb.week_label as string) ?? undefined,
         weekStart: (sb.week_start as string) ?? undefined,
-        weekEnd: (sb.week_end as string) ?? undefined,
+        weekEnd: weekEndStr || undefined,
+        paymentDueDate,
         period: sb.period as string,
         jobsCount: Number(sb.jobs_count) || 0,
         jobValue: Number(sb.job_value) || 0,

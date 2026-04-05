@@ -5,6 +5,12 @@ import type { ListParams } from "@/services/base";
 
 export type FinancePeriodMode = "all" | "week" | "month" | "range";
 
+/** UI order in `FinanceWeekRangeBar`: All · Monthly · Week · Date range. */
+export const FINANCE_PERIOD_MODES_ORDER: readonly FinancePeriodMode[] = ["all", "month", "week", "range"];
+
+/** Default period on Finance and other list screens that share this bar (current calendar month). */
+export const DEFAULT_FINANCE_PERIOD_MODE: FinancePeriodMode = "month";
+
 /** Inclusive YYYY-MM-DD bounds for the calendar month containing `d` (local). */
 export function getMonthBoundsForDate(d: Date): { from: string; to: string; monthLabel: string } {
   const y = d.getFullYear();

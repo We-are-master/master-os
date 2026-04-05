@@ -1,4 +1,13 @@
-import { startOfWeek, endOfWeek, format, getISOWeek, getISOWeekYear, parseISO, isValid } from "date-fns";
+import {
+  addDays,
+  startOfWeek,
+  endOfWeek,
+  format,
+  getISOWeek,
+  getISOWeekYear,
+  parseISO,
+  isValid,
+} from "date-fns";
 
 /** UK-style business week: Monday 00:00 → Sunday end-of-day (displayed as week_end date). */
 export function getWeekBoundsForDate(d: Date): { weekStart: string; weekEnd: string; weekLabel: string } {
@@ -13,6 +22,22 @@ export function getWeekBoundsForDate(d: Date): { weekStart: string; weekEnd: str
 /** Next Monday after Sunday close — informational copy for UI. */
 export function weekPeriodHelpText(): string {
   return "Each period runs Monday 00:00 through Sunday 23:59 (local date). A new period opens every Monday.";
+}
+
+/**
+ * Partner field self-bill: the bucket is Monday 00:00 – Sunday 23:59 (`week_end` is that Sunday, YYYY-MM-DD).
+ * Office payment to the partner is **due on the following Friday** (5 days after `week_end`).
+ */
+export function partnerFieldSelfBillPaymentDueDate(weekEndYmd: string): string {
+  const s = weekEndYmd?.trim() ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = parseISO(s);
+  if (!isValid(d)) return s;
+  return format(addDays(d, 5), "yyyy-MM-dd");
+}
+
+export function partnerFieldSelfBillPaymentDueHelpText(): string {
+  return "Partner payouts: each Monday–Sunday week is payable by the Friday immediately after that Sunday.";
 }
 
 /**

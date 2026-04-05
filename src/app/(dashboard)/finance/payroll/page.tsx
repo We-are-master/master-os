@@ -46,7 +46,11 @@ import type { CommissionRun, CommissionRunItem } from "@/types/database";
 import { useProfile } from "@/hooks/use-profile";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import type { FinancePeriodMode } from "@/lib/finance-period";
-import { getFinancePeriodClosedBounds, formatFinancePeriodKpiDescription } from "@/lib/finance-period";
+import {
+  DEFAULT_FINANCE_PERIOD_MODE,
+  getFinancePeriodClosedBounds,
+  formatFinancePeriodKpiDescription,
+} from "@/lib/finance-period";
 import { insertPayrollInternalCostWithCompat } from "@/lib/payroll-internal-insert-compat";
 
 const INTERNAL_COST_STATUSES: InternalCostStatus[] = ["pending", "paid"];
@@ -140,19 +144,20 @@ export default function PayrollPage() {
   const [runCommissionBusy, setRunCommissionBusy] = useState(false);
   const [runCommissionApproving, setRunCommissionApproving] = useState(false);
 
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>("all");
+  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
   const [weekAnchor, setWeekAnchor] = useState(() => new Date());
+  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
 
   const periodBounds = useMemo(
-    () => getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo),
-    [periodMode, weekAnchor, rangeFrom, rangeTo]
+    () => getFinancePeriodClosedBounds(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
+    [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]
   );
 
   const kpiPeriodDesc = useMemo(
-    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo),
-    [periodMode, weekAnchor, rangeFrom, rangeTo]
+    () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
+    [periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]
   );
 
   const loadInternal = useCallback(async () => {
@@ -788,7 +793,7 @@ export default function PayrollPage() {
       <div className="space-y-5">
         <PageHeader
           title="Payroll & costs"
-          subtitle="Pay-run model: Employed vs Self-employed, stages (onboarding → active → needs attention → offboard). Approve once to make recurring until offboard. Only Active + due in week appear in Pay Run. Recurring bills and commission runs below."
+          subtitle="Pay-run model: Employed vs Self-employed, stages (onboarding → active → needs attention → offboard). Approve once to make recurring until offboard. Only Active + due in week appear in Pay Run. Period: All · Monthly · Week · Date range (default: current month). Recurring bills and commission runs below."
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>Export CSV</Button>
           {section === "internal" && (
@@ -805,6 +810,8 @@ export default function PayrollPage() {
           onModeChange={setPeriodMode}
           weekAnchor={weekAnchor}
           onWeekAnchorChange={setWeekAnchor}
+          monthAnchor={monthAnchor}
+          onMonthAnchorChange={setMonthAnchor}
           rangeFrom={rangeFrom}
           rangeTo={rangeTo}
           onRangeFromChange={setRangeFrom}
