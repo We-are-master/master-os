@@ -1,5 +1,18 @@
 import { getErrorMessage } from "@/lib/utils";
 
+/** SELECT failed because a column/filter is unknown to PostgREST (lagging schema cache or DB). */
+export function isPostgrestSelectSchemaError(err: unknown): boolean {
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const c = String((err as { code: unknown }).code);
+    if (c === "PGRST204" || c === "42703") return true;
+  }
+  const msg = getErrorMessage(err, "");
+  if (/Could not find the .+ column/i.test(msg)) return true;
+  if (/column .+ does not exist/i.test(msg)) return true;
+  if (/schema cache/i.test(msg)) return true;
+  return false;
+}
+
 /** True when a second write with a slimmer payload might succeed (unknown column, check constraint). */
 export function isPostgrestWriteRetryableError(err: unknown): boolean {
   if (typeof err === "object" && err !== null && "code" in err) {
