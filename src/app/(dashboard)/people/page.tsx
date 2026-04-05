@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
-import { Plus, Loader2, FileText, Wallet, Building2, Pencil, Trash2 } from "lucide-react";
+import { Plus, Loader2, FileText, Wallet, Building2, Pencil, Trash2, Users, HardHat } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { InternalCost, InternalCostStatus, PayrollInternalEmploymentType, Squad } from "@/types/database";
@@ -23,9 +23,11 @@ import { SquadModal } from "@/components/teams/squad-modal";
 import {
   PAYROLL_FREQUENCY_OPTIONS,
   PAYROLL_COST_CATEGORIES,
+  PROFILE_PHOTO_DOC_KEY,
   payrollDocsRowCompletion,
   type PayrollDocumentFileMeta,
 } from "@/lib/payroll-doc-checklist";
+import { getPayrollDocumentSignedUrl } from "@/services/payroll-documents-storage";
 import { WorkforcePersonDrawer } from "@/components/people/workforce-person-drawer";
 import { buildPayLineDescription, WORKFORCE_DEPARTMENT_SELECT_OPTIONS } from "@/lib/workforce-departments";
 
@@ -43,6 +45,12 @@ function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocument
     }
   }
   return out;
+}
+
+function payrollProfileEmail(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const e = (raw as Record<string, unknown>).email;
+  return typeof e === "string" && e.trim() ? e.trim() : undefined;
 }
 
 type PeopleTab = "internal" | "contractors";
@@ -145,6 +153,52 @@ export default function PeoplePage() {
     return list;
   }, [rows, section, search, squadFilter]);
 
+  const rosterCounts = useMemo(() => {
+    const base = rows.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard");
+    return {
+      internal: base.filter((r) => r.employment_type === "employee").length,
+      contractors: base.filter((r) => r.employment_type === "self_employed").length,
+    };
+  }, [rows]);
+
+  const photoPathsKey = useMemo(
+    () =>
+      filtered
+        .map((r) => {
+          const f = parsePayrollDocumentFiles(r.payroll_document_files);
+          const p = f[PROFILE_PHOTO_DOC_KEY]?.path ?? "";
+          return `${r.id}:${p}`;
+        })
+        .sort()
+        .join("|"),
+    [filtered],
+  );
+
+  const [photoUrlsById, setPhotoUrlsById] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const out: Record<string, string> = {};
+      await Promise.all(
+        filtered.map(async (r) => {
+          const f = parsePayrollDocumentFiles(r.payroll_document_files);
+          const p = f[PROFILE_PHOTO_DOC_KEY]?.path;
+          if (!p) return;
+          try {
+            out[r.id] = await getPayrollDocumentSignedUrl(p);
+          } catch {
+            /* bucket / RLS — card falls back to initials */
+          }
+        }),
+      );
+      if (!cancelled) setPhotoUrlsById(out);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [photoPathsKey, filtered]);
+
   const openPerson = (r: PeopleRow) => {
     setSelected(r);
     setDrawerOpen(true);
@@ -242,11 +296,6 @@ export default function PeoplePage() {
     }
   };
 
-  const sectionTabs = [
-    { id: "internal" as const, label: "Internal team" },
-    { id: "contractors" as const, label: "Contractors" },
-  ];
-
   const squadFilterOptions = useMemo(
     () => [
       { value: "all", label: "All squads" },
@@ -310,7 +359,7 @@ export default function PeoplePage() {
       <div className="space-y-6">
         <PageHeader
           title="Workforce"
-          subtitle="Employees and contractors by squad — profile, documents, finance, and Pay Run data in one place. Squads replace the old payroll roster list."
+          subtitle="Working roster — internal employees and self-employed contractors. Open a card for profile photo, contact details, compliance documents, and pay. Squads group people the same way as the field teams."
         >
           <div className="flex flex-wrap gap-2">
             <Button
@@ -333,6 +382,12 @@ export default function PeoplePage() {
             </Button>
           </div>
         </PageHeader>
+
+        <p className="text-xs text-text-tertiary -mt-2 max-w-3xl">
+          <span className="font-medium text-text-secondary">Working</span> lists everyone except offboard. Use{" "}
+          <span className="font-medium text-text-secondary">Internal team</span> for PAYE staff and{" "}
+          <span className="font-medium text-text-secondary">Contractors</span> for self-billed partners. Finance → Payroll keeps commission runs and recurring bills; people live here.
+        </p>
 
         {squads.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 px-1">
@@ -366,7 +421,19 @@ export default function PeoplePage() {
         <div className="rounded-2xl border border-border-light bg-card/80 backdrop-blur-sm overflow-hidden">
           <div className="px-4 pt-4 pb-2 border-b border-border-light flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <Tabs
-              tabs={sectionTabs.map((t) => ({ id: t.id, label: t.label }))}
+              variant="pills"
+              tabs={[
+                {
+                  id: "internal",
+                  label: "Internal team",
+                  count: rosterCounts.internal,
+                },
+                {
+                  id: "contractors",
+                  label: "Contractors",
+                  count: rosterCounts.contractors,
+                },
+              ]}
               activeTab={section}
               onChange={(id) => setSection(id as PeopleTab)}
             />
@@ -393,17 +460,35 @@ export default function PeoplePage() {
               </div>
             ) : filtered.length === 0 ? (
               <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="text-center py-16">
-                <p className="text-text-secondary">No one in this list yet.</p>
-                <p className="text-sm text-text-tertiary mt-2 max-w-md mx-auto">
-                  Add employees or contractors, assign a squad, then open their profile for documents and finance.
+                <div className="inline-flex items-center justify-center rounded-full bg-surface-hover p-3 mb-3">
+                  {section === "internal" ? (
+                    <Users className="h-8 w-8 text-text-tertiary" />
+                  ) : (
+                    <HardHat className="h-8 w-8 text-text-tertiary" />
+                  )}
+                </div>
+                <p className="text-text-secondary font-medium">
+                  {section === "internal" ? "No internal team members yet" : "No contractors yet"}
                 </p>
-                <Button className="mt-4" onClick={() => setAddOpen(true)}>
-                  Add first person
+                <p className="text-sm text-text-tertiary mt-2 max-w-md mx-auto">
+                  {section === "internal"
+                    ? "Add PAYE employees with salary lines. You can upload passport, contract, and payroll setup from each person’s drawer."
+                    : "Add self-employed people for internal contractor fees and self-bill workflow. Documents differ from employees (e.g. self-bill agreement)."}
+                </p>
+                <Button
+                  className="mt-4"
+                  onClick={() => {
+                    setFormEmployment(section === "internal" ? "employee" : "self_employed");
+                    setAddOpen(true);
+                  }}
+                >
+                  Add {section === "internal" ? "employee" : "contractor"}
                 </Button>
               </motion.div>
             ) : (
               <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                 {filtered.map((r) => {
+                  const emailLine = payrollProfileEmail(r.payroll_profile);
                   const files = parsePayrollDocumentFiles(r.payroll_document_files);
                   const { done, total } = payrollDocsRowCompletion(
                     r.employment_type ?? null,
@@ -421,9 +506,10 @@ export default function PeoplePage() {
                       className="text-left rounded-2xl border border-border-light bg-surface-hover/20 hover:bg-surface-hover/50 hover:border-primary/20 transition-all p-4 flex flex-col gap-3 shadow-sm"
                     >
                       <div className="flex items-start gap-3">
-                        <Avatar name={r.payee_name ?? "?"} size="lg" />
+                        <Avatar name={r.payee_name ?? "?"} size="lg" src={photoUrlsById[r.id]} />
                         <div className="min-w-0 flex-1">
                           <p className="font-semibold text-text-primary truncate">{r.payee_name ?? "Unnamed"}</p>
+                          {emailLine ? <p className="text-xs text-text-secondary truncate">{emailLine}</p> : null}
                           <p className="text-xs text-text-tertiary line-clamp-2">{r.description}</p>
                           <div className="flex flex-wrap gap-1.5 mt-2">
                             {r.squad_name ? (
