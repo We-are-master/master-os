@@ -401,6 +401,8 @@ export interface Account {
   contact_name: string;
   /** Internal account owner (sales / AM), same idea as jobs.owner_name. */
   owner_name?: string | null;
+  /** Linked app user (`profiles.id`) as account owner for rollups / Top account owners. */
+  account_owner_id?: string | null;
   email: string;
   address?: string | null;
   crn?: string | null;

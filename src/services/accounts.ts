@@ -4,8 +4,15 @@ import type { Account, Client, Invoice, Job } from "@/types/database";
 type AccountInsert = Omit<Account, "id" | "created_at" | "total_revenue" | "active_jobs">;
 
 function normalizeAccountInsert(input: AccountInsert): AccountInsert {
+  const account_owner_id =
+    input.account_owner_id === undefined
+      ? undefined
+      : input.account_owner_id && String(input.account_owner_id).trim()
+        ? String(input.account_owner_id).trim()
+        : null;
   return {
     ...input,
+    ...(account_owner_id !== undefined ? { account_owner_id } : {}),
     email: input.email.trim().toLowerCase(),
     company_name: input.company_name.trim(),
     contact_name: input.contact_name.trim(),
@@ -25,6 +32,10 @@ function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
   if (next.owner_name !== undefined) {
     const t = typeof next.owner_name === "string" ? next.owner_name.trim() : "";
     next.owner_name = t.length > 0 ? t : null;
+  }
+  if (next.account_owner_id !== undefined) {
+    const t = typeof next.account_owner_id === "string" ? next.account_owner_id.trim() : "";
+    next.account_owner_id = t.length > 0 ? t : null;
   }
   if (next.address !== undefined) next.address = next.address?.trim() || null;
   if (next.crn !== undefined) next.crn = next.crn?.trim() || null;
@@ -91,6 +102,82 @@ export async function updateAccount(id: string, input: Partial<Account>): Promis
   const { data, error } = await supabase.from("accounts").update(payload).eq("id", id).select().single();
   if (error) throw formatAccountDbError(error);
   return data as Account;
+}
+
+/**
+ * When a client has no corporate account, create one from the client name and link it.
+ * Idempotent if `source_account_id` is already set. Used so revenue rollups always have an account id.
+ */
+export async function ensureSourceAccountForClient(
+  supabase: ReturnType<typeof getSupabase>,
+  clientId: string,
+): Promise<string | null> {
+  const { data: client, error: cErr } = await supabase
+    .from("clients")
+    .select("id, full_name, email, source_account_id")
+    .eq("id", clientId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (cErr || !client) return null;
+
+  const row = client as {
+    id: string;
+    full_name: string;
+    email?: string | null;
+    source_account_id?: string | null;
+  };
+  if (row.source_account_id) return row.source_account_id;
+
+  const company = row.full_name?.trim() || "Client";
+  const safeEmail = (
+    row.email?.trim() || `linked+${row.id.replace(/-/g, "")}@client-auto.master-os.internal`
+  ).toLowerCase();
+
+  async function linkAccount(accountId: string): Promise<string> {
+    const { error: uErr } = await supabase.from("clients").update({ source_account_id: accountId }).eq("id", clientId);
+    if (uErr) throw new Error(uErr.message);
+    return accountId;
+  }
+
+  try {
+    const account = await createAccount({
+      company_name: company,
+      contact_name: company,
+      owner_name: null,
+      email: safeEmail,
+      address: null,
+      crn: null,
+      contact_number: null,
+      industry: "General",
+      status: "onboarding",
+      credit_limit: 0,
+      payment_terms: "Net 30",
+      logo_url: null,
+      contract_url: null,
+    });
+    return await linkAccount(account.id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("email") || msg.includes("company name") || msg.includes("duplicate")) {
+      const { data: byEmail } = await supabase
+        .from("accounts")
+        .select("id")
+        .eq("email", safeEmail)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (byEmail?.id) return await linkAccount((byEmail as { id: string }).id);
+
+      const { data: byCo } = await supabase
+        .from("accounts")
+        .select("id")
+        .eq("company_name", company)
+        .is("deleted_at", null)
+        .limit(1)
+        .maybeSingle();
+      if (byCo?.id) return await linkAccount((byCo as { id: string }).id);
+    }
+    return null;
+  }
 }
 
 /** Jobs whose client is linked to this corporate account.

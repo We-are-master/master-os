@@ -16,7 +16,6 @@ import {
   buildWeeklyJobSoldSeries,
   type WeeklyCashPositionRow,
 } from "@/lib/dashboard-cashflow-buckets";
-import { BestSellersByOwner } from "@/components/dashboard/best-sellers-by-owner";
 import {
   fetchPipelineJobsForDashboard,
   defaultMonthlySalesGoalGbp,
@@ -25,11 +24,11 @@ import {
   type OverviewPipelineJobRow,
 } from "@/lib/dashboard-overview-jobs";
 import {
+  localCalendarMonthYmdBounds,
   sumInvoiceOpenBalanceByDueDateWindow,
   sumInvoiceOpenBalanceOutstanding,
-  sumPaidInvoiceAmountAll,
-  sumPaidInvoiceAmountByPaidDateRange,
 } from "@/lib/overview-dashboard-kpis";
+import { ensureSourceAccountForClient } from "@/services/accounts";
 
 /** Customer cash in from job ledger (deposit + final), matches Financial summary registrations. */
 async function customerPaymentsTotalInRange(
@@ -85,10 +84,15 @@ export function OverviewExecutiveBundle() {
   const [billsCost, setBillsCost] = useState(0);
   const [payrollCost, setPayrollCost] = useState(0);
   const [billingForTier, setBillingForTier] = useState(0);
+  const [tierMonthLabel, setTierMonthLabel] = useState("");
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
-  const [ownerLeaderboard, setOwnerLeaderboard] = useState<{ name: string; revenue: number; jobCount: number }[]>([]);
+  const [accountOwnerLeaderboard, setAccountOwnerLeaderboard] = useState<
+    { ownerProfileId: string | null; displayName: string; revenue: number }[]
+  >([]);
   const [topPartners, setTopPartners] = useState<{ name: string; marginContribution: number }[]>([]);
-  const [topAccounts, setTopAccounts] = useState<{ name: string; revenue: number; ownerName?: string | null }[]>([]);
+  const [topAccounts, setTopAccounts] = useState<
+    { accountId: string; name: string; revenue: number; ownerName?: string | null }[]
+  >([]);
   const [cashflow, setCashflow] = useState<WeeklyCashPositionRow[]>([]);
   const [forecastWeeks, setForecastWeeks] = useState<{ label: string; sold: number }[]>([]);
   const [funnel, setFunnel] = useState({
@@ -148,10 +152,14 @@ export function OverviewExecutiveBundle() {
         setRevenue(rev);
         setPartnerDirect(direct);
         setGrossProfit(gross);
-        const tierPaidTotal = bounds
-          ? sumPaidInvoiceAmountByPaidDateRange(invoiceRows, fromDay, toDay)
-          : sumPaidInvoiceAmountAll(invoiceRows);
-        setBillingForTier(tierPaidTotal);
+        const { fromDay: tierFromDay, toDay: tierToDay, monthLabel: tierLabel } = localCalendarMonthYmdBounds(clock);
+        const tierPaymentsTotal = await customerPaymentsTotalInRange(
+          supabase,
+          `${tierFromDay}T00:00:00.000Z`,
+          `${tierToDay}T23:59:59.999Z`,
+        );
+        setBillingForTier(tierPaymentsTotal);
+        setTierMonthLabel(tierLabel);
         setTiers(tiersList);
 
         let billsTotal = 0;
@@ -187,19 +195,6 @@ export function OverviewExecutiveBundle() {
         setBillsCost(billsTotal);
         setPayrollCost(payrollTotal);
 
-        const ownerMap = new Map<string, { revenue: number; jobCount: number }>();
-        for (const r of pipelineRows) {
-          const name = r.owner_name?.trim() || "Unassigned";
-          const o = ownerMap.get(name) ?? { revenue: 0, jobCount: 0 };
-          o.revenue += jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]);
-          o.jobCount += 1;
-          ownerMap.set(name, o);
-        }
-        const ownerSorted = [...ownerMap.entries()]
-          .map(([name, v]) => ({ name, revenue: v.revenue, jobCount: v.jobCount }))
-          .sort((a, b) => b.revenue - a.revenue);
-        setOwnerLeaderboard(ownerSorted.slice(0, 5));
-
         const partnerMargin = new Map<string, number>();
         for (const r of pipelineRows) {
           const pn = r.partner_name?.trim();
@@ -221,60 +216,127 @@ export function OverviewExecutiveBundle() {
           clientTotals.set(cid, (clientTotals.get(cid) ?? 0) + jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]));
         }
         const clientIds = [...clientTotals.keys()];
-        let accountsOut: { name: string; revenue: number; ownerName?: string | null }[] = [];
+        let accountsOut: { accountId: string; name: string; revenue: number; ownerName?: string | null }[] = [];
+        let ownersOut: { ownerProfileId: string | null; displayName: string; revenue: number }[] = [];
+
         if (clientIds.length > 0) {
-          const { data: clients } = await supabase.from("clients").select("id, source_account_id").in("id", clientIds);
+          for (const cid of clientIds) {
+            await ensureSourceAccountForClient(supabase, cid);
+          }
+
+          const { data: clientsAfter } = await supabase
+            .from("clients")
+            .select("id, source_account_id")
+            .in("id", clientIds);
           const accByClient = new Map<string, string | null>();
           const accIds = new Set<string>();
-          for (const c of clients ?? []) {
+          for (const c of clientsAfter ?? []) {
             const id = (c as { id: string }).id;
             const aid = (c as { source_account_id?: string | null }).source_account_id ?? null;
             accByClient.set(id, aid);
             if (aid) accIds.add(aid);
           }
-          const accMetaById = new Map<string, { company_name: string; owner_name: string | null }>();
+
+          const accMetaById = new Map<
+            string,
+            { company_name: string; owner_name: string | null; account_owner_id: string | null }
+          >();
           if (accIds.size > 0) {
             const { data: accs } = await supabase
               .from("accounts")
-              .select("id, company_name, owner_name")
+              .select("id, company_name, owner_name, account_owner_id")
               .in("id", [...accIds])
               .is("deleted_at", null);
             for (const a of accs ?? []) {
               const id = (a as { id: string }).id;
               const raw = (a as { owner_name?: string | null }).owner_name;
               const owner = raw != null && String(raw).trim() !== "" ? String(raw).trim() : null;
+              const oid = (a as { account_owner_id?: string | null }).account_owner_id;
+              const account_owner_id =
+                oid != null && String(oid).trim() !== "" ? String(oid).trim() : null;
               accMetaById.set(id, {
                 company_name: String((a as { company_name?: string }).company_name ?? "Account"),
                 owner_name: owner,
+                account_owner_id,
               });
             }
           }
-          const byAccount = new Map<string, { revenue: number; ownerName: string | null }>();
-          const unlinked = new Map<string, number>();
+
+          const profileIds = new Set<string>();
+          for (const m of accMetaById.values()) {
+            if (m.account_owner_id) profileIds.add(m.account_owner_id);
+          }
+          const profileNames = new Map<string, string>();
+          if (profileIds.size > 0) {
+            const { data: profs } = await supabase
+              .from("profiles")
+              .select("id, full_name, email")
+              .in("id", [...profileIds]);
+            for (const p of profs ?? []) {
+              const pid = (p as { id: string }).id;
+              const nm = String((p as { full_name?: string | null }).full_name?.trim() || "").trim();
+              const em = String((p as { email?: string | null }).email?.trim() || "").trim();
+              profileNames.set(pid, nm || em || "User");
+            }
+          }
+
+          const byAccountId = new Map<
+            string,
+            { revenue: number; companyName: string; ownerName: string | null; accountOwnerId: string | null }
+          >();
+          let orphanRevenue = 0;
           for (const [cid, amt] of clientTotals) {
             const aid = accByClient.get(cid);
             if (aid && accMetaById.has(aid)) {
               const meta = accMetaById.get(aid)!;
-              const nm = meta.company_name;
-              const cur = byAccount.get(nm) ?? { revenue: 0, ownerName: meta.owner_name };
+              const cur =
+                byAccountId.get(aid) ?? {
+                  revenue: 0,
+                  companyName: meta.company_name,
+                  ownerName: meta.owner_name,
+                  accountOwnerId: meta.account_owner_id,
+                };
               cur.revenue += amt;
-              if (!cur.ownerName && meta.owner_name) cur.ownerName = meta.owner_name;
-              byAccount.set(nm, cur);
+              byAccountId.set(aid, cur);
             } else {
-              unlinked.set("Direct / unlinked clients", (unlinked.get("Direct / unlinked clients") ?? 0) + amt);
+              orphanRevenue += amt;
             }
           }
-          accountsOut = [
-            ...[...byAccount.entries()].map(([name, v]) => ({
-              name,
-              revenue: v.revenue,
-              ownerName: v.ownerName,
-            })),
-            ...[...unlinked.entries()].map(([name, revenue]) => ({ name, revenue, ownerName: null as string | null })),
-          ]
+
+          const ownerAgg = new Map<string, number>();
+          for (const row of byAccountId.values()) {
+            const key = row.accountOwnerId ?? "__unassigned__";
+            ownerAgg.set(key, (ownerAgg.get(key) ?? 0) + row.revenue);
+          }
+          ownersOut = [...ownerAgg.entries()]
+            .map(([key, revenue]) => ({
+              ownerProfileId: key === "__unassigned__" ? null : key,
+              displayName:
+                key === "__unassigned__"
+                  ? "Unassigned"
+                  : (profileNames.get(key) ?? "User"),
+              revenue,
+            }))
             .sort((a, b) => b.revenue - a.revenue)
             .slice(0, 5);
+
+          accountsOut = [...byAccountId.entries()].map(([accountId, v]) => ({
+            accountId,
+            name: v.companyName,
+            revenue: v.revenue,
+            ownerName: v.ownerName,
+          }));
+          if (orphanRevenue > 0.02) {
+            accountsOut.push({
+              accountId: "orphan",
+              name: "Clients still without account",
+              revenue: orphanRevenue,
+              ownerName: null,
+            });
+          }
+          accountsOut = accountsOut.sort((a, b) => b.revenue - a.revenue).slice(0, 5);
         }
+        setAccountOwnerLeaderboard(ownersOut);
         setTopAccounts(accountsOut);
 
         const quotesQuery = supabase
@@ -448,7 +510,8 @@ export function OverviewExecutiveBundle() {
           setBillsCost(0);
           setPayrollCost(0);
           setBillingForTier(0);
-          setOwnerLeaderboard([]);
+          setTierMonthLabel("");
+          setAccountOwnerLeaderboard([]);
           setTopPartners([]);
           setTopAccounts([]);
           setCashflow([]);
@@ -655,55 +718,6 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card>
 
-      <Card padding="none" className="overflow-hidden border-border-light shadow-sm ring-1 ring-border-light/20">
-        <div className="px-5 pt-4 pb-2 flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 bg-gradient-to-r from-surface-hover/40 to-transparent">
-          <div>
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wider">Executive snapshot</p>
-            <p className="text-xs text-text-tertiary mt-0.5">
-              Same cohort as <strong className="font-medium text-text-secondary">Sales</strong>: billable value on jobs whose{" "}
-              <strong className="font-medium text-text-secondary">created_at</strong> falls in the selected range. Excl. cancelled,
-              deleted · {bounds ? rangeLabel : "All jobs (no date filter)"}
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-border-light">
-          {[
-            {
-              label: "Revenue",
-              value: revenue,
-              sub: "Client price + extras on jobs created in the period (booked sales)",
-              accent: "text-emerald-600",
-            },
-            {
-              label: "Partner & materials",
-              value: partnerDirect,
-              sub: "Partner cost + materials on those same jobs",
-              accent: "text-amber-600",
-            },
-            {
-              label: "Gross margin",
-              value: grossProfit,
-              sub: `${grossPct}% of revenue`,
-              accent: grossPct >= 20 ? "text-emerald-600" : "text-rose-600",
-            },
-            {
-              label: "Net margin",
-              value: netProfit,
-              sub: `${netPct}% of revenue · after bills and payroll (in range)`,
-              accent: netPct >= 15 ? "text-sky-600" : "text-rose-600",
-            },
-          ].map((cell) => (
-            <div key={cell.label} className="p-4 sm:p-5">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">{cell.label}</p>
-              <p className={cn("text-xl sm:text-2xl font-bold tabular-nums mt-1", cell.accent)}>
-                {loading ? "—" : formatCurrency(cell.value)}
-              </p>
-              <p className="text-[11px] text-text-tertiary mt-1 leading-snug">{cell.sub}</p>
-            </div>
-          ))}
-        </div>
-      </Card>
-
       <Card padding="none" className="overflow-hidden border-border-light">
         <CardHeader className="px-4 pt-3 pb-2">
           <div className="flex items-start gap-2.5">
@@ -713,7 +727,7 @@ export function OverviewExecutiveBundle() {
             <div>
               <CardTitle className="text-sm font-semibold">Tier vs Revenue</CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5">
-                Paid invoices in range — progress toward the next tier threshold
+                Customer payments (job ledger) in <strong className="text-text-secondary">{tierMonthLabel || "this month"}</strong> — ignores dashboard date filter
               </p>
             </div>
           </div>
@@ -728,7 +742,7 @@ export function OverviewExecutiveBundle() {
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="text-base font-bold text-text-primary tabular-nums">{formatCurrency(billingForTier)}</span>
-                  <span className="text-xs text-text-tertiary">paid invoices</span>
+                  <span className="text-xs text-text-tertiary">collected this month</span>
                   {current && (
                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-200">
                       Tier {current.tier_number} · {current.rate_percent}%
@@ -757,7 +771,7 @@ export function OverviewExecutiveBundle() {
           <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
               <CardTitle className="text-sm font-semibold">Top 5 — partners</CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">Gross margin $ · jobs created in period</p>
+              <p className="text-[10px] text-text-tertiary mt-0.5">Gross margin · jobs created in period</p>
             </div>
             <Users className="h-3.5 w-3.5 text-text-tertiary" />
           </CardHeader>
@@ -780,20 +794,46 @@ export function OverviewExecutiveBundle() {
           </div>
         </Card>
 
-        <BestSellersByOwner
-          items={ownerLeaderboard}
-          loading={loading}
-          rangeLabel={bounds ? rangeLabel : "All time"}
-          limit={5}
-          compact
-          title="Top 5 — job owners"
-        />
+        <Card padding="none" className="border-border-light h-full flex flex-col min-h-0 overflow-hidden">
+          <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-start justify-between gap-2 mb-0 shrink-0">
+            <div className="flex items-start gap-2 min-w-0">
+              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-sky-500/20 to-indigo-500/10 flex items-center justify-center shrink-0">
+                <Users className="h-3.5 w-3.5 text-sky-600" />
+              </div>
+              <div className="min-w-0">
+                <CardTitle className="text-sm font-semibold">Top 5 — account owners</CardTitle>
+                <p className="text-[10px] text-text-tertiary mt-0.5">
+                  By <strong className="text-text-secondary">account_owner_id</strong> · booked revenue · jobs created in period ·{" "}
+                  {bounds ? rangeLabel : "All time"}
+                </p>
+              </div>
+            </div>
+          </CardHeader>
+          <div className="px-3 pb-3 space-y-1 flex-1 min-h-0">
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-8 animate-pulse rounded-md bg-surface-hover" />)
+            ) : accountOwnerLeaderboard.length === 0 ? (
+              <p className="text-xs text-text-tertiary py-3 text-center">No account-linked revenue in this period</p>
+            ) : (
+              accountOwnerLeaderboard.map((row, i) => (
+                <div
+                  key={row.ownerProfileId ?? `unassigned-${i}`}
+                  className="flex items-center gap-2 py-1.5 border-b border-border-light/50 last:border-0"
+                >
+                  <span className={rankBadgeClass(i)}>{i + 1}</span>
+                  <p className="text-xs font-medium text-text-primary truncate flex-1">{row.displayName}</p>
+                  <p className="text-xs font-bold tabular-nums text-text-primary shrink-0">{formatCurrency(row.revenue)}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
 
         <Card padding="none" className="border-border-light h-full flex flex-col min-h-0">
           <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
               <CardTitle className="text-sm font-semibold">Top 5 — accounts</CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">Booked revenue · account owner when set</p>
+              <p className="text-[10px] text-text-tertiary mt-0.5">By account · auto-link clients without account</p>
             </div>
             <Building2 className="h-3.5 w-3.5 text-text-tertiary" />
           </CardHeader>
@@ -804,7 +844,7 @@ export function OverviewExecutiveBundle() {
               <p className="text-xs text-text-tertiary py-3 text-center">No account-linked revenue</p>
             ) : (
               topAccounts.map((row, i) => (
-                <div key={row.name} className="flex items-center gap-2 py-1.5 border-b border-border-light/50 last:border-0">
+                <div key={row.accountId} className="flex items-center gap-2 py-1.5 border-b border-border-light/50 last:border-0">
                   <span className={rankBadgeClass(i)}>{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-text-primary truncate">{row.name}</p>
