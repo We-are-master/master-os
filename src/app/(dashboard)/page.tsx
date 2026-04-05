@@ -18,11 +18,12 @@ import { DashboardDateToolbar } from "@/components/dashboard/dashboard-date-tool
 import { WidgetRenderer } from "@/components/dashboard/widget-renderer";
 import { DashboardViewEditor } from "@/components/dashboard/dashboard-view-editor";
 import { OperationsStatus } from "@/components/dashboard/operations-status";
+import { CeoFinancialDashboard } from "@/components/dashboard/ceo-financial-dashboard";
 import type { DashboardView, WidgetConfig } from "@/types/dashboard-config";
 import {
   LayoutDashboard, DollarSign, Briefcase, BarChart2, PieChart,
   Activity, Users, Settings, Layers, Plus, Pencil, SlidersHorizontal,
-  ChevronDown,
+  ChevronDown, Crown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { dashboardJobsFilterSelectColumns, isLegacyJobSchema } from "@/lib/job-schema-compat";
@@ -124,7 +125,7 @@ function DashboardInner() {
   const { profile } = useProfile();
   const firstName = profile?.full_name?.split(" ")[0] || "there";
   const { visibleViews, loading: viewsLoading, canEdit } = useDashboardConfig();
-  const { bounds } = useDashboardDateRange();
+  const { bounds, rangeLabel } = useDashboardDateRange();
 
   const [activeFilters, setActiveFilters] = useState<Set<DashboardFilter>>(new Set());
   const [filterCounts, setFilterCounts] = useState<Record<string, number>>({});
@@ -132,6 +133,7 @@ function DashboardInner() {
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingView, setEditingView] = useState<DashboardView | null>(null);
+  const [ceoDashboard, setCeoDashboard] = useState(false);
 
   // Set default view when views load
   useEffect(() => {
@@ -203,22 +205,48 @@ function DashboardInner() {
 
         {/* ── View picker ──────────────────────────────────────────────── */}
         <div className="flex items-center gap-2 flex-wrap">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setCeoDashboard(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setCeoDashboard(true);
+              }
+            }}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-sm font-medium border transition-all cursor-pointer select-none",
+              ceoDashboard
+                ? "bg-emerald-700 text-white border-emerald-700 shadow-sm dark:bg-emerald-800 dark:border-emerald-800"
+                : "bg-card text-text-secondary border-border hover:bg-surface-hover"
+            )}
+          >
+            <Crown className="h-3.5 w-3.5 flex-shrink-0" />
+            CEO
+          </div>
           {viewsLoading
             ? Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="h-8 w-24 animate-pulse rounded-xl bg-surface-hover" />
               ))
             : visibleViews.map((view) => {
                 const IconComp = ICON_MAP[view.icon] ?? LayoutDashboard;
-                const isActive = view.id === activeViewId;
+                const isActive = !ceoDashboard && view.id === activeViewId;
                 return (
                   <div
                     key={view.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => setActiveViewId(view.id)}
+                    onClick={() => {
+                      setCeoDashboard(false);
+                      setActiveViewId(view.id);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
+                        setCeoDashboard(false);
                         setActiveViewId(view.id);
                       }
                     }}
@@ -263,13 +291,24 @@ function DashboardInner() {
         </div>
 
         {/* View description */}
-        {activeView?.description && (
+        {activeView?.description && !ceoDashboard && (
           <p className="text-xs text-text-tertiary -mt-1">{activeView.description}</p>
         )}
 
-        {!isOperationsView(activeView) && (
+        {(!isOperationsView(activeView) || ceoDashboard) && (
           <DashboardDateToolbar
+            footnote={
+              ceoDashboard ? (
+                <>
+                  CEO dashboard: <strong className="text-text-secondary">{rangeLabel}</strong>
+                  <span className="block mt-1 text-text-tertiary">
+                    Presets include today, week-to-date, month-to-date, quarter-to-date, year-to-date, and custom range
+                  </span>
+                </>
+              ) : undefined
+            }
             trailing={
+              ceoDashboard ? null : (
               <div className="relative">
                 <button
                   type="button"
@@ -342,6 +381,7 @@ function DashboardInner() {
                   </>
                 )}
               </div>
+              )
             }
           />
         )}
@@ -353,6 +393,8 @@ function DashboardInner() {
               <div key={i} className={cn("h-48 animate-pulse rounded-2xl bg-surface-hover", i === 0 || i === 5 ? "col-span-12" : "col-span-12 md:col-span-6 lg:col-span-4")} />
             ))}
           </div>
+        ) : ceoDashboard ? (
+          <CeoFinancialDashboard />
         ) : activeView ? (
           isOperationsView(activeView) ? (
             <OperationsStatus />
