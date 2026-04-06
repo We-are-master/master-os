@@ -362,10 +362,13 @@ export async function GET(req: NextRequest) {
       React.createElement(QuotePDF, { data: pdfData, branding }),
     );
 
+    const safeName = `${quote.reference.replace(/\//g, "-")}_quote.pdf`;
+    const asAttachment = req.nextUrl.searchParams.get("download") === "1";
+
     return new Response(pdfBuffer, {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="${quote.reference.replace(/\//g, "-")}_quote.pdf"`,
+        "Content-Disposition": `${asAttachment ? "attachment" : "inline"}; filename="${safeName}"`,
       },
     });
   } catch (err) {

@@ -2079,9 +2079,32 @@ function QuoteDetailDrawer({
               )}
 
               <div className="rounded-xl border border-border-light bg-surface-hover/80 p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-text-tertiary" />
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer PDF preview</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="h-4 w-4 shrink-0 text-text-tertiary" />
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
+                      Customer PDF preview
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    icon={<Download className="h-3.5 w-3.5" />}
+                    onClick={() => {
+                      const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.rel = "noopener";
+                      a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                    }}
+                  >
+                    Download PDF
+                  </Button>
                 </div>
                 <p className="text-[11px] text-text-tertiary">
                   Matches the PDF attached when you email the client. Uses <strong className="text-text-secondary">saved</strong> scope, line items and figures — use <strong className="text-text-secondary">Save Quote</strong> to refresh.
