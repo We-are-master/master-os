@@ -209,6 +209,9 @@ export interface Job {
   client_address_id?: string;
   client_name: string;
   property_address: string;
+  /** WGS84; geocoded from `property_address` (OpenCage) for partner app map. */
+  latitude?: number | null;
+  longitude?: number | null;
   /** Set to null in updates to clear assignment (undefined is omitted by the client and leaves the old value). */
   partner_id?: string | null;
   partner_ids?: string[] | null;
