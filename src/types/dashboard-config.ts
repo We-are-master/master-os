@@ -177,6 +177,7 @@ export type WidgetType =
   | "revenue_chart"
   | "quote_funnel"
   | "jobs_status_donut"
+  | "partners_by_trade"
   | "margin_chart"
   | "partner_performance"
   | "partner_payout_top5"
@@ -206,6 +207,7 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
   { type: "revenue_chart",       label: "Revenue Chart",         description: "Collected vs invoiced revenue per month",            icon: "TrendingUp",    defaultSize: "full" },
   { type: "quote_funnel",        label: "Quote → Job Funnel",    description: "End-to-end conversion: request → quote → job",      icon: "Filter",        defaultSize: "one_third" },
   { type: "jobs_status_donut",   label: "Jobs by Status",        description: "Donut chart of all jobs by current status",         icon: "PieChart",      defaultSize: "one_third" },
+  { type: "partners_by_trade",   label: "Partners by type of work", description: "Active partners counted per trade / type of work (horizontal bars)", icon: "Users", defaultSize: "one_third" },
   { type: "margin_chart",        label: "Margin Trend",          description: "Margin percentage trend over time",                  icon: "Percent",       defaultSize: "one_third" },
   { type: "partner_performance", label: "Top Partners",          description: "Partner ranking by revenue and jobs",                icon: "Award",         defaultSize: "half" },
   { type: "partner_payout_top5", label: "Partner payout · Top 5", description: "Largest partner costs / payouts in the period (1/3 width — place beside Pipeline)", icon: "DollarSign", defaultSize: "one_third" },

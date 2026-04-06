@@ -5,6 +5,7 @@ import { StatsGrid } from "./stats-grid";
 import { RevenueChart } from "./revenue-chart";
 import { QuoteFunnel } from "./quote-funnel";
 import { JobsStatusDonut } from "./jobs-status-donut";
+import { PartnersByTradeChart } from "./partners-by-trade-chart";
 import { MarginChart } from "./margin-chart";
 import { PartnerPerformance } from "./partner-performance";
 import { PartnerMarginTop5, PartnerPayoutTop5 } from "./partner-financial-top5";
@@ -49,6 +50,7 @@ export function WidgetRenderer({ widget, className }: WidgetRendererProps) {
     case "revenue_chart":       return <div className={cls}><RevenueChart /></div>;
     case "quote_funnel":        return <div className={cls}><QuoteFunnel /></div>;
     case "jobs_status_donut":   return <div className={cls}><JobsStatusDonut /></div>;
+    case "partners_by_trade":   return <div className={cls}><PartnersByTradeChart /></div>;
     case "margin_chart":        return <div className={cls}><MarginChart /></div>;
     case "partner_performance": return <div className={cls}><PartnerPerformance /></div>;
     case "partner_payout_top5": return <div className={cls}><PartnerPayoutTop5 /></div>;

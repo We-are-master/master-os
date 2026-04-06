@@ -102,6 +102,7 @@ const OVERVIEW_HIDDEN_WIDGET_TYPES = new Set<WidgetConfig["type"]>([
   "partner_margin_top5",
   "partner_performance",
   "finance_flow",
+  "partners_by_trade",
 ]);
 
 function isOverviewView(view: DashboardView | null): boolean {
