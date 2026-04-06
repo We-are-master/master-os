@@ -52,7 +52,11 @@ import { findDuplicateJobs, formatJobDuplicateLines } from "@/lib/duplicate-crea
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, getPreviousJobStatus, normalizeTotalPhases } from "@/lib/job-phases";
-import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
+import {
+  effectiveJobStatusForDisplay,
+  getPartnerAssignmentBlockReason,
+  jobHasPartnerSet,
+} from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
 import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
@@ -1127,7 +1131,8 @@ function JobsPageContent() {
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap",
       render: (item) => {
-        const c = statusConfig[item.status] ?? { label: item.status, variant: "default" as const };
+        const st = effectiveJobStatusForDisplay(item);
+        const c = statusConfig[st] ?? { label: st, variant: "default" as const };
         return <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>;
       },
     },
@@ -1377,7 +1382,8 @@ function JobsPageContent() {
                   getCardId={(j) => j.id}
                   onCardClick={(j) => router.push(`/jobs/${j.id}`)}
                   renderCard={(j) => {
-                    const sc = statusConfig[j.status] ?? { label: j.status };
+                    const disp = effectiveJobStatusForDisplay(j);
+                    const sc = statusConfig[disp] ?? { label: disp };
                     const sched = formatJobScheduleLine(j);
                     const previousStatus = getPreviousJobStatus(j);
                     const prevLabel = previousStatus ? (statusConfig[previousStatus]?.label ?? previousStatus) : null;
