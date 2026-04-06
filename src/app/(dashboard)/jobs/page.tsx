@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo, Suspense } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, Suspense, useId } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
@@ -19,7 +19,7 @@ import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon,
   ArrowRight, Briefcase, Receipt,
   MapPin, Building2, TrendingUp,
-  AlertTriangle, XCircle, PoundSterling, Undo2,
+  AlertTriangle, XCircle, PoundSterling,   Undo2, ImagePlus, Loader2,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -87,6 +87,9 @@ import {
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
+import { coerceJobImagesArray } from "@/lib/job-images";
+import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
+import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -649,6 +652,7 @@ function JobsPageContent() {
         customer_deposit: 0, customer_deposit_paid: false,
         customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
         scope: formData.scope?.trim() || undefined,
+        images: coerceJobImagesArray(formData.images),
       });
       await Promise.all([
         logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }),
@@ -1089,6 +1093,20 @@ function JobsPageContent() {
       },
     },
     {
+      key: "site_photos",
+      label: "Photos",
+      minWidth: "100px",
+      cellClassName: "max-w-[140px]",
+      render: (item) => {
+        const urls = jobSitePhotoUrls(item);
+        return urls.length ? (
+          <JobSitePhotosStrip urls={urls} max={3} size="sm" />
+        ) : (
+          <span className="text-xs text-text-tertiary">—</span>
+        );
+      },
+    },
+    {
       key: "status",
       label: "Status",
       minWidth: "118px",
@@ -1363,6 +1381,12 @@ function JobsPageContent() {
                           {sched ? <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug">{sched}</p> : null}
                           <p className="text-[11px] text-text-secondary mt-0.5 truncate">{j.client_name}</p>
                           <JobCardFinanceRow job={j} />
+                          {jobSitePhotoUrls(j).length > 0 ? (
+                            <div className="mt-2 border-t border-border-light pt-2">
+                              <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide mb-1">Site photos</p>
+                              <JobSitePhotosStrip urls={jobSitePhotoUrls(j)} max={5} size="md" />
+                            </div>
+                          ) : null}
                           {previousStatus && prevLabel ? (
                             <div className="mt-2.5" onClick={(e) => e.stopPropagation()}>
                               <Button
@@ -1534,6 +1558,9 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const [partners, setPartners] = useState<Partner[]>([]);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const [partnerSearch, setPartnerSearch] = useState("");
+  const [sitePhotoFiles, setSitePhotoFiles] = useState<File[]>([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const sitePhotosInputId = useId();
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
@@ -1575,6 +1602,17 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   }, [open]);
 
   useEffect(() => {
+    if (!open) setSitePhotoFiles([]);
+  }, [open]);
+
+  const sitePhotoPreviewUrls = useMemo(() => sitePhotoFiles.map((f) => URL.createObjectURL(f)), [sitePhotoFiles]);
+  useEffect(() => {
+    return () => {
+      sitePhotoPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [sitePhotoPreviewUrls]);
+
+  useEffect(() => {
     if (isHousekeepJob) return;
     const eligible = isLikelyCczAddress(clientAddress.property_address);
     queueMicrotask(() => {
@@ -1594,7 +1632,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     });
   }, [isHousekeepJob]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (form.job_type !== "hourly" && !form.title) { toast.error("Type of work is required"); return; }
     if (form.job_type === "hourly" && !form.catalog_service_id) {
@@ -1639,6 +1677,19 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     const clientPriceOut = isHourly ? hourlyTotals.clientTotal : (Number(form.client_price) || 0);
     const partnerCostOut = isHourly ? hourlyTotals.partnerTotal : (Number(form.partner_cost) || 0);
 
+    let uploadedImageUrls: string[] = [];
+    if (sitePhotoFiles.length > 0) {
+      setUploadingPhotos(true);
+      try {
+        uploadedImageUrls = await uploadQuoteInviteImages(sitePhotoFiles, `job-new/${Date.now()}`);
+      } catch (err) {
+        toast.error(getErrorMessage(err, "Photo upload failed"));
+        setUploadingPhotos(false);
+        return;
+      }
+      setUploadingPhotos(false);
+    }
+
     onCreate({
       title: form.job_type === "hourly"
         ? (selectedCatalogService?.name ? (normalizeTypeOfWork(selectedCatalogService.name) || selectedCatalogService.name) : (normalizeTypeOfWork(form.title.trim()) || form.title.trim()))
@@ -1668,7 +1719,9 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       scheduled_finish_date,
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
+      images: uploadedImageUrls.length ? uploadedImageUrls : undefined,
     });
+    setSitePhotoFiles([]);
     setForm({
       title: "",
       catalog_service_id: "",
@@ -1778,6 +1831,54 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             placeholder="Required if you assign a partner (with schedule and address above)."
             className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]"
           />
+        </div>
+        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Site reference photos</p>
+          <p className="text-[11px] text-text-tertiary">Optional — photos from the client or site (JPG/PNG/WebP/GIF, max 5 MB each).</p>
+          <input
+            id={sitePhotosInputId}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            multiple
+            className="sr-only"
+            onChange={(e) => {
+              const list = e.target.files;
+              if (!list?.length) return;
+              setSitePhotoFiles((prev) => [...prev, ...Array.from(list)].slice(0, 12));
+              e.target.value = "";
+            }}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={sitePhotosInputId}>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-text-primary cursor-pointer hover:bg-surface-hover">
+                <ImagePlus className="h-4 w-4" />
+                Add photos
+              </span>
+            </label>
+            {uploadingPhotos ? <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" aria-hidden /> : null}
+          </div>
+          {sitePhotoFiles.length > 0 ? (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {sitePhotoFiles.map((f, i) => (
+                <div key={`${f.name}-${i}`} className="relative shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={sitePhotoPreviewUrls[i]}
+                    alt=""
+                    className="h-14 w-14 rounded-md object-cover border border-border-light"
+                  />
+                  <button
+                    type="button"
+                    className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-card border border-border text-text-tertiary hover:text-primary"
+                    onClick={() => setSitePhotoFiles((prev) => prev.filter((_, j) => j !== i))}
+                    aria-label="Remove photo"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
@@ -1962,8 +2063,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit">Create Job</Button>
+          <Button variant="outline" onClick={onClose} type="button" disabled={uploadingPhotos}>Cancel</Button>
+          <Button type="submit" loading={uploadingPhotos} disabled={uploadingPhotos}>Create Job</Button>
         </div>
       </form>
     </Modal>

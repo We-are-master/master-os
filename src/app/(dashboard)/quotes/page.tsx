@@ -74,6 +74,7 @@ import {
   depositAmountFromPercent,
   inferDepositPercentFromLegacy,
 } from "@/lib/quote-deposit";
+import { resolveImagesForJobFromQuote } from "@/lib/job-images";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
@@ -616,6 +617,8 @@ function QuotesPageContent() {
         });
         if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJobs)))) return;
 
+        const siteImages = await resolveImagesForJobFromQuote(quoteToConvert);
+
         const job = await createJob({
           title: formData.title,
           client_id: formData.client_id,
@@ -654,6 +657,7 @@ function QuotesPageContent() {
           customer_final_payment: scheduledFinal,
           customer_final_paid: false,
           scope: jobScope || undefined,
+          images: siteImages.length ? siteImages : undefined,
         });
 
         const dueStr = await getInvoiceDueDateIsoForClient(formData.client_id ?? null);
