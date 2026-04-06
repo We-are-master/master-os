@@ -98,7 +98,10 @@ import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
-import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
+import {
+  getPartnerAssignmentBlockReason,
+  JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
+} from "@/lib/job-partner-assign";
 import {
   computePartnerLiveTimerActiveMs,
   formatPartnerLiveTimer,
@@ -4271,7 +4274,10 @@ export default function JobDetailPage() {
                   if (selectedPartnerId && (job.status === "unassigned" || job.status === "auto_assigning")) {
                     partnerPatch.status = "scheduled";
                   }
-                  if (!selectedPartnerId && job.status === "scheduled") {
+                  if (
+                    !selectedPartnerId &&
+                    JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(job.status)
+                  ) {
                     partnerPatch.status = "unassigned";
                   }
                   await handleJobUpdate(job.id, partnerPatch);
