@@ -180,15 +180,18 @@ export function QuoteFunnel() {
                   <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">{step.label}</span>
                   <span className="text-xs font-bold tabular-nums text-text-primary shrink-0">{step.pct}%</span>
                 </div>
-                <div className="h-7 w-full rounded-lg bg-surface-hover overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${step.pct}%` }}
-                    transition={{ duration: 0.7, delay: i * 0.1, ease: [0.25, 0.46, 0.45, 0.94] }}
-                    className={`h-full rounded-lg ${step.color} flex items-center justify-center px-2 min-w-0`}
-                  >
-                    <span className="text-xs font-bold text-white tabular-nums drop-shadow-sm">{step.count}</span>
-                  </motion.div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-bold tabular-nums text-text-primary w-8 shrink-0 text-right">
+                    {step.count}
+                  </span>
+                  <div className="h-7 flex-1 min-w-0 rounded-lg bg-surface-hover overflow-hidden">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${step.pct}%` }}
+                      transition={{ duration: 0.7, delay: i * 0.1, ease: [0.25, 0.46, 0.45, 0.94] }}
+                      className={`h-full rounded-lg ${step.color} min-w-0`}
+                    />
+                  </div>
                 </div>
               </div>
             ))}
@@ -207,10 +210,10 @@ export function QuoteFunnel() {
             {meta.jobsFromQuotes > 0 && Object.keys(jobStatusBreakdown).length > 0 && (
               <div className="mt-3">
                 <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-2">Jobs from quotes by status</p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {Object.entries(jobStatusBreakdown)
                     .sort((a, b) => b[1] - a[1])
-                    .slice(0, 6)
+                    .slice(0, 9)
                     .map(([status, count]) => {
                       const pct = Math.round((count / meta.jobsFromQuotes) * 100);
                       return (

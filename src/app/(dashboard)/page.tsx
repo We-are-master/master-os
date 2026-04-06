@@ -70,8 +70,16 @@ const PIPELINE_ROW_WIDGETS = new Set<WidgetConfig["type"]>([
 ]);
 
 /** Revenue Overview always uses the full 12-column row (not split with Quick Actions, etc.). */
-function getWidgetGridClass(widget: WidgetConfig, orderedWidgets: WidgetConfig[]): string {
+function getWidgetGridClass(widget: WidgetConfig, orderedWidgets: WidgetConfig[], activeView: DashboardView | null): string {
   if (widget.type === "revenue_chart") return "col-span-12";
+  /** Overview: Jobs donut + Request→Job funnel + Partners by trade share one row (3×4 cols from `md`). */
+  if (
+    activeView &&
+    isOverviewView(activeView) &&
+    (widget.type === "jobs_status_donut" || widget.type === "quote_funnel" || widget.type === "partners_by_trade")
+  ) {
+    return "col-span-12 md:col-span-4";
+  }
   /** If only one Top 5 companion exists, let Pipeline expand to avoid empty space. */
   if (widget.type === "pipeline_summary") {
     const companionCount = orderedWidgets.filter(
@@ -102,7 +110,6 @@ const OVERVIEW_HIDDEN_WIDGET_TYPES = new Set<WidgetConfig["type"]>([
   "partner_margin_top5",
   "partner_performance",
   "finance_flow",
-  "partners_by_trade",
 ]);
 
 function isOverviewView(view: DashboardView | null): boolean {
@@ -131,6 +138,30 @@ function orderCashFlowPartnersAboveJobsDonut(widgets: WidgetConfig[]): WidgetCon
   const firstDonutIdx = withoutFp.findIndex((w) => w.type === "jobs_status_donut");
   if (firstDonutIdx === -1) return byPos;
   return [...withoutFp.slice(0, firstDonutIdx), ...fp, ...withoutFp.slice(firstDonutIdx)];
+}
+
+/**
+ * Overview: place **Partners by type of work** in the same row as Jobs donut + Quote funnel (1/3 width each).
+ */
+function injectOverviewPartnersWidget(widgets: WidgetConfig[], activeView: DashboardView | null): WidgetConfig[] {
+  if (!activeView || !isOverviewView(activeView)) return widgets;
+  if (widgets.some((w) => w.type === "partners_by_trade")) return widgets;
+  const sorted = [...widgets].sort((a, b) => a.position - b.position);
+  const funnelIdx = sorted.findIndex((w) => w.type === "quote_funnel");
+  const insert: WidgetConfig = {
+    id: "overview-partners-by-trade",
+    type: "partners_by_trade",
+    title: "Partners by type of work",
+    size: "one_third",
+    position: 0,
+  };
+  if (funnelIdx === -1) {
+    const next = [...sorted, insert];
+    return next.map((w, i) => ({ ...w, position: i }));
+  }
+  const next = [...sorted];
+  next.splice(funnelIdx + 1, 0, insert);
+  return next.map((w, i) => ({ ...w, position: i }));
 }
 
 // ─── Dashboard inner (needs context) ─────────────────────────────────────────
@@ -448,10 +479,13 @@ function DashboardInner() {
           ) : (
           <div className="grid grid-cols-12 gap-5 items-stretch">
             {(() => {
-              const orderedWidgets = orderCashFlowPartnersAboveJobsDonut(
-                [...activeView.widgets]
-                  .filter((w) => !DASHBOARD_HIDDEN_WIDGET_TYPES.has(w.type))
-                  .filter((w) => !isOverviewView(activeView) || !OVERVIEW_HIDDEN_WIDGET_TYPES.has(w.type)),
+              const orderedWidgets = injectOverviewPartnersWidget(
+                orderCashFlowPartnersAboveJobsDonut(
+                  [...activeView.widgets]
+                    .filter((w) => !DASHBOARD_HIDDEN_WIDGET_TYPES.has(w.type))
+                    .filter((w) => !isOverviewView(activeView) || !OVERVIEW_HIDDEN_WIDGET_TYPES.has(w.type)),
+                ),
+                activeView,
               );
               return orderedWidgets.map((widget, i) => (
                 <motion.div
@@ -460,7 +494,7 @@ function DashboardInner() {
                   initial="hidden"
                   animate="visible"
                   custom={i}
-                  className={cn(getWidgetGridClass(widget, orderedWidgets), "h-full min-h-0")}
+                  className={cn(getWidgetGridClass(widget, orderedWidgets, activeView), "h-full min-h-0")}
                 >
                   <WidgetRenderer widget={widget} />
                 </motion.div>
