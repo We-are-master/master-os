@@ -859,8 +859,14 @@ export default function BillsPage() {
               setModalOpen(false);
               setEditing(null);
               load();
-            } catch {
-              toast.error("Failed to save");
+            } catch (e) {
+              const msg =
+                e && typeof e === "object" && "message" in e
+                  ? String((e as { message: unknown }).message)
+                  : e instanceof Error
+                    ? e.message
+                    : "Failed to save";
+              toast.error(msg);
             } finally {
               setSaving(false);
             }
