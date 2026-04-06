@@ -268,13 +268,26 @@ export type EnsureWeeklySelfBillOptions = {
 export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
   if (!job.partner_id?.trim()) return null;
   const supabase = getSupabase();
+  const partnerId = job.partner_id.trim();
+  /** `self_bills.partner_id` FK → `partners.id`; jobs can still hold a stale/invalid UUID. */
+  const { data: partnerRow, error: partnerLookupErr } = await supabase
+    .from("partners")
+    .select("id")
+    .eq("id", partnerId)
+    .maybeSingle();
+  if (partnerLookupErr) throw partnerLookupErr;
+  if (!partnerRow?.id) {
+    throw new Error(
+      "This partner is not in the directory (link broken or partner removed). Re-assign the partner on the job, then create the self-bill again.",
+    );
+  }
   const anchor = options?.weekAnchorDate ?? new Date(job.created_at);
   const { weekStart, weekEnd, weekLabel } = getWeekBoundsForDate(anchor);
 
   const { data: existing, error: selErr } = await supabase
     .from("self_bills")
     .select("id")
-    .eq("partner_id", job.partner_id)
+    .eq("partner_id", partnerId)
     .eq("week_start", weekStart)
     .limit(1)
     .maybeSingle();
@@ -287,7 +300,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     const ref = uniqueRef(weekLabel, job.reference);
     const row = {
       reference: ref,
-      partner_id: job.partner_id,
+      partner_id: partnerId,
       partner_name: job.partner_name?.trim() || "Partner",
       bill_origin: "partner" as const,
       period: weekStart.slice(0, 7),
@@ -310,6 +323,13 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     if (insErr) {
       const code = (insErr as { code?: string }).code;
       const msg = insErr.message ?? "";
+      const isFkPartner =
+        code === "23503" || msg.includes("self_bills_partner_id_fkey") || msg.includes("foreign key constraint");
+      if (isFkPartner) {
+        throw new Error(
+          "Partner is not in the directory (self_bills require a valid partners row). Re-assign the partner on the job, then try again.",
+        );
+      }
       const isStatusCheck =
         code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint");
       if (isStatusCheck) {
@@ -324,7 +344,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
           const { data: race } = await supabase
             .from("self_bills")
             .select("id")
-            .eq("partner_id", job.partner_id)
+            .eq("partner_id", partnerId)
             .eq("week_start", weekStart)
             .limit(1)
             .maybeSingle();
@@ -335,7 +355,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
         const { data: race } = await supabase
           .from("self_bills")
           .select("id")
-          .eq("partner_id", job.partner_id)
+          .eq("partner_id", partnerId)
           .eq("week_start", weekStart)
           .limit(1)
           .maybeSingle();
