@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
+import { jobVisibleOnSchedule } from "@/services/jobs";
 import { getLatestLocation, getTeamMembers } from "@/services/partner-detail";
 import type { Job } from "@/types/database";
 import {
@@ -188,7 +189,9 @@ export default function SchedulePage() {
       ]) {
         merged.set(row.id, row as Job);
       }
-      const list = Array.from(merged.values()).filter((j) => jobIntersectsLocalMonth(j, year, month));
+      const list = Array.from(merged.values())
+        .filter((j) => jobVisibleOnSchedule(j.status))
+        .filter((j) => jobIntersectsLocalMonth(j, year, month));
       list.sort((a, b) => {
         const ka = a.scheduled_start_at ?? (a.scheduled_date ? `${a.scheduled_date}T00:00:00` : "");
         const kb = b.scheduled_start_at ?? (b.scheduled_date ? `${b.scheduled_date}T00:00:00` : "");

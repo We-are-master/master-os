@@ -108,6 +108,16 @@ export function jobMatchesJobsManagementTab(jobStatus: string, tabId: string): b
   return jobStatus === tabId;
 }
 
+/** Schedule calendar: same pipeline as Jobs tabs Unassigned, Scheduled, In progress, Final checks (excludes awaiting payment, completed, cancelled, etc.). */
+export function jobVisibleOnSchedule(jobStatus: string): boolean {
+  return (
+    jobMatchesJobsManagementTab(jobStatus, "unassigned") ||
+    jobMatchesJobsManagementTab(jobStatus, "scheduled") ||
+    jobMatchesJobsManagementTab(jobStatus, "in_progress") ||
+    jobMatchesJobsManagementTab(jobStatus, "final_check")
+  );
+}
+
 export async function markLateJobs(): Promise<void> {
   const supabase = getSupabase();
   const nowIso = new Date().toISOString();
