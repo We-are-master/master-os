@@ -618,6 +618,25 @@ export default function PartnersPage() {
       },
     },
     {
+      key: "compliance_score",
+      label: "Compliance",
+      align: "center",
+      render: (item) => {
+        const raw = item.compliance_score;
+        const s = typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
+        const colorClass =
+          s >= 97 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
+        return (
+          <div className="flex flex-col items-center min-w-[3.25rem]" title="Blended score (documents + profile), 0–100">
+            <span className={cn("text-sm font-bold tabular-nums", colorClass)}>
+              {Math.round(s)}
+              <span className="text-[10px] font-semibold text-text-tertiary ml-0.5">%</span>
+            </span>
+          </div>
+        );
+      },
+    },
+    {
       key: "jobs_completed", label: "Jobs", align: "center",
       render: (item) => <span className="text-sm font-semibold text-text-primary">{item.jobs_completed}</span>,
     },

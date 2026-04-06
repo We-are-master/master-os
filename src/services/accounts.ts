@@ -1,5 +1,15 @@
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Account, Client, Invoice, Job } from "@/types/database";
+
+const ACCOUNT_OWNER_MIGRATION_HINT =
+  "This database is missing the account owner column or migration — run migration 107 (supabase/migrations/107_accounts_account_owner_id.sql), or clear Account owner and save.";
+
+function wantsAccountOwnerId(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  const t = typeof value === "string" ? value.trim() : "";
+  return t.length > 0;
+}
 
 type AccountInsert = Omit<Account, "id" | "created_at" | "total_revenue" | "active_jobs">;
 
@@ -116,17 +126,45 @@ export async function getAccount(id: string): Promise<Account | null> {
 export async function createAccount(input: AccountInsert): Promise<Account> {
   const supabase = getSupabase();
   const payload = normalizeAccountInsert(input);
-  const { data, error } = await supabase.from("accounts").insert(payload).select().single();
-  if (error) throw formatAccountDbError(error);
-  return data as Account;
+  const first = await supabase.from("accounts").insert(payload).select().single();
+  if (!first.error) return first.data as Account;
+
+  if (
+    isSupabaseMissingColumnError(first.error, "account_owner_id") &&
+    Object.prototype.hasOwnProperty.call(payload, "account_owner_id")
+  ) {
+    if (wantsAccountOwnerId(payload.account_owner_id)) {
+      throw new Error(ACCOUNT_OWNER_MIGRATION_HINT);
+    }
+    const { account_owner_id: _a, ...rest } = payload;
+    const retry = await supabase.from("accounts").insert(rest).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
+  throw formatAccountDbError(first.error);
 }
 
 export async function updateAccount(id: string, input: Partial<Account>): Promise<Account> {
   const supabase = getSupabase();
   const payload = normalizeAccountPatch(input);
-  const { data, error } = await supabase.from("accounts").update(payload).eq("id", id).select().single();
-  if (error) throw formatAccountDbError(error);
-  return data as Account;
+  const first = await supabase.from("accounts").update(payload).eq("id", id).select().single();
+  if (!first.error) return first.data as Account;
+
+  if (
+    isSupabaseMissingColumnError(first.error, "account_owner_id") &&
+    Object.prototype.hasOwnProperty.call(payload, "account_owner_id")
+  ) {
+    if (wantsAccountOwnerId(payload.account_owner_id)) {
+      throw new Error(ACCOUNT_OWNER_MIGRATION_HINT);
+    }
+    const { account_owner_id: _a, ...rest } = payload;
+    const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
+  throw formatAccountDbError(first.error);
 }
 
 /**
