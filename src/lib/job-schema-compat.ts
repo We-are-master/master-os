@@ -24,8 +24,6 @@ const JOB_DB_COMPAT_STRIP_KEYS = [
   "hourly_partner_rate",
   "billed_hours",
   "images",
-  "latitude",
-  "longitude",
 ] as const;
 
 /**

@@ -578,7 +578,8 @@ export async function updateJob(
 
   let { data: rows, error } = await runUpdateReturning(patch);
   if (error && isPostgrestWriteRetryableError(error)) {
-    const retry = await runUpdateReturning(applyJobDbCompat({ ...effectivePatch }));
+    /** Use full `patch` (incl. geocoded lat/lng), not `effectivePatch` — compat strip must not drop coords. */
+    const retry = await runUpdateReturning(applyJobDbCompat({ ...patch }));
     rows = retry.data;
     error = retry.error;
   }

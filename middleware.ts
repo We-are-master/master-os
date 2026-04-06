@@ -35,7 +35,7 @@ export async function middleware(request: NextRequest) {
 
   // API routes: do not redirect; let the route return 401 if unauthenticated
   if (isApiRoute) {
-    addSecurityHeaders(supabaseResponse);
+    addSecurityHeaders(supabaseResponse, pathname);
     return supabaseResponse;
   }
 
@@ -43,7 +43,7 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     const redirect = NextResponse.redirect(url);
-    addSecurityHeaders(redirect);
+    addSecurityHeaders(redirect, pathname);
     return redirect;
   }
 
@@ -51,17 +51,23 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     const redirect = NextResponse.redirect(url);
-    addSecurityHeaders(redirect);
+    addSecurityHeaders(redirect, pathname);
     return redirect;
   }
 
-  addSecurityHeaders(supabaseResponse);
+  addSecurityHeaders(supabaseResponse, pathname);
   return supabaseResponse;
 }
 
-function addSecurityHeaders(res: NextResponse) {
+/**
+ * `DENY` breaks same-origin iframes (e.g. quote drawer PDF preview loading `/api/quotes/send-pdf`).
+ * `SAMEORIGIN` still blocks embedding on other sites.
+ */
+function addSecurityHeaders(res: NextResponse, pathname?: string) {
   res.headers.set("X-Content-Type-Options", "nosniff");
-  res.headers.set("X-Frame-Options", "DENY");
+  const allowSameOriginFrame =
+    pathname === "/api/quotes/send-pdf" || pathname === "/api/quotes/email-preview";
+  res.headers.set("X-Frame-Options", allowSameOriginFrame ? "SAMEORIGIN" : "DENY");
   res.headers.set("X-XSS-Protection", "1; mode=block");
   res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
