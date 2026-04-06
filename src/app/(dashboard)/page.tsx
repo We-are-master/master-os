@@ -132,6 +132,31 @@ function orderCashFlowPartnersAboveJobsDonut(widgets: WidgetConfig[]): WidgetCon
   return [...withoutFp.slice(0, firstDonutIdx), ...fp, ...withoutFp.slice(firstDonutIdx)];
 }
 
+/**
+ * Overview: show **Partners by type of work** beside Jobs donut + Request funnel (third column)
+ * without requiring every tenant to re-save the dashboard view.
+ */
+function injectOverviewPartnersWidget(widgets: WidgetConfig[], activeView: DashboardView | null): WidgetConfig[] {
+  if (!activeView || !isOverviewView(activeView)) return widgets;
+  if (widgets.some((w) => w.type === "partners_by_trade")) return widgets;
+  const sorted = [...widgets].sort((a, b) => a.position - b.position);
+  const funnelIdx = sorted.findIndex((w) => w.type === "quote_funnel");
+  const insert: WidgetConfig = {
+    id: "overview-partners-by-trade",
+    type: "partners_by_trade",
+    title: "Partners by type of work",
+    size: "one_third",
+    position: 0,
+  };
+  if (funnelIdx === -1) {
+    const next = [...sorted, insert];
+    return next.map((w, i) => ({ ...w, position: i }));
+  }
+  const next = [...sorted];
+  next.splice(funnelIdx + 1, 0, insert);
+  return next.map((w, i) => ({ ...w, position: i }));
+}
+
 // ─── Dashboard inner (needs context) ─────────────────────────────────────────
 function DashboardInner() {
   const { profile } = useProfile();
@@ -447,10 +472,13 @@ function DashboardInner() {
           ) : (
           <div className="grid grid-cols-12 gap-5 items-stretch">
             {(() => {
-              const orderedWidgets = orderCashFlowPartnersAboveJobsDonut(
-                [...activeView.widgets]
-                  .filter((w) => !DASHBOARD_HIDDEN_WIDGET_TYPES.has(w.type))
-                  .filter((w) => !isOverviewView(activeView) || !OVERVIEW_HIDDEN_WIDGET_TYPES.has(w.type)),
+              const orderedWidgets = injectOverviewPartnersWidget(
+                orderCashFlowPartnersAboveJobsDonut(
+                  [...activeView.widgets]
+                    .filter((w) => !DASHBOARD_HIDDEN_WIDGET_TYPES.has(w.type))
+                    .filter((w) => !isOverviewView(activeView) || !OVERVIEW_HIDDEN_WIDGET_TYPES.has(w.type)),
+                ),
+                activeView,
               );
               return orderedWidgets.map((widget, i) => (
                 <motion.div
