@@ -2832,7 +2832,14 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title?.trim()) { toast.error("Job title is required"); return; }
-    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
+    if (!clientAddress.client_id) {
+      toast.error("Select a client from the list (click the name or press Enter) — typing alone does not link the client.");
+      return;
+    }
+    if (!clientAddress.property_address?.trim()) {
+      toast.error("Choose a property address or add a new one under Property address.");
+      return;
+    }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const partnerNameResolved =
       selectedPartner?.company_name ||
@@ -3230,7 +3237,14 @@ function CreateQuoteForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Title is required"); return; }
-    if (!clientAddress.client_id || !clientAddress.property_address) { toast.error("Please select a client and property address"); return; }
+    if (!clientAddress.client_id) {
+      toast.error("Select a client from the list (click the name or press Enter) — typing alone does not link the client.");
+      return;
+    }
+    if (!clientAddress.property_address?.trim()) {
+      toast.error("Choose a property address or add a new one under Property address.");
+      return;
+    }
     const scopeFromLineItems = lineItems
       .map((li) => li.description.trim())
       .filter(Boolean)
@@ -3334,7 +3348,7 @@ function CreateQuoteForm({
           { value: "partner", label: "Invite Partner to Bid" },
         ]}
       />
-      <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+      <ClientAddressPicker value={clientAddress} onChange={setClientAddress} loadAllClientsOnOpen />
       <Select
         label="Type of work *"
         value={form.title}
