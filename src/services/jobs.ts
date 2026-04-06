@@ -14,7 +14,10 @@ import {
 } from "@/lib/job-schema-compat";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
-import { jobHasPartnerSet } from "@/lib/job-partner-assign";
+import {
+  JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
+  jobHasPartnerSet,
+} from "@/lib/job-partner-assign";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
@@ -481,6 +484,27 @@ export async function updateJob(
   const effectivePatch: Record<string, unknown> = { ...basePatch };
   if (beforeGates.status === "late" && jobPatchTouchesSchedule(basePatch)) {
     effectivePatch.status = "scheduled";
+  }
+  const partnerFieldsTouched =
+    "partner_id" in basePatch || "partner_ids" in basePatch || "partner_name" in basePatch;
+  if (partnerFieldsTouched) {
+    const { data: partnerRow } = await supabase
+      .from("jobs")
+      .select("partner_id, partner_ids")
+      .eq("id", trimmedId)
+      .maybeSingle();
+    const mergedPartner = {
+      partner_id:
+        basePatch.partner_id !== undefined ? basePatch.partner_id : partnerRow?.partner_id,
+      partner_ids:
+        basePatch.partner_ids !== undefined ? basePatch.partner_ids : partnerRow?.partner_ids,
+    };
+    if (
+      !jobHasPartnerSet(mergedPartner as Job) &&
+      JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(beforeGates.status)
+    ) {
+      effectivePatch.status = "unassigned";
+    }
   }
   const patch = prepareJobRowForUpdate(effectivePatch);
 
