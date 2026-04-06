@@ -225,17 +225,20 @@ export function ClientAddressPicker({
       });
   }, [value.client_id, value.client_name, loadClientResults]);
 
+  /** Load addresses as soon as we have a linked client id (not only when `selectedClient` is hydrated). */
+  const clientIdForAddresses = value.client_id ?? selectedClient?.id ?? null;
+
   useEffect(() => {
-    if (!selectedClient?.id) {
+    if (!clientIdForAddresses) {
       setAddresses([]);
       return;
     }
     setAddressLoading(true);
-    listAddressesByClient(selectedClient.id)
+    listAddressesByClient(clientIdForAddresses)
       .then(setAddresses)
       .catch(() => setAddresses([]))
       .finally(() => setAddressLoading(false));
-  }, [selectedClient?.id]);
+  }, [clientIdForAddresses]);
 
   useEffect(() => {
     if (selectedClient && !addressLoading && addresses.length === 0 && value.property_address?.trim()) {
@@ -243,6 +246,24 @@ export function ClientAddressPicker({
       setNewAddressRaw(value.property_address.trim());
     }
   }, [selectedClient, addressLoading, addresses.length, value.property_address]);
+
+  /** When the client has no saved addresses, open the new-address field so the user always sees where to type (modals, create flows). */
+  const autoOpenedNewAddressForClientRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!value.client_id || !selectedClient) {
+      if (!value.client_id) autoOpenedNewAddressForClientRef.current = null;
+      return;
+    }
+    if (addressLoading) return;
+    if (addresses.length > 0) {
+      autoOpenedNewAddressForClientRef.current = null;
+      return;
+    }
+    if (addingNewAddress) return;
+    if (autoOpenedNewAddressForClientRef.current === value.client_id) return;
+    autoOpenedNewAddressForClientRef.current = value.client_id;
+    setAddingNewAddress(true);
+  }, [value.client_id, selectedClient, addressLoading, addresses.length, addingNewAddress]);
 
   const selectAddress = useCallback(
     (addr: ClientAddress) => {
@@ -265,12 +286,13 @@ export function ClientAddressPicker({
 
   const handleNewAddressSelect = useCallback(
     async (parts: AddressParts) => {
-      if (!selectedClient) return;
+      const cid = selectedClient?.id ?? valueRef.current.client_id;
+      if (!cid) return;
       setCreating(true);
       try {
         const full = parts.full_address;
         const addr = await createClientAddress({
-          client_id: selectedClient.id,
+          client_id: cid,
           address: parts.address || full,
           city: parts.city,
           postcode: parts.postcode,
@@ -288,6 +310,8 @@ export function ClientAddressPicker({
     },
     [selectedClient, addresses.length, selectAddress]
   );
+
+  const showAddressSection = !!value.client_id || !!selectedClient;
 
   const handleCreateClient = useCallback(async () => {
     if (!createClientForm.full_name.trim()) {
@@ -544,14 +568,19 @@ export function ClientAddressPicker({
         </div>
       )}
 
-      {selectedClient && (
+      {showAddressSection && (
         <div className="mt-3">
           <label className="block text-xs font-medium text-text-secondary mb-1.5">{labelAddress}</label>
-          {addressLoading ? (
+          {!selectedClient && value.client_id ? (
+            <div className="flex items-center gap-2 text-text-tertiary text-sm py-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading client…
+            </div>
+          ) : null}
+          {selectedClient && addressLoading ? (
             <div className="flex items-center gap-2 text-text-tertiary text-sm py-2">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading addresses...
             </div>
-          ) : (
+          ) : selectedClient && !addressLoading ? (
             <div className="space-y-2">
               {addresses.map((addr) => {
                 const full = [addr.address, addr.city, addr.postcode].filter(Boolean).join(", ");
@@ -613,8 +642,8 @@ export function ClientAddressPicker({
                 </button>
               )}
             </div>
-          )}
-          {addresses.length === 0 && !addressLoading && !addingNewAddress && (
+          ) : null}
+          {selectedClient && addresses.length === 0 && !addressLoading && !addingNewAddress && (
             <p className="text-xs text-text-tertiary mb-2">No addresses. Add one below.</p>
           )}
         </div>
