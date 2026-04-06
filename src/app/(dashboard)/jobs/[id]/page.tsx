@@ -34,7 +34,7 @@ import {
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
-import { uploadQuoteInviteImage } from "@/services/quote-invite-images";
+import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { listQuoteLineItems } from "@/services/quotes";
 import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob, syncSelfBillAfterJobChange } from "@/services/self-bills";
 import { listJobPayments, deleteJobPayment } from "@/services/job-payments";
@@ -119,7 +119,7 @@ import {
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
-import { coerceJobImagesArray } from "@/lib/job-images";
+import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
 import {
   JobMoneyDrawer,
@@ -2601,7 +2601,14 @@ export default function JobDetailPage() {
               <p className="text-[11px] text-text-tertiary">Scope is required before assigning a partner. Site photos come from the request/quote or uploads here.</p>
 
               <div className="space-y-2">
-                <p className="text-xs font-medium text-text-secondary">Site reference photos</p>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-xs font-medium text-text-secondary">Site reference photos</p>
+                  {job ? (
+                    <p className="text-[11px] text-text-tertiary tabular-nums">
+                      {coerceJobImagesArray(job.images).length}/{JOB_SITE_PHOTOS_MAX}
+                    </p>
+                  ) : null}
+                </div>
                 <div className="flex flex-wrap gap-2 items-start">
                   {job && coerceJobImagesArray(job.images).map((url, i) => (
                     <div key={`${url}-${i}`} className="relative shrink-0 group">
@@ -2623,21 +2630,34 @@ export default function JobDetailPage() {
                       </button>
                     </div>
                   ))}
+                  {job && coerceJobImagesArray(job.images).length < JOB_SITE_PHOTOS_MAX ? (
                   <label className="inline-flex items-center justify-center h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem] rounded-lg border border-dashed border-border bg-surface-hover/50 cursor-pointer hover:border-primary/40 transition-colors">
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp,image/gif"
+                      multiple
                       className="hidden"
                       disabled={sitePhotoUploading || !job}
                       onChange={async (e) => {
-                        const f = e.target.files?.[0];
-                        if (!f || !job) return;
+                        const files = e.target.files ? Array.from(e.target.files) : [];
+                        if (!files.length || !job) return;
+                        const current = coerceJobImagesArray(job.images);
+                        const room = JOB_SITE_PHOTOS_MAX - current.length;
+                        if (room <= 0) {
+                          toast.error(`Maximum ${JOB_SITE_PHOTOS_MAX} photos per job.`);
+                          e.target.value = "";
+                          return;
+                        }
+                        const take = files.slice(0, room);
+                        if (files.length > take.length) {
+                          toast.message(`Only ${take.length} photo(s) added (limit ${JOB_SITE_PHOTOS_MAX} per job).`);
+                        }
                         setSitePhotoUploading(true);
                         try {
-                          const url = await uploadQuoteInviteImage(f, `job/${job.id}`);
-                          const next = [...coerceJobImagesArray(job.images), url];
+                          const urls = await uploadQuoteInviteImages(take, `job/${job.id}`);
+                          const next = [...current, ...urls];
                           await handleJobUpdate(job.id, { images: next }, { silent: true });
-                          toast.success("Photo added");
+                          toast.success(take.length === 1 ? "Photo added" : `${take.length} photos added`);
                         } catch (err) {
                           toast.error(getErrorMessage(err, "Upload failed"));
                         } finally {
@@ -2652,6 +2672,7 @@ export default function JobDetailPage() {
                       <ImagePlus className="h-5 w-5 text-text-tertiary" aria-hidden />
                     )}
                   </label>
+                  ) : null}
                 </div>
               </div>
 

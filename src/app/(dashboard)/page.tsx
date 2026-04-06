@@ -23,7 +23,7 @@ import type { DashboardView, WidgetConfig } from "@/types/dashboard-config";
 import {
   LayoutDashboard, DollarSign, Briefcase, BarChart2, PieChart,
   Activity, Users, Settings, Layers, Plus, Pencil, SlidersHorizontal,
-  ChevronDown, Crown,
+  ChevronDown, Crown, RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { dashboardJobsFilterSelectColumns, isLegacyJobSchema } from "@/lib/job-schema-compat";
@@ -178,6 +178,8 @@ function DashboardInner() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingView, setEditingView] = useState<DashboardView | null>(null);
   const [ceoDashboard, setCeoDashboard] = useState(false);
+  /** Bump to remount widgets and pull fresh data. */
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
 
   const canSeeCeoDashboard = useMemo(() => isCeoDashboardAllowedUser(profile), [profile]);
 
@@ -262,6 +264,11 @@ function DashboardInner() {
     } catch { /* non-critical */ }
   }, [bounds]);
 
+  const refreshDashboard = useCallback(() => {
+    setDashboardRefreshKey((k) => k + 1);
+    void loadFilterCounts();
+  }, [loadFilterCounts]);
+
   useEffect(() => {
     queueMicrotask(() => void loadFilterCounts());
   }, [loadFilterCounts]);
@@ -276,7 +283,19 @@ function DashboardInner() {
       <div className="space-y-5">
         {/* Header */}
         <PageHeader title={`${greeting}, ${firstName}`}>
-          <Badge variant="success" dot pulse size="md">Live</Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              icon={<RefreshCw className="h-3.5 w-3.5" />}
+              onClick={refreshDashboard}
+              title="Refresh dashboard"
+            >
+              Refresh
+            </Button>
+            <Badge variant="success" dot pulse size="md">Live</Badge>
+          </div>
         </PageHeader>
 
         {/* ── View picker ──────────────────────────────────────────────── */}
@@ -472,10 +491,10 @@ function DashboardInner() {
             ))}
           </div>
         ) : ceoDashboard ? (
-          <CeoFinancialDashboard />
+          <CeoFinancialDashboard key={dashboardRefreshKey} />
         ) : activeView ? (
           isOperationsView(activeView) ? (
-            <OperationsStatus />
+            <OperationsStatus key={dashboardRefreshKey} />
           ) : (
           <div className="grid grid-cols-12 gap-5 items-stretch">
             {(() => {
@@ -489,7 +508,7 @@ function DashboardInner() {
               );
               return orderedWidgets.map((widget, i) => (
                 <motion.div
-                  key={widget.id}
+                  key={`${widget.id}-${dashboardRefreshKey}`}
                   variants={staggerItem}
                   initial="hidden"
                   animate="visible"

@@ -87,7 +87,7 @@ import {
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
-import { coerceJobImagesArray } from "@/lib/job-images";
+import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 
@@ -652,7 +652,7 @@ function JobsPageContent() {
         customer_deposit: 0, customer_deposit_paid: false,
         customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
         scope: formData.scope?.trim() || undefined,
-        images: coerceJobImagesArray(formData.images),
+        images: capJobImagesArray(coerceJobImagesArray(formData.images)),
       });
       await Promise.all([
         logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }),
@@ -1834,7 +1834,9 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
         </div>
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-2">
           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Site reference photos</p>
-          <p className="text-[11px] text-text-tertiary">Optional — photos from the client or site (JPG/PNG/WebP/GIF, max 5 MB each).</p>
+          <p className="text-[11px] text-text-tertiary">
+            Optional — up to {JOB_SITE_PHOTOS_MAX} photos from the client or site (JPG/PNG/WebP/GIF, max 5 MB each).
+          </p>
           <input
             id={sitePhotosInputId}
             type="file"
@@ -1844,12 +1846,24 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             onChange={(e) => {
               const list = e.target.files;
               if (!list?.length) return;
-              setSitePhotoFiles((prev) => [...prev, ...Array.from(list)].slice(0, 12));
+              setSitePhotoFiles((prev) => {
+                const merged = [...prev, ...Array.from(list)];
+                if (merged.length > JOB_SITE_PHOTOS_MAX) {
+                  toast.message(`Keeping the first ${JOB_SITE_PHOTOS_MAX} photos (max per job).`);
+                }
+                return merged.slice(0, JOB_SITE_PHOTOS_MAX);
+              });
               e.target.value = "";
             }}
           />
           <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor={sitePhotosInputId}>
+            <span className="text-[11px] text-text-tertiary tabular-nums">
+              {sitePhotoFiles.length}/{JOB_SITE_PHOTOS_MAX}
+            </span>
+            <label
+              htmlFor={sitePhotosInputId}
+              className={sitePhotoFiles.length >= JOB_SITE_PHOTOS_MAX ? "pointer-events-none opacity-50" : undefined}
+            >
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-text-primary cursor-pointer hover:bg-surface-hover">
                 <ImagePlus className="h-4 w-4" />
                 Add photos

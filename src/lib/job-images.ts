@@ -1,6 +1,9 @@
 import type { Quote } from "@/types/database";
 import { getRequest } from "@/services/requests";
 
+/** Max site reference photos per job (UI + storage). */
+export const JOB_SITE_PHOTOS_MAX = 10;
+
 /** Normalise DB/UI values to a list of HTTPS URLs. */
 export function coerceJobImagesArray(raw: unknown): string[] {
   if (raw == null) return [];
@@ -11,11 +14,15 @@ export function coerceJobImagesArray(raw: unknown): string[] {
 }
 
 /** Prefer quote images; if empty and linked to a request, load request images (dashboard client). */
+export function capJobImagesArray(urls: string[]): string[] {
+  return urls.slice(0, JOB_SITE_PHOTOS_MAX);
+}
+
 export async function resolveImagesForJobFromQuote(quote: Quote): Promise<string[]> {
   const fromQuote = coerceJobImagesArray(quote.images);
-  if (fromQuote.length) return fromQuote;
+  if (fromQuote.length) return capJobImagesArray(fromQuote);
   const rid = quote.request_id?.trim();
   if (!rid) return [];
   const req = await getRequest(rid, { enrich: false });
-  return coerceJobImagesArray(req?.images);
+  return capJobImagesArray(coerceJobImagesArray(req?.images));
 }
