@@ -31,7 +31,7 @@ import {
   getJob,
   fetchAllJobsFinancialKpiRows,
   JOB_LIST_ALL_TAB_STATUSES,
-  jobMatchesJobsManagementTab,
+  jobRowMatchesJobsManagementTab,
 } from "@/services/jobs";
 import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
@@ -51,7 +51,7 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { findDuplicateJobs, formatJobDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { KanbanBoard } from "@/components/shared/kanban-board";
-import { canAdvanceJob, getPreviousJobStatus, isJobOnSiteWorkStatus, normalizeTotalPhases } from "@/lib/job-phases";
+import { canAdvanceJob, getPreviousJobStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
 import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS } from "@/lib/job-status-ui";
@@ -351,7 +351,7 @@ function JobsPageContent() {
           id,
           title: "In progress",
           color: "bg-blue-500",
-          items: filteredData.filter((j) => isJobOnSiteWorkStatus(j.status)),
+          items: filteredData.filter((j) => jobRowMatchesJobsManagementTab(j, "in_progress")),
         };
       }
       if (id === "scheduled") {
@@ -359,7 +359,7 @@ function JobsPageContent() {
           id,
           title: "Scheduled",
           color: "bg-emerald-500",
-          items: filteredData.filter((j) => j.status === "scheduled" || j.status === "late"),
+          items: filteredData.filter((j) => jobRowMatchesJobsManagementTab(j, "scheduled")),
         };
       }
       if (id === "final_check") {
@@ -385,7 +385,7 @@ function JobsPageContent() {
                       : "bg-blue-500",
         items: filteredData.filter((j) =>
           id === "unassigned"
-            ? j.status === "unassigned" || j.status === "auto_assigning"
+            ? jobRowMatchesJobsManagementTab(j, "unassigned")
             : j.status === id,
         ),
       };
@@ -417,7 +417,16 @@ function JobsPageContent() {
       }
       try {
         const rows = await fetchAllJobsFinancialKpiRows(scheduleRange);
-        const tabFiltered = rows.filter((r) => jobMatchesJobsManagementTab(r.status, status));
+        const tabFiltered = rows.filter((r) =>
+          jobRowMatchesJobsManagementTab(
+            {
+              status: r.status,
+              partner_id: r.partner_id,
+              partner_ids: r.partner_ids,
+            } as Job,
+            status,
+          ),
+        );
         const revenueBasis =
           status === "cancelled"
             ? tabFiltered
@@ -1093,14 +1102,19 @@ function JobsPageContent() {
       },
     },
     {
-      key: "site_photos",
-      label: "Photos",
-      minWidth: "100px",
-      cellClassName: "max-w-[140px]",
+      key: "type_of_work",
+      label: "TOW",
+      minWidth: "120px",
+      cellClassName: "min-w-[6rem] max-w-[11rem]",
+      headerClassName: "whitespace-nowrap",
       render: (item) => {
-        const urls = jobSitePhotoUrls(item);
-        return urls.length ? (
-          <JobSitePhotosStrip urls={urls} max={3} size="sm" />
+        const raw = (item as { service_type?: string | null }).service_type?.trim();
+        const fromTitle = normalizeTypeOfWork(item.title) || item.title?.trim();
+        const tow = raw ? normalizeTypeOfWork(raw) || raw : fromTitle;
+        return tow ? (
+          <span className="text-sm text-text-secondary truncate block max-w-[10rem]" title={tow}>
+            {tow}
+          </span>
         ) : (
           <span className="text-xs text-text-tertiary">—</span>
         );

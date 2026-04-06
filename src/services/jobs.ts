@@ -17,12 +17,15 @@ import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import {
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
   jobHasPartnerSet,
+  jobIsBookedPipelineWithoutPartner,
 } from "@/lib/job-partner-assign";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
   Job,
   | "status"
+  | "partner_id"
+  | "partner_ids"
   | "client_price"
   | "extras_amount"
   | "partner_cost"
@@ -36,9 +39,9 @@ export type JobFinancialKpiRow = Pick<
 >;
 
 const KPI_CHUNK_COLS_FULL =
-  "status,client_price,extras_amount,partner_cost,materials_cost,created_at,scheduled_date,scheduled_finish_date,scheduled_start_at,scheduled_end_at,completed_date";
+  "status,partner_id,partner_ids,client_price,extras_amount,partner_cost,materials_cost,created_at,scheduled_date,scheduled_finish_date,scheduled_start_at,scheduled_end_at,completed_date";
 const KPI_CHUNK_COLS_LEGACY =
-  "status,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
+  "status,partner_id,partner_ids,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
 
 export async function fetchAllJobsFinancialKpiRows(
   scheduleRange?: { from: string; to: string } | null
@@ -61,7 +64,7 @@ export async function fetchAllJobsFinancialKpiRows(
     }
     if (error && isPostgrestWriteRetryableError(error) && columns.includes("extras_amount")) {
       columns =
-        "status,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
+        "status,partner_id,partner_ids,client_price,partner_cost,materials_cost,created_at,scheduled_date,scheduled_start_at,scheduled_end_at,completed_date";
       ({ data, error } = await run(columns));
     }
     if (error) throw error;
@@ -111,13 +114,30 @@ export function jobMatchesJobsManagementTab(jobStatus: string, tabId: string): b
   return jobStatus === tabId;
 }
 
+/**
+ * Tab grouping for Jobs Management (list, kanban, KPIs): `scheduled` / `late` / on-site phases
+ * without a partner are treated as **Unassigned**, not Scheduled / In progress.
+ */
+export function jobRowMatchesJobsManagementTab(
+  job: Pick<Job, "status" | "partner_id" | "partner_ids">,
+  tabId: string,
+): boolean {
+  if (tabId === "all") {
+    return jobMatchesJobsManagementTab(job.status, tabId);
+  }
+  if (jobIsBookedPipelineWithoutPartner(job)) {
+    return tabId === "unassigned";
+  }
+  return jobMatchesJobsManagementTab(job.status, tabId);
+}
+
 /** Schedule calendar: same pipeline as Jobs tabs Unassigned, Scheduled, In progress, Final checks (excludes awaiting payment, completed, cancelled, etc.). */
-export function jobVisibleOnSchedule(jobStatus: string): boolean {
+export function jobVisibleOnSchedule(job: Pick<Job, "status" | "partner_id" | "partner_ids">): boolean {
   return (
-    jobMatchesJobsManagementTab(jobStatus, "unassigned") ||
-    jobMatchesJobsManagementTab(jobStatus, "scheduled") ||
-    jobMatchesJobsManagementTab(jobStatus, "in_progress") ||
-    jobMatchesJobsManagementTab(jobStatus, "final_check")
+    jobRowMatchesJobsManagementTab(job, "unassigned") ||
+    jobRowMatchesJobsManagementTab(job, "scheduled") ||
+    jobRowMatchesJobsManagementTab(job, "in_progress") ||
+    jobRowMatchesJobsManagementTab(job, "final_check")
   );
 }
 
@@ -197,13 +217,24 @@ async function listJobsWithSchedulePeriodOverlap(params: ListParams): Promise<Li
   if (params.statusIn && params.statusIn.length > 0) statusIn = [...params.statusIn];
   else if (params.status === "in_progress") statusIn = [...JOB_ONSITE_PROGRESS_STATUSES];
   else if (params.status === "scheduled") statusIn = ["scheduled", "late"];
-  else if (params.status === "unassigned") statusIn = ["unassigned", "auto_assigning"];
-  else if (!params.status || params.status === "all") statusIn = [...JOB_LIST_ALL_TAB_STATUSES];
+  else if (params.status === "unassigned") {
+    statusIn = [
+      "unassigned",
+      "auto_assigning",
+      "scheduled",
+      "late",
+      ...JOB_ONSITE_PROGRESS_STATUSES,
+    ];
+  } else if (!params.status || params.status === "all") statusIn = [...JOB_LIST_ALL_TAB_STATUSES];
   else statusIn = [params.status];
 
   const all = await loadAllJobsForPeriodOverlap(statusIn, range);
   const search = params.search?.trim();
-  const filtered = search ? all.filter((j) => jobMatchesSearchKeyword(j, search)) : all;
+  let filtered = search ? all.filter((j) => jobMatchesSearchKeyword(j, search)) : all;
+  const tabId = params.status;
+  if (tabId && tabId !== "all") {
+    filtered = filtered.filter((j) => jobRowMatchesJobsManagementTab(j, tabId));
+  }
   const sortKey = params.sortBy ?? "created_at";
   const sortDir = (params.sortDir ?? "desc") as SortDirection;
   const rows = [...filtered].sort((a, b) => compareJobsForSort(a, b, sortKey, sortDir));
@@ -264,7 +295,11 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(
       "jobs",
-      { ...rest, statusIn: [...JOB_ONSITE_PROGRESS_STATUSES] },
+      {
+        ...rest,
+        statusIn: [...JOB_ONSITE_PROGRESS_STATUSES],
+        jobsRequirePartnerSet: true,
+      },
       {
         searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
         defaultSort: "created_at",
@@ -275,7 +310,11 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(
       "jobs",
-      { ...rest, statusIn: ["scheduled", "late"] },
+      {
+        ...rest,
+        statusIn: ["scheduled", "late"],
+        jobsRequirePartnerSet: true,
+      },
       {
         searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
         defaultSort: "created_at",
@@ -286,7 +325,10 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(
       "jobs",
-      { ...rest, statusIn: ["unassigned", "auto_assigning"] },
+      {
+        ...rest,
+        jobsUnassignedPipelineTab: true,
+      },
       {
         searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
         defaultSort: "created_at",
