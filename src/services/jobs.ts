@@ -92,6 +92,22 @@ export const JOB_LIST_ALL_TAB_STATUSES = [
   "completed",
 ] as const;
 
+/** Same grouping as `listJobs` / Jobs Management tabs — used for KPI rows + counts. */
+export function jobMatchesJobsManagementTab(jobStatus: string, tabId: string): boolean {
+  if (tabId === "all") {
+    return (JOB_LIST_ALL_TAB_STATUSES as readonly string[]).includes(jobStatus);
+  }
+  if (tabId === "unassigned") return jobStatus === "unassigned" || jobStatus === "auto_assigning";
+  if (tabId === "scheduled") return jobStatus === "scheduled" || jobStatus === "late";
+  if (tabId === "in_progress") return (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(jobStatus);
+  if (tabId === "final_check") return jobStatus === "final_check" || jobStatus === "need_attention";
+  if (tabId === "awaiting_payment") return jobStatus === "awaiting_payment";
+  if (tabId === "completed") return jobStatus === "completed";
+  if (tabId === "cancelled") return jobStatus === "cancelled";
+  if (tabId === "deleted") return false;
+  return jobStatus === tabId;
+}
+
 export async function markLateJobs(): Promise<void> {
   const supabase = getSupabase();
   const nowIso = new Date().toISOString();

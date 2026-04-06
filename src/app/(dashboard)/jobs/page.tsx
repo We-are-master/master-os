@@ -31,6 +31,7 @@ import {
   getJob,
   fetchAllJobsFinancialKpiRows,
   JOB_LIST_ALL_TAB_STATUSES,
+  jobMatchesJobsManagementTab,
 } from "@/services/jobs";
 import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
@@ -53,6 +54,8 @@ import { KanbanBoard } from "@/components/shared/kanban-board";
 import { canAdvanceJob, getPreviousJobStatus, isJobOnSiteWorkStatus, normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason, jobHasPartnerSet } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
+import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS } from "@/lib/job-status-ui";
+import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import {
   formatJobScheduleLine,
@@ -174,20 +177,20 @@ function JobCardFinanceRow({ job }: { job: Job }) {
   );
 }
 
-const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
-  unassigned: { label: "Unassigned", variant: "warning", dot: true },
-  auto_assigning: { label: "Assigning", variant: "info", dot: true },
-  scheduled: { label: "Scheduled", variant: "info", dot: true },
-  late: { label: "Late", variant: "danger", dot: true },
-  in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
-  in_progress_phase2: { label: "In Progress", variant: "primary", dot: true },
-  in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
-  final_check: { label: "Final Check", variant: "warning", dot: true },
-  awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
-  need_attention: { label: "Final Check", variant: "warning", dot: true },
-  completed: { label: "Paid & Completed", variant: "success", dot: true },
-  cancelled: { label: "Lost & Cancelled", variant: "danger", dot: true },
-  deleted: { label: "Deleted", variant: "default", dot: true },
+const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?: boolean }> = {
+  unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned, dot: true },
+  auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
+  scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled, dot: true },
+  late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
+  in_progress_phase1: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1, dot: true },
+  in_progress_phase2: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2, dot: true },
+  in_progress_phase3: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3, dot: true },
+  final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
+  awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
+  need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
+  completed: { label: "Paid & Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
+  cancelled: { label: "Lost & Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
+  deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted, dot: true },
 };
 
 function JobsPageContent() {
@@ -344,7 +347,7 @@ function JobsPageContent() {
         return {
           id,
           title: "In progress",
-          color: "bg-primary",
+          color: "bg-blue-500",
           items: filteredData.filter((j) => isJobOnSiteWorkStatus(j.status)),
         };
       }
@@ -352,7 +355,7 @@ function JobsPageContent() {
         return {
           id,
           title: "Scheduled",
-          color: "bg-sky-600",
+          color: "bg-emerald-500",
           items: filteredData.filter((j) => j.status === "scheduled" || j.status === "late"),
         };
       }
@@ -360,7 +363,7 @@ function JobsPageContent() {
         return {
           id,
           title: "Final checks",
-          color: "bg-amber-500",
+          color: "bg-violet-500",
           items: filteredData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
         };
       }
@@ -371,12 +374,12 @@ function JobsPageContent() {
           id === "completed"
             ? "bg-emerald-500"
             : id === "cancelled"
-              ? "bg-stone-500"
+              ? "bg-red-500"
                 : id === "awaiting_payment"
-                  ? "bg-amber-600"
+                  ? "bg-amber-500"
                     : id === "unassigned"
-                      ? "bg-slate-500"
-                      : "bg-primary",
+                      ? "bg-red-500"
+                      : "bg-blue-500",
         items: filteredData.filter((j) =>
           id === "unassigned"
             ? j.status === "unassigned" || j.status === "auto_assigning"
@@ -411,12 +414,28 @@ function JobsPageContent() {
       }
       try {
         const rows = await fetchAllJobsFinancialKpiRows(scheduleRange);
-        const pipelineRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
-        const ticketSum = pipelineRows.reduce((s, r) => s + jobBillableRevenue(r), 0);
+        const tabFiltered = rows.filter((r) => jobMatchesJobsManagementTab(r.status, status));
+        const revenueBasis =
+          status === "cancelled"
+            ? tabFiltered
+            : tabFiltered.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
+        const ticketSum = revenueBasis.reduce((s, r) => s + jobBillableRevenue(r), 0);
         setTotalRevenue(ticketSum);
-        setAvgTicket(pipelineRows.length ? ticketSum / pipelineRows.length : 0);
-        const activeRows = rows.filter((r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted");
-        const margins = activeRows.map((r) => jobMarginPercent(r));
+        setAvgTicket(revenueBasis.length ? ticketSum / revenueBasis.length : 0);
+
+        let marginRows: typeof rows;
+        if (status === "deleted") {
+          marginRows = [];
+        } else if (status === "all") {
+          marginRows = rows.filter(
+            (r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted",
+          );
+        } else if (status === "completed" || status === "cancelled") {
+          marginRows = tabFiltered;
+        } else {
+          marginRows = tabFiltered.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
+        }
+        const margins = marginRows.map((r) => jobMarginPercent(r));
         const avgM = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
         setAvgMarginPct(Math.round(avgM * 10) / 10);
       } catch {
@@ -425,7 +444,7 @@ function JobsPageContent() {
     } finally {
       setKpiFinancialLoading(false);
     }
-  }, [scheduleRange]);
+  }, [scheduleRange, status]);
   useEffect(() => {
     void loadDashboardStats();
   }, [loadDashboardStats]);
@@ -457,32 +476,71 @@ function JobsPageContent() {
 
   const unassignedTabCount = (tabCounts.unassigned ?? 0) + (tabCounts.auto_assigning ?? 0);
 
-  const activeJobsKpiCount = useMemo(() => {
-    const onSite =
-      (tabCounts.in_progress_phase1 ?? 0) +
-      (tabCounts.in_progress_phase2 ?? 0) +
-      (tabCounts.in_progress_phase3 ?? 0);
-    return (
-      (tabCounts.unassigned ?? 0) +
-      (tabCounts.auto_assigning ?? 0) +
-      (tabCounts.scheduled ?? 0) +
-      (tabCounts.late ?? 0) +
-      onSite +
-      (tabCounts.final_check ?? 0) +
-      (tabCounts.awaiting_payment ?? 0)
-    );
-  }, [tabCounts]);
+  /** Pipeline stages shown in tabs (excl. Paid & Completed, Lost & Cancelled, Deleted). Must match tab badge sums. */
+  const activeJobsKpiCount = useMemo(
+    () =>
+      unassignedTabCount +
+      scheduledTabCount +
+      inProgressTabCount +
+      finalChecksTabCount +
+      (tabCounts.awaiting_payment ?? 0),
+    [
+      unassignedTabCount,
+      scheduledTabCount,
+      inProgressTabCount,
+      finalChecksTabCount,
+      tabCounts.awaiting_payment,
+    ],
+  );
+
+  /** Jobs count for KPI strip — matches selected tab + date range (same badges as tabs). */
+  const kpiJobsCount = useMemo(() => {
+    switch (status) {
+      case "all":
+        return activeJobsKpiCount;
+      case "unassigned":
+        return unassignedTabCount;
+      case "scheduled":
+        return scheduledTabCount;
+      case "in_progress":
+        return inProgressTabCount;
+      case "final_check":
+        return finalChecksTabCount;
+      case "awaiting_payment":
+        return tabCounts.awaiting_payment ?? 0;
+      case "completed":
+        return tabCounts.completed ?? 0;
+      case "cancelled":
+        return tabCounts.cancelled ?? 0;
+      case "deleted":
+        return tabCounts.deleted ?? 0;
+      default:
+        return tabCounts.all ?? 0;
+    }
+  }, [
+    status,
+    activeJobsKpiCount,
+    unassignedTabCount,
+    scheduledTabCount,
+    inProgressTabCount,
+    finalChecksTabCount,
+    tabCounts.awaiting_payment,
+    tabCounts.completed,
+    tabCounts.cancelled,
+    tabCounts.deleted,
+    tabCounts.all,
+  ]);
 
   const tabs = [
-    { id: "all", label: "All Jobs", count: tabCounts.all ?? 0 },
-    { id: "unassigned", label: "Unassigned", count: unassignedTabCount },
-    { id: "scheduled", label: "Scheduled", count: scheduledTabCount },
-    { id: "in_progress", label: "In Progress", count: inProgressTabCount },
-    { id: "final_check", label: "Final Checks", count: finalChecksTabCount },
-    { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0 },
-    { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0 },
-    { id: "cancelled", label: "Lost & Cancelled", count: tabCounts.cancelled ?? 0 },
-    { id: "deleted", label: "Deleted", count: tabCounts.deleted ?? 0 },
+    { id: "all", label: "All Jobs", count: tabCounts.all ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.all },
+    { id: "unassigned", label: "Unassigned", count: unassignedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.unassigned },
+    { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
+    { id: "in_progress", label: "In Progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
+    { id: "final_check", label: "Final Checks", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
+    { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
+    { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.completed },
+    { id: "cancelled", label: "Lost & Cancelled", count: tabCounts.cancelled ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.cancelled },
+    { id: "deleted", label: "Deleted", count: tabCounts.deleted ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.deleted },
   ];
 
   useEffect(() => {
@@ -1199,7 +1257,14 @@ function JobsPageContent() {
         {scheduleSubtitleText ? <p className="text-xs text-text-tertiary -mt-2">{scheduleSubtitleText}</p> : null}
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
-          <KpiCard className="min-h-[128px] h-full" title="Active Jobs" value={activeJobsKpiCount} format="number" icon={Briefcase} accent="blue" />
+          <KpiCard
+            className="min-h-[128px] h-full"
+            title={status === "all" ? "Active jobs" : "Jobs"}
+            value={kpiFinancialLoading ? "—" : kpiJobsCount}
+            format="number"
+            icon={Briefcase}
+            accent="blue"
+          />
           <KpiCard
             className="min-h-[128px] h-full"
             title="Revenue"

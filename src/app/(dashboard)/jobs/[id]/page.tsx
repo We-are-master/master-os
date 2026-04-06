@@ -125,20 +125,22 @@ import {
   type JobMoneySubmitPayload,
 } from "@/components/jobs/job-money-drawer";
 import { executeJobMoneyAction } from "@/services/job-money-actions";
+import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
+import type { BadgeVariant } from "@/components/ui/badge";
 
-const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
-  unassigned: { label: "Unassigned", variant: "warning", dot: true },
-  auto_assigning: { label: "Assigning", variant: "info", dot: true },
-  scheduled: { label: "Scheduled", variant: "info", dot: true },
-  late: { label: "Late", variant: "danger", dot: true },
-  in_progress_phase1: { label: "In Progress", variant: "primary", dot: true },
-  in_progress_phase2: { label: "In Progress", variant: "primary", dot: true },
-  in_progress_phase3: { label: "In Progress", variant: "primary", dot: true },
-  final_check: { label: "Final Check", variant: "warning", dot: true },
-  awaiting_payment: { label: "Awaiting Payment", variant: "danger", dot: true },
-  need_attention: { label: "Final Check", variant: "warning", dot: true },
-  completed: { label: "Completed", variant: "success", dot: true },
-  cancelled: { label: "Cancelled", variant: "danger", dot: true },
+const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?: boolean }> = {
+  unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned, dot: true },
+  auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
+  scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled, dot: true },
+  late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
+  in_progress_phase1: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1, dot: true },
+  in_progress_phase2: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2, dot: true },
+  in_progress_phase3: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3, dot: true },
+  final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
+  awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
+  need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
+  completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
+  cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
 };
 
 const selfBillStatusConfig: Record<

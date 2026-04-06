@@ -160,6 +160,8 @@ export interface Quote {
   sell_price: number;
   margin_percent: number;
   quote_type: "internal" | "partner";
+  /** % of customer line total; `deposit_required` is the computed £ amount (kept in sync on save). */
+  deposit_percent: number;
   deposit_required: number;
   start_date_option_1?: string;
   start_date_option_2?: string;
