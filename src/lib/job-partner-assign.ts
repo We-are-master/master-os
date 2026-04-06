@@ -65,3 +65,14 @@ export function jobIsBookedPipelineWithoutPartner(
     (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(st)
   );
 }
+
+/**
+ * Status shown in badges / lists when the DB row is still booked (`late`, `scheduled`, …) but there is no partner.
+ * Business logic elsewhere should keep using `job.status` until `updateJob` or migration aligns the row.
+ */
+export function effectiveJobStatusForDisplay(
+  job: Pick<Job, "status" | "partner_id" | "partner_ids">,
+): JobStatus {
+  if (jobIsBookedPipelineWithoutPartner(job)) return "unassigned";
+  return job.status;
+}

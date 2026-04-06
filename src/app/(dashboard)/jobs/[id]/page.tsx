@@ -99,6 +99,7 @@ import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
 import {
+  effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
 } from "@/lib/job-partner-assign";
@@ -2024,7 +2025,8 @@ export default function JobDetailPage() {
     );
   }
 
-  const config = statusConfig[job.status] ?? { label: job.status, variant: "default" as const };
+  const displayStatus = effectiveJobStatusForDisplay(job);
+  const config = statusConfig[displayStatus] ?? { label: displayStatus, variant: "default" as const };
   /** Same basis as linked invoice targets and `syncInvoicesFromJobCustomerPayments` (ticket + extras, schedule, hourly). */
   const billableRevenue = jobCustomerBillableRevenueForCollections(job);
   const partnerCap =
