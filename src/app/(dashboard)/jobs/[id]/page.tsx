@@ -23,6 +23,7 @@ import {
   Upload,
   ShieldCheck,
   Plus,
+  ImagePlus,
   ExternalLink,
   AlertTriangle,
   CreditCard,
@@ -30,9 +31,10 @@ import {
   Timer,
   X,
 } from "lucide-react";
-import { cn, formatCurrency, formatCurrencyPrecise, formatDate } from "@/lib/utils";
+import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, updateJob } from "@/services/jobs";
+import { uploadQuoteInviteImage } from "@/services/quote-invite-images";
 import { listQuoteLineItems } from "@/services/quotes";
 import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob, syncSelfBillAfterJobChange } from "@/services/self-bills";
 import { listJobPayments, deleteJobPayment } from "@/services/job-payments";
@@ -117,6 +119,7 @@ import {
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
+import { coerceJobImagesArray } from "@/lib/job-images";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
 import {
   JobMoneyDrawer,
@@ -322,6 +325,7 @@ export default function JobDetailPage() {
   const [openingReportImageKey, setOpeningReportImageKey] = useState<string | null>(null);
   const [scopeDraft, setScopeDraft] = useState("");
   const [savingScope, setSavingScope] = useState(false);
+  const [sitePhotoUploading, setSitePhotoUploading] = useState(false);
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
   const autoOwnerFillRef = useRef<Set<string>>(new Set());
@@ -2591,28 +2595,87 @@ export default function JobDetailPage() {
               </div>
             </div>
 
-            {/* SCOPE */}
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-2">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope of work</p>
-              <p className="text-[11px] text-text-tertiary">Required before assigning a partner (with schedule and address).</p>
-              <textarea
-                value={scopeDraft}
-                onChange={(e) => setScopeDraft(e.target.value)}
-                rows={5}
-                placeholder="Describe what the partner is expected to do…"
-                className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[100px]"
-              />
-              <Button type="button" variant="outline" size="sm" loading={savingScope} onClick={async () => {
-                if (!job) return;
-                setSavingScope(true);
-                try {
-                  await handleJobUpdate(job.id, { scope: scopeDraft.trim() || undefined });
-                } finally {
-                  setSavingScope(false);
-                }
-              }}>
-                Save scope
-              </Button>
+            {/* SCOPE + SITE PHOTOS */}
+            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope of work & site photos</p>
+              <p className="text-[11px] text-text-tertiary">Scope is required before assigning a partner. Site photos come from the request/quote or uploads here.</p>
+
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-text-secondary">Site reference photos</p>
+                <div className="flex flex-wrap gap-2 items-start">
+                  {job && coerceJobImagesArray(job.images).map((url, i) => (
+                    <div key={`${url}-${i}`} className="relative shrink-0 group">
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="block rounded-lg overflow-hidden border border-border-light ring-1 ring-black/5">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt="" className="h-16 w-16 object-cover sm:h-[4.5rem] sm:w-[4.5rem]" />
+                      </a>
+                      <button
+                        type="button"
+                        className="absolute -top-1 -right-1 h-6 w-6 rounded-full bg-card border border-border text-xs text-text-tertiary hover:text-red-600 hover:border-red-200"
+                        title="Remove photo"
+                        onClick={async () => {
+                          if (!job) return;
+                          const next = coerceJobImagesArray(job.images).filter((_, j) => j !== i);
+                          await handleJobUpdate(job.id, { images: next }, { silent: true });
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <label className="inline-flex items-center justify-center h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem] rounded-lg border border-dashed border-border bg-surface-hover/50 cursor-pointer hover:border-primary/40 transition-colors">
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      className="hidden"
+                      disabled={sitePhotoUploading || !job}
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (!f || !job) return;
+                        setSitePhotoUploading(true);
+                        try {
+                          const url = await uploadQuoteInviteImage(f, `job/${job.id}`);
+                          const next = [...coerceJobImagesArray(job.images), url];
+                          await handleJobUpdate(job.id, { images: next }, { silent: true });
+                          toast.success("Photo added");
+                        } catch (err) {
+                          toast.error(getErrorMessage(err, "Upload failed"));
+                        } finally {
+                          setSitePhotoUploading(false);
+                          e.target.value = "";
+                        }
+                      }}
+                    />
+                    {sitePhotoUploading ? (
+                      <span className="text-[10px] text-text-tertiary">…</span>
+                    ) : (
+                      <ImagePlus className="h-5 w-5 text-text-tertiary" aria-hidden />
+                    )}
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-1 border-t border-border-light">
+                <p className="text-xs font-medium text-text-secondary">Scope</p>
+                <textarea
+                  value={scopeDraft}
+                  onChange={(e) => setScopeDraft(e.target.value)}
+                  rows={5}
+                  placeholder="Describe what the partner is expected to do…"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[100px]"
+                />
+                <Button type="button" variant="outline" size="sm" loading={savingScope} onClick={async () => {
+                  if (!job) return;
+                  setSavingScope(true);
+                  try {
+                    await handleJobUpdate(job.id, { scope: scopeDraft.trim() || undefined });
+                  } finally {
+                    setSavingScope(false);
+                  }
+                }}>
+                  Save scope
+                </Button>
+              </div>
             </div>
 
             {/* REPORTS */}

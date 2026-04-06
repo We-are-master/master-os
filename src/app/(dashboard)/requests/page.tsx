@@ -49,6 +49,7 @@ import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
+import { coerceJobImagesArray } from "@/lib/job-images";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
 import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
@@ -1498,6 +1499,7 @@ export default function RequestsPage() {
               partner_agreed_value: partnerCost,
               scope: data.scope,
               internal_notes: data.internal_notes,
+              images: coerceJobImagesArray(convertToJobOpen.images),
               cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
               finance_status: "unpaid",
               service_value: clientPrice + accessSurcharge,

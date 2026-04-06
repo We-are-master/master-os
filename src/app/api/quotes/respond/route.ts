@@ -5,6 +5,7 @@ import { requireStripe } from "@/lib/stripe";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { applyJobDbCompat, prepareJobRowForInsert } from "@/lib/job-schema-compat";
+import { coerceJobImagesArray } from "@/lib/job-images";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 
 function getServiceSupabase() {
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest) {
     const tLookup = performance.now();
     const { data: quote, error: fetchError } = await supabase
       .from("quotes")
-      .select("id, reference, status, title, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value")
+      .select("id, reference, status, title, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id")
       .eq("id", quoteId)
       .single();
     marks.push(["quote_lookup", performance.now() - tLookup]);
@@ -155,6 +156,12 @@ export async function POST(req: NextRequest) {
       const dueDateStr = dueDate.toISOString().split("T")[0];
 
       const hasPartner = !!(quote.partner_id?.trim() || (quote.partner_name && String(quote.partner_name).trim()));
+      let jobImages = coerceJobImagesArray((quote as { images?: unknown }).images);
+      const reqId = (quote as { request_id?: string | null }).request_id?.trim();
+      if (jobImages.length === 0 && reqId) {
+        const { data: reqRow } = await supabase.from("service_requests").select("images").eq("id", reqId).maybeSingle();
+        jobImages = coerceJobImagesArray(reqRow?.images);
+      }
       const baseJobRow: Record<string, unknown> = {
         reference: jobReference,
         title: quote.title ?? "Job from quote",
@@ -199,6 +206,7 @@ export async function POST(req: NextRequest) {
         commission: 0,
         vat: 0,
         scope: quote.scope ?? null,
+        images: jobImages,
       };
       const tJob = performance.now();
       const jobInsert = prepareJobRowForInsert(baseJobRow);

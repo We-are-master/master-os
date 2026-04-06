@@ -285,6 +285,8 @@ export interface Job {
   invoice_id?: string;
   scope?: string;
   internal_notes?: string;
+  /** Site reference photos (client request / quote / office); JSON array of public storage URLs (quote-invite-images). */
+  images?: string[] | null;
   /** Set when partner cancels from the app (RPC `partner_cancel_job`). */
   partner_cancelled_at?: string | null;
   /** Snapshot of cancellation fee (GBP) from company_settings at cancel time. */
