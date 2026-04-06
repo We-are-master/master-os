@@ -721,7 +721,13 @@ function AccountDetailDrawer({
       onAccountUpdated(next);
       toast.success("Account updated");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update account");
+      const msg =
+        e instanceof Error
+          ? e.message
+          : e && typeof e === "object" && e !== null && "message" in e
+            ? String((e as { message: unknown }).message)
+            : "Failed to update account";
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
