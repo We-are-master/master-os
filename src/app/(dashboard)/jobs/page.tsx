@@ -1093,14 +1093,19 @@ function JobsPageContent() {
       },
     },
     {
-      key: "site_photos",
-      label: "Photos",
-      minWidth: "100px",
-      cellClassName: "max-w-[140px]",
+      key: "type_of_work",
+      label: "TOW",
+      minWidth: "120px",
+      cellClassName: "min-w-[6rem] max-w-[11rem]",
+      headerClassName: "whitespace-nowrap",
       render: (item) => {
-        const urls = jobSitePhotoUrls(item);
-        return urls.length ? (
-          <JobSitePhotosStrip urls={urls} max={3} size="sm" />
+        const raw = (item as { service_type?: string | null }).service_type?.trim();
+        const fromTitle = normalizeTypeOfWork(item.title) || item.title?.trim();
+        const tow = raw ? normalizeTypeOfWork(raw) || raw : fromTitle;
+        return tow ? (
+          <span className="text-sm text-text-secondary truncate block max-w-[10rem]" title={tow}>
+            {tow}
+          </span>
         ) : (
           <span className="text-xs text-text-tertiary">—</span>
         );
