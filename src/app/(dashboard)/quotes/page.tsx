@@ -533,8 +533,9 @@ function QuotesPageContent() {
           quoteType: formData.quote_type ?? "internal",
           lineItems: manualLines?.length ?? 0,
         });
-      } catch {
-        toast.error("Failed to create quote");
+      } catch (err) {
+        console.error(err);
+        toast.error(getErrorMessage(err, "Failed to create quote"));
       }
     },
     [refreshWithKpis, profile?.id, profile?.full_name, confirmDespiteDuplicates],
@@ -3236,7 +3237,10 @@ function CreateQuoteForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title) { toast.error("Title is required"); return; }
+    if (!form.title?.trim()) {
+      toast.error("Type of work is required");
+      return;
+    }
     if (!clientAddress.client_id) {
       toast.error("Select a client from the list (click the name or press Enter) — typing alone does not link the client.");
       return;

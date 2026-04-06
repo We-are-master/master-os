@@ -1,5 +1,6 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Quote, QuoteLineItem } from "@/types/database";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 /** Real `quotes` columns only — stray keys (e.g. from UI state spread) must not reach PostgREST. */
 const QUOTE_WRITABLE_KEYS = new Set<string>([
@@ -78,11 +79,25 @@ export async function createQuote(
   const supabase = getSupabase();
   const { data: ref } = await supabase.rpc("next_quote_ref");
   const row = pickQuotePayload({ ...input } as Record<string, unknown>);
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("quotes")
     .insert({ ...row, reference: ref })
     .select()
     .single();
+  if (
+    error &&
+    isSupabaseMissingColumnError(error, "deposit_percent") &&
+    "deposit_percent" in row
+  ) {
+    const { deposit_percent: _omit, ...rest } = row as Record<string, unknown>;
+    const retry = await supabase
+      .from("quotes")
+      .insert({ ...rest, reference: ref })
+      .select()
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw error;
   return data as Quote;
 }
@@ -93,13 +108,29 @@ export async function updateQuote(
 ): Promise<Quote> {
   const supabase = getSupabase();
   const row = pickQuotePayload({ ...input } as Record<string, unknown>);
-  const payload = { ...row, updated_at: new Date().toISOString() };
-  const { data, error } = await supabase
+  let payload = { ...row, updated_at: new Date().toISOString() };
+  let { data, error } = await supabase
     .from("quotes")
     .update(payload)
     .eq("id", id)
     .select()
     .single();
+  if (
+    error &&
+    isSupabaseMissingColumnError(error, "deposit_percent") &&
+    "deposit_percent" in payload
+  ) {
+    const { deposit_percent: _omit, ...rest } = payload;
+    payload = { ...rest, updated_at: new Date().toISOString() };
+    const retry = await supabase
+      .from("quotes")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw new Error(error.message);
   return data as Quote;
 }
