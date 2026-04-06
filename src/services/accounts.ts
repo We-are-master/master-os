@@ -51,27 +51,52 @@ function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
   return next;
 }
 
-/** Maps Postgres unique violations on accounts (migration 033) to a clear message. */
+/** Maps Postgres / PostgREST errors to a clear message (Supabase errors are plain objects, not `Error`). */
 export function formatAccountDbError(error: unknown): Error {
-  if (error && typeof error === "object" && "message" in error) {
-    const msg = String((error as { message?: string }).message ?? "");
-    const code = (error as { code?: string }).code;
-    if (code === "23505" || msg.includes("duplicate key") || msg.includes("unique constraint")) {
-      if (msg.includes("uq_accounts_email_active")) {
+  const rawMsg =
+    error && typeof error === "object" && error !== null && "message" in error
+      ? String((error as { message?: string }).message ?? "")
+      : "";
+  const code =
+    error && typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: string }).code ?? "")
+      : "";
+
+  if (rawMsg || code) {
+    if (code === "23505" || rawMsg.includes("duplicate key") || rawMsg.includes("unique constraint")) {
+      if (rawMsg.includes("uq_accounts_email_active")) {
         return new Error("An account with this email already exists.");
       }
-      if (msg.includes("uq_accounts_company_name_active")) {
+      if (rawMsg.includes("uq_accounts_company_name_active")) {
         return new Error("An account with this company name already exists.");
       }
-      if (msg.toLowerCase().includes("email")) {
+      if (rawMsg.toLowerCase().includes("email")) {
         return new Error("An account with this email already exists.");
       }
-      if (msg.toLowerCase().includes("company_name")) {
+      if (rawMsg.toLowerCase().includes("company_name")) {
         return new Error("An account with this company name already exists.");
       }
     }
+    if (code === "23503" || rawMsg.includes("foreign key constraint") || rawMsg.includes("violates foreign key")) {
+      if (rawMsg.includes("account_owner_id") || rawMsg.includes("profiles")) {
+        return new Error(
+          "Account owner must be a valid platform user. Clear the field or pick someone from the list.",
+        );
+      }
+    }
+    if (
+      rawMsg.includes("account_owner_id") &&
+      (rawMsg.includes("does not exist") || rawMsg.includes("schema cache") || rawMsg.includes("Could not find"))
+    ) {
+      return new Error(
+        "This database is missing the account owner column or migration — run migration 107, or clear Account owner and save.",
+      );
+    }
+    if (rawMsg) return new Error(rawMsg);
   }
-  return error instanceof Error ? error : new Error(String(error));
+
+  if (error instanceof Error) return error;
+  return new Error(typeof error === "string" ? error : "Database error");
 }
 
 export async function listAccounts(params: ListParams): Promise<ListResult<Account>> {
