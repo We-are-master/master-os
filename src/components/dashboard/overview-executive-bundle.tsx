@@ -31,7 +31,6 @@ import {
   sumInvoiceOpenBalanceOutstanding,
 } from "@/lib/overview-dashboard-kpis";
 import { ensureSourceAccountForClient } from "@/services/accounts";
-import { PartnersByTradeChart } from "./partners-by-trade-chart";
 
 /** Customer cash in from job ledger (deposit + final), matches Financial summary registrations. */
 async function customerPaymentsTotalInRange(
@@ -771,8 +770,6 @@ export function OverviewExecutiveBundle() {
           )}
         </div>
       </Card>
-
-      <PartnersByTradeChart />
 
       <Card padding="none" className="overflow-hidden border-border-light">
         <CardHeader className="px-4 pt-3 pb-2">
