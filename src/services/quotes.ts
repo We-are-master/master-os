@@ -21,6 +21,7 @@ const QUOTE_WRITABLE_KEYS = new Set<string>([
   "sell_price",
   "margin_percent",
   "quote_type",
+  "deposit_percent",
   "deposit_required",
   "start_date_option_1",
   "start_date_option_2",

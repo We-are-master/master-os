@@ -80,6 +80,8 @@ import {
   normalizeUkSortCodeInput,
   validatePartnerBankDetails,
 } from "@/lib/uk-bank-details";
+import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
+import type { BadgeVariant } from "@/components/ui/badge";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
@@ -183,14 +185,14 @@ interface PartnerSelfBill {
   created_at: string;
 }
 
-const jobStatusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
+const jobStatusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   draft: { label: "Draft", variant: "default" },
-  unassigned: { label: "Unassigned", variant: "warning" },
-  scheduled: { label: "Scheduled", variant: "info" },
-  in_progress: { label: "In Progress", variant: "primary" },
+  unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned },
+  scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled },
+  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1 },
   on_hold: { label: "On Hold", variant: "warning" },
-  completed: { label: "Completed", variant: "success" },
-  cancelled: { label: "Cancelled", variant: "danger" },
+  completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed },
+  cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled },
 };
 
 const emptyForm = {

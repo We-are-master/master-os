@@ -3,7 +3,16 @@
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 
-type BadgeVariant = "default" | "primary" | "success" | "warning" | "danger" | "info" | "outline";
+export type BadgeVariant =
+  | "default"
+  | "primary"
+  | "success"
+  | "warning"
+  | "danger"
+  | "info"
+  | "outline"
+  | "violet"
+  | "orange";
 
 const variantStyles: Record<BadgeVariant, string> = {
   default: "bg-[var(--badge-muted)] text-text-secondary ring-border/50",
@@ -13,6 +22,10 @@ const variantStyles: Record<BadgeVariant, string> = {
   danger: "bg-danger-light text-red-700 ring-red-200/50 dark:text-red-400",
   info: "bg-info-light text-blue-700 ring-blue-200/50 dark:text-blue-400",
   outline: "bg-transparent text-text-secondary ring-border",
+  violet:
+    "bg-violet-100 text-violet-800 ring-violet-200/60 dark:bg-violet-950/45 dark:text-violet-200 dark:ring-violet-800/50",
+  orange:
+    "bg-orange-100 text-orange-800 ring-orange-200/60 dark:bg-orange-950/45 dark:text-orange-200 dark:ring-orange-800/50",
 };
 
 interface BadgeProps {
@@ -40,6 +53,8 @@ export function Badge({
     danger: "bg-red-500",
     info: "bg-blue-500",
     outline: "bg-stone-400",
+    violet: "bg-violet-500",
+    orange: "bg-orange-500",
   };
 
   return (

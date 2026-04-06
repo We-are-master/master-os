@@ -23,21 +23,21 @@ const JOBS_DONUT_ACTIVE_STATUSES = new Set([
 ]);
 
 const STATUS_COLORS: Record<string, string> = {
-  unassigned: "#fbbf24",
-  auto_assigning: "#fcd34d",
-  scheduled: "#60a5fa",
-  late: "#fb923c",
-  in_progress_phase1: "#f97316",
-  in_progress_phase2: "#ea580c",
-  in_progress_phase3: "#c2410c",
-  final_check: "#a78bfa",
-  awaiting_payment: "#fbbf24",
-  need_attention: "#f87171",
+  unassigned: "#ef4444",
+  auto_assigning: "#3b82f6",
+  scheduled: "#22c55e",
+  late: "#f97316",
+  in_progress_phase1: "#2563eb",
+  in_progress_phase2: "#2563eb",
+  in_progress_phase3: "#2563eb",
+  final_check: "#9333ea",
+  awaiting_payment: "#eab308",
+  need_attention: "#ef4444",
   completed: "#34d399",
-  cancelled: "#94a3b8",
+  cancelled: "#dc2626",
   draft: "#94a3b8",
-  in_progress: "#f97316",
-  on_hold: "#a78bfa",
+  in_progress: "#2563eb",
+  on_hold: "#eab308",
 };
 
 const STATUS_LABELS: Record<string, string> = {

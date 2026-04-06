@@ -25,7 +25,7 @@ import {
   Mail, Building2,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
   ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
-  Wallet, Percent, ImagePlus, X,
+  Wallet, Percent, PoundSterling, ImagePlus, X,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatCurrency, cn } from "@/lib/utils";
@@ -69,6 +69,11 @@ import {
   customerUnitSellFromPartnerUnit,
 } from "@/lib/quote-bid-payload";
 import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import {
+  clampDepositPercent,
+  depositAmountFromPercent,
+  inferDepositPercentFromLegacy,
+} from "@/lib/quote-deposit";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
@@ -141,7 +146,8 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
   scopeText?: string;
   startDate1?: string;
   startDate2?: string;
-  depositRequired?: string;
+  /** % of customer sell; if bid payload had £ deposit, converted using line totals. */
+  depositPercent?: string;
 } {
   const payload = parseBidProposalFromNotes(bid.notes);
   const { labour: L, materials: M } = splitBidPartnerCosts(bid.bid_amount, payload);
@@ -149,6 +155,7 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
   const line1Desc = bidPayloadTrimmedString(payload?.materials_description) || "Materials";
   const u0 = customerUnitSellFromPartnerUnit(L);
   const u1 = customerUnitSellFromPartnerUnit(M);
+  const lineTotSell = u0 + u1;
   return {
     lines: [
       { description: line0Desc, quantity: "1", unitPrice: String(u0), partnerUnitCost: String(L), notes: "" },
@@ -162,9 +169,16 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
     })(),
     startDate1: bidPayloadTrimmedString(payload?.start_date_option_1).slice(0, 10) || undefined,
     startDate2: bidPayloadTrimmedString(payload?.start_date_option_2).slice(0, 10) || undefined,
-    depositRequired:
-      payload?.deposit_required != null && Number.isFinite(Number(payload.deposit_required))
-        ? String(payload.deposit_required)
+    depositPercent:
+      payload?.deposit_required != null &&
+      Number.isFinite(Number(payload.deposit_required)) &&
+      Number(payload.deposit_required) > 0 &&
+      lineTotSell > 0.01
+        ? String(
+            clampDepositPercent(
+              Math.round((Number(payload.deposit_required) / lineTotSell) * 1000) / 10,
+            ),
+          )
         : undefined,
   };
 }
@@ -433,53 +447,98 @@ function QuotesPageContent() {
     };
   }, [statusCounts]);
 
-  const handleCreate = useCallback(async (formData: Partial<Quote>) => {
-    const perfStart = performance.now();
-    try {
-      const dupQ = await findDuplicateQuotes({
-        clientEmail: formData.client_email ?? "",
-        title: formData.title ?? "",
-        propertyAddress: formData.property_address,
-      });
-      if (!(await confirmDespiteDuplicates(formatQuoteDuplicateLines(dupQ)))) return;
+  const handleCreate = useCallback(
+    async (formData: Partial<Quote>, options?: { manualLineItems?: ProposalLineRow[] }) => {
+      const perfStart = performance.now();
+      try {
+        const dupQ = await findDuplicateQuotes({
+          clientEmail: formData.client_email ?? "",
+          title: formData.title ?? "",
+          propertyAddress: formData.property_address,
+        });
+        if (!(await confirmDespiteDuplicates(formatQuoteDuplicateLines(dupQ)))) return;
 
-      const result = await createQuote({
-        title: formData.title ?? "",
-        client_id: formData.client_id,
-        client_address_id: formData.client_address_id,
-        client_name: formData.client_name ?? "",
-        client_email: formData.client_email ?? "",
-        catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
-          ? String(formData.catalog_service_id).trim()
-          : null,
-        status: formData.status ?? "draft",
-        total_value: formData.total_value ?? 0,
-        partner_quotes_count: formData.partner_quotes_count ?? 0,
-        cost: formData.cost ?? 0,
-        sell_price: formData.sell_price ?? formData.total_value ?? 0,
-        margin_percent: formData.margin_percent ?? 0,
-        quote_type: formData.quote_type ?? "internal",
-        deposit_required: 0,
-        customer_accepted: false,
-        customer_deposit_paid: false,
-        partner_id: formData.partner_id,
-        partner_name: formData.partner_name,
-        property_address: formData.property_address,
-        scope: formData.scope,
-        partner_cost: formData.partner_cost ?? formData.cost ?? 0,
-        ...(formData.service_type?.trim() ? { service_type: formData.service_type.trim() } : {}),
-        ...(formData.images?.length ? { images: formData.images } : {}),
-        email_attach_request_photos: formData.email_attach_request_photos ?? false,
-        owner_id: profile?.id,
-        owner_name: profile?.full_name,
-      });
-      await logAudit({ entityType: "quote", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name });
-      setCreateOpen(false);
-      toast.success("Quote created successfully");
-      refreshWithKpis();
-      trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, { quoteType: formData.quote_type ?? "internal" });
-    } catch { toast.error("Failed to create quote"); }
-  }, [refreshWithKpis, profile?.id, profile?.full_name, confirmDespiteDuplicates]);
+        const result = await createQuote({
+          title: formData.title ?? "",
+          client_id: formData.client_id,
+          client_address_id: formData.client_address_id,
+          client_name: formData.client_name ?? "",
+          client_email: formData.client_email ?? "",
+          catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
+            ? String(formData.catalog_service_id).trim()
+            : null,
+          status: formData.status ?? "draft",
+          total_value: formData.total_value ?? 0,
+          partner_quotes_count: formData.partner_quotes_count ?? 0,
+          cost: formData.cost ?? 0,
+          sell_price: formData.sell_price ?? formData.total_value ?? 0,
+          margin_percent: formData.margin_percent ?? 0,
+          quote_type: formData.quote_type ?? "internal",
+          deposit_percent: formData.deposit_percent ?? 50,
+          deposit_required: formData.deposit_required ?? 0,
+          customer_accepted: false,
+          customer_deposit_paid: false,
+          partner_id: formData.partner_id,
+          partner_name: formData.partner_name,
+          property_address: formData.property_address,
+          scope: formData.scope,
+          start_date_option_1: formData.start_date_option_1,
+          start_date_option_2: formData.start_date_option_2,
+          partner_cost: formData.partner_cost ?? formData.cost ?? 0,
+          ...(formData.service_type?.trim() ? { service_type: formData.service_type.trim() } : {}),
+          ...(formData.images?.length ? { images: formData.images } : {}),
+          email_attach_request_photos: formData.email_attach_request_photos ?? false,
+          owner_id: profile?.id,
+          owner_name: profile?.full_name,
+        });
+
+        const manualLines = options?.manualLineItems;
+        if (formData.quote_type === "internal" && manualLines?.length) {
+          const supabase = getSupabase();
+          const rows = manualLines.map((li, i) => ({
+            quote_id: result.id,
+            description: li.description,
+            quantity: Number(li.quantity) || 1,
+            unit_price: Number(li.unitPrice) || 0,
+            partner_unit_cost: Number(li.partnerUnitCost) || 0,
+            sort_order: i,
+            notes: bidPayloadTrimmedString(li.notes as unknown) || null,
+          }));
+          let ins = await supabase.from("quote_line_items").insert(rows);
+          if (ins.error && isPostgrestWriteRetryableError(ins.error)) {
+            const slim = rows.map((r) => ({
+              quote_id: r.quote_id,
+              description: r.description,
+              quantity: r.quantity,
+              unit_price: r.unit_price,
+              sort_order: r.sort_order,
+            }));
+            ins = await supabase.from("quote_line_items").insert(slim);
+          }
+          if (ins.error) throw ins.error;
+        }
+
+        await logAudit({
+          entityType: "quote",
+          entityId: result.id,
+          entityRef: result.reference,
+          action: "created",
+          userId: profile?.id,
+          userName: profile?.full_name,
+        });
+        setCreateOpen(false);
+        toast.success("Quote created successfully");
+        refreshWithKpis();
+        trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, {
+          quoteType: formData.quote_type ?? "internal",
+          lineItems: manualLines?.length ?? 0,
+        });
+      } catch {
+        toast.error("Failed to create quote");
+      }
+    },
+    [refreshWithKpis, profile?.id, profile?.full_name, confirmDespiteDuplicates],
+  );
 
   const handleBulkStatusChange = async (newStatus: string) => {
     if (selectedIds.size === 0) return;
@@ -963,9 +1022,9 @@ function QuotesPageContent() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         title="Create Quote"
-        subtitle="Add line items and optionally request partner bids"
+        subtitle="Manual quote uses the same layout as Review & Send — line items, scope, dates, deposit"
         size="lg"
-        scrollBody={false}
+        scrollBody
       >
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
@@ -1020,7 +1079,7 @@ function QuoteDetailDrawer({
   });
   const [savingClient, setSavingClient] = useState(false);
   // Send to customer / preview — must stay above useLayoutEffect (Rules of Hooks).
-  const [depositRequired, setDepositRequired] = useState("");
+  const [depositPercent, setDepositPercent] = useState("50");
   const [startDate1, setStartDate1] = useState("");
   const [startDate2, setStartDate2] = useState("");
   const [customMessage, setCustomMessage] = useState("");
@@ -1063,7 +1122,11 @@ function QuoteDetailDrawer({
   useEffect(() => {
     setSendEmail(bidPayloadTrimmedString(quote.client_email as unknown));
     setScopeText(bidPayloadTrimmedString(quote.scope as unknown));
-    setDepositRequired(String(quote.deposit_required ?? 0));
+    setDepositPercent(
+      quote.deposit_percent != null && Number.isFinite(Number(quote.deposit_percent))
+        ? String(Number(quote.deposit_percent))
+        : String(inferDepositPercentFromLegacy(Number(quote.deposit_required ?? 0), Number(quote.total_value ?? 0))),
+    );
     setStartDate1(bidPayloadTrimmedString(quote.start_date_option_1 as unknown));
     setStartDate2(bidPayloadTrimmedString(quote.start_date_option_2 as unknown));
     setCustomMessage(bidPayloadTrimmedString(quote.email_custom_message as unknown));
@@ -1208,7 +1271,9 @@ function QuoteDetailDrawer({
   const proposalMarginLabourPct = marginPctOnSell(proposalLine0Sell, proposalLine0Partner);
   const proposalMarginMaterialsPct = marginPctOnSell(proposalLine1Sell, proposalLine1Partner);
   const proposalPartnerTotal = lineItems.reduce((s, li) => s + linePartnerSubtotal(li), 0);
+  const proposalMarginAbs = lineTotal - proposalPartnerTotal;
   const proposalSummaryMarginPct = marginPctOnSell(lineTotal, proposalPartnerTotal);
+  const proposalDepositAmount = depositAmountFromPercent(lineTotal, Number(depositPercent));
   const partnerBasisLines01 = proposalLine0Partner + proposalLine1Partner;
   const canUseProposalMarginSlider = partnerBasisLines01 > 0;
 
@@ -1217,10 +1282,11 @@ function QuoteDetailDrawer({
     bidPayloadTrimmedString(scopeText as unknown).length > 0 ||
     lineItems.some((li) => bidPayloadTrimmedString(li.description as unknown).length > 0);
   const sendStep2Ready = !!startDate1 || !!startDate2;
-  const sendDepositNumber = Number(depositRequired);
+  const sendDepositPercentNum = Number(depositPercent);
   const sendStep3Ready =
-    sendDepositNumber >= 0 &&
-    !Number.isNaN(sendDepositNumber) &&
+    sendDepositPercentNum >= 0 &&
+    sendDepositPercentNum <= 100 &&
+    !Number.isNaN(sendDepositPercentNum) &&
     bidPayloadTrimmedString(sendEmail as unknown).includes("@");
 
   const drawerTabs = [
@@ -1270,6 +1336,7 @@ function QuoteDetailDrawer({
     scopeTextOverride?: string;
     startDate1Override?: string;
     startDate2Override?: string;
+    /** Override deposit % (0–100); default is current `depositPercent` state. */
     depositOverride?: string;
     partnerCostOverride?: number;
   }): Promise<Quote> => {
@@ -1277,7 +1344,7 @@ function QuoteDetailDrawer({
     const st = opts?.scopeTextOverride !== undefined ? opts.scopeTextOverride : scopeText;
     const d1 = opts?.startDate1Override !== undefined ? opts.startDate1Override : startDate1;
     const d2 = opts?.startDate2Override !== undefined ? opts.startDate2Override : startDate2;
-    const dep = opts?.depositOverride !== undefined ? opts.depositOverride : depositRequired;
+    const depPctStr = opts?.depositOverride !== undefined ? opts.depositOverride : depositPercent;
     const partnerTotalFromLines = lines.reduce((s, li) => s + linePartnerSubtotal(li), 0);
     const partnerTotal = opts?.partnerCostOverride ?? partnerTotalFromLines;
 
@@ -1310,6 +1377,8 @@ function QuoteDetailDrawer({
     const lineTot = lines.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
     const marginPct =
       lineTot > 0 && partnerTotal >= 0 ? Math.round(((lineTot - partnerTotal) / lineTot) * 1000) / 10 : 0;
+    const depositPct = clampDepositPercent(Number(depPctStr) || 0);
+    const depositRequiredAmount = depositAmountFromPercent(lineTot, depositPct);
 
     return updateQuote(quote.id, {
       partner_cost: partnerTotal,
@@ -1317,7 +1386,8 @@ function QuoteDetailDrawer({
       sell_price: lineTot,
       margin_percent: marginPct,
       scope: bidPayloadTrimmedString(st as unknown) || undefined,
-      deposit_required: Number(dep) || 0,
+      deposit_percent: depositPct,
+      deposit_required: depositRequiredAmount,
       start_date_option_1: d1 || undefined,
       start_date_option_2: d2 || undefined,
       client_email: bidPayloadTrimmedString(sendEmail as unknown),
@@ -1748,7 +1818,7 @@ function QuoteDetailDrawer({
                           {formatCurrency(lineTotal)}
                         </p>
                       </div>
-                      <div className="grid grid-cols-2 gap-1.5 min-[420px]:min-w-[200px] min-[420px]:max-w-[min(100%,280px)] min-[420px]:shrink-0">
+                      <div className="grid grid-cols-1 gap-1.5 min-[420px]:grid-cols-3 min-[420px]:min-w-[280px] min-[420px]:max-w-[min(100%,420px)] min-[420px]:shrink-0">
                         <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
                           <div className="flex items-center gap-1 text-text-tertiary">
                             <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
@@ -1756,10 +1826,28 @@ function QuoteDetailDrawer({
                           </div>
                           <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(proposalPartnerTotal)}</p>
                         </div>
+                        <div className="rounded-md border border-emerald-500/25 bg-emerald-500/15 dark:border-emerald-500/30 dark:bg-emerald-500/12 px-2 py-1.5">
+                          <div className="flex items-center gap-1 text-emerald-800/85 dark:text-emerald-400/90">
+                            <PoundSterling className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
+                            <span className="text-[9px] font-medium uppercase tracking-wide">Gross margin</span>
+                          </div>
+                          <p
+                            className={cn(
+                              "mt-0.5 text-sm font-bold tabular-nums",
+                              proposalSummaryMarginPct >= 20
+                                ? "text-emerald-700 dark:text-emerald-400"
+                                : proposalSummaryMarginPct >= 0
+                                  ? "text-amber-700 dark:text-amber-400"
+                                  : "text-red-600 dark:text-red-400",
+                            )}
+                          >
+                            {formatCurrency(proposalMarginAbs)}
+                          </p>
+                        </div>
                         <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
                           <div className="flex items-center gap-1 text-text-tertiary">
                             <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                            <span className="text-[9px] font-medium uppercase tracking-wide">Margin</span>
+                            <span className="text-[9px] font-medium uppercase tracking-wide">% margin</span>
                           </div>
                           <p
                             className={cn(
@@ -1905,8 +1993,20 @@ function QuoteDetailDrawer({
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Deposit required</label>
-                    <Input type="number" value={depositRequired} onChange={(e) => setDepositRequired(e.target.value)} placeholder="0.00" min={0} step="0.01" />
+                    <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Deposit (% of total)</label>
+                    <Input
+                      type="number"
+                      value={depositPercent}
+                      onChange={(e) => setDepositPercent(e.target.value)}
+                      placeholder="50"
+                      min={0}
+                      max={100}
+                      step={0.5}
+                    />
+                    <p className="text-[10px] text-text-tertiary mt-1.5">
+                      Deposit amount:{" "}
+                      <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalDepositAmount)}</span>
+                    </p>
                   </div>
 
                   <div>
@@ -2214,7 +2314,7 @@ function QuoteDetailDrawer({
                                     const scopeMerged = pre.scopeText ?? scopeText;
                                     const d1 = pre.startDate1 ?? startDate1;
                                     const d2 = pre.startDate2 ?? startDate2;
-                                    const dep = pre.depositRequired ?? depositRequired;
+                                    const depPct = pre.depositPercent ?? depositPercent;
 
                                     await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
 
@@ -2223,7 +2323,7 @@ function QuoteDetailDrawer({
                                       scopeTextOverride: scopeMerged,
                                       startDate1Override: d1,
                                       startDate2Override: d2,
-                                      depositOverride: dep,
+                                      depositOverride: depPct,
                                       partnerCostOverride: bid.bid_amount,
                                     });
 
@@ -2233,7 +2333,7 @@ function QuoteDetailDrawer({
                                     setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
                                     setStartDate1(d1);
                                     setStartDate2(d2);
-                                    setDepositRequired(dep);
+                                    setDepositPercent(depPct);
                                     setProposalScalePercent(100);
 
                                     onQuoteUpdate?.(updated);
@@ -2489,9 +2589,13 @@ function proposalFieldsReadyForQuote(quote: Quote): { ok: boolean; message?: str
   if (!quote.start_date_option_1 && !quote.start_date_option_2) {
     return { ok: false, message: "Set at least one proposed start date before sending to customer." };
   }
-  const dep = Number(quote.deposit_required);
-  if (Number.isNaN(dep) || dep < 0) {
-    return { ok: false, message: "Set the deposit required (use 0 if none)." };
+  const depPct = (() => {
+    const raw = quote.deposit_percent;
+    if (raw != null && Number.isFinite(Number(raw))) return Number(raw);
+    return inferDepositPercentFromLegacy(Number(quote.deposit_required ?? 0), Number(quote.total_value ?? 0));
+  })();
+  if (Number.isNaN(depPct) || depPct < 0 || depPct > 100) {
+    return { ok: false, message: "Set deposit percentage between 0% and 100% (0 if no deposit)." };
   }
   const email = bidPayloadTrimmedString(quote.client_email as unknown);
   if (!email.includes("@")) {
@@ -3021,12 +3125,30 @@ function partnerMatchesTypeOfWork(partner: Partner, typeOfWork: string): boolean
   });
 }
 
+function seedManualProposalLines(typeOfWorkTitle: string): ProposalLineRow[] {
+  const first = normalizeTypeOfWork(typeOfWorkTitle).trim() || "Type of work";
+  return [
+    { description: first, quantity: "1", partnerUnitCost: "0", unitPrice: "0", notes: "" },
+    { description: "Materials", quantity: "1", partnerUnitCost: "0", unitPrice: "0", notes: "" },
+  ];
+}
+
 /* ========== CREATE QUOTE FORM ========== */
-function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>) => void; onCancel: () => void }) {
-  const [quoteType, setQuoteType] = useState<"internal" | "partner">("partner");
+function CreateQuoteForm({
+  onSubmit,
+  onCancel,
+}: {
+  onSubmit: (d: Partial<Quote>, options?: { manualLineItems?: ProposalLineRow[] }) => void;
+  onCancel: () => void;
+}) {
+  const [quoteType, setQuoteType] = useState<"internal" | "partner">("internal");
   const [form, setForm] = useState({ title: "", total_value: "" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
-  const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0" }]);
+  const [lineItems, setLineItems] = useState<ProposalLineRow[]>(() => seedManualProposalLines(""));
+  const [scopeText, setScopeText] = useState("");
+  const [startDate1, setStartDate1] = useState("");
+  const [startDate2, setStartDate2] = useState("");
+  const [depositPercent, setDepositPercent] = useState("50");
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnersLoading, setPartnersLoading] = useState(false);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
@@ -3035,10 +3157,19 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
   const [invitePhotoPreviews, setInvitePhotoPreviews] = useState<string[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const inviteUploadFolderRef = useRef(`create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`);
+  const quoteTypePrevRef = useRef(quoteType);
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const linePartnerTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.partnerUnitCost) || 0), 0);
   const lineSellTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
+  const createProposalMarginAbs = lineSellTotal - linePartnerTotal;
+  const createProposalMarginPct = marginPctOnSell(lineSellTotal, linePartnerTotal);
+  const createDepositAmount = depositAmountFromPercent(lineSellTotal, Number(depositPercent));
+  const minCreateStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [marginPct, setMarginPct] = useState(0);
+
+  const updateCreateLineItem = (idx: number, field: keyof ProposalLineRow, value: string) => {
+    setLineItems((prev) => prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)));
+  };
   const typeOfWorkOptions = useMemo(
     () =>
       mergeTypeOfWorkOptions([...TYPE_OF_WORK_OPTIONS])
@@ -3074,6 +3205,28 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
     });
   }, [quoteType, form.title, partnersForTrade]);
 
+  useEffect(() => {
+    const prev = quoteTypePrevRef.current;
+    quoteTypePrevRef.current = quoteType;
+    if (quoteType !== "internal" || prev === "internal") return;
+    setLineItems(seedManualProposalLines(form.title));
+    setScopeText("");
+    setDepositPercent("50");
+    setStartDate1("");
+    setStartDate2("");
+  }, [quoteType, form.title]);
+
+  useEffect(() => {
+    if (quoteType !== "internal") return;
+    const first = normalizeTypeOfWork(form.title).trim() || "Type of work";
+    setLineItems((prev) => {
+      if (prev.length === 0) return seedManualProposalLines(form.title);
+      const next = [...prev];
+      if (next[0]) next[0] = { ...next[0], description: first };
+      return next;
+    });
+  }, [form.title, quoteType]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) { toast.error("Title is required"); return; }
@@ -3082,6 +3235,10 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       .map((li) => li.description.trim())
       .filter(Boolean)
       .join("\n");
+    const scopeResolved =
+      quoteType === "internal"
+        ? (bidPayloadTrimmedString(scopeText as unknown).trim() || scopeFromLineItems.trim() || undefined)
+        : undefined;
 
     if (quoteType === "partner") {
       if (partnersForTrade.length === 0) {
@@ -3115,6 +3272,9 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       setUploadingPhotos(false);
     }
 
+    const depPct = clampDepositPercent(Number(depositPercent));
+    const depAmt = depositAmountFromPercent(lineSellTotal, depPct);
+
     const payload: Partial<Quote> = {
       title: normalizeTypeOfWork(form.title),
       client_id: clientAddress.client_id,
@@ -3133,18 +3293,24 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       partner_id: quoteType === "partner" ? undefined : undefined,
       partner_name: quoteType === "partner" ? undefined : undefined,
       partner_quotes_count: quoteType === "partner" ? selectedPartnerIds.size : undefined,
-      scope: quoteType === "partner"
-        ? partnerDescription.trim()
-        : (scopeFromLineItems.trim() ? scopeFromLineItems.trim() : undefined),
+      scope: quoteType === "partner" ? partnerDescription.trim() : scopeResolved,
+      start_date_option_1: quoteType === "internal" ? (startDate1 || undefined) : undefined,
+      start_date_option_2: quoteType === "internal" ? (startDate2 || undefined) : undefined,
+      deposit_percent: quoteType === "internal" ? depPct : 50,
+      deposit_required: quoteType === "internal" ? depAmt : 0,
       ...(form.title.trim() ? { service_type: form.title.trim() } : {}),
       ...(imageUrls?.length ? { images: imageUrls } : {}),
     };
-    onSubmit(payload);
+    onSubmit(payload, quoteType === "internal" ? { manualLineItems: lineItems } : undefined);
     inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     setForm({ title: "", total_value: "" });
     setClientAddress({ client_name: "", property_address: "" });
-    setLineItems([{ description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0" }]);
-    setQuoteType("partner");
+    setLineItems(seedManualProposalLines(""));
+    setScopeText("");
+    setDepositPercent("50");
+    setStartDate1("");
+    setStartDate2("");
+    setQuoteType("internal");
     setPartners([]);
     setSelectedPartnerIds(new Set());
     setPartnerDescription("");
@@ -3238,40 +3404,193 @@ function CreateQuoteForm({ onSubmit, onCancel }: { onSubmit: (d: Partial<Quote>)
       )}
       {quoteType === "internal" ? (
         <>
+          <div
+            className="rounded-xl px-2.5 py-2 sm:px-3 sm:py-2.5 bg-emerald-500/[0.07] dark:bg-emerald-500/[0.09]"
+            role="region"
+            aria-label="Quote summary"
+          >
+            <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between min-[420px]:gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold text-emerald-800/90 dark:text-emerald-400/95">Total price</p>
+                <p className="mt-0.5 text-lg min-[420px]:text-xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400 leading-none">
+                  {formatCurrency(lineSellTotal)}
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-1.5 min-[420px]:grid-cols-3 min-[420px]:min-w-[280px] min-[420px]:max-w-[min(100%,420px)] min-[420px]:shrink-0">
+                <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
+                  <div className="flex items-center gap-1 text-text-tertiary">
+                    <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                    <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
+                  </div>
+                  <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(linePartnerTotal)}</p>
+                </div>
+                <div className="rounded-md border border-emerald-500/25 bg-emerald-500/15 dark:border-emerald-500/30 dark:bg-emerald-500/12 px-2 py-1.5">
+                  <div className="flex items-center gap-1 text-emerald-800/85 dark:text-emerald-400/90">
+                    <PoundSterling className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
+                    <span className="text-[9px] font-medium uppercase tracking-wide">Gross margin</span>
+                  </div>
+                  <p
+                    className={cn(
+                      "mt-0.5 text-sm font-bold tabular-nums",
+                      createProposalMarginPct >= 20
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : createProposalMarginPct >= 0
+                          ? "text-amber-700 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400",
+                    )}
+                  >
+                    {formatCurrency(createProposalMarginAbs)}
+                  </p>
+                </div>
+                <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
+                  <div className="flex items-center gap-1 text-text-tertiary">
+                    <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                    <span className="text-[9px] font-medium uppercase tracking-wide">% margin</span>
+                  </div>
+                  <p
+                    className={cn(
+                      "mt-0.5 text-sm font-bold tabular-nums",
+                      createProposalMarginPct >= 20
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : createProposalMarginPct >= 0
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400",
+                    )}
+                  >
+                    {createProposalMarginPct}%
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Line Items</label>
-              <button type="button" onClick={() => setLineItems((prev) => [...prev, { description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0" }])} className="text-[11px] font-medium text-primary hover:underline">+ Add Item</button>
+              <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope / line items</label>
+              <button
+                type="button"
+                onClick={() =>
+                  setLineItems((prev) => [
+                    ...prev,
+                    { description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0", notes: "" },
+                  ])
+                }
+                className="text-[11px] font-medium text-primary hover:underline"
+              >
+                + Add item
+              </button>
             </div>
             <div className="space-y-2">
               {lineItems.map((item, idx) => (
                 <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
                   <div className="flex-1 min-w-0">
-                    <Input placeholder="Service / Description" value={item.description} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], description: e.target.value }; setLineItems(n); }} className="text-xs mb-1.5" />
-                    <div className="flex gap-2 flex-wrap">
-                      <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], quantity: e.target.value }; setLineItems(n); }} className="text-xs w-20" />
-                      <Input type="number" placeholder="Partner / unit" value={item.partnerUnitCost} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], partnerUnitCost: e.target.value }; setLineItems(n); }} className="text-xs flex-1 min-w-[100px]" />
-                      <Input type="number" placeholder="Sell / unit" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1 min-w-[100px]" />
+                    <Input
+                      placeholder={idx === 0 ? "Type of work / labour" : idx === 1 ? "Materials" : "Service / description"}
+                      value={item.description}
+                      onChange={(e) => updateCreateLineItem(idx, "description", e.target.value)}
+                      className="text-xs mb-1.5"
+                    />
+                    <div className="flex gap-2 flex-wrap items-end">
+                      <div className="w-20 shrink-0">
+                        <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Qty</span>
+                        <Input
+                          type="number"
+                          placeholder="1"
+                          value={item.quantity}
+                          onChange={(e) => updateCreateLineItem(idx, "quantity", e.target.value)}
+                          className="text-xs w-full"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[88px]">
+                        <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Partner / unit</span>
+                        <Input
+                          type="number"
+                          placeholder="0"
+                          value={item.partnerUnitCost}
+                          onChange={(e) => updateCreateLineItem(idx, "partnerUnitCost", e.target.value)}
+                          className="text-xs w-full"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[88px]">
+                        <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Sell / unit</span>
+                        <Input
+                          type="number"
+                          placeholder="0"
+                          value={item.unitPrice}
+                          onChange={(e) => updateCreateLineItem(idx, "unitPrice", e.target.value)}
+                          className="text-xs w-full"
+                        />
+                      </div>
                     </div>
+                    <label className="block mt-1.5">
+                      <span className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Line notes</span>
+                      <textarea
+                        value={item.notes ?? ""}
+                        onChange={(e) => updateCreateLineItem(idx, "notes", e.target.value)}
+                        placeholder="e.g. materials included, hourly detail, exclusions…"
+                        rows={2}
+                        className="mt-0.5 w-full rounded-lg border border-border-light bg-card px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
+                      />
+                    </label>
                   </div>
                   <div className="flex flex-col items-end gap-1 pt-1 shrink-0">
-                    <span className="text-[10px] text-text-tertiary">
-                      Sub: <span className="font-semibold text-text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.partnerUnitCost) || 0))}</span>
-                      {" → "}
-                      <span className="font-semibold text-primary">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
+                    <span className="text-xs font-semibold text-text-primary tabular-nums">
+                      {formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}
                     </span>
-                    {lineItems.length > 1 && <button type="button" onClick={() => setLineItems((prev) => prev.filter((_, i) => i !== idx))} className="text-text-tertiary hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>}
+                    {lineItems.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setLineItems((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-text-tertiary hover:text-red-500"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
             </div>
-            <div className="flex justify-end mt-2 pt-2 border-t border-border-light">
-              <div className="text-right space-y-0.5">
-                <p className="text-sm font-bold text-text-primary">Partner total: {formatCurrency(linePartnerTotal)}</p>
-                <p className="text-sm font-bold text-primary">Sell total: {formatCurrency(lineSellTotal)}</p>
-              </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Scope of work (for email / PDF)</label>
+            <textarea
+              value={scopeText}
+              onChange={(e) => setScopeText(e.target.value)}
+              placeholder="Describe scope, inclusions and exclusions..."
+              rows={4}
+              className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 1</label>
+              <Input type="date" min={minCreateStartDate} value={startDate1} onChange={(e) => setStartDate1(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Start date option 2</label>
+              <Input type="date" min={minCreateStartDate} value={startDate2} onChange={(e) => setStartDate2(e.target.value)} />
             </div>
           </div>
+
+          <div>
+            <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Deposit (% of total)</label>
+            <Input
+              type="number"
+              value={depositPercent}
+              onChange={(e) => setDepositPercent(e.target.value)}
+              placeholder="50"
+              min={0}
+              max={100}
+              step={0.5}
+            />
+            <p className="text-[10px] text-text-tertiary mt-1.5">
+              Deposit amount:{" "}
+              <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(createDepositAmount)}</span>
+            </p>
+          </div>
+
           {linePartnerTotal > 0 && (
             <MarginCalculator
               key={`margin-create-${linePartnerTotal}-${lineSellTotal}`}

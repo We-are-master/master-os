@@ -42,6 +42,7 @@ import { findDuplicateAccountHints, formatAccountDuplicateLines } from "@/lib/du
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { listActiveAssignableUsers, type AssignableUser } from "@/services/profiles";
+import { jobStatusBadgeVariant } from "@/lib/job-status-ui";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
@@ -80,18 +81,7 @@ const ACCOUNT_STATUS_OPTIONS = [
 ];
 
 function jobStatusBadge(status: string) {
-  const variants: Record<string, "success" | "info" | "warning" | "danger" | "default" | "primary"> = {
-    completed: "success",
-    unassigned: "warning",
-    scheduled: "info",
-    in_progress_phase1: "primary",
-    in_progress_phase2: "primary",
-    in_progress_phase3: "primary",
-    awaiting_payment: "danger",
-    need_attention: "warning",
-    final_check: "warning",
-  };
-  const v = variants[status] ?? "default";
+  const v = jobStatusBadgeVariant(status);
   const label = status.replace(/_/g, " ");
   return (
     <Badge variant={v} size="sm" className="capitalize">

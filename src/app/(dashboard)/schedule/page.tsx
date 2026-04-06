@@ -43,6 +43,8 @@ import {
 import { isJobInProgressStatus } from "@/lib/job-phases";
 import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financials";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
+import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
+import type { BadgeVariant } from "@/components/ui/badge";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -53,18 +55,20 @@ const MONTHS = [
 const LIVE_MAP_INACTIVE_MINUTES = 15;
 type LiveMapStatusFilter = "all" | "active" | "inactive";
 
-const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" }> = {
-  unassigned: { label: "Unassigned", variant: "warning" },
-  scheduled: { label: "Scheduled", variant: "default" },
-  late: { label: "Late", variant: "danger" },
-  in_progress_phase1: { label: "In progress", variant: "primary" },
-  in_progress_phase2: { label: "In progress", variant: "primary" },
-  in_progress_phase3: { label: "In progress", variant: "primary" },
-  final_check: { label: "Final check", variant: "warning" },
-  awaiting_payment: { label: "Awaiting payment", variant: "danger" },
-  need_attention: { label: "Need attention", variant: "warning" },
-  completed: { label: "Completed", variant: "success" },
-  cancelled: { label: "Cancelled", variant: "default" },
+const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
+  unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned },
+  auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning },
+  scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled },
+  late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late },
+  in_progress_phase1: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1 },
+  in_progress_phase2: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2 },
+  in_progress_phase3: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3 },
+  final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check },
+  awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment },
+  need_attention: { label: "Need attention", variant: JOB_STATUS_BADGE_VARIANT.need_attention },
+  completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed },
+  cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled },
+  deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted },
 };
 
 type ScheduleBarSegment = "only" | "first" | "middle" | "last";
