@@ -19,6 +19,7 @@ import {
   jobHasPartnerSet,
   jobIsBookedPipelineWithoutPartner,
 } from "@/lib/job-partner-assign";
+import { resolveJobGeocode } from "@/lib/job-geocode-client";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
@@ -419,6 +420,11 @@ export async function createJob(
   if (jobHasPartnerSet(input as Job) && (input as Job).status === "auto_assigning") {
     baseRow.status = "scheduled";
   }
+  const coords = await resolveJobGeocode(input.property_address);
+  if (coords) {
+    baseRow.latitude = coords.latitude;
+    baseRow.longitude = coords.longitude;
+  }
   const row = prepareJobRowForInsert(baseRow);
   let { data, error } = await supabase.from("jobs").insert(row).select().single();
   if (error && isPostgrestWriteRetryableError(error)) {
@@ -549,6 +555,18 @@ export async function updateJob(
     }
   }
   const patch = prepareJobRowForUpdate(effectivePatch);
+
+  if (Object.prototype.hasOwnProperty.call(basePatch, "property_address")) {
+    const addr =
+      typeof basePatch.property_address === "string" ? basePatch.property_address.trim() : "";
+    if (addr.length >= 3) {
+      const coords = await resolveJobGeocode(addr);
+      if (coords) {
+        patch.latitude = coords.latitude;
+        patch.longitude = coords.longitude;
+      }
+    }
+  }
 
   /**
    * Return full row from PATCH (array select — no `.single()`) to skip a follow-up `getJob`.
