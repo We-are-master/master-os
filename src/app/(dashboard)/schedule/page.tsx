@@ -190,7 +190,7 @@ export default function SchedulePage() {
         merged.set(row.id, row as Job);
       }
       const list = Array.from(merged.values())
-        .filter((j) => jobVisibleOnSchedule(j.status))
+        .filter((j) => jobVisibleOnSchedule(j))
         .filter((j) => jobIntersectsLocalMonth(j, year, month));
       list.sort((a, b) => {
         const ka = a.scheduled_start_at ?? (a.scheduled_date ? `${a.scheduled_date}T00:00:00` : "");

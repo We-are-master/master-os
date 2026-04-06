@@ -1,4 +1,5 @@
 import type { Job, JobStatus } from "@/types/database";
+import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
 
 /** When a partner is cleared, these statuses must become `unassigned` (e.g. `late` without a partner). */
 export const JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED: readonly JobStatus[] = [
@@ -47,4 +48,20 @@ export function jobHasPartnerSet(job: Pick<Job, "partner_id" | "partner_ids">): 
   if (pid) return true;
   const ids = job.partner_ids;
   return Array.isArray(ids) && ids.some((id) => id != null && String(id).trim() !== "");
+}
+
+/**
+ * True when the row is still "booked" in the DB (`scheduled` / `late` / on-site) but has no partner.
+ * Those jobs belong in the Unassigned tab until a partner is set (not Scheduled / In progress).
+ */
+export function jobIsBookedPipelineWithoutPartner(
+  job: Pick<Job, "status" | "partner_id" | "partner_ids">,
+): boolean {
+  if (jobHasPartnerSet(job)) return false;
+  const st = job.status;
+  return (
+    st === "scheduled" ||
+    st === "late" ||
+    (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(st)
+  );
 }

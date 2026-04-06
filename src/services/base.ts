@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
+import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
 import { getJobStatusCountsByChunkedSelect, getJobStatusCountsWithScheduleOverlap } from "./job-period-overlap-queries";
 
 export type SortDirection = "asc" | "desc";
@@ -29,6 +30,13 @@ export interface ListParams {
   scheduleRange?: { from: string; to: string };
   /** Soft-deleted rows only (`deleted_at` set). Used for the Jobs "Archived" tab. */
   archivedOnly?: boolean;
+  /**
+   * Jobs only: Unassigned tab — `unassigned` / `auto_assigning` OR booked pipeline rows with no partner.
+   * When set, do not pass `statusIn` (this replaces the status filter).
+   */
+  jobsUnassignedPipelineTab?: boolean;
+  /** Jobs only: Scheduled / In progress tabs — require `partner_id` or non-empty `partner_ids`. */
+  jobsRequirePartnerSet?: boolean;
   /**
    * Invoices: period matches rows where `billing_week_start` is in [from,to] (weekly batch),
    * or `billing_week_start` is null and `created_at` falls in the local-day UTC window.
@@ -115,10 +123,23 @@ export async function queryList<T>(
     query = query.is("deleted_at", null);
   }
 
-  if (params.statusIn && params.statusIn.length > 0) {
+  const uTab = params.jobsUnassignedPipelineTab;
+  const reqPartner = params.jobsRequirePartnerSet;
+
+  if (table === "jobs" && uTab) {
+    const onsites = JOB_ONSITE_PROGRESS_STATUSES.join(",");
+    query = query.or(
+      `status.in.(unassigned,auto_assigning),` +
+        `and(status.in.(scheduled,late,${onsites}),partner_id.is.null,partner_ids.eq.{})`,
+    );
+  } else if (params.statusIn && params.statusIn.length > 0) {
     query = query.in("status", params.statusIn);
   } else if (params.status && params.status !== "all") {
     query = query.eq("status", params.status);
+  }
+
+  if (table === "jobs" && reqPartner) {
+    query = query.or("partner_id.not.is.null,partner_ids.neq.{}");
   }
 
   if (params.search && options?.searchColumns?.length) {
