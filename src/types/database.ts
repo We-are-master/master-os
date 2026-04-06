@@ -641,7 +641,13 @@ export interface CommissionPoolShare {
 
 /** Unified company bills: recurring + one-off, workflow Submitted → Approved → Paid/Rejected; optional flag Needs attention */
 export type BillStatus = "submitted" | "approved" | "paid" | "rejected" | "needs_attention";
-export type BillRecurrence = "weekly" | "monthly" | "quarterly" | "yearly";
+export type BillRecurrence =
+  | "weekly"
+  | "weekly_friday"
+  | "biweekly_friday"
+  | "monthly"
+  | "quarterly"
+  | "yearly";
 
 export interface Bill {
   id: string;

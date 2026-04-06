@@ -1115,12 +1115,20 @@ function BillModal({
             disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
             options={[
               { value: "weekly", label: "Weekly" },
+              { value: "weekly_friday", label: "Every Friday" },
+              { value: "biweekly_friday", label: "Every 2 Fridays" },
               { value: "monthly", label: "Monthly" },
               { value: "quarterly", label: "Quarterly" },
               { value: "yearly", label: "Yearly" },
             ]}
           />
         )}
+        {is_recurring && (recurrence_interval === "weekly_friday" || recurrence_interval === "biweekly_friday") ? (
+          <p className="text-[11px] text-text-tertiary leading-snug -mt-1">
+            Due dates are generated on <strong className="text-text-secondary">Fridays</strong>. If the first due date is not a Friday, we
+            use the first Friday on or after it.
+          </p>
+        ) : null}
         <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
