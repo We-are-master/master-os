@@ -1,6 +1,7 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Quote, QuoteLineItem } from "@/types/database";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 
 /** Real `quotes` columns only — stray keys (e.g. from UI state spread) must not reach PostgREST. */
 const QUOTE_WRITABLE_KEYS = new Set<string>([
@@ -55,11 +56,23 @@ function pickQuotePayload(input: Record<string, unknown>): Record<string, unknow
   return out;
 }
 
+async function enrichQuotesWithAccountNames(quotes: Quote[]): Promise<Quote[]> {
+  const clientIds = [...new Set(quotes.map((q) => q.client_id).filter(Boolean))] as string[];
+  if (clientIds.length === 0) return quotes;
+  const labels = await batchResolveLinkedAccountLabels(getSupabase(), clientIds);
+  return quotes.map((q) => ({
+    ...q,
+    source_account_name: q.client_id ? labels.get(q.client_id) ?? null : null,
+  }));
+}
+
 export async function listQuotes(params: ListParams): Promise<ListResult<Quote>> {
-  return queryList<Quote>("quotes", params, {
+  const result = await queryList<Quote>("quotes", params, {
     searchColumns: ["reference", "title", "client_name", "client_email"],
     defaultSort: "created_at",
   });
+  const data = await enrichQuotesWithAccountNames(result.data);
+  return { ...result, data };
 }
 
 export async function getQuote(id: string): Promise<Quote | null> {

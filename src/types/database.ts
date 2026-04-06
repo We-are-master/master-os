@@ -149,6 +149,8 @@ export interface Quote {
   client_address_id?: string;
   client_name: string;
   client_email: string;
+  /** Set when listing via join: client linked corporate account (`accounts` label). */
+  source_account_name?: string | null;
   status: QuoteStatus;
   total_value: number;
   ai_confidence?: number;

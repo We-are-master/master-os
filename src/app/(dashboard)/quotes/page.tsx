@@ -529,6 +529,9 @@ function QuotesPageContent() {
         setCreateOpen(false);
         toast.success("Quote created successfully");
         refreshWithKpis();
+        if ((formData.quote_type ?? "internal") === "internal") {
+          setSelectedQuote(result);
+        }
         trackUiPerf("quotes.create_quote_ms", performance.now() - perfStart, {
           quoteType: formData.quote_type ?? "internal",
           lineItems: manualLines?.length ?? 0,
@@ -766,9 +769,14 @@ function QuotesPageContent() {
     {
       key: "client_name", label: "Client",
       render: (item) => (
-        <div className="flex items-center gap-2">
-          <Avatar name={item.client_name} size="sm" />
-          <span className="text-sm text-text-primary font-medium">{item.client_name}</span>
+        <div className="flex items-start gap-2 min-w-0">
+          <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
+            {item.source_account_name?.trim() ? (
+              <p className="text-[11px] text-text-tertiary truncate max-w-[200px]">{item.source_account_name}</p>
+            ) : null}
+          </div>
         </div>
       ),
     },
@@ -986,6 +994,9 @@ function QuotesPageContent() {
                       <p className="text-sm font-semibold text-text-primary truncate">{q.reference}</p>
                       <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(q.title) || q.title}</p>
                       <p className="text-[11px] text-text-secondary mt-1">{q.client_name}</p>
+                      {q.source_account_name?.trim() ? (
+                        <p className="text-[10px] text-text-tertiary truncate">{q.source_account_name}</p>
+                      ) : null}
                       <p className="text-xs font-medium text-primary mt-1">{formatCurrency(Number(q.total_value) || 0)}</p>
                     </div>
                   )}
@@ -3853,6 +3864,9 @@ function QuotesCardGridView({ quotes, loading, onSelectQuote }: { quotes: Quote[
             <p className="text-[10px] text-text-tertiary mt-1">From request · optional site photos in drawer</p>
           )}
           <p className="text-[11px] text-text-secondary mt-1">{q.client_name}</p>
+          {q.source_account_name?.trim() ? (
+            <p className="text-[10px] text-text-tertiary truncate">{q.source_account_name}</p>
+          ) : null}
           <p className="text-xs font-medium text-primary mt-1">{formatCurrency(Number(q.total_value) || 0)}</p>
           <Badge variant={statusConfig[q.status]?.variant ?? "default"} size="sm" className="mt-2">{statusLabels[q.status]}</Badge>
         </button>
