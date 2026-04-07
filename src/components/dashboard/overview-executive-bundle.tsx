@@ -33,7 +33,6 @@ import {
 import { dashboardBoundsToInclusiveLocalYmd } from "@/lib/dashboard-date-range";
 import {
   localCalendarMonthYmdBounds,
-  sumInvoiceOpenBalanceByDueDateWindow,
   sumInvoiceOpenBalanceOutstanding,
 } from "@/lib/overview-dashboard-kpis";
 import { ensureSourceAccountForClient } from "@/services/accounts";
@@ -112,7 +111,8 @@ export function OverviewExecutiveBundle() {
     salesJobCount: 0,
     salesBookedValue: 0,
     collectedCash: 0,
-    projectedInvoiceBalance: 0,
+    fixedMonthlyOverhead: 0,
+    overheadMonthLabel: "",
     outstandingAr: 0,
   });
   const [monthlySalesGoal, setMonthlySalesGoal] = useState(() => defaultMonthlySalesGoalGbp());
@@ -464,13 +464,34 @@ export function OverviewExecutiveBundle() {
         );
         const quotesAwaitingCount = quotesAwaitingCountRes.count ?? 0;
 
-        /** Always current calendar month by due date (else created_at) — not the dashboard range, so short presets (e.g. 7d) do not zero this out when invoices are due later in the month. */
-        const { fromDay: projectedMonthFrom, toDay: projectedMonthTo } = localCalendarMonthYmdBounds(clock);
-        const projectedInvoiceBalance = sumInvoiceOpenBalanceByDueDateWindow(
-          invoiceRows,
-          projectedMonthFrom,
-          projectedMonthTo,
+        /** Calendar month (local) — same for fixed overhead as for prior “projection” KPI: not tied to dashboard range. */
+        const { fromDay: overheadMonthFrom, toDay: overheadMonthTo, monthLabel: overheadMonthLabel } =
+          localCalendarMonthYmdBounds(clock);
+
+        const [billsFixedRes, payrollFixedRes] = await Promise.all([
+          supabase
+            .from("bills")
+            .select("amount")
+            .is("archived_at", null)
+            .neq("status", "rejected")
+            .gte("due_date", overheadMonthFrom)
+            .lte("due_date", overheadMonthTo),
+          supabase
+            .from("payroll_internal_costs")
+            .select("amount")
+            .not("due_date", "is", null)
+            .gte("due_date", overheadMonthFrom)
+            .lte("due_date", overheadMonthTo),
+        ]);
+        const billsFixedSum = (billsFixedRes.error ? [] : billsFixedRes.data ?? []).reduce(
+          (s, r) => s + Number((r as { amount?: number }).amount ?? 0),
+          0,
         );
+        const payrollFixedSum = (payrollFixedRes.error ? [] : payrollFixedRes.data ?? []).reduce(
+          (s, r) => s + Number((r as { amount?: number }).amount ?? 0),
+          0,
+        );
+        const fixedMonthlyOverhead = billsFixedSum + payrollFixedSum;
         const outstandingAr = sumInvoiceOpenBalanceOutstanding(invoiceRows);
 
         setFunnel({
@@ -481,7 +502,8 @@ export function OverviewExecutiveBundle() {
           salesJobCount: pipelineRows.length,
           salesBookedValue: rev,
           collectedCash: customerCashTotal,
-          projectedInvoiceBalance,
+          fixedMonthlyOverhead,
+          overheadMonthLabel,
           outstandingAr,
         });
 
@@ -571,7 +593,8 @@ export function OverviewExecutiveBundle() {
             salesJobCount: 0,
             salesBookedValue: 0,
             collectedCash: 0,
-            projectedInvoiceBalance: 0,
+            fixedMonthlyOverhead: 0,
+            overheadMonthLabel: "",
             outstandingAr: 0,
           });
         }
@@ -726,13 +749,12 @@ export function OverviewExecutiveBundle() {
               accent: "text-violet-600",
             },
             {
-              label: "Projected revenue",
-              display: loading ? "—" : formatCurrency(funnel.projectedInvoiceBalance),
-              sub: (() => {
-                const { monthLabel } = localCalendarMonthYmdBounds(new Date());
-                return `Open balance · due in ${monthLabel} (due date; created date if due missing) · excl. paid/cancelled`;
-              })(),
-              accent: "text-teal-600",
+              label: "Fixed overhead",
+              display: loading ? "—" : formatCurrency(funnel.fixedMonthlyOverhead),
+              sub: loading
+                ? "—"
+                : `Bills + workforce (internal payroll) · due in ${funnel.overheadMonthLabel || "this month"} · ignores dashboard range`,
+              accent: "text-rose-600",
             },
             {
               label: "Collected",
