@@ -4,8 +4,16 @@ import type { Account, Client, Invoice, Job } from "@/types/database";
 
 const ACCOUNT_OWNER_MIGRATION_HINT =
   "This database is missing the account owner column or migration — run migration 107 (supabase/migrations/107_accounts_account_owner_id.sql), or clear Account owner and save.";
+const ACCOUNT_FINANCE_EMAIL_MIGRATION_HINT =
+  "This database is missing the finance email column — run migration 121 (supabase/migrations/121_accounts_finance_email.sql), or clear Finance email and save.";
 
 function wantsAccountOwnerId(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  const t = typeof value === "string" ? value.trim() : "";
+  return t.length > 0;
+}
+
+function wantsFinanceEmail(value: unknown): boolean {
   if (value === undefined || value === null) return false;
   const t = typeof value === "string" ? value.trim() : "";
   return t.length > 0;
@@ -24,6 +32,7 @@ function normalizeAccountInsert(input: AccountInsert): AccountInsert {
     ...input,
     ...(account_owner_id !== undefined ? { account_owner_id } : {}),
     email: input.email.trim().toLowerCase(),
+    finance_email: input.finance_email?.trim().toLowerCase() || null,
     company_name: input.company_name.trim(),
     contact_name: input.contact_name.trim(),
     owner_name: input.owner_name?.trim() || null,
@@ -37,6 +46,10 @@ function normalizeAccountInsert(input: AccountInsert): AccountInsert {
 function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
   const next = { ...input };
   if (next.email !== undefined) next.email = next.email.trim().toLowerCase();
+  if (next.finance_email !== undefined) {
+    const t = typeof next.finance_email === "string" ? next.finance_email.trim() : "";
+    next.finance_email = t.length > 0 ? t.toLowerCase() : null;
+  }
   if (next.company_name !== undefined) next.company_name = next.company_name.trim();
   if (next.contact_name !== undefined) next.contact_name = next.contact_name.trim();
   if (next.owner_name !== undefined) {
@@ -111,7 +124,7 @@ export function formatAccountDbError(error: unknown): Error {
 
 export async function listAccounts(params: ListParams): Promise<ListResult<Account>> {
   return queryList<Account>("accounts", params, {
-    searchColumns: ["company_name", "contact_name", "owner_name", "email", "industry"],
+    searchColumns: ["company_name", "contact_name", "owner_name", "email", "finance_email", "industry"],
     defaultSort: "created_at",
   });
 }
@@ -142,6 +155,19 @@ export async function createAccount(input: AccountInsert): Promise<Account> {
     return retry.data as Account;
   }
 
+  if (
+    isSupabaseMissingColumnError(first.error, "finance_email") &&
+    Object.prototype.hasOwnProperty.call(payload, "finance_email")
+  ) {
+    if (wantsFinanceEmail(payload.finance_email)) {
+      throw new Error(ACCOUNT_FINANCE_EMAIL_MIGRATION_HINT);
+    }
+    const { finance_email: _f, ...rest } = payload;
+    const retry = await supabase.from("accounts").insert(rest).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
   throw formatAccountDbError(first.error);
 }
 
@@ -159,6 +185,19 @@ export async function updateAccount(id: string, input: Partial<Account>): Promis
       throw new Error(ACCOUNT_OWNER_MIGRATION_HINT);
     }
     const { account_owner_id: _a, ...rest } = payload;
+    const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
+  if (
+    isSupabaseMissingColumnError(first.error, "finance_email") &&
+    Object.prototype.hasOwnProperty.call(payload, "finance_email")
+  ) {
+    if (wantsFinanceEmail(payload.finance_email)) {
+      throw new Error(ACCOUNT_FINANCE_EMAIL_MIGRATION_HINT);
+    }
+    const { finance_email: _f, ...rest } = payload;
     const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();
     if (retry.error) throw formatAccountDbError(retry.error);
     return retry.data as Account;
@@ -221,6 +260,7 @@ export async function ensureSourceAccountForClient(
       contact_name: company,
       owner_name: null,
       email: safeEmail,
+      finance_email: null,
       address: null,
       crn: null,
       contact_number: null,

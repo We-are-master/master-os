@@ -205,26 +205,11 @@ export default function SchedulePage() {
     }
   }, [year, month]);
 
-  const loadAllJobs = useCallback(async () => {
-    const supabase = getSupabase();
-    try {
-      const { data } = await supabase.from("jobs").select("*").is("deleted_at", null);
-      const allJobs = (data ?? []) as Job[];
-      const withoutDate = allJobs.filter(
-        (j) =>
-          !j.scheduled_date &&
-          !j.scheduled_start_at &&
-          j.status !== "completed" &&
-          j.status !== "cancelled",
-      );
-      setStats({
-        unscheduled: withoutDate.length,
-        active: allJobs.filter((j) => isJobInProgressStatus(j.status)).length,
-      });
-    } catch { /* cosmetic */ }
-  }, []);
-
-  const [stats, setStats] = useState({ unscheduled: 0, active: 0 });
+  const activeCount = useMemo(() => jobs.length, [jobs]);
+  const unassignedCount = useMemo(
+    () => jobs.filter((j) => j.status === "unassigned" || j.status === "auto_assigning").length,
+    [jobs],
+  );
 
   const loadLiveMap = useCallback(async () => {
     setLoadingLiveMap(true);
@@ -280,10 +265,6 @@ export default function SchedulePage() {
   useEffect(() => {
     loadJobs();
   }, [loadJobs]);
-
-  useEffect(() => {
-    loadAllJobs();
-  }, [loadAllJobs]);
 
   useEffect(() => {
     loadLiveMap();
@@ -391,7 +372,7 @@ export default function SchedulePage() {
     () => jobs.filter((j) => isJobInProgressStatus(j.status)).length,
     [jobs],
   );
-  const hasUnassigned = stats.unscheduled > 0;
+  const hasUnassigned = unassignedCount > 0;
   const liveActiveCount = useMemo(() => liveMapPoints.filter((p) => !p.inactive).length, [liveMapPoints]);
   const liveInactiveCount = useMemo(() => liveMapPoints.filter((p) => p.inactive).length, [liveMapPoints]);
 
@@ -454,7 +435,7 @@ export default function SchedulePage() {
         </div>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Active" value={stats.active} format="number" icon={Briefcase} accent="blue" />
+          <KpiCard title="Active" value={activeCount} format="number" icon={Briefcase} accent="blue" />
           <KpiCard title="In progress" value={inProgressCount} format="number" icon={RefreshCw} accent="emerald" />
           <KpiCard
             title={view === "calendar" ? "Total revenue this month" : "Total on map"}
@@ -472,7 +453,7 @@ export default function SchedulePage() {
           />
           <KpiCard
             title="Unassigned"
-            value={stats.unscheduled}
+            value={unassignedCount}
             format="number"
             description={hasUnassigned ? "Needs immediate attention" : "All assigned"}
             icon={AlertTriangle}

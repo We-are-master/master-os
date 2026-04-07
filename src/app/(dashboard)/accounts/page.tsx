@@ -103,6 +103,7 @@ const emptyForm = {
   contact_name: "",
   account_owner_id: "",
   email: "",
+  finance_email: "",
   address: "",
   crn: "",
   contact_number: "",
@@ -189,6 +190,7 @@ export default function AccountsPage() {
         owner_name: ownerRow?.full_name?.trim() || null,
         account_owner_id: ownerId || null,
         email: form.email.trim(),
+        finance_email: form.finance_email.trim() || null,
         address: form.address.trim() || null,
         crn: form.crn.trim() || null,
         contact_number: form.contact_number.trim() || null,
@@ -421,6 +423,18 @@ export default function AccountsPage() {
               placeholder="contact@company.com"
             />
           </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Finance Email (Invoices)</label>
+            <Input
+              type="email"
+              value={form.finance_email}
+              onChange={(e) => setForm((f) => ({ ...f, finance_email: e.target.value }))}
+              placeholder="finance@company.com"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">
+              Optional. Used when billing/invoice contact differs from the main account email.
+            </p>
+          </div>
 
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Address</label>
@@ -528,6 +542,7 @@ function AccountDetailDrawer({
     owner_name: "",
     account_owner_id: "",
     email: "",
+    finance_email: "",
     address: "",
     crn: "",
     contact_number: "",
@@ -547,6 +562,7 @@ function AccountDetailDrawer({
       owner_name: account.owner_name ?? "",
       account_owner_id: account.account_owner_id ?? "",
       email: account.email,
+      finance_email: account.finance_email ?? "",
       address: account.address ?? "",
       crn: account.crn ?? "",
       contact_number: account.contact_number ?? "",
@@ -696,6 +712,7 @@ function AccountDetailDrawer({
         owner_name: edit.owner_name.trim() || null,
         account_owner_id: edit.account_owner_id.trim() || null,
         email: edit.email.trim(),
+        finance_email: edit.finance_email.trim() || null,
         address: edit.address.trim() || null,
         crn: edit.crn.trim() || null,
         contact_number: edit.contact_number.trim() || null,
@@ -996,6 +1013,10 @@ function AccountDetailDrawer({
                   <Input type="email" value={edit.email} onChange={(e) => setEdit((p) => ({ ...p, email: e.target.value }))} />
                 </div>
                 <div>
+                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Finance email (invoices)</label>
+                  <Input type="email" value={edit.finance_email} onChange={(e) => setEdit((p) => ({ ...p, finance_email: e.target.value }))} />
+                </div>
+                <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Address</label>
                   <Input value={edit.address} onChange={(e) => setEdit((p) => ({ ...p, address: e.target.value }))} />
                 </div>
@@ -1120,6 +1141,11 @@ function AccountDetailDrawer({
                 </DetailRow>
                 <DetailRow icon={Mail} label="Email">
                   <a href={`mailto:${account.email}`} className="text-primary hover:underline break-all">{account.email}</a>
+                </DetailRow>
+                <DetailRow icon={Mail} label="Finance email">
+                  {account.finance_email?.trim() ? (
+                    <a href={`mailto:${account.finance_email}`} className="text-primary hover:underline break-all">{account.finance_email}</a>
+                  ) : "—"}
                 </DetailRow>
                 <DetailRow label="Contact number">{account.contact_number || "—"}</DetailRow>
                 <DetailRow label="CRN">{account.crn || "—"}</DetailRow>
