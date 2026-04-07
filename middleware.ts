@@ -31,7 +31,9 @@ export async function middleware(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
   const isApiRoute = pathname.startsWith("/api");
-  const isAuthPage = pathname.startsWith("/login");
+  const isLoginPage = pathname.startsWith("/login");
+  /** Public pages: no Supabase session (partner portal validates ?token= / ?code= client-side + API). */
+  const allowsAnonymous = isLoginPage || pathname.startsWith("/partner-upload");
 
   // API routes: do not redirect; let the route return 401 if unauthenticated
   if (isApiRoute) {
@@ -39,7 +41,7 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
-  if (!user && !isAuthPage) {
+  if (!user && !allowsAnonymous) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     const redirect = NextResponse.redirect(url);
@@ -47,7 +49,7 @@ export async function middleware(request: NextRequest) {
     return redirect;
   }
 
-  if (user && isAuthPage) {
+  if (user && isLoginPage) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     const redirect = NextResponse.redirect(url);
