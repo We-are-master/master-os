@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,7 @@ import type { DashboardView, WidgetConfig } from "@/types/dashboard-config";
 import {
   LayoutDashboard, DollarSign, Briefcase, BarChart2, PieChart,
   Activity, Users, Settings, Layers, Plus, Pencil, SlidersHorizontal,
-  ChevronDown, Crown, RefreshCw,
+  ChevronDown, Crown, RefreshCw, Maximize2, Minimize2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { dashboardJobsFilterSelectColumns, isLegacyJobSchema } from "@/lib/job-schema-compat";
@@ -120,6 +120,43 @@ function isOperationsView(view: DashboardView | null): boolean {
   return (view?.name?.trim().toLowerCase() ?? "") === "operations";
 }
 
+function getFullscreenElement(): Element | null {
+  const d = document as Document & {
+    webkitFullscreenElement?: Element | null;
+    msFullscreenElement?: Element | null;
+  };
+  return document.fullscreenElement ?? d.webkitFullscreenElement ?? d.msFullscreenElement ?? null;
+}
+
+async function requestElementFullscreen(el: HTMLElement): Promise<void> {
+  const anyEl = el as HTMLElement & {
+    webkitRequestFullscreen?: () => void;
+    msRequestFullscreen?: () => void;
+  };
+  if (el.requestFullscreen) {
+    await el.requestFullscreen();
+    return;
+  }
+  if (anyEl.webkitRequestFullscreen) {
+    anyEl.webkitRequestFullscreen();
+    return;
+  }
+  if (anyEl.msRequestFullscreen) anyEl.msRequestFullscreen();
+}
+
+async function exitDocumentFullscreen(): Promise<void> {
+  const d = document as Document & {
+    webkitExitFullscreen?: () => Promise<void> | void;
+    msExitFullscreen?: () => void;
+  };
+  if (document.exitFullscreen) {
+    await document.exitFullscreen();
+    return;
+  }
+  if (d.webkitExitFullscreen) await d.webkitExitFullscreen();
+  else if (d.msExitFullscreen) d.msExitFullscreen();
+}
+
 function isCashFlowOrTopPartners(w: WidgetConfig): boolean {
   return w.type === "finance_flow" || w.type === "partner_performance";
 }
@@ -180,6 +217,8 @@ function DashboardInner() {
   const [ceoDashboard, setCeoDashboard] = useState(false);
   /** Bump to remount widgets and pull fresh data. */
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
+  const dashboardRootRef = useRef<HTMLDivElement>(null);
+  const [dashboardFullscreen, setDashboardFullscreen] = useState(false);
 
   const canSeeCeoDashboard = useMemo(() => isCeoDashboardAllowedUser(profile), [profile]);
 
@@ -278,12 +317,56 @@ function DashboardInner() {
   const openNewView = () => { setEditingView(null); setEditorOpen(true); };
   const openEditView = (view: DashboardView) => { setEditingView(view); setEditorOpen(true); };
 
+  useEffect(() => {
+    const sync = () => {
+      const root = dashboardRootRef.current;
+      setDashboardFullscreen(!!root && getFullscreenElement() === root);
+    };
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync as EventListener);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync as EventListener);
+    };
+  }, []);
+
+  const toggleDashboardFullscreen = useCallback(async () => {
+    const root = dashboardRootRef.current;
+    if (!root) return;
+    try {
+      if (getFullscreenElement() === root) {
+        await exitDocumentFullscreen();
+      } else {
+        await requestElementFullscreen(root);
+      }
+    } catch {
+      /* user denied, unsupported, or transient error */
+    }
+  }, []);
+
   return (
     <PageTransition>
-      <div className="space-y-5">
+      <div
+        ref={dashboardRootRef}
+        className={cn(
+          "space-y-5",
+          dashboardFullscreen && "min-h-screen bg-surface-secondary p-6 lg:p-8 box-border",
+        )}
+      >
         {/* Header */}
         <PageHeader title={`${greeting}, ${firstName}`}>
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              icon={dashboardFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              onClick={() => void toggleDashboardFullscreen()}
+              title={dashboardFullscreen ? "Exit full screen" : "Full screen"}
+              aria-label={dashboardFullscreen ? "Exit full screen" : "Enter full screen"}
+              aria-pressed={dashboardFullscreen}
+            />
             <Button
               type="button"
               variant="outline"
