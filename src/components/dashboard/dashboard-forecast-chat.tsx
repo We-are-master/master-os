@@ -13,7 +13,7 @@ function buildContextBlock(
   rangeLabel: string
 ): string {
   const lines = forecastWeeks.map((w) => `- ${w.label}: ${formatCurrency(w.sold)}`).join("\n");
-  return `Dashboard context (${rangeLabel}) — weekly pipeline sold (billable GBP from jobs created per week):\n${lines || "(no weeks in range)"}`;
+  return `Dashboard context (${rangeLabel}) — weekly pipeline sold (billable GBP by schedule-start week):\n${lines || "(no weeks in range)"}`;
 }
 
 export function DashboardForecastChat({

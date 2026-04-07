@@ -33,7 +33,10 @@ import {
   createCommissionTier,
   ensureCommissionConfigDefaults,
 } from "@/services/tiers";
-import { getCompanySettings, updateCompanySettings } from "@/services/company";
+import {
+  getDashboardSalesGoalTierNumberPreference,
+  setDashboardSalesGoalTierNumberPreference,
+} from "@/lib/dashboard-sales-goal-preference";
 import { formatCurrency, setAppCurrencyCode } from "@/lib/utils";
 import type { Profile, CommissionTier, CommissionPoolShare } from "@/types/database";
 import type { NavGroup } from "@/lib/constants";
@@ -768,23 +771,23 @@ function TiersTab() {
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
   const [poolShares, setPoolShares] = useState<CommissionPoolShare[]>([]);
   const [revenue, setRevenue] = useState<number>(0);
-  const [dashboardSalesGoalTierId, setDashboardSalesGoalTierId] = useState<string>("");
+  const [dashboardSalesGoalTierNumber, setDashboardSalesGoalTierNumber] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [t, p, r, company] = await Promise.all([
+      const [t, p, r] = await Promise.all([
         listCommissionTiers(),
         listCommissionPoolShares(),
         getCurrentMonthRevenue(),
-        getCompanySettings().catch(() => null),
       ]);
       setTiers(t);
       setPoolShares(p);
       setRevenue(r);
-      setDashboardSalesGoalTierId(company?.dashboard_sales_goal_tier_id?.trim() ?? "");
+      const n = getDashboardSalesGoalTierNumberPreference();
+      setDashboardSalesGoalTierNumber(n != null ? String(n) : "");
     } catch {
       toast.error("Failed to load tiers");
     } finally {
@@ -817,18 +820,22 @@ function TiersTab() {
     }
   };
 
-  const handleSaveDashboardGoalSource = async (tierId: string) => {
-    setSavingId("dashboard-goal-source");
-    try {
-      await updateCompanySettings({ dashboard_sales_goal_tier_id: tierId.trim() ? tierId.trim() : null });
-      setDashboardSalesGoalTierId(tierId.trim());
-      toast.success("Dashboard sales goal source updated");
+  const handleBlurDashboardSalesGoalTier = () => {
+    const raw = dashboardSalesGoalTierNumber.trim();
+    if (!raw) {
+      setDashboardSalesGoalTierNumberPreference(null);
       window.dispatchEvent(new Event("master-os-company-settings"));
-    } catch {
-      toast.error("Failed to save dashboard goal source");
-    } finally {
-      setSavingId(null);
+      toast.success("Overview will use the manual monthly goal (System tab)");
+      return;
     }
+    const num = Number(raw);
+    if (!Number.isFinite(num) || num < 1) {
+      toast.error("Enter a tier number ≥ 1, or leave empty for the manual goal");
+      return;
+    }
+    setDashboardSalesGoalTierNumberPreference(num);
+    window.dispatchEvent(new Event("master-os-company-settings"));
+    toast.success("Saved on this device — Overview uses that tier’s monthly sales goal");
   };
 
   const handleSavePool = async (id: string, share_percent: number) => {
@@ -912,29 +919,21 @@ function TiersTab() {
       <Card padding="md">
         <h4 className="text-sm font-semibold text-text-primary mb-1">Overview dashboard — sales goal source</h4>
         <p className="text-xs text-text-tertiary mb-3">
-          Pick which tier’s <strong>Sales goal (monthly)</strong> drives the Sales goal bar on the main dashboard. If none is selected, Settings → System uses the manual monthly figure.
+          Enter the <strong>tier number</strong> (1, 2, 3…) whose <strong>Sales goal (monthly)</strong> drives the Overview bar. Stored only in this browser — no database column. Leave empty to use the manual monthly figure on System configuration.
         </p>
         <div className="flex flex-wrap items-end gap-2">
-          <div className="min-w-[220px] flex-1">
-            <label className="block text-xs font-medium text-text-secondary mb-1">Use sales goal from tier</label>
-            <Select
-              value={dashboardSalesGoalTierId}
-              onChange={(e) => void handleSaveDashboardGoalSource(e.target.value)}
-              disabled={savingId === "dashboard-goal-source" || tiers.length === 0}
-              options={[
-                { value: "", label: "Manual value (System tab)" },
-                ...tiers
-                  .slice()
-                  .sort((a, b) => a.tier_number - b.tier_number)
-                  .map((t) => ({
-                    value: t.id,
-                    label: `Tier ${t.tier_number}${
-                      t.sales_goal_monthly != null && Number(t.sales_goal_monthly) > 0
-                        ? ` (${formatCurrency(Number(t.sales_goal_monthly))}/mo)`
-                        : " (set goal on tier row)"
-                    }`,
-                  })),
-              ]}
+          <div className="min-w-[180px] flex-1">
+            <label className="block text-xs font-medium text-text-secondary mb-1">Tier number for sales goal</label>
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              value={dashboardSalesGoalTierNumber}
+              onChange={(e) => setDashboardSalesGoalTierNumber(e.target.value)}
+              onBlur={handleBlurDashboardSalesGoalTier}
+              placeholder="e.g. 2"
+              disabled={tiers.length === 0}
+              className="h-10 max-w-[140px]"
             />
           </div>
         </div>
@@ -1488,15 +1487,13 @@ function SystemTab() {
     quote_footer_notes: "",
     currency: "GBP",
     dashboard_sales_goal_monthly: "35000",
-    dashboard_sales_goal_tier_id: "",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
-  const [tiersForGoalSelect, setTiersForGoalSelect] = useState<CommissionTier[]>([]);
+  const [overviewSalesGoalTierNum, setOverviewSalesGoalTierNum] = useState("");
 
   useEffect(() => {
-    void listCommissionTiers()
-      .then(setTiersForGoalSelect)
-      .catch(() => setTiersForGoalSelect([]));
+    const n = getDashboardSalesGoalTierNumberPreference();
+    setOverviewSalesGoalTierNum(n != null ? String(n) : "");
   }, []);
 
   useEffect(() => {
@@ -1526,8 +1523,6 @@ function SystemTab() {
             const v = (data as { dashboard_sales_goal_monthly?: number | null }).dashboard_sales_goal_monthly;
             return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "35000";
           })(),
-          dashboard_sales_goal_tier_id:
-            (data as { dashboard_sales_goal_tier_id?: string | null }).dashboard_sales_goal_tier_id?.trim() ?? "",
         });
       }
       setLoading(false);
@@ -1548,7 +1543,6 @@ function SystemTab() {
         logo_dark_theme_url: form.logo_dark_theme_url.trim() || null,
         favicon_url: form.favicon_url.trim() || null,
         dashboard_sales_goal_monthly: Math.max(0, Number(form.dashboard_sales_goal_monthly) || 35000),
-        dashboard_sales_goal_tier_id: form.dashboard_sales_goal_tier_id.trim() || null,
       };
       if (settingsId) {
         const { error } = await supabase.from("company_settings").update(payload).eq("id", settingsId);
@@ -1629,27 +1623,36 @@ function SystemTab() {
               <p className="text-[10px] text-text-tertiary mt-1">Applied when VAT is ticked on manual quote lines (e.g. 20 for 20%).</p>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Dashboard sales goal — use tier (optional)</label>
-              <Select
-                value={form.dashboard_sales_goal_tier_id}
-                onChange={(e) => update("dashboard_sales_goal_tier_id", e.target.value)}
-                options={[
-                  { value: "", label: "None — use manual monthly figure below" },
-                  ...tiersForGoalSelect
-                    .slice()
-                    .sort((a, b) => a.tier_number - b.tier_number)
-                    .map((t) => ({
-                      value: t.id,
-                      label: `Tier ${t.tier_number}${
-                        t.sales_goal_monthly != null && Number(t.sales_goal_monthly) > 0
-                          ? ` (${formatCurrency(Number(t.sales_goal_monthly))}/mo)`
-                          : ""
-                      }`,
-                    })),
-                ]}
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Overview sales goal — tier number (this browser only)
+              </label>
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                value={overviewSalesGoalTierNum}
+                onChange={(e) => setOverviewSalesGoalTierNum(e.target.value)}
+                onBlur={() => {
+                  const raw = overviewSalesGoalTierNum.trim();
+                  if (!raw) {
+                    setDashboardSalesGoalTierNumberPreference(null);
+                    window.dispatchEvent(new Event("master-os-company-settings"));
+                    return;
+                  }
+                  const num = Number(raw);
+                  if (!Number.isFinite(num) || num < 1) {
+                    toast.error("Enter a tier number ≥ 1, or leave empty for the manual goal below");
+                    return;
+                  }
+                  setDashboardSalesGoalTierNumberPreference(num);
+                  window.dispatchEvent(new Event("master-os-company-settings"));
+                  toast.success("Saved on this device");
+                }}
+                placeholder="e.g. 2"
+                className="max-w-[140px]"
               />
               <p className="text-[10px] text-text-tertiary mt-1 mb-3">
-                When a tier is selected, its <strong>Sales goal (monthly)</strong> from Commission tiers overrides the manual value. Set per-tier goals in Settings → Commission tiers.
+                Matches <strong>Tier N</strong> in Commission tiers. Leave empty to use only the manual monthly figure below. Not synced to the database.
               </p>
             </div>
             <div>

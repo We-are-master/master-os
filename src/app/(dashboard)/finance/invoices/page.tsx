@@ -344,6 +344,7 @@ export default function InvoicesPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [savingDueDateId, setSavingDueDateId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [accountNameById, setAccountNameById] = useState<Record<string, string>>({});
   /** `job_reference` → `accounts.id` via job.client_id → clients.source_account_id */
@@ -831,6 +832,42 @@ export default function InvoicesPage() {
     } catch { toast.error("Failed to create invoice"); }
   }, [loadPageData, profile?.id, profile?.full_name]);
 
+  const handleInvoiceDueDateSave = useCallback(
+    async (invoice: Invoice, nextYmd: string) => {
+      if (invoice.status === "paid" || invoice.status === "cancelled") return;
+      const trimmed = nextYmd.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        toast.error("Enter a valid due date");
+        return;
+      }
+      const prev = invoice.due_date ? String(invoice.due_date).slice(0, 10) : "";
+      if (trimmed === prev) return;
+      setSavingDueDateId(invoice.id);
+      try {
+        const updated = await updateInvoice(invoice.id, { due_date: trimmed });
+        await logAudit({
+          entityType: "invoice",
+          entityId: invoice.id,
+          entityRef: invoice.reference,
+          action: "updated",
+          fieldName: "due_date",
+          oldValue: prev,
+          newValue: trimmed,
+          userId: profile?.id,
+          userName: profile?.full_name,
+        });
+        toast.success("Due date updated");
+        setSelectedInvoice((cur) => (cur?.id === invoice.id ? updated : cur));
+        void loadPageData();
+      } catch {
+        toast.error("Failed to update due date");
+      } finally {
+        setSavingDueDateId(null);
+      }
+    },
+    [loadPageData, profile?.id, profile?.full_name],
+  );
+
   const handleExportCSV = useCallback(() => {
     const headers = [
       "Reference",
@@ -1005,12 +1042,36 @@ export default function InvoicesPage() {
       },
     },
     {
-      key: "due_date", label: "Due Date",
-      render: (item) => (
-        <span className={`text-sm ${item.status === "overdue" ? "text-red-600 font-medium" : "text-text-secondary"}`}>
-          {formatDate(item.due_date)}
-        </span>
-      ),
+      key: "due_date",
+      label: "Due Date",
+      render: (item) => {
+        const canEditDue =
+          !item.deleted_at && item.status !== "paid" && item.status !== "cancelled";
+        const ymd = item.due_date ? String(item.due_date).slice(0, 10) : "";
+        if (!canEditDue) {
+          return (
+            <span className={`text-sm ${item.status === "overdue" ? "text-red-600 font-medium" : "text-text-secondary"}`}>
+              {formatDate(item.due_date)}
+            </span>
+          );
+        }
+        return (
+          <div
+            className="min-w-[9.5rem] max-w-[12rem]"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <Input
+              type="date"
+              className="h-8 text-sm"
+              value={ymd}
+              disabled={savingDueDateId === item.id}
+              aria-label={`Due date for ${item.reference}`}
+              onChange={(e) => void handleInvoiceDueDateSave(item, e.target.value)}
+            />
+          </div>
+        );
+      },
     },
     {
       key: "job_status", label: "Status",
@@ -1476,6 +1537,7 @@ function InvoiceDetailDrawer({
 
   const canEditDueDate =
     Boolean(onInvoiceUpdated) &&
+    !invoice.deleted_at &&
     invoice.status !== "paid" &&
     invoice.status !== "cancelled";
 

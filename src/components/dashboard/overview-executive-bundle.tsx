@@ -20,11 +20,14 @@ import {
 } from "@/lib/dashboard-cashflow-buckets";
 import {
   fetchPipelineJobsForDashboard,
+  jobExecutionStartYmd,
   defaultMonthlySalesGoalGbp,
   periodSalesGoalGbp,
   resolveMonthlySalesGoalFromCompany,
   type OverviewPipelineJobRow,
 } from "@/lib/dashboard-overview-jobs";
+import { getDashboardSalesGoalTierNumberPreference } from "@/lib/dashboard-sales-goal-preference";
+import { dashboardBoundsToInclusiveLocalYmd } from "@/lib/dashboard-date-range";
 import {
   localCalendarMonthYmdBounds,
   sumInvoiceOpenBalanceByDueDateWindow,
@@ -135,10 +138,17 @@ export function OverviewExecutiveBundle() {
 
         if (cancelled) return;
 
-        const fromDay = fromIso.slice(0, 10);
-        const toDay = toBound.slice(0, 10);
+        /** Match invoice `due_date` civil dates — do not use UTC slice of `bounds` ISO strings. */
+        const fromDay = bounds ? dashboardBoundsToInclusiveLocalYmd(bounds).fromDay : fromIso.slice(0, 10);
+        const toDay = bounds ? dashboardBoundsToInclusiveLocalYmd(bounds).toDay : toBound.slice(0, 10);
 
-        setMonthlySalesGoal(resolveMonthlySalesGoalFromCompany(companySettings, tiersList));
+        setMonthlySalesGoal(
+          resolveMonthlySalesGoalFromCompany(
+            companySettings,
+            tiersList,
+            getDashboardSalesGoalTierNumberPreference(),
+          ),
+        );
 
         const invoiceRows = (invoicesRes.error ? [] : invoicesRes.data ?? []) as {
           amount?: number;
@@ -450,9 +460,13 @@ export function OverviewExecutiveBundle() {
         );
         const quotesAwaitingCount = quotesAwaitingCountRes.count ?? 0;
 
-        const projectedInvoiceBalance = bounds
-          ? sumInvoiceOpenBalanceByDueDateWindow(invoiceRows, fromDay, toDay)
-          : sumInvoiceOpenBalanceOutstanding(invoiceRows);
+        /** Always current calendar month by due date (else created_at) — not the dashboard range, so short presets (e.g. 7d) do not zero this out when invoices are due later in the month. */
+        const { fromDay: projectedMonthFrom, toDay: projectedMonthTo } = localCalendarMonthYmdBounds(clock);
+        const projectedInvoiceBalance = sumInvoiceOpenBalanceByDueDateWindow(
+          invoiceRows,
+          projectedMonthFrom,
+          projectedMonthTo,
+        );
         const outstandingAr = sumInvoiceOpenBalanceOutstanding(invoiceRows);
 
         setFunnel({
@@ -492,7 +506,7 @@ export function OverviewExecutiveBundle() {
             (row) => jobBillableRevenue(row as Parameters<typeof jobBillableRevenue>[0]),
             forecastFromIso,
             forecastToIso,
-            (row) => (row as OverviewPipelineJobRow).created_at?.slice(0, 10) ?? null,
+            (row) => jobExecutionStartYmd(row as OverviewPipelineJobRow),
           ),
         );
 
@@ -570,7 +584,9 @@ export function OverviewExecutiveBundle() {
   useEffect(() => {
     function refreshGoal() {
       void Promise.all([getCompanySettings(), listCommissionTiers().catch(() => [] as CommissionTier[])]).then(([s, t]) => {
-        setMonthlySalesGoal(resolveMonthlySalesGoalFromCompany(s, t));
+        setMonthlySalesGoal(
+          resolveMonthlySalesGoalFromCompany(s, t, getDashboardSalesGoalTierNumberPreference()),
+        );
       });
     }
     window.addEventListener("master-os-company-settings", refreshGoal);
@@ -644,7 +660,7 @@ export function OverviewExecutiveBundle() {
             {
               label: "Revenue",
               value: revenue,
-              sub: bounds ? "Booked value · jobs created in range" : "Booked value · all jobs (no date filter)",
+              sub: bounds ? "Booked value · schedule start in selected range" : "Booked value · all pipeline jobs (no date filter)",
               accent: "text-emerald-600",
             },
             { label: "Costs", value: partnerDirect, sub: "Direct cost on those jobs", accent: "text-amber-600" },
@@ -703,9 +719,10 @@ export function OverviewExecutiveBundle() {
             {
               label: "Projected revenue",
               display: loading ? "—" : formatCurrency(funnel.projectedInvoiceBalance),
-              sub: bounds
-                ? "Open balance · due in range (or invoice date if due missing)"
-                : "Total outstanding invoice balance",
+              sub: (() => {
+                const { monthLabel } = localCalendarMonthYmdBounds(new Date());
+                return `Open balance · due in ${monthLabel} (due date; created date if due missing) · excl. paid/cancelled`;
+              })(),
               accent: "text-teal-600",
             },
             {
@@ -885,7 +902,7 @@ export function OverviewExecutiveBundle() {
           <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
               <CardTitle className="text-sm font-semibold">Top 5 — partners</CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">Gross margin · jobs created in period</p>
+              <p className="text-[10px] text-text-tertiary mt-0.5">Gross margin · schedule start in period</p>
             </div>
             <Users className="h-3.5 w-3.5 text-text-tertiary" />
           </CardHeader>
@@ -917,7 +934,7 @@ export function OverviewExecutiveBundle() {
               <div className="min-w-0">
                 <CardTitle className="text-sm font-semibold">Top 5 — account owners</CardTitle>
                 <p className="text-[10px] text-text-tertiary mt-0.5">
-                  By <strong className="text-text-secondary">account_owner_id</strong> · booked revenue · jobs created in period ·{" "}
+                  By <strong className="text-text-secondary">account_owner_id</strong> · booked revenue · schedule start in period ·{" "}
                   {bounds ? rangeLabel : "All time"}
                 </p>
               </div>
@@ -977,7 +994,7 @@ export function OverviewExecutiveBundle() {
           <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
               <CardTitle className="text-sm font-semibold">Top 5 — weeks</CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">Highest booked revenue by job-created week</p>
+              <p className="text-[10px] text-text-tertiary mt-0.5">Highest booked revenue by schedule-start week</p>
             </div>
             <CalendarDays className="h-3.5 w-3.5 text-text-tertiary" />
           </CardHeader>
@@ -1044,7 +1061,7 @@ export function OverviewExecutiveBundle() {
                 k: "rev",
                 label: "Revenue",
                 main: loading ? "—" : formatCurrency(revenue),
-                sub: bounds ? "Booked · jobs in range" : "Booked · all pipeline",
+                sub: bounds ? "Booked · schedule start in range" : "Booked · all pipeline",
                 accent: "text-emerald-700 dark:text-emerald-400",
               },
               {

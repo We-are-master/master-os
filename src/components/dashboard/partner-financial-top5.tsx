@@ -7,7 +7,7 @@ import { formatCurrency, cn } from "@/lib/utils";
 import { Banknote, PiggyBank, Star } from "lucide-react";
 import { useDashboardDateRangeOptional } from "@/hooks/use-dashboard-date-range";
 import { jobProfit, partnerPaymentCap } from "@/lib/job-financials";
-import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { fetchPipelineJobsForDashboard } from "@/lib/dashboard-overview-jobs";
 import type { Job } from "@/types/database";
 
 type JobRow = Pick<Job, "partner_name" | "client_price" | "extras_amount" | "partner_cost" | "materials_cost" | "partner_agreed_value">;
@@ -18,10 +18,6 @@ interface PartnerAgg {
   margin: number;
   jobCount: number;
 }
-
-const SEL_FULL =
-  "partner_name, client_price, extras_amount, partner_cost, materials_cost, partner_agreed_value, status";
-const SEL_LEGACY = "partner_name, client_price, partner_cost, materials_cost, status";
 
 function aggregate(rows: JobRow[]): Map<string, PartnerAgg> {
   const map = new Map<string, PartnerAgg>();
@@ -55,20 +51,8 @@ function PartnerFinancialTop5Inner({ variant }: { variant: Variant }) {
       setLoading(true);
       try {
         const b = dateCtx?.bounds ?? null;
-        async function runSelect(columns: string) {
-          let q = supabase.from("jobs").select(columns).not("partner_name", "is", null);
-          if (b) q = q.gte("created_at", b.fromIso).lte("created_at", b.toIso);
-          return q;
-        }
-        let res = await runSelect(SEL_FULL);
-        if (res.error && isPostgrestWriteRetryableError(res.error)) {
-          res = await runSelect(SEL_LEGACY);
-        }
-        if (res.error) {
-          setRows([]);
-          return;
-        }
-        const jobs = (res.data ?? []) as unknown as JobRow[];
+        const pipeline = await fetchPipelineJobsForDashboard(supabase, b);
+        const jobs = pipeline.filter((r) => Boolean(r.partner_name?.trim())) as unknown as JobRow[];
         const map = aggregate(jobs);
         const key: "payout" | "margin" = variant;
         const list = Array.from(map.values())
@@ -97,7 +81,7 @@ function PartnerFinancialTop5Inner({ variant }: { variant: Variant }) {
             {isPayout
               ? "Partner cost / agreed payout per partner"
               : "Revenue after partner payout & materials"}
-            {dateCtx?.bounds ? " · jobs created in range" : ""}
+            {dateCtx?.bounds ? " · schedule start in range" : ""}
           </p>
         </div>
         {isPayout ? (

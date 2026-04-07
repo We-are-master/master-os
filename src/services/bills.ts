@@ -41,13 +41,24 @@ export async function listBillsInSameSeries(bill: Bill): Promise<Bill[]> {
   return match as Bill[];
 }
 
-export type CreateBillPayload = Omit<Bill, "id" | "created_at" | "updated_at">;
+export type CreateBillPayload = Omit<Bill, "id" | "created_at" | "updated_at"> & {
+  /** Override default horizon (e.g. debit with 23 months left). Clamped 1–120. */
+  recurringOccurrenceCount?: number | null;
+};
+
+function resolveRecurringOccurrenceCount(interval: BillRecurrence, payload: CreateBillPayload): number {
+  const fallback = RECURRENCE_GENERATION_COUNTS[interval] ?? 12;
+  const raw = payload.recurringOccurrenceCount;
+  const num = raw == null ? NaN : Number(raw);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.min(120, Math.max(1, Math.floor(num)));
+}
 
 export async function createBill(payload: CreateBillPayload): Promise<Bill> {
   const supabase = getSupabase();
   if (payload.is_recurring && payload.recurrence_interval && payload.due_date) {
     const interval = payload.recurrence_interval;
-    const n = RECURRENCE_GENERATION_COUNTS[interval] ?? 12;
+    const n = resolveRecurringOccurrenceCount(interval, payload);
     const dueDates = generateRecurringDueDates(payload.due_date, interval, n);
     const recurringSeriesId =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"

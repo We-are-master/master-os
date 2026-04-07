@@ -18,6 +18,19 @@ export interface DashboardDateBounds {
 }
 
 /**
+ * Inclusive **calendar** days (YYYY-MM-DD) matching the user’s local timezone.
+ * Use this when comparing to DB date fields stored as civil dates (`due_date`, `payment_date`, …),
+ * not `bounds.*.slice(0, 10)` on UTC ISO strings (that can shift the day at month boundaries).
+ */
+export function dashboardBoundsToInclusiveLocalYmd(bounds: DashboardDateBounds): { fromDay: string; toDay: string } {
+  const from = new Date(bounds.fromIso);
+  const to = new Date(bounds.toIso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return { fromDay: ymd(from), toDay: ymd(to) };
+}
+
+/**
  * Inclusive calendar range in local browser TZ, returned as ISO strings for Supabase `.gte` / `.lte`.
  * `null` means no date filter (all time).
  */

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
+import { cn } from "@/lib/utils";
 import { ARRIVAL_WINDOW_OPTIONS } from "@/lib/job-arrival-window";
 import { jobModalClientArrivalPreview } from "@/lib/job-modal-schedule";
 
@@ -22,6 +23,8 @@ type Props = {
   /** e.g. quote pre-fill hint under start date */
   startDateFooter?: ReactNode;
   startDateRequired?: boolean;
+  /** When start date is set, expected finish is required — parent should pass true when `scheduledDate` is non-empty. */
+  expectedFinishRequired?: boolean;
   requiredFieldClassName?: string;
 };
 
@@ -33,6 +36,7 @@ export function JobModalScheduleFields({
   onChange,
   startDateFooter,
   startDateRequired,
+  expectedFinishRequired,
   requiredFieldClassName,
 }: Props) {
   const preview = jobModalClientArrivalPreview(scheduledDate, arrivalFrom, arrivalWindowMins);
@@ -64,12 +68,14 @@ export function JobModalScheduleFields({
           options={[...ARRIVAL_WINDOW_OPTIONS]}
         />
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish (date only)</label>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">
+            Expected finish (date only){expectedFinishRequired ? " *" : ""}
+          </label>
           <Input
             type="date"
             value={expectedFinishDate}
             onChange={(e) => onChange("expected_finish_date", e.target.value)}
-            className="h-10 max-w-[200px]"
+            className={cn("h-10 max-w-[200px]", expectedFinishRequired && requiredFieldClassName)}
           />
         </div>
       </div>
