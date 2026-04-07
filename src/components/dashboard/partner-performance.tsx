@@ -7,7 +7,7 @@ import { formatCurrency } from "@/lib/utils";
 import { TrendingUp, Star } from "lucide-react";
 import { useDashboardDateRangeOptional } from "@/hooks/use-dashboard-date-range";
 import { jobBillableRevenue } from "@/lib/job-financials";
-import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { fetchPipelineJobsForDashboard } from "@/lib/dashboard-overview-jobs";
 
 interface PartnerStat {
   name: string;
@@ -32,24 +32,8 @@ export function PartnerPerformance() {
       setLoading(true);
       try {
         const b = dateCtx?.bounds ?? null;
-        const selFull = "partner_name, client_price, extras_amount, margin_percent, status";
-        const selLegacy = "partner_name, client_price, margin_percent, status";
-
-        async function runSelect(columns: string) {
-          let q = supabase.from("jobs").select(columns).not("partner_name", "is", null);
-          if (b) q = q.gte("created_at", b.fromIso).lte("created_at", b.toIso);
-          return q;
-        }
-
-        let res = await runSelect(selFull);
-        if (res.error && isPostgrestWriteRetryableError(res.error)) {
-          res = await runSelect(selLegacy);
-        }
-        if (res.error) {
-          setData([]);
-          return;
-        }
-        const jobs = (res.data ?? []) as unknown as {
+        const pipeline = await fetchPipelineJobsForDashboard(supabase, b);
+        const jobs = pipeline.filter((r) => Boolean(r.partner_name?.trim())) as unknown as {
           partner_name: string;
           client_price?: number;
           extras_amount?: number | null;
@@ -91,7 +75,7 @@ export function PartnerPerformance() {
         <div>
           <CardTitle>Top Partners</CardTitle>
           <p className="text-xs text-text-tertiary mt-0.5">
-            Revenue{dateCtx?.bounds ? " · jobs created in range" : ""}
+            Revenue{dateCtx?.bounds ? " · schedule start in range" : ""}
           </p>
         </div>
         <TrendingUp className="h-4 w-4 text-text-tertiary" />

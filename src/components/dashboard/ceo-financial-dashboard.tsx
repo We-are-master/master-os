@@ -32,6 +32,7 @@ import {
   resolveMonthlySalesGoalFromCompany,
   type OverviewPipelineJobRow,
 } from "@/lib/dashboard-overview-jobs";
+import { getDashboardSalesGoalTierNumberPreference } from "@/lib/dashboard-sales-goal-preference";
 import { buildWeeklyCashPositionBuckets, type WeeklyCashPositionRow } from "@/lib/dashboard-cashflow-buckets";
 import {
   CEO_SERVICE_TIER_ORDER,
@@ -169,7 +170,13 @@ export function CeoFinancialDashboard() {
           ]);
 
         if (cancelled) return;
-        setMonthlyGoal(resolveMonthlySalesGoalFromCompany(companySettings, tiersList));
+        setMonthlyGoal(
+          resolveMonthlySalesGoalFromCompany(
+            companySettings,
+            tiersList,
+            getDashboardSalesGoalTierNumberPreference(),
+          ),
+        );
 
         let s = 0;
         let cos = 0;
@@ -389,6 +396,20 @@ export function CeoFinancialDashboard() {
     };
   }, [boundsKey, bounds]);
 
+  useEffect(() => {
+    function refreshGoal() {
+      void Promise.all([getCompanySettings(), listCommissionTiers().catch(() => [] as CommissionTier[])]).then(
+        ([s, t]) => {
+          setMonthlyGoal(
+            resolveMonthlySalesGoalFromCompany(s, t, getDashboardSalesGoalTierNumberPreference()),
+          );
+        },
+      );
+    }
+    window.addEventListener("master-os-company-settings", refreshGoal);
+    return () => window.removeEventListener("master-os-company-settings", refreshGoal);
+  }, []);
+
   const gross = sales - costOfSales;
   const net = sales - costOfSales - billsInPeriod - workforceInPeriod;
   const grossPct = grossMarginPct(sales, costOfSales);
@@ -486,7 +507,7 @@ export function CeoFinancialDashboard() {
             changeLabel="vs prior period"
             icon={CircleDollarSign}
             accent="blue"
-            description="Jobs created in period (billable value, by job created_at)"
+            description="Pipeline jobs with schedule start in period (billable value; same date rule as Jobs list)"
           />
           <KpiCard
             title="Cost of sales"

@@ -55,7 +55,7 @@ import type { CatalogService } from "@/types/database";
 import { lineItemDefaultsFromCatalog } from "@/lib/catalog-service-defaults";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
-import { cn, formatCurrency, isUuid } from "@/lib/utils";
+import { cn, formatCurrency, isUuid, parseIsoDateOnly } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { computeHourlyTotals, partnerHourlyRateFromCatalogBundle } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
@@ -2234,9 +2234,25 @@ function ConvertToJobModal({
     const scheduled_date = sched.scheduled_date;
     const scheduled_start_at = sched.scheduled_start_at;
     const scheduled_end_at = sched.scheduled_end_at;
-    const expected_finish = form.expected_finish_date?.trim() || undefined;
-    if (expected_finish && scheduled_date && expected_finish < scheduled_date) {
-      toast.error("Expected finish date must be on or after the scheduled date.");
+    let scheduled_finish_date: string | null = null;
+    if (scheduled_date) {
+      const efRaw = form.expected_finish_date?.trim() ?? "";
+      const expected_finish = parseIsoDateOnly(efRaw);
+      if (efRaw && !expected_finish) {
+        toast.error("Expected finish must be a complete date (YYYY-MM-DD).");
+        return;
+      }
+      if (!expected_finish) {
+        toast.error("Expected finish date is required when a start date is set.");
+        return;
+      }
+      if (expected_finish < scheduled_date) {
+        toast.error("Expected finish date must be on or after the scheduled date.");
+        return;
+      }
+      scheduled_finish_date = expected_finish;
+    } else if (form.expected_finish_date?.trim()) {
+      toast.error("Clear expected finish or set a scheduled date.");
       return;
     }
     if (form.partner_id) {
@@ -2281,7 +2297,7 @@ function ConvertToJobModal({
       scheduled_date,
       scheduled_start_at,
       scheduled_end_at,
-      scheduled_finish_date: expected_finish ?? null,
+      scheduled_finish_date,
     });
   };
 
@@ -2352,6 +2368,7 @@ function ConvertToJobModal({
           expectedFinishDate={form.expected_finish_date}
           onChange={(field, v) => update(field, v)}
           startDateRequired={form.assignment_mode === "manual" && !!form.partner_id}
+          expectedFinishRequired={!!form.scheduled_date?.trim()}
           requiredFieldClassName={requiredFieldClass}
         />
         <div>

@@ -44,7 +44,7 @@ import {
   getFinancePeriodClosedBounds,
   formatFinancePeriodKpiDescription,
 } from "@/lib/finance-period";
-import { BILL_CATEGORY_OPTIONS, billCategoryLabel } from "@/lib/bill-categories";
+import { BILL_STANDARD_CATEGORY_OPTIONS, billCategoryLabel } from "@/lib/bill-categories";
 import { RECURRENCE_GENERATION_COUNTS, recurrenceLabel } from "@/lib/bill-recurrence";
 import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
 
@@ -624,6 +624,11 @@ export default function BillsPage() {
                             <Badge variant="info" size="sm" className="shrink-0">
                               Recurring
                             </Badge>
+                            {head.category === "debit" ? (
+                              <Badge variant="outline" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
+                                Debit
+                              </Badge>
+                            ) : null}
                             <p className="text-sm font-semibold text-text-primary min-w-0 w-full sm:w-auto sm:inline sm:ml-0">
                               {head.description}
                             </p>
@@ -731,10 +736,22 @@ export default function BillsPage() {
                             <Badge variant="info" size="sm" className="shrink-0">
                               Recurring
                             </Badge>
+                            {r.category === "debit" ? (
+                              <Badge variant="outline" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
+                                Debit
+                              </Badge>
+                            ) : null}
                             <p className="text-sm font-semibold text-text-primary min-w-0 w-full sm:w-auto">{r.description}</p>
                           </div>
                         ) : (
-                          <p className="text-sm font-medium text-text-primary">{r.description}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-text-primary">{r.description}</p>
+                            {r.category === "debit" ? (
+                              <Badge variant="outline" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
+                                Debit
+                              </Badge>
+                            ) : null}
+                          </div>
                         )}
                         <p className="text-xs text-text-tertiary">{billCategoryLabel(r.category)}</p>
                       </div>
@@ -838,6 +855,12 @@ export default function BillsPage() {
                 }
               } else {
                 const interval = form.recurrence_interval ?? "monthly";
+                const nScheduled =
+                  form.is_recurring && interval
+                    ? form.recurringOccurrenceCount != null && form.recurringOccurrenceCount > 0
+                      ? Math.min(120, Math.max(1, Math.floor(form.recurringOccurrenceCount)))
+                      : RECURRENCE_GENERATION_COUNTS[interval] ?? 12
+                    : 1;
                 await createBill({
                   description: form.description ?? "",
                   amount: form.amount ?? 0,
@@ -845,13 +868,16 @@ export default function BillsPage() {
                   is_recurring: form.is_recurring ?? false,
                   recurrence_interval: form.is_recurring ? interval : undefined,
                   category: form.category,
+                  recurringOccurrenceCount:
+                    form.is_recurring && form.category === "debit" && form.recurringOccurrenceCount != null
+                      ? form.recurringOccurrenceCount
+                      : undefined,
                   submitted_by_id: profile?.id,
                   submitted_by_name: profile?.full_name,
                   status: "submitted",
                 });
                 if (form.is_recurring && interval) {
-                  const n = RECURRENCE_GENERATION_COUNTS[interval] ?? 12;
-                  toast.success(`Bill submitted — ${n} occurrences scheduled ahead.`);
+                  toast.success(`Bill submitted — ${nScheduled} occurrence${nScheduled === 1 ? "" : "s"} scheduled ahead.`);
                 } else {
                   toast.success("Bill submitted");
                 }
@@ -881,6 +907,8 @@ export default function BillsPage() {
 type BillModalSavePayload = Partial<Bill> & {
   /** When set, updates each bill id with its amount (recurring edit). */
   installmentAmounts?: Record<string, number>;
+  /** Debit recurring: how many installments to generate (1–120). */
+  recurringOccurrenceCount?: number;
 };
 
 function BillModal({
@@ -906,6 +934,9 @@ function BillModal({
   const [due_date, setDueDate] = useState("");
   const [is_recurring, setIsRecurring] = useState(false);
   const [recurrence_interval, setRecurrenceInterval] = useState<BillRecurrence>("monthly");
+  const [billType, setBillType] = useState<"expense" | "debit">("expense");
+  /** Remaining installments for debit + recurring (new bill only). */
+  const [debitInstallments, setDebitInstallments] = useState("12");
   const [seriesSiblings, setSeriesSiblings] = useState<Bill[] | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [amountById, setAmountById] = useState<Record<string, string>>({});
@@ -915,11 +946,22 @@ function BillModal({
     queueMicrotask(() => {
       setDescription(initial?.description ?? "");
       const cat = initial?.category ?? "";
-      setCategory(BILL_CATEGORY_OPTIONS.some((o) => o.value === cat) ? cat : cat ? "other" : "");
+      const isDebit = cat === "debit";
+      setBillType(isDebit ? "debit" : "expense");
+      setCategory(
+        isDebit
+          ? "debit"
+          : BILL_STANDARD_CATEGORY_OPTIONS.some((o) => o.value === cat)
+            ? cat
+            : cat && cat !== "debit"
+              ? "other"
+              : ""
+      );
       setAmount(initial?.amount != null ? String(initial.amount) : "");
       setDueDate(initial?.due_date ?? "");
       setIsRecurring(initial?.is_recurring ?? false);
       setRecurrenceInterval((initial?.recurrence_interval as BillRecurrence) ?? "monthly");
+      setDebitInstallments("12");
       setSeriesSiblings(null);
       setAmountById({});
     });
@@ -957,15 +999,19 @@ function BillModal({
   );
   const hideTopAmountWhileLoading = Boolean(initial?.is_recurring && seriesLoading);
 
+  const effectiveCategory = billType === "debit" ? "debit" : category;
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!description.trim()) {
       toast.error("Description is required");
       return;
     }
-    if (!category || !BILL_CATEGORY_OPTIONS.some((o) => o.value === category)) {
-      toast.error("Category is required");
-      return;
+    if (billType === "expense") {
+      if (!category || !BILL_STANDARD_CATEGORY_OPTIONS.some((o) => o.value === category)) {
+        toast.error("Category is required");
+        return;
+      }
     }
     if (showInstallmentList && seriesSiblings) {
       const installmentAmounts: Record<string, number> = {};
@@ -980,7 +1026,7 @@ function BillModal({
       }
       onSave({
         description: description.trim(),
-        category,
+        category: initial?.category === "debit" ? "debit" : effectiveCategory,
         due_date: seriesSiblings[0]?.due_date ?? due_date,
         is_recurring: true,
         recurrence_interval: is_recurring ? recurrence_interval : undefined,
@@ -997,13 +1043,24 @@ function BillModal({
       toast.error("Due date required");
       return;
     }
+    if (!initial && billType === "debit" && is_recurring) {
+      const inst = parseInt(String(debitInstallments).trim(), 10);
+      if (!Number.isFinite(inst) || inst < 1 || inst > 120) {
+        toast.error("Enter remaining installments (1–120) for this debit.");
+        return;
+      }
+    }
     onSave({
       description: description.trim(),
-      category,
+      category: effectiveCategory,
       amount: num,
       due_date,
       is_recurring,
       recurrence_interval: is_recurring ? recurrence_interval : undefined,
+      recurringOccurrenceCount:
+        !initial && billType === "debit" && is_recurring
+          ? Math.min(120, Math.max(1, parseInt(String(debitInstallments).trim(), 10) || 0))
+          : undefined,
     });
   };
 
@@ -1036,17 +1093,46 @@ function BillModal({
           <Input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="e.g. Zoho subscription, office rent"
+            placeholder="e.g. Zoho subscription, office rent, car finance"
             required
           />
         </div>
         <Select
-          label="Category *"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          options={[{ value: "", label: "Select category…" }, ...BILL_CATEGORY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]}
-          required
+          label="Type"
+          value={billType}
+          disabled={Boolean(initial?.category === "debit" || (initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1))}
+          onChange={(e) => {
+            const v = e.target.value as "expense" | "debit";
+            setBillType(v);
+            if (v === "debit") setCategory("debit");
+            else setCategory((c) => (c === "debit" ? "" : c));
+          }}
+          options={[
+            { value: "expense", label: "Standard expense" },
+            { value: "debit", label: "Debit (financing / loan)" },
+          ]}
         />
+        <p className="text-[11px] text-text-tertiary -mt-2 leading-snug">
+          <strong className="text-text-secondary">Debit</strong> marks financing: set how many installments remain so the schedule matches
+          cash flow (e.g. 23 or 24 months).
+        </p>
+        {billType === "expense" ? (
+          <Select
+            label="Category *"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            options={[
+              { value: "", label: "Select category…" },
+              ...BILL_STANDARD_CATEGORY_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+            ]}
+            required
+          />
+        ) : (
+          <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Category</p>
+            <p className="text-sm font-medium text-text-primary mt-0.5">{billCategoryLabel("debit")}</p>
+          </div>
+        )}
         {initial?.is_recurring && seriesLoading ? (
           <div className="flex items-center gap-2 text-sm text-text-tertiary py-2">
             <Loader2 className="h-4 w-4 animate-spin shrink-0" />
@@ -1129,6 +1215,29 @@ function BillModal({
             ]}
           />
         )}
+        {billType === "debit" && is_recurring && !initial ? (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Remaining installments</label>
+            <Input
+              type="number"
+              min={1}
+              max={120}
+              step={1}
+              value={debitInstallments}
+              onChange={(e) => setDebitInstallments(e.target.value)}
+              placeholder="e.g. 23 or 24"
+            />
+            <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
+              We create one bill line per installment (up to 120) so pay runs and cash flow match your loan term.
+            </p>
+          </div>
+        ) : null}
+        {billType === "debit" && is_recurring && initial && seriesSiblings && seriesSiblings.length > 0 ? (
+          <p className="text-[11px] text-text-tertiary rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2">
+            This debit series has <strong className="text-text-secondary">{seriesSiblings.length}</strong> scheduled line
+            {seriesSiblings.length === 1 ? "" : "s"} (including archived in DB — list may differ). Remaining count is set at creation.
+          </p>
+        ) : null}
         {is_recurring && (recurrence_interval === "weekly_friday" || recurrence_interval === "biweekly_friday") ? (
           <p className="text-[11px] text-text-tertiary leading-snug -mt-1">
             Due dates are generated on <strong className="text-text-secondary">Fridays</strong>. If the first due date is not a Friday, we

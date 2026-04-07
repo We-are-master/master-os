@@ -83,18 +83,15 @@ export function jobScheduleYmd(job: {
   return null;
 }
 
+/** Expected finish day for calendar span; arrival window end (`scheduled_end_at`) is not used here. */
 export function jobFinishYmd(job: {
   scheduled_finish_date?: string | null;
-  scheduled_end_at?: string | null;
 }): { y: number; m: number; d: number } | null {
   if (job.scheduled_finish_date) {
     const p = parseIsoDateOnlyPrefix(job.scheduled_finish_date);
     if (p) return p;
   }
-  if (!job.scheduled_end_at) return null;
-  const dt = new Date(job.scheduled_end_at);
-  if (Number.isNaN(dt.getTime())) return null;
-  return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
+  return null;
 }
 
 /** True if the job’s inclusive [start, finish] range overlaps a calendar month (month is 0-based). */
@@ -103,7 +100,6 @@ export function jobIntersectsLocalMonth(
     scheduled_date?: string | null;
     scheduled_start_at?: string | null;
     scheduled_finish_date?: string | null;
-    scheduled_end_at?: string | null;
   },
   year: number,
   month: number,

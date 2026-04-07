@@ -21,7 +21,7 @@ import {
   MapPin, Building2, TrendingUp,
   AlertTriangle, XCircle, PoundSterling,   Undo2, ImagePlus, Loader2,
 } from "lucide-react";
-import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage } from "@/lib/utils";
+import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import {
@@ -1705,12 +1705,27 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     const scheduled_date = sched.scheduled_date;
     const scheduled_start_at = sched.scheduled_start_at;
     const scheduled_end_at = sched.scheduled_end_at;
-    const expected_finish = form.expected_finish_date?.trim() || undefined;
-    if (expected_finish && scheduled_date && expected_finish < scheduled_date) {
-      toast.error("Expected finish date must be on or after the arrival date.");
+    let scheduled_finish_date: string | null = null;
+    if (scheduled_date) {
+      const efRaw = form.expected_finish_date?.trim() ?? "";
+      const expected_finish = parseIsoDateOnly(efRaw);
+      if (efRaw && !expected_finish) {
+        toast.error("Expected finish must be a complete date (YYYY-MM-DD).");
+        return;
+      }
+      if (!expected_finish) {
+        toast.error("Expected finish date is required when a start date is set.");
+        return;
+      }
+      if (expected_finish < scheduled_date) {
+        toast.error("Expected finish date must be on or after the start date.");
+        return;
+      }
+      scheduled_finish_date = expected_finish;
+    } else if (form.expected_finish_date?.trim()) {
+      toast.error("Clear expected finish or set a start date.");
       return;
     }
-    const scheduled_finish_date = expected_finish ?? null;
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const hourlyClientRate = Math.max(0, Number(form.hourly_client_rate) || 0);
     const hourlyPartnerRate = Math.max(0, Number(form.hourly_partner_rate) || 0);
@@ -1884,6 +1899,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
           arrivalWindowMins={form.arrival_window_mins}
           expectedFinishDate={form.expected_finish_date}
           onChange={(field, v) => update(field, v)}
+          expectedFinishRequired={!!form.scheduled_date?.trim()}
           requiredFieldClassName={requiredFieldClass}
         />
         <div>
@@ -2199,20 +2215,19 @@ function JobsCalendarView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading
     for (const job of jobs) {
       const start = jobScheduleYmd(job);
       if (!start) continue;
-      const finish = jobFinishYmd(job);
+      const finish = jobFinishYmd(job) ?? start;
       const startsThisMonth = start.y === year && start.m === month + 1;
-      const finishesThisMonth = !!finish && finish.y === year && finish.m === month + 1;
+      const finishesThisMonth = finish.y === year && finish.m === month + 1;
 
       if (startsThisMonth) {
         if (!map[start.d]) map[start.d] = [];
         map[start.d].push({ job, kind: "start" });
       }
       if (finishesThisMonth) {
-        if (!map[finish!.d]) map[finish!.d] = [];
-        map[finish!.d].push({ job, kind: "end" });
+        if (!map[finish.d]) map[finish.d] = [];
+        map[finish.d].push({ job, kind: "end" });
       }
 
-      if (!finish) continue;
       const cursor = new Date(start.y, start.m - 1, start.d);
       const endDate = new Date(finish.y, finish.m - 1, finish.d);
       cursor.setDate(cursor.getDate() + 1);

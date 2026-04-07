@@ -57,7 +57,7 @@ export function BestSellersByOwner({
             <div className="min-w-0">
               <CardTitle className="text-sm font-semibold">{cardTitle}</CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5">
-                Booked revenue by owner · jobs created in period · {rangeLabel}
+                Booked revenue by owner · schedule start in period · {rangeLabel}
               </p>
             </div>
           </div>

@@ -30,6 +30,7 @@ import {
   RefreshCw,
   Timer,
   X,
+  Pencil,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
@@ -56,7 +57,7 @@ import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
-import type { Invoice, Job, JobPayment, Partner, QuoteLineItem, SelfBill } from "@/types/database";
+import type { CatalogService, Invoice, Job, JobPayment, Partner, QuoteLineItem, SelfBill } from "@/types/database";
 import { listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
@@ -116,8 +117,15 @@ import {
   formatOfficeTimer,
   statusChangeOfficeTimerPatch,
 } from "@/lib/office-job-timer";
-import { computeHourlyTotals, resolveJobHourlyRates } from "@/lib/job-hourly-billing";
+import {
+  computeHourlyTotals,
+  partnerHourlyRateFromCatalogBundle,
+  resolveJobHourlyRates,
+} from "@/lib/job-hourly-billing";
 import { ARRIVAL_WINDOW_OPTIONS, scheduledEndFromWindow, snapArrivalWindowMinutes } from "@/lib/job-arrival-window";
+import { normalizeTypeOfWork, withTypeOfWorkFallback } from "@/lib/type-of-work";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
 import { isJobForcePaid, markJobAsForcePaidNote } from "@/lib/job-force-paid";
 import {
   OFFICE_JOB_CANCELLATION_REASONS,
@@ -308,6 +316,13 @@ export default function JobDetailPage() {
     customer_final_payment: "",
   });
   const [savingFin, setSavingFin] = useState(false);
+  const [jobTypeEditOpen, setJobTypeEditOpen] = useState(false);
+  const [jobTypeEditTarget, setJobTypeEditTarget] = useState<"fixed" | "hourly">("fixed");
+  const [jobTypeEditCatalogId, setJobTypeEditCatalogId] = useState("");
+  const [jobTypeEditFixedTitle, setJobTypeEditFixedTitle] = useState("");
+  const [catalogServicesJobType, setCatalogServicesJobType] = useState<CatalogService[]>([]);
+  const [loadingJobTypeCatalog, setLoadingJobTypeCatalog] = useState(false);
+  const [savingJobTypeEdit, setSavingJobTypeEdit] = useState(false);
   const [jobInvoices, setJobInvoices] = useState<Invoice[]>([]);
   const [quoteLineItems, setQuoteLineItems] = useState<QuoteLineItem[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
@@ -706,7 +721,9 @@ export default function JobDetailPage() {
       setScheduleTime("");
       setScheduleWindowMins("");
     }
-    setScheduleExpectedFinishDate(job?.scheduled_finish_date?.slice(0, 10) ?? "");
+    setScheduleExpectedFinishDate(
+      job?.scheduled_finish_date?.slice(0, 10) ?? job?.scheduled_date?.slice(0, 10) ?? "",
+    );
   }, [job?.id, job?.scheduled_start_at, job?.scheduled_end_at, job?.scheduled_date, job?.scheduled_finish_date]);
 
   useEffect(() => {
@@ -746,6 +763,18 @@ export default function JobDetailPage() {
       })
       .finally(() => setLoadingPartners(false));
   }, [partnerModalOpen]);
+
+  useEffect(() => {
+    if (!jobTypeEditOpen) return;
+    setLoadingJobTypeCatalog(true);
+    listCatalogServicesForPicker()
+      .then(setCatalogServicesJobType)
+      .catch(() => {
+        setCatalogServicesJobType([]);
+        toast.error("Failed to load services catalog");
+      })
+      .finally(() => setLoadingJobTypeCatalog(false));
+  }, [jobTypeEditOpen]);
 
   useEffect(() => {
     if (!job) return;
@@ -903,6 +932,126 @@ export default function JobDetailPage() {
       return undefined;
     }
   }, [profile?.id, profile?.full_name]);
+
+  const handleSaveJobTypeEdit = useCallback(async () => {
+    if (!job) return;
+    const extras = Number(job.extras_amount ?? 0);
+    const deposit = Number(job.customer_deposit ?? 0);
+    const prev = job;
+
+    if (jobTypeEditTarget === "hourly") {
+      const service = catalogServicesJobType.find((c) => c.id === jobTypeEditCatalogId);
+      if (!jobTypeEditCatalogId || !service) {
+        toast.error("Select a Call Out type from Services.");
+        return;
+      }
+      const hrs = Math.max(1, Number(service.default_hours) || 1);
+      const clientRate = Number(service.hourly_rate) || 0;
+      const partnerRate = partnerHourlyRateFromCatalogBundle(service.partner_cost, service.default_hours);
+      const totals = computeHourlyTotals({
+        elapsedSeconds: hrs * 3600,
+        clientHourlyRate: clientRate,
+        partnerHourlyRate: partnerRate,
+      });
+      const customer_final_payment =
+        Math.round(Math.max(0, totals.clientTotal + extras - deposit) * 100) / 100;
+      const titleOut = normalizeTypeOfWork(service.name) || service.name;
+      const patch: Partial<Job> = {
+        job_type: "hourly",
+        catalog_service_id: jobTypeEditCatalogId,
+        hourly_client_rate: clientRate,
+        hourly_partner_rate: partnerRate,
+        billed_hours: totals.billedHours,
+        client_price: totals.clientTotal,
+        partner_cost: totals.partnerTotal,
+        title: titleOut,
+        customer_final_payment,
+        ...(service.default_description?.trim()
+          ? { scope: service.default_description.trim() }
+          : {}),
+      };
+      setSavingJobTypeEdit(true);
+      try {
+        const updated = await handleJobUpdate(job.id, patch, { silent: true });
+        await logFieldChanges(
+          "job",
+          prev.id,
+          prev.reference,
+          prev as unknown as Record<string, unknown>,
+          patch as Record<string, unknown>,
+          profile?.id,
+          profile?.full_name,
+        );
+        if (updated) {
+          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+          await syncSelfBillAfterJobChange(updated);
+          try {
+            await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
+          } catch {
+            /* non-blocking */
+          }
+          await refreshJobFinance();
+          setJobTypeEditOpen(false);
+          toast.success("Job is now hourly — amounts and invoice updated.");
+        }
+      } finally {
+        setSavingJobTypeEdit(false);
+      }
+      return;
+    }
+
+    const titleTrim = jobTypeEditFixedTitle.trim();
+    if (!titleTrim) {
+      toast.error("Select type of work.");
+      return;
+    }
+    const titleOut = normalizeTypeOfWork(titleTrim) || titleTrim;
+    const patch: Partial<Job> = {
+      job_type: "fixed",
+      catalog_service_id: null,
+      hourly_client_rate: null,
+      hourly_partner_rate: null,
+      billed_hours: null,
+      title: titleOut,
+    };
+    setSavingJobTypeEdit(true);
+    try {
+      const updated = await handleJobUpdate(job.id, patch, { silent: true });
+      await logFieldChanges(
+        "job",
+        prev.id,
+        prev.reference,
+        prev as unknown as Record<string, unknown>,
+        patch as Record<string, unknown>,
+        profile?.id,
+        profile?.full_name,
+      );
+      if (updated) {
+        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        await syncSelfBillAfterJobChange(updated);
+        try {
+          await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
+        } catch {
+          /* non-blocking */
+        }
+        await refreshJobFinance();
+        setJobTypeEditOpen(false);
+        toast.success("Job is now fixed price.");
+      }
+    } finally {
+      setSavingJobTypeEdit(false);
+    }
+  }, [
+    job,
+    jobTypeEditTarget,
+    jobTypeEditCatalogId,
+    jobTypeEditFixedTitle,
+    catalogServicesJobType,
+    handleJobUpdate,
+    profile?.id,
+    profile?.full_name,
+    refreshJobFinance,
+  ]);
 
   const saveAccessFeeFlags = useCallback(
     async (patch: Partial<Pick<Job, "in_ccz" | "has_free_parking">>) => {
@@ -1366,9 +1515,14 @@ export default function JobDetailPage() {
             scheduled_date: null,
             scheduled_start_at: null,
             scheduled_end_at: null,
-            scheduled_finish_date: expectedTrim ? expectedTrim : null,
+            scheduled_finish_date: null,
           } as unknown as Partial<Job>,
         );
+        return;
+      }
+
+      if (!expectedTrim) {
+        toast.error("Expected finish date is required when a start date is set.");
         return;
       }
 
@@ -1379,7 +1533,7 @@ export default function JobDetailPage() {
             scheduled_date: d,
             scheduled_start_at: null,
             scheduled_end_at: null,
-            scheduled_finish_date: expectedTrim ? expectedTrim : null,
+            scheduled_finish_date: expectedTrim,
           } as unknown as Partial<Job>,
         );
         return;
@@ -1415,7 +1569,7 @@ export default function JobDetailPage() {
           scheduled_date: d,
           scheduled_start_at,
           scheduled_end_at,
-          scheduled_finish_date: expectedTrim ? expectedTrim : null,
+          scheduled_finish_date: expectedTrim,
         } as unknown as Partial<Job>,
       );
     },
@@ -2065,6 +2219,14 @@ export default function JobDetailPage() {
     });
   }, [job?.id, job?.job_type, finForm.client_price, finForm.extras_amount, finForm.materials_cost]);
 
+  const jobTypeEditFixedSelectOptions = useMemo(
+    () => [
+      { value: "", label: "Select type of work..." },
+      ...withTypeOfWorkFallback(job?.title).map((name) => ({ value: name, label: name })),
+    ],
+    [job?.title],
+  );
+
   if (loading || !id) {
     return (
       <PageTransition>
@@ -2508,9 +2670,34 @@ export default function JobDetailPage() {
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
                     <Building2 className="h-3.5 w-3.5" /> Client identity
                   </p>
-                  <div>
-                    <p className="text-base font-bold text-text-primary">{job.client_name}</p>
-                    <p className="text-xs text-text-tertiary mt-0.5 leading-snug">{job.property_address}</p>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-bold text-text-primary">{job.client_name}</p>
+                      <p className="text-xs text-text-tertiary mt-0.5 leading-snug">{job.property_address}</p>
+                    </div>
+                    {!isHousekeepJobDetail ? (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Badge variant="outline" size="sm" className="font-medium">
+                          {job.job_type === "hourly" ? "Hourly" : "Fixed"}
+                        </Badge>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-text-secondary"
+                          disabled={job.status === "cancelled"}
+                          onClick={() => {
+                            setJobTypeEditTarget(job.job_type === "hourly" ? "hourly" : "fixed");
+                            setJobTypeEditCatalogId(job.catalog_service_id ?? "");
+                            setJobTypeEditFixedTitle(job.title ?? "");
+                            setJobTypeEditOpen(true);
+                          }}
+                        >
+                          <Pencil className="h-3.5 w-3.5 mr-1" aria-hidden />
+                          Edit
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border-light">
                     <div>
@@ -2520,7 +2707,12 @@ export default function JobDetailPage() {
                         value={scheduleDate}
                         disabled={job.status === "cancelled"}
                         className="mt-0.5 h-9 text-sm"
-                        onChange={(e) => { setScheduleDate(e.target.value); handleScheduleChange(job, e.target.value, scheduleTime, scheduleWindowMins, scheduleExpectedFinishDate); }}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setScheduleDate(v);
+                          if (!v.trim()) setScheduleExpectedFinishDate("");
+                          handleScheduleChange(job, v, scheduleTime, scheduleWindowMins, v.trim() ? scheduleExpectedFinishDate : "");
+                        }}
                       />
                     </div>
                     <div>
@@ -2544,7 +2736,9 @@ export default function JobDetailPage() {
                       options={[...ARRIVAL_WINDOW_OPTIONS]}
                     />
                     <div>
-                      <p className="text-[10px] text-text-tertiary">Expected finish (date only)</p>
+                      <p className="text-[10px] text-text-tertiary">
+                        Expected finish (date only){scheduleDate.trim() ? " *" : ""}
+                      </p>
                       <Input
                         type="date"
                         value={scheduleExpectedFinishDate}
@@ -4204,6 +4398,83 @@ export default function JobDetailPage() {
             </Button>
             <Button variant="danger" size="sm" loading={cancellingJob} onClick={() => void handleConfirmOfficeCancel()}>
               Cancel job
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={jobTypeEditOpen}
+        onClose={() => {
+          if (savingJobTypeEdit) return;
+          setJobTypeEditOpen(false);
+        }}
+        title="Billing type"
+        subtitle={job.reference ? `${job.reference} — switch fixed ↔ hourly` : "Switch fixed ↔ hourly"}
+        size="md"
+      >
+        <div className="p-4 space-y-4">
+          <p className="text-xs text-text-tertiary leading-snug">
+            Hourly uses a Call Out type from Services (same as new job). Amounts, linked invoice, and partner cost update from the catalog. Fixed keeps your current labour totals unless you edit them in Finance.
+          </p>
+          <Select
+            label="Job type"
+            value={jobTypeEditTarget}
+            disabled={savingJobTypeEdit}
+            onChange={(e) => {
+              const v = e.target.value as "fixed" | "hourly";
+              setJobTypeEditTarget(v);
+              if (v === "fixed") {
+                setJobTypeEditFixedTitle(job.title ?? "");
+              }
+            }}
+            options={[
+              { value: "fixed", label: "Fixed" },
+              { value: "hourly", label: "Hourly" },
+            ]}
+          />
+          {jobTypeEditTarget === "hourly" ? (
+            <div className={cn(loadingJobTypeCatalog && "opacity-70 pointer-events-none")}>
+              <ServiceCatalogSelect
+                label="Call Out type *"
+                emptyOptionLabel="Select from Services..."
+                catalog={catalogServicesJobType}
+                value={jobTypeEditCatalogId}
+                disabled={savingJobTypeEdit}
+                onChange={(id) => setJobTypeEditCatalogId(id)}
+              />
+            </div>
+          ) : (
+            <Select
+              label="Type of work *"
+              value={jobTypeEditFixedTitle}
+              disabled={savingJobTypeEdit}
+              onChange={(e) => setJobTypeEditFixedTitle(e.target.value)}
+              options={jobTypeEditFixedSelectOptions}
+            />
+          )}
+          <div className="flex flex-wrap gap-2 justify-end pt-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={savingJobTypeEdit}
+              onClick={() => setJobTypeEditOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              loading={savingJobTypeEdit}
+              disabled={
+                savingJobTypeEdit ||
+                (jobTypeEditTarget === "hourly" && (!jobTypeEditCatalogId || loadingJobTypeCatalog)) ||
+                (jobTypeEditTarget === "fixed" && !jobTypeEditFixedTitle.trim())
+              }
+              onClick={() => void handleSaveJobTypeEdit()}
+            >
+              Save
             </Button>
           </div>
         </div>

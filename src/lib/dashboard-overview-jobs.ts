@@ -1,6 +1,6 @@
 import { getSupabase } from "@/services/base";
 import { isPostgrestSelectSchemaError, isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
-import { jobExecutionOverlapsYmdRange } from "@/lib/job-period-overlap";
+import { jobExecutionOverlapsYmdRange, jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
 import type { CommissionTier } from "@/types/database";
 
 export {
@@ -8,6 +8,22 @@ export {
   jobExecutionWindowYmd,
   jobExecutionStartYmd,
 } from "@/lib/job-period-overlap";
+
+/** Pipeline jobs included in dashboard “booked revenue” (excludes completed, cancelled, deleted). */
+export const DASHBOARD_BOOKED_PIPELINE_STATUSES = [
+  "unassigned",
+  "auto_assigning",
+  "scheduled",
+  "late",
+  "in_progress_phase1",
+  "in_progress_phase2",
+  "in_progress_phase3",
+  "final_check",
+  "awaiting_payment",
+  "need_attention",
+] as const;
+
+const CHUNK = 800;
 
 /** Jobs aligned with Jobs Management: not deleted, not cancelled/lost, optional created_at window. */
 export type OverviewPipelineJobRow = {
@@ -30,57 +46,77 @@ export type OverviewPipelineJobRow = {
   completed_date?: string | null;
   /** Set when the job was created from an accepted quote (conversion funnel). */
   quote_id?: string | null;
+  partner_agreed_value?: number | null;
+  margin_percent?: number | null;
 };
 
 const SELECT_FULL =
-  "id, client_id, owner_name, partner_name, title, client_price, extras_amount, partner_cost, materials_cost, commission, status, created_at, quote_id";
+  "id, client_id, owner_name, partner_name, title, client_price, extras_amount, partner_cost, materials_cost, partner_agreed_value, margin_percent, commission, status, created_at, quote_id";
 const SELECT_LEGACY =
-  "id, client_id, partner_name, title, client_price, partner_cost, materials_cost, commission, status, created_at, quote_id";
+  "id, client_id, partner_name, title, client_price, partner_cost, materials_cost, margin_percent, commission, status, created_at, quote_id";
 /** Oldest job rows may not have `quote_id`; omit for schema compatibility. */
 const SELECT_LEGACY_NO_QUOTE =
-  "id, client_id, partner_name, title, client_price, partner_cost, materials_cost, commission, status, created_at";
+  "id, client_id, partner_name, title, client_price, partner_cost, materials_cost, margin_percent, commission, status, created_at";
 
 const SELECT_EXEC_FULL =
   `${SELECT_FULL}, scheduled_date, scheduled_finish_date, scheduled_start_at, scheduled_end_at, completed_date`;
 const SELECT_EXEC_LEGACY = SELECT_FULL;
 
 /**
- * CEO / dashboard “Sales”: jobs whose `created_at` falls in the range (official sale date).
- * Same broad universe as pipeline KPIs: not soft-deleted, not cancelled, not trash status.
+ * Dashboard booked revenue: pipeline jobs whose **schedule start day** falls in the selected range
+ * (same rule as Jobs Management “Schedule window”: {@link jobScheduleStartInYmdRange}).
+ * Soft-deleted rows excluded; statuses are {@link DASHBOARD_BOOKED_PIPELINE_STATUSES} (not completed).
+ * When `bounds` is null, all matching pipeline jobs are included (no date filter).
  */
 export async function fetchPipelineJobsForDashboard(
   supabase: ReturnType<typeof getSupabase>,
   bounds: { fromIso: string; toIso: string } | null,
 ): Promise<OverviewPipelineJobRow[]> {
-  async function run(cols: string) {
-    let q = supabase
-      .from("jobs")
-      .select(cols)
-      .is("deleted_at", null)
-      .neq("status", "cancelled")
-      .neq("status", "deleted");
-    if (bounds) {
-      q = q.gte("created_at", bounds.fromIso).lte("created_at", bounds.toIso);
+  const statusList = [...DASHBOARD_BOOKED_PIPELINE_STATUSES];
+  const fromDay = bounds?.fromIso.slice(0, 10) ?? null;
+  const toDay = bounds?.toIso.slice(0, 10) ?? null;
+
+  async function loadChunked(cols: string): Promise<OverviewPipelineJobRow[]> {
+    const seen = new Set<string>();
+    const out: OverviewPipelineJobRow[] = [];
+    for (let offset = 0; ; offset += CHUNK) {
+      const { data, error } = await supabase
+        .from("jobs")
+        .select(cols)
+        .is("deleted_at", null)
+        .in("status", statusList)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + CHUNK - 1);
+      if (error) throw error;
+      const batch = (data ?? []) as unknown as OverviewPipelineJobRow[];
+      for (const r of batch) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+      if (batch.length < CHUNK) break;
     }
-    return q;
+    return out;
   }
 
-  let res = await run(SELECT_FULL);
-  if (res.error && isPostgrestWriteRetryableError(res.error)) {
-    res = await run(SELECT_LEGACY);
+  const columnAttempts = [SELECT_EXEC_FULL, SELECT_EXEC_LEGACY, SELECT_LEGACY, SELECT_LEGACY_NO_QUOTE];
+  let rows: OverviewPipelineJobRow[] = [];
+  let loaded = false;
+  let lastErr: unknown;
+  for (const cols of columnAttempts) {
+    try {
+      rows = await loadChunked(cols);
+      loaded = true;
+      break;
+    } catch (e) {
+      lastErr = e;
+    }
   }
-  if (res.error && isPostgrestSelectSchemaError(res.error)) {
-    res = await run(SELECT_LEGACY_NO_QUOTE);
-  }
-  if (res.error) throw res.error;
+  if (!loaded) throw lastErr instanceof Error ? lastErr : new Error("Failed to load pipeline jobs for dashboard");
 
-  const rows = (res.data ?? []) as unknown as OverviewPipelineJobRow[];
-  const seen = new Set<string>();
-  return rows.filter((r) => {
-    if (seen.has(r.id)) return false;
-    seen.add(r.id);
-    return true;
-  });
+  if (!bounds || fromDay == null || toDay == null) return rows;
+
+  return rows.filter((r) => jobScheduleStartInYmdRange(r, fromDay, toDay));
 }
 
 /**
@@ -134,20 +170,20 @@ export function defaultMonthlySalesGoalGbp(): number {
 
 export type CompanySalesGoalSettings = {
   dashboard_sales_goal_monthly?: number | null;
-  dashboard_sales_goal_tier_id?: string | null;
 } | null;
 
 /**
- * Prefer tier `sales_goal_monthly` when `dashboard_sales_goal_tier_id` is set and present in `tiers`;
- * else `dashboard_sales_goal_monthly`; else env default.
+ * If `preferredTierNumber` matches a tier’s `sales_goal_monthly`, use it (preference lives in localStorage).
+ * Else `dashboard_sales_goal_monthly`; else env default.
  */
 export function resolveMonthlySalesGoalFromCompany(
   settings: CompanySalesGoalSettings,
   tiers?: CommissionTier[] | null,
+  preferredTierNumber?: number | null,
 ): number {
-  const tierId = settings?.dashboard_sales_goal_tier_id?.trim();
-  if (tierId && tiers && tiers.length > 0) {
-    const t = tiers.find((x) => x.id === tierId);
+  const tn = preferredTierNumber ?? null;
+  if (tn != null && tiers && tiers.length > 0) {
+    const t = tiers.find((x) => Number(x.tier_number) === tn);
     const g = t?.sales_goal_monthly;
     if (g != null && Number.isFinite(Number(g)) && Number(g) > 0) return Number(g);
   }

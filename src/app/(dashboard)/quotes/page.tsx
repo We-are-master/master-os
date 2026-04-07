@@ -3002,13 +3002,24 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       toast.error("Scheduled date must be a complete day (YYYY-MM-DD). Fix the date or clear the field.");
         return;
       }
-    const expected_finish = parseIsoDateOnly(form.expected_finish_date) || undefined;
-    if (form.expected_finish_date?.trim() && !expected_finish) {
-      toast.error("Expected finish must be a complete date (YYYY-MM-DD) or left empty.");
+    let scheduled_finish_date: string | null = null;
+    if (scheduled_date) {
+      const ef = parseIsoDateOnly(form.expected_finish_date ?? "");
+      if (form.expected_finish_date?.trim() && !ef) {
+        toast.error("Expected finish must be a complete date (YYYY-MM-DD).");
         return;
       }
-    if (expected_finish && scheduled_date && expected_finish < scheduled_date) {
-      toast.error("Expected finish date must be on or after the scheduled date.");
+      if (!ef) {
+        toast.error("Expected finish date is required when a start date is set.");
+        return;
+      }
+      if (ef < scheduled_date) {
+        toast.error("Expected finish date must be on or after the scheduled date.");
+        return;
+      }
+      scheduled_finish_date = ef;
+    } else if (form.expected_finish_date?.trim()) {
+      toast.error("Clear expected finish or set a scheduled date.");
       return;
     }
     let scheduled_start_at = sched.scheduled_start_at;
@@ -3046,7 +3057,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       scheduled_date,
       scheduled_start_at,
       scheduled_end_at,
-      scheduled_finish_date: expected_finish ?? null,
+      scheduled_finish_date,
       createWithoutDeposit: form.createWithoutDeposit,
       job_type: form.job_type as "fixed" | "hourly",
       scope: scopeTrimmed || (quote.scope ?? "").trim(),
@@ -3094,6 +3105,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
           arrivalWindowMins={form.arrival_window_mins}
           expectedFinishDate={form.expected_finish_date}
           onChange={(field, v) => update(field, v)}
+          expectedFinishRequired={!!form.scheduled_date?.trim()}
           startDateFooter={
             <p className="text-[10px] text-text-tertiary">
               Pre-filled from the client&apos;s preferred start on the quote (option 1, else option 2) when set.
