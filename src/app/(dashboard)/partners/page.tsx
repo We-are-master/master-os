@@ -2581,6 +2581,9 @@ function PartnerDetailDrawer({
         shortUrl?: string;
         expiresAt?: string;
         message?: string;
+        emailSent?: boolean;
+        emailTo?: string;
+        emailNotice?: string;
       };
       if (!res.ok) throw new Error(data.error || "Failed");
       const shortUrl = (data.shortUrl ?? data.url ?? "").trim();
@@ -2591,7 +2594,18 @@ function PartnerDetailDrawer({
         fullUrl: fullUrl !== shortUrl ? fullUrl : undefined,
         expiresAt: data.expiresAt ?? "",
       });
-      toast.success("Link ready — copy or send via WhatsApp.");
+      if (data.emailSent) {
+        toast.success(
+          data.emailTo
+            ? `Link created and email sent to ${data.emailTo}.`
+            : "Link created and email sent to the partner.",
+        );
+      } else {
+        toast.success("Link ready — copy or send manually.");
+        if (data.emailNotice) {
+          toast.info(data.emailNotice);
+        }
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed");
     } finally {
