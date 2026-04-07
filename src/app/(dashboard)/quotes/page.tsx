@@ -68,7 +68,7 @@ import {
   BID_DEFAULT_MARGIN_ON_SELL,
   customerUnitSellFromPartnerUnit,
 } from "@/lib/quote-bid-payload";
-import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import {
   clampDepositPercent,
   depositAmountFromPercent,
@@ -2615,7 +2615,7 @@ function QuoteDetailDrawer({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-text-primary truncate">{p.company_name}</p>
                     <p className="text-xs text-text-tertiary mt-0.5 truncate">
-                      {p.trade}
+                      {isTradeMatch ? partnerMatchTypeLabel(p, invitePartnerTypeOfWork) : (p.trade || "—")}
                       {p.location?.trim() ? <> · {p.location}</> : null}
                     </p>
                   </div>
@@ -3872,7 +3872,7 @@ function CreateQuoteForm({
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
                         <p className="text-xs text-text-tertiary mt-0.5 truncate">
-                          {p.trade}
+                          {partnerMatchTypeLabel(p, form.title)}
                           {p.location?.trim() ? <> · {p.location}</> : null}
                         </p>
                       </div>

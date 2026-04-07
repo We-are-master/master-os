@@ -92,7 +92,7 @@ import {
   partnerHourlyRateFromCatalogBundle,
 } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
-import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
@@ -2093,7 +2093,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                             match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
                           )}
                         >
-                          {p.trade ?? "—"} · {p.location ?? "—"}
+                          {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
