@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createPartnerUploadToken } from "@/lib/partner-upload-token";
+import { generatePartnerUploadSlug } from "@/lib/partner-upload-token";
 import { addBusinessDays } from "@/lib/business-days";
 import { buildPartnerUploadEmailHTML } from "@/lib/partner-upload-email-template";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
@@ -18,6 +18,11 @@ const ALLOWED_DOC_TYPES = new Set([
   "tax",
   "id_proof",
   "other",
+  "proof_of_address",
+  "right_to_work",
+  "utr",
+  "public_liability",
+  "photo_id",
 ]);
 
 /**
@@ -32,6 +37,24 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  try {
+    return await handlePost(req, ctx);
+  } catch (e) {
+    /** Catch-all so the route never returns an empty 500 body — admins need a real
+     *  error in the UI, and prod logs need a stack to act on. */
+    const message = e instanceof Error ? e.message : "Unexpected error";
+    console.error("[partners/request-documents] unhandled", e);
+    return NextResponse.json(
+      { error: message || "Unexpected error generating link" },
+      { status: 500 },
+    );
+  }
+}
+
+async function handlePost(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
@@ -40,7 +63,12 @@ export async function POST(
     return NextResponse.json({ error: "Invalid partner id" }, { status: 400 });
   }
 
-  let body: { docTypes?: unknown; customMessage?: unknown };
+  let body: {
+    docTypes?: unknown;
+    docNames?: unknown;
+    requestedDocs?: unknown;
+    customMessage?: unknown;
+  };
   try {
     body = await req.json();
   } catch {
@@ -52,6 +80,34 @@ export async function POST(
     .filter((t): t is string => typeof t === "string")
     .map((t) => t.trim().toLowerCase())
     .filter((t) => ALLOWED_DOC_TYPES.has(t));
+  /** Human-readable doc names (e.g. "Photo ID", "Public Liability Insurance") that the
+   *  modal sends alongside docTypes — kept in metadata for the email/audit trail. */
+  const docNamesRaw = Array.isArray(body.docNames) ? body.docNames : [];
+  const docNames = docNamesRaw
+    .filter((n): n is string => typeof n === "string")
+    .map((n) => n.trim())
+    .filter((n) => n.length > 0 && n.length <= 120)
+    .slice(0, 25);
+
+  /** Structured per-doc payload — preferred over docNames/docTypes when present.
+   *  Each entry: { id, name, description, docType }. The partner page uses this to
+   *  render one upload card per requested item with the exact label the admin clicked. */
+  type RequestedDocInput = { id: string; name: string; description: string; docType: string };
+  const requestedDocsRaw = Array.isArray(body.requestedDocs) ? body.requestedDocs : [];
+  const requestedDocs: RequestedDocInput[] = requestedDocsRaw
+    .filter((d): d is Record<string, unknown> => !!d && typeof d === "object")
+    .map((d) => {
+      const id = typeof d.id === "string" ? d.id.trim().slice(0, 80) : "";
+      const name = typeof d.name === "string" ? d.name.trim().slice(0, 120) : "";
+      const description =
+        typeof d.description === "string" ? d.description.trim().slice(0, 240) : "";
+      const docType =
+        typeof d.docType === "string" ? d.docType.trim().toLowerCase().slice(0, 40) : "";
+      return { id, name, description, docType };
+    })
+    .filter((d) => d.id && d.name && ALLOWED_DOC_TYPES.has(d.docType))
+    .slice(0, 25);
+
   const customMessage =
     typeof body.customMessage === "string" && body.customMessage.trim()
       ? body.customMessage.trim().slice(0, 2000)
@@ -95,31 +151,35 @@ export async function POST(
     requestedByName = auth.user.email ?? null;
   }
 
+  const slug = generatePartnerUploadSlug();
+
   const { data: requestRow, error: insertErr } = await supabase
     .from("partner_document_requests")
     .insert({
       partner_id: partnerId,
+      slug,
       requested_doc_types: docTypes,
+      requested_docs: requestedDocs,
       custom_message: customMessage,
       requested_by: auth.user.id,
       requested_by_name: requestedByName,
       sent_to_email: partnerEmail,
       expires_at: expiresAt.toISOString(),
     })
-    .select("id, expires_at")
+    .select("id, expires_at, slug")
     .single();
   if (insertErr || !requestRow) {
     console.error("partner_document_requests insert", insertErr);
-    return NextResponse.json({ error: "Failed to create request" }, { status: 500 });
+    return NextResponse.json(
+      { error: insertErr?.message || "Failed to create request" },
+      { status: 500 },
+    );
   }
 
-  const token = createPartnerUploadToken({
-    requestId: (requestRow as { id: string }).id,
-    partnerId,
-  });
-
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || req.nextUrl.origin;
-  const uploadUrl = `${baseUrl}/partner-upload?token=${encodeURIComponent(token)}`;
+  const storedSlug = (requestRow as { slug?: string | null }).slug ?? slug;
+  /** Short, WhatsApp-friendly URL — `${origin}/p/{slug}` is ~30 chars total. */
+  const uploadUrl = `${baseUrl}/p/${storedSlug}`;
 
   /** Branding for the email — same source as quote emails so look stays consistent. */
   let branding: CompanyBranding;
@@ -204,6 +264,7 @@ export async function POST(
         request_id: (requestRow as { id: string }).id,
         sent_to: partnerEmail,
         doc_types: docTypes,
+        doc_names: docNames,
         email_sent: emailSent,
         requested_by: requestedByName,
       },

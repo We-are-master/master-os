@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { verifyPartnerUploadToken } from "@/lib/partner-upload-token";
+import { resolvePartnerUploadToken } from "@/lib/partner-upload-resolver";
 
 /**
  * PATCH /api/partner-upload/profile
@@ -67,10 +67,6 @@ export async function PATCH(req: NextRequest) {
   if (!token) {
     return NextResponse.json({ error: "Missing token" }, { status: 400 });
   }
-  const payload = verifyPartnerUploadToken(token);
-  if (!payload) {
-    return NextResponse.json({ error: "Invalid or expired link" }, { status: 401 });
-  }
 
   const patch = sanitizePatch(body.patch);
   if (Object.keys(patch).length === 0) {
@@ -78,6 +74,10 @@ export async function PATCH(req: NextRequest) {
   }
 
   const supabase = createServiceClient();
+  const payload = await resolvePartnerUploadToken(supabase, token);
+  if (!payload) {
+    return NextResponse.json({ error: "Invalid or expired link" }, { status: 401 });
+  }
 
   const { data: requestRow, error: reqErr } = await supabase
     .from("partner_document_requests")

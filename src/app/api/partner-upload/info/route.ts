@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { verifyPartnerUploadToken } from "@/lib/partner-upload-token";
+import { resolvePartnerUploadToken } from "@/lib/partner-upload-resolver";
 
 /**
  * GET /api/partner-upload/info?token=...
@@ -16,17 +16,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing token" }, { status: 400 });
   }
 
-  const payload = verifyPartnerUploadToken(token);
-  if (!payload) {
+  const supabase = createServiceClient();
+
+  const resolved = await resolvePartnerUploadToken(supabase, token);
+  if (!resolved) {
     return NextResponse.json({ error: "Invalid or expired link" }, { status: 401 });
   }
 
-  const supabase = createServiceClient();
-
   const { data: request, error: reqErr } = await supabase
     .from("partner_document_requests")
-    .select("id, partner_id, requested_doc_types, custom_message, expires_at, revoked_at, first_used_at, use_count")
-    .eq("id", payload.requestId)
+    .select("id, partner_id, requested_doc_types, requested_docs, custom_message, expires_at, revoked_at, first_used_at, use_count")
+    .eq("id", resolved.requestId)
     .maybeSingle();
   if (reqErr || !request) {
     return NextResponse.json({ error: "Link not found" }, { status: 404 });
@@ -35,6 +35,7 @@ export async function GET(req: NextRequest) {
     id: string;
     partner_id: string;
     requested_doc_types: string[];
+    requested_docs: Array<{ id: string; name: string; description: string; docType: string }> | null;
     custom_message: string | null;
     expires_at: string;
     revoked_at: string | null;
@@ -42,9 +43,9 @@ export async function GET(req: NextRequest) {
     use_count: number;
   };
 
-  if (r.partner_id !== payload.partnerId) {
+  if (r.partner_id !== resolved.partnerId) {
     /** Token payload tampered with — log and refuse. */
-    console.warn("partner-upload/info: partnerId mismatch", { token: payload, row: r });
+    console.warn("partner-upload/info: partnerId mismatch", { resolved, row: r });
     return NextResponse.json({ error: "Invalid link" }, { status: 401 });
   }
   if (r.revoked_at) {
@@ -101,6 +102,7 @@ export async function GET(req: NextRequest) {
     request: {
       id: r.id,
       requestedDocTypes: r.requested_doc_types,
+      requestedDocs: Array.isArray(r.requested_docs) ? r.requested_docs : [],
       customMessage: r.custom_message,
       expiresAt: r.expires_at,
     },

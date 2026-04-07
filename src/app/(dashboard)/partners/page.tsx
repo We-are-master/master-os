@@ -4345,6 +4345,26 @@ function PartnerDetailDrawer({
                           Copy
                         </Button>
                       </div>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <a
+                          href={`https://wa.me/?text=${encodeURIComponent(
+                            `Hi${partner?.contact_name ? ` ${partner.contact_name.split(" ")[0]}` : ""}, please upload your documents here: ${requestLinkResult.uploadUrl}`,
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+                        >
+                          Share on WhatsApp
+                        </a>
+                        <a
+                          href={`sms:?body=${encodeURIComponent(
+                            `Please upload your documents: ${requestLinkResult.uploadUrl}`,
+                          )}`}
+                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border bg-card text-xs font-medium text-text-primary hover:bg-surface-hover"
+                        >
+                          Share via SMS
+                        </a>
+                      </div>
                     </div>
                     <p className="text-xs text-text-tertiary">
                       Expires {new Date(requestLinkResult.expiresAt).toLocaleDateString()} (7 business days).
@@ -4362,16 +4382,11 @@ function PartnerDetailDrawer({
                         Documents to request (optional)
                       </label>
                       <div className="grid grid-cols-2 gap-2">
-                        {[
-                          { value: "insurance", label: "Insurance" },
-                          { value: "certification", label: "Certification" },
-                          { value: "license", label: "License" },
-                          { value: "contract", label: "Contract" },
-                          { value: "tax", label: "Tax" },
-                          { value: "id_proof", label: "ID Proof" },
-                          { value: "other", label: "Other" },
-                        ].map((opt) => {
-                          const checked = requestLinkDocTypes.includes(opt.value);
+                        {requiredDocuments.map((req) => {
+                          /** Use the required-doc id as the checkbox key — multiple items can share
+                           *  the same docType (e.g. trade certifications), so id keeps them distinct. */
+                          const checked = requestLinkDocTypes.includes(req.id);
+                          const opt = { value: req.id, label: req.name };
                           return (
                             <label
                               key={opt.value}
@@ -4430,13 +4445,28 @@ function PartnerDetailDrawer({
                           setRequestLinkSubmitting(true);
                           setRequestLinkError(null);
                           try {
+                            /** Build the structured payload the partner page renders into upload cards. */
+                            const selectedDocs = requiredDocuments
+                              .filter((r) => requestLinkDocTypes.includes(r.id))
+                              .map((r) => ({
+                                id: r.id,
+                                name: r.name,
+                                description: r.description,
+                                docType: r.docType,
+                              }));
+                            const selectedDocTypes = Array.from(
+                              new Set(selectedDocs.map((r) => r.docType)),
+                            );
+                            const selectedNames = selectedDocs.map((r) => r.name);
                             const res = await fetch(
                               `/api/partners/${partner.id}/request-documents`,
                               {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({
-                                  docTypes: requestLinkDocTypes,
+                                  docTypes: selectedDocTypes,
+                                  docNames: selectedNames,
+                                  requestedDocs: selectedDocs,
                                   customMessage: requestLinkMessage.trim() || undefined,
                                 }),
                               },

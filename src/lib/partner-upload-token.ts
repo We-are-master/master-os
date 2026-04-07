@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 
 /**
  * Signed token for partner self-service document/profile upload links.
@@ -72,4 +72,41 @@ export function verifyPartnerUploadToken(token: string): PartnerUploadTokenPaylo
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
 
   return { requestId, partnerId };
+}
+
+/**
+ * Short, URL-safe slug used for the WhatsApp-friendly `/p/{slug}` link.
+ * 12 base32 chars ≈ 60 bits of entropy — combined with the DB lookup + Vercel rate limits,
+ * this is infeasible to brute-force. We avoid base64url to keep slugs case-insensitive
+ * for users typing them in (though the DB column itself is case-sensitive).
+ */
+const SLUG_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"; // 31 chars (no 0/o/1/l/i to avoid confusion)
+export const SLUG_LENGTH = 12;
+
+export function generatePartnerUploadSlug(): string {
+  /** Use rejection sampling on randomBytes so the distribution stays uniform. */
+  const out: string[] = [];
+  const buf = randomBytes(SLUG_LENGTH * 2);
+  for (let i = 0; i < buf.length && out.length < SLUG_LENGTH; i++) {
+    const v = buf[i];
+    if (v < SLUG_ALPHABET.length * 8) {
+      out.push(SLUG_ALPHABET[v % SLUG_ALPHABET.length]);
+    }
+  }
+  while (out.length < SLUG_LENGTH) {
+    /** Extremely unlikely fallback — top up with one more byte at a time. */
+    const v = randomBytes(1)[0];
+    if (v < SLUG_ALPHABET.length * 8) {
+      out.push(SLUG_ALPHABET[v % SLUG_ALPHABET.length]);
+    }
+  }
+  return out.join("");
+}
+
+export function isLikelyPartnerUploadSlug(value: string): boolean {
+  if (!value || value.length !== SLUG_LENGTH) return false;
+  for (const ch of value) {
+    if (!SLUG_ALPHABET.includes(ch)) return false;
+  }
+  return true;
 }
