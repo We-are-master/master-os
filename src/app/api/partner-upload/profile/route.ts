@@ -1,159 +1,96 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { resolvePartnerUploadToken } from "@/lib/partner-upload-resolver";
+import { resolvePartnerPortalCredential } from "@/lib/partner-portal-session";
+import { normalizeUkAccountNumberInput, normalizeUkSortCodeInput, validatePartnerBankDetails } from "@/lib/uk-bank-details";
 
-/**
- * PATCH /api/partner-upload/profile
- * Public, no auth — protected by signed token + active request row.
- *
- * Updates ONLY the fields the partner is allowed to self-edit. Anything not in
- * the allow-list is silently dropped (defence in depth — never trust the body).
- *
- * Body: { token: string, patch: { ... } }
- */
-
-const TEXT_FIELDS = new Set([
-  "contact_name",
-  "phone",
-  "partner_address",
-  "vat_number",
-  "crn",
-  "utr",
-  "bank_sort_code",
-  "bank_account_number",
-  "bank_account_holder",
-  "bank_name",
-]);
-
-const BOOL_FIELDS = new Set(["vat_registered"]);
-const STRING_ARRAY_FIELDS = new Set(["trades", "uk_coverage_regions"]);
-
-function sanitizePatch(input: unknown): Record<string, unknown> {
-  if (!input || typeof input !== "object") return {};
-  const out: Record<string, unknown> = {};
-  for (const [key, raw] of Object.entries(input as Record<string, unknown>)) {
-    if (TEXT_FIELDS.has(key)) {
-      if (raw == null) {
-        out[key] = null;
-      } else if (typeof raw === "string") {
-        const trimmed = raw.trim();
-        out[key] = trimmed.length > 0 ? trimmed.slice(0, 500) : null;
-      }
-    } else if (BOOL_FIELDS.has(key)) {
-      if (typeof raw === "boolean") out[key] = raw;
-    } else if (STRING_ARRAY_FIELDS.has(key)) {
-      if (Array.isArray(raw)) {
-        const arr = raw
-          .filter((v): v is string => typeof v === "string")
-          .map((v) => v.trim())
-          .filter((v) => v.length > 0)
-          .slice(0, 50);
-        out[key] = arr;
-      }
-    }
-  }
-  return out;
-}
+export const dynamic = "force-dynamic";
 
 export async function PATCH(req: NextRequest) {
-  let body: { token?: unknown; patch?: unknown };
+  let body: Record<string, unknown>;
   try {
-    body = await req.json();
+    body = (await req.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
+  const code = typeof body.code === "string" ? body.code.trim() : "";
   const token = typeof body.token === "string" ? body.token.trim() : "";
-  if (!token) {
-    return NextResponse.json({ error: "Missing token" }, { status: 400 });
+  const credential = code || token;
+  if (!credential) {
+    return NextResponse.json({ error: "missing_token" }, { status: 400 });
   }
 
-  const patch = sanitizePatch(body.patch);
+  const session = await resolvePartnerPortalCredential(credential);
+  if (!session) {
+    return NextResponse.json({ error: "invalid_or_expired" }, { status: 401 });
+  }
+
+  const contactName = typeof body.contactName === "string" ? body.contactName.trim() : undefined;
+  const companyName = typeof body.companyName === "string" ? body.companyName.trim() : undefined;
+  const phone = typeof body.phone === "string" ? body.phone.trim() : undefined;
+  const partnerAddress = typeof body.partnerAddress === "string" ? body.partnerAddress.trim() : undefined;
+  const vatNumber = typeof body.vatNumber === "string" ? body.vatNumber.trim() : undefined;
+  const crn = typeof body.crn === "string" ? body.crn.trim() : undefined;
+  const utr = typeof body.utr === "string" ? body.utr.trim() : undefined;
+  const vatRegistered =
+    typeof body.vatRegistered === "boolean" ? body.vatRegistered : undefined;
+
+  const bankSortCode = typeof body.bankSortCode === "string" ? body.bankSortCode : undefined;
+  const bankAccountNumber = typeof body.bankAccountNumber === "string" ? body.bankAccountNumber : undefined;
+  const bankAccountHolder = typeof body.bankAccountHolder === "string" ? body.bankAccountHolder : undefined;
+  const bankName = typeof body.bankName === "string" ? body.bankName : undefined;
+
+  const patch: Record<string, unknown> = {};
+  if (contactName !== undefined) patch.contact_name = contactName;
+  if (companyName !== undefined) patch.company_name = companyName;
+  if (phone !== undefined) patch.phone = phone || null;
+  if (partnerAddress !== undefined) patch.partner_address = partnerAddress || null;
+  if (vatNumber !== undefined) patch.vat_number = vatNumber || null;
+  if (crn !== undefined) patch.crn = crn || null;
+  if (utr !== undefined) patch.utr = utr || null;
+  if (vatRegistered !== undefined) patch.vat_registered = vatRegistered;
+
+  if (
+    bankSortCode !== undefined ||
+    bankAccountNumber !== undefined ||
+    bankAccountHolder !== undefined ||
+    bankName !== undefined
+  ) {
+    const sortDigits = normalizeUkSortCodeInput(bankSortCode ?? "");
+    const accountDigits = normalizeUkAccountNumberInput(bankAccountNumber ?? "");
+    const holder = typeof bankAccountHolder === "string" ? bankAccountHolder : "";
+    const bname = typeof bankName === "string" ? bankName : "";
+    const bankVal = validatePartnerBankDetails({
+      sortDigits,
+      accountDigits,
+      accountHolder: holder,
+      bankName: bname,
+    });
+    if (!bankVal.ok) {
+      return NextResponse.json({ error: bankVal.message }, { status: 400 });
+    }
+    const anyBank =
+      sortDigits.length > 0 ||
+      accountDigits.length > 0 ||
+      holder.trim().length > 0 ||
+      bname.trim().length > 0;
+    if (anyBank) {
+      patch.bank_sort_code = sortDigits || null;
+      patch.bank_account_number = accountDigits || null;
+      patch.bank_account_holder = holder.trim() || null;
+      patch.bank_name = bname.trim() || null;
+    }
+  }
+
   if (Object.keys(patch).length === 0) {
-    return NextResponse.json({ error: "No editable fields supplied" }, { status: 400 });
+    return NextResponse.json({ error: "nothing_to_update" }, { status: 400 });
   }
 
   const supabase = createServiceClient();
-  const payload = await resolvePartnerUploadToken(supabase, token);
-  if (!payload) {
-    return NextResponse.json({ error: "Invalid or expired link" }, { status: 401 });
+  const { error } = await supabase.from("partners").update(patch).eq("id", session.partnerId);
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const { data: requestRow, error: reqErr } = await supabase
-    .from("partner_document_requests")
-    .select("id, partner_id, expires_at, revoked_at, use_count")
-    .eq("id", payload.requestId)
-    .maybeSingle();
-  if (reqErr || !requestRow) {
-    return NextResponse.json({ error: "Link not found" }, { status: 404 });
-  }
-  const r = requestRow as {
-    id: string;
-    partner_id: string;
-    expires_at: string;
-    revoked_at: string | null;
-    use_count: number;
-  };
-  if (r.partner_id !== payload.partnerId) {
-    return NextResponse.json({ error: "Invalid link" }, { status: 401 });
-  }
-  if (r.revoked_at) {
-    return NextResponse.json({ error: "This link was revoked" }, { status: 410 });
-  }
-  if (new Date(r.expires_at).getTime() < Date.now()) {
-    return NextResponse.json({ error: "This link has expired" }, { status: 410 });
-  }
-  if (r.use_count >= 30) {
-    return NextResponse.json(
-      { error: "Update limit reached for this link." },
-      { status: 429 },
-    );
-  }
-
-  /** Keep `trade` (singular) in sync with `trades[0]` since the dashboard list still reads it. */
-  if (Array.isArray(patch.trades) && (patch.trades as string[]).length > 0) {
-    patch.trade = (patch.trades as string[])[0];
-  }
-
-  const { data: updated, error: updErr } = await supabase
-    .from("partners")
-    .update(patch)
-    .eq("id", r.partner_id)
-    .select(
-      "id, contact_name, phone, partner_address, vat_number, vat_registered, crn, utr, trades, trade, uk_coverage_regions, bank_sort_code, bank_account_number, bank_account_holder, bank_name",
-    )
-    .single();
-  if (updErr || !updated) {
-    console.error("partner-upload/profile update", updErr);
-    return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
-  }
-
-  void supabase
-    .from("partner_document_requests")
-    .update({ use_count: r.use_count + 1, last_used_at: new Date().toISOString() })
-    .eq("id", r.id)
-    .then(({ error }) => {
-      if (error) console.error("partner_document_requests use_count", error);
-    });
-
-  void supabase
-    .from("audit_logs")
-    .insert({
-      entity_type: "partner",
-      entity_id: r.partner_id,
-      entity_ref: null,
-      action: "profile_updated_via_link",
-      field_name: null,
-      old_value: null,
-      new_value: null,
-      metadata: {
-        request_id: r.id,
-        fields: Object.keys(patch),
-      },
-    })
-    .then(({ error }) => {
-      if (error) console.error("audit_logs insert (profile_updated_via_link)", error);
-    });
-
-  return NextResponse.json({ success: true, partner: updated });
+  return NextResponse.json({ ok: true });
 }

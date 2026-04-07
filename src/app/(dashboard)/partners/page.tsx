@@ -19,9 +19,9 @@ import {
   UserPlus, Filter, Users, Star, Briefcase, ShieldCheck, MapPin,
   ArrowRight, Mail, Phone, Calendar, DollarSign, Landmark,
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
-  MessageSquare, Send, Trash2, Download, Eye,
+  MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus,
-  Home, Sparkles,
+  Home, Sparkles, Link2,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -66,6 +66,20 @@ import {
   mergePartnerComplianceScore,
 } from "@/lib/partner-compliance";
 import {
+  pickRequiredDocMatches,
+  pickRequiredDocMatch,
+  buildRequiredDocumentChecklist,
+  computeComplianceScore,
+  getRequiredDocComplianceStatus,
+  getOptionalDbsStatus,
+  resolvePartnerDocExpiresAt,
+  partnerDocExpiryPolicy,
+  extractCertificateNumber,
+  OPTIONAL_TRADE_CERTS_BY_TRADE,
+  type RequiredDocDef,
+  type PartnerDocExpiryPolicy,
+} from "@/lib/partner-required-docs";
+import {
   computeAutoReasonCodes,
   deriveAutoStatusAndReasons,
   isPartnerInactiveStage,
@@ -80,6 +94,10 @@ import {
   normalizeUkSortCodeInput,
   validatePartnerBankDetails,
 } from "@/lib/uk-bank-details";
+import {
+  getPartnerPortalAllowlistIds,
+  getPartnerPortalAllowlistOptions,
+} from "@/lib/partner-portal-allowlist";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 
@@ -1494,38 +1512,6 @@ interface PartnerNote {
   created_at: string;
 }
 
-const DOC_TYPES_NO_EXPIRY = new Set([
-  "utr",
-  "service_agreement",
-  "self_bill_agreement",
-  "proof_of_address",
-  "right_to_work",
-  /** Optional UK basic DBS — issue date only; no fixed expiry in product */
-  "dbs",
-]);
-
-const DOC_TYPES_EXPIRY_ONE_YEAR_FROM_UPLOAD = new Set(["poa"]);
-
-type PartnerDocExpiryPolicy = "none" | "one_year_from_upload" | "manual";
-
-function partnerDocExpiryPolicy(docType: string): PartnerDocExpiryPolicy {
-  if (DOC_TYPES_NO_EXPIRY.has(docType)) return "none";
-  if (DOC_TYPES_EXPIRY_ONE_YEAR_FROM_UPLOAD.has(docType)) return "one_year_from_upload";
-  return "manual";
-}
-
-/** Resolves DB `expires_at` from doc type + optional date from the form (at upload time). */
-function resolvePartnerDocExpiresAt(docType: string, expiresAt?: string): string | null {
-  if (DOC_TYPES_NO_EXPIRY.has(docType)) return null;
-  if (DOC_TYPES_EXPIRY_ONE_YEAR_FROM_UPLOAD.has(docType)) {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() + 1);
-    return d.toISOString();
-  }
-  if (expiresAt?.trim()) return new Date(expiresAt.trim()).toISOString();
-  return null;
-}
-
 /** Shared insert + storage upload for partner_documents (drawer upload + create-partner queue). */
 async function insertAndUploadPartnerDocument(opts: {
   partnerId: string;
@@ -1603,182 +1589,12 @@ const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = 
   other: { label: "Other", icon: FileText },
 };
 
-const REQUIRED_PARTNER_DOCS = [
-  {
-    id: "photo_id",
-    name: "Photo ID",
-    description: "Passport or driving license",
-    docType: "id_proof",
-    aliases: ["photo id", "passport", "driver license", "driving license", "id proof"],
-  },
-  {
-    id: "proof_of_address",
-    name: "Proof of Address",
-    description: "Utility bill or bank statement",
-    docType: "proof_of_address",
-    aliases: ["proof of address", "utility bill", "bank statement", "address proof"],
-  },
-  {
-    id: "right_to_work",
-    name: "Right to Work",
-    description: "Share code, birth certificate, or passport",
-    docType: "right_to_work",
-    aliases: ["right to work", "share code", "birth certificate", "british passport", "passport"],
-  },
-  {
-    id: "public_liability",
-    name: "Public Liability Insurance",
-    description: "Active public liability policy",
-    docType: "insurance",
-    aliases: ["public liability", "insurance", "liability insurance"],
-  },
-] as const;
-
-const CERT_REQUIREMENTS_BY_TRADE: Record<string, string[]> = {
-  Plumber: ["Water Regulations", "WRAS"],
-  Electrician: ["NICEIC", "ECS Card", "18th Edition Wiring Regulations"],
-  "Gas Safety Certificate": ["Gas Safe Certificate", "ACS Gas Certificate"],
-  "PAT Testing": ["PAT Testing Certificate"],
-  "PAT EICR": ["PAT Testing Certificate", "EICR Qualification"],
-  EICR: ["EICR Qualification"],
-  "Fire Alarm Certificate": ["Fire Alarm Certification"],
-  "Emergency Lighting Certificate": ["Emergency Lighting Certification"],
-  "Fire Extinguisher Service": ["BAFE / extinguisher servicing certificate"],
-};
-
-/** Not counted in compliance score — shown as optional upload prompts per trade. */
-const OPTIONAL_TRADE_CERTS_BY_TRADE: Record<string, string[]> = {
-  Builder: ["CSCS Card"],
-  Carpenter: ["CSCS Card"],
-};
-
 const docStatusConfig: Record<string, { label: string; variant: "default" | "success" | "warning" | "danger" }> = {
   pending: { label: "Pending Review", variant: "warning" },
   approved: { label: "Approved", variant: "success" },
   rejected: { label: "Rejected", variant: "danger" },
   expired: { label: "Expired", variant: "default" },
 };
-
-type RequiredDocDef = {
-  id: string;
-  name: string;
-  description: string;
-  docType: string;
-  aliases: readonly string[];
-};
-
-/** Self-employed only — same card UX as other required docs (doc_type `utr`). */
-const UTR_REQUIRED_DOC: RequiredDocDef = {
-  id: "utr_hmrc",
-  name: "UTR (HMRC)",
-  description: "Proof of Unique Taxpayer Reference (HMRC letter or screenshot)",
-  docType: "utr",
-  aliases: ["utr", "hmrc", "unique taxpayer", "utr (hmrc)", "tax reference"],
-};
-
-function pickRequiredDocMatch(
-  docs: PartnerDoc[],
-  req: RequiredDocDef,
-): PartnerDoc | null {
-  return pickRequiredDocMatches(docs, req)[0] ?? null;
-}
-
-function pickRequiredDocMatches(
-  docs: PartnerDoc[],
-  req: RequiredDocDef,
-): PartnerDoc[] {
-  const aliasMatch = docs.filter((d) => {
-    const n = String(d.name ?? "").toLowerCase();
-    return req.aliases.some((a) => n.includes(a));
-  });
-  const byType = docs.filter((d) => d.doc_type === req.docType);
-  const byId = new Map<string, PartnerDoc>();
-  for (const doc of [...aliasMatch, ...byType]) byId.set(doc.id, doc);
-  return [...byId.values()].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
-}
-
-function extractCertificateNumber(doc: Pick<PartnerDoc, "notes">): string | null {
-  const t = String(doc.notes ?? "").trim();
-  if (!t) return null;
-  const m = t.match(/^certificate_number:\s*(.+)$/i);
-  if (m?.[1]) return m[1].trim();
-  return null;
-}
-
-function buildTradeCertificateRequirements(trades: string[] | null | undefined): {
-  id: string;
-  name: string;
-  description: string;
-  docType: string;
-  aliases: string[];
-}[] {
-  const out: { id: string; name: string; description: string; docType: string; aliases: string[] }[] = [];
-  const seen = new Set<string>();
-  for (const t of trades ?? []) {
-    const certs = CERT_REQUIREMENTS_BY_TRADE[t] ?? [];
-    for (const cert of certs) {
-      const key = cert.trim().toLowerCase();
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push({
-        id: `trade-cert-${key.replace(/[^a-z0-9]+/g, "-")}`,
-        name: cert,
-        description: `Required for ${t} work`,
-        docType: "certification",
-        aliases: [key, "certificate", t.toLowerCase()],
-      });
-    }
-  }
-  return out;
-}
-
-function buildRequiredDocumentChecklist(
-  trades: string[] | null | undefined,
-  partner: Partner | null,
-): RequiredDocDef[] {
-  const tradeCerts = buildTradeCertificateRequirements(trades);
-  const core: RequiredDocDef[] = [...REQUIRED_PARTNER_DOCS];
-  if (partner && inferPartnerLegal(partner) === "self_employed") {
-    return [...core, UTR_REQUIRED_DOC, ...tradeCerts];
-  }
-  return [...core, ...tradeCerts];
-}
-
-function computeComplianceScore(docs: PartnerDoc[], requiredDocs: RequiredDocDef[]): number {
-  if (requiredDocs.length === 0) return 100;
-  const now = new Date();
-  let validCount = 0;
-  for (const req of requiredDocs) {
-    const matches = pickRequiredDocMatches(docs, req);
-    const hasValidDoc = matches.some((d) => !d.expires_at || new Date(d.expires_at) >= now);
-    if (hasValidDoc) validCount += 1;
-  }
-  return Math.round((validCount / requiredDocs.length) * 100);
-}
-
-/** Same rules as `computeComplianceScore` — one row per required checklist item. */
-function getRequiredDocComplianceStatus(
-  docs: PartnerDoc[],
-  req: RequiredDocDef,
-): "valid" | "expired" | "missing" {
-  const matches = pickRequiredDocMatches(docs, req);
-  const now = new Date();
-  const hasValid = matches.some((d) => !d.expires_at || new Date(d.expires_at) >= now);
-  if (hasValid) return "valid";
-  if (matches.length > 0) return "expired";
-  return "missing";
-}
-
-function getOptionalDbsStatus(docs: PartnerDoc[]): "valid" | "expired" | "missing" {
-  const dbsDocs = docs.filter((d) => d.doc_type === "dbs");
-  if (dbsDocs.length === 0) return "missing";
-  const now = new Date();
-  const hasValid = dbsDocs.some((d) => !d.expires_at || new Date(d.expires_at) >= now);
-  if (hasValid) return "valid";
-  return "expired";
-}
 
 /** Map create-partner queue to PartnerDoc shape for the same compliance matching as the profile Documents tab. */
 function pendingCreateDocsAsPartnerDocs(queue: PendingCreatePartnerDoc[]): PartnerDoc[] {
@@ -2237,6 +2053,26 @@ function PartnerDetailDrawer({
   const [deactivatePreset, setDeactivatePreset] = useState<"" | "missing_docs" | "low_score" | "on_break" | "other">("");
   const [deactivateOtherText, setDeactivateOtherText] = useState("");
   const [deactivateOtherStage, setDeactivateOtherStage] = useState<PartnerStatus>("needs_attention");
+
+  const [portalLinkModalOpen, setPortalLinkModalOpen] = useState(false);
+  const [portalLinkSelectedIds, setPortalLinkSelectedIds] = useState<Set<string>>(() => new Set());
+  const [portalLinkSubmitting, setPortalLinkSubmitting] = useState(false);
+  const [portalExpiresDays, setPortalExpiresDays] = useState(14);
+  const [portalLinkResult, setPortalLinkResult] = useState<{
+    shortUrl: string;
+    fullUrl?: string;
+    expiresAt: string;
+  } | null>(null);
+
+  const portalAllowlistOptions = useMemo(
+    () => (partner ? getPartnerPortalAllowlistOptions(partner) : []),
+    [partner],
+  );
+
+  useEffect(() => {
+    if (!portalLinkModalOpen || !partner) return;
+    setPortalLinkSelectedIds(new Set(getPartnerPortalAllowlistIds(partner)));
+  }, [portalLinkModalOpen, partner]);
 
   useEffect(() => {
     if (teamMember) {
@@ -2711,6 +2547,57 @@ function PartnerDetailDrawer({
     computedCompliance,
     onPartnerPatch,
   ]);
+
+  const togglePortalDocId = useCallback((id: string) => {
+    setPortalLinkSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }, []);
+
+  const handleGeneratePortalLink = useCallback(async () => {
+    if (!partner) return;
+    const ids = [...portalLinkSelectedIds];
+    if (ids.length === 0) {
+      toast.error("Select at least one document type.");
+      return;
+    }
+    setPortalLinkSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/partner/portal-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          partnerId: partner.id,
+          expiresInDays: portalExpiresDays,
+          requestedDocIds: ids,
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        url?: string;
+        shortUrl?: string;
+        expiresAt?: string;
+        message?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "Failed");
+      const shortUrl = (data.shortUrl ?? data.url ?? "").trim();
+      const fullUrl = (data.url ?? "").trim();
+      if (!shortUrl) throw new Error("No URL returned.");
+      setPortalLinkResult({
+        shortUrl,
+        fullUrl: fullUrl !== shortUrl ? fullUrl : undefined,
+        expiresAt: data.expiresAt ?? "",
+      });
+      toast.success("Link ready — copy or send via WhatsApp.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setPortalLinkSubmitting(false);
+    }
+  }, [partner, portalLinkSelectedIds, portalExpiresDays]);
 
   if (!partner && !teamMember) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
@@ -3479,6 +3366,28 @@ function PartnerDetailDrawer({
               </div>
             )}
 
+            {isAdmin && (
+              <div className="p-4 rounded-xl border border-border-light bg-card space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">Partner upload portal</p>
+                  <p className="text-xs text-text-tertiary mt-0.5">
+                    Generate a secure link so this partner can upload only the documents you choose (public page, no login).
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Link2 className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    setPortalLinkResult(null);
+                    setPortalLinkModalOpen(true);
+                  }}
+                >
+                  Generate upload link…
+                </Button>
+              </div>
+            )}
+
             <div className="flex flex-col gap-2 pt-4 border-t border-border-light">
               {isAdmin && (
                 <div className="flex flex-wrap gap-2">
@@ -4099,22 +4008,22 @@ function PartnerDetailDrawer({
                 </div>
               </div>
             )}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <p className="text-sm font-semibold text-text-primary">{documents.length} Documents</p>
               <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setRequestLinkDocTypes([]);
-                    setRequestLinkMessage("");
-                    setRequestLinkResult(null);
-                    setRequestLinkError(null);
-                    setRequestLinkOpen(true);
-                  }}
-                >
-                  Request from partner
-                </Button>
+                {isAdmin && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={<Send className="h-3.5 w-3.5" />}
+                    onClick={() => {
+                      setPortalLinkResult(null);
+                      setPortalLinkModalOpen(true);
+                    }}
+                  >
+                    Request documents
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -4683,6 +4592,173 @@ function PartnerDetailDrawer({
               Confirm
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={portalLinkModalOpen}
+        onClose={() => {
+          if (portalLinkSubmitting) return;
+          setPortalLinkModalOpen(false);
+          setPortalLinkResult(null);
+        }}
+        title={portalLinkResult ? "Your upload link" : "Generate partner upload link"}
+        subtitle={
+          portalLinkResult
+            ? "Short link for WhatsApp — partner opens the same upload page."
+            : "Only the document types you tick will appear on the partner’s upload page."
+        }
+        size="lg"
+        className="max-w-lg"
+      >
+        <div className="p-6 space-y-4 max-h-[min(70vh,520px)] overflow-y-auto">
+          {portalLinkResult ? (
+            <div className="space-y-4">
+              <p className="text-sm text-text-secondary">
+                Copy the short link below, or open WhatsApp with a pre-filled message.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  readOnly
+                  value={portalLinkResult.shortUrl}
+                  className="font-mono text-xs flex-1 min-w-0"
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  icon={<Copy className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(portalLinkResult.shortUrl).then(() => {
+                      toast.success("Link copied.");
+                    });
+                  }}
+                >
+                  Copy
+                </Button>
+              </div>
+              {portalLinkResult.fullUrl ? (
+                <details className="text-xs text-text-tertiary">
+                  <summary className="cursor-pointer font-medium text-text-secondary">Full link (fallback)</summary>
+                  <p className="mt-2 break-all font-mono text-[11px]">{portalLinkResult.fullUrl}</p>
+                </details>
+              ) : null}
+              {portalLinkResult.expiresAt ? (
+                <p className="text-xs text-text-tertiary">
+                  Expires on{" "}
+                  <time dateTime={portalLinkResult.expiresAt}>
+                    {new Date(portalLinkResult.expiresAt).toLocaleDateString("en-GB", {
+                      dateStyle: "medium",
+                    })}
+                  </time>
+                </p>
+              ) : null}
+              <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-border-light">
+                <Button
+                  type="button"
+                  variant="outline"
+                  icon={<MessageSquare className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    const text = `Please upload your documents here: ${portalLinkResult.shortUrl}`;
+                    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  WhatsApp
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setPortalLinkResult(null);
+                  }}
+                >
+                  Generate another
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={() => {
+                    setPortalLinkModalOpen(false);
+                    setPortalLinkResult(null);
+                  }}
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Link expires in</label>
+                <select
+                  value={portalExpiresDays}
+                  onChange={(e) => setPortalExpiresDays(Number(e.target.value))}
+                  className="w-full h-10 rounded-lg border border-border bg-card text-sm px-3 text-text-primary"
+                >
+                  <option value={7}>7 days</option>
+                  <option value={14}>14 days</option>
+                  <option value={30}>30 days</option>
+                  <option value={60}>60 days</option>
+                  <option value={90}>90 days</option>
+                </select>
+              </div>
+              <div className="space-y-3">
+                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Requested documents</p>
+                {["core", "extra"].map((group) => {
+                  const opts = portalAllowlistOptions.filter((o) => o.kind === group);
+                  if (opts.length === 0) return null;
+                  return (
+                    <div key={group} className="space-y-2">
+                      <p className="text-[11px] font-medium text-text-tertiary">
+                        {group === "core" ? "Compliance" : "Optional / other"}
+                      </p>
+                      <div className="space-y-2">
+                        {opts.map((o) => (
+                          <label
+                            key={o.id}
+                            className="flex items-start gap-3 rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2.5 cursor-pointer hover:bg-surface-hover"
+                          >
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 rounded border-border"
+                              checked={portalLinkSelectedIds.has(o.id)}
+                              onChange={() => togglePortalDocId(o.id)}
+                            />
+                            <span>
+                              <span className="text-sm font-medium text-text-primary block">{o.name}</span>
+                              <span className="text-xs text-text-tertiary">{o.description}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t border-border-light">
+                <Button
+                  variant="outline"
+                  type="button"
+                  disabled={portalLinkSubmitting}
+                  onClick={() => {
+                    setPortalLinkModalOpen(false);
+                    setPortalLinkResult(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={portalLinkSubmitting || portalLinkSelectedIds.size === 0}
+                  onClick={() => void handleGeneratePortalLink()}
+                >
+                  {portalLinkSubmitting ? "Generating…" : "Generate link"}
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </Modal>
 

@@ -3,6 +3,7 @@ import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
+import { escapeHtmlAttr, normalizeEmailAssetUrl } from "@/lib/email-asset-url";
 
 function escapeHtml(s: string): string {
   return s
@@ -12,12 +13,10 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function isHttpsUrl(u: string): boolean {
-  try {
-    return new URL(u).protocol === "https:";
-  } catch {
-    return false;
-  }
+function publicOsBaseUrl(req: NextRequest): string {
+  const env = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+  if (env) return env;
+  return req.nextUrl.origin;
 }
 
 /** Email selected partners when inviting to bid (includes site photo links from the linked request). */
@@ -56,7 +55,9 @@ export async function POST(req: NextRequest) {
         .select("images, description")
         .eq("id", quote.request_id)
         .maybeSingle();
-      photoUrls = normalizeJsonImageArray(sr?.images).filter((u) => isHttpsUrl(u.trim()));
+      photoUrls = normalizeJsonImageArray(sr?.images)
+        .map((u) => normalizeEmailAssetUrl(u))
+        .filter((u): u is string => u != null);
       description = typeof sr?.description === "string" ? sr.description : "";
     }
 
@@ -72,10 +73,29 @@ export async function POST(req: NextRequest) {
 
     const imgHtml = photoUrls
       .map((u, i) => {
-        const safe = u.replace(/"/g, "");
-        return `<p style="margin:12px 0"><a href="${safe}">Site photo ${i + 1}</a></p><img src="${safe}" alt="" width="560" style="max-width:100%;height:auto;border-radius:8px;border:1px solid #e5e5e5" />`;
+        const href = escapeHtmlAttr(u);
+        return `<p style="margin:12px 0"><a href="${href}">Site photo ${i + 1}</a></p><img src="${href}" alt="" width="560" style="max-width:100%;height:auto;border-radius:8px;border:1px solid #e5e5e5" />`;
       })
       .join("");
+
+    const iosStore = process.env.PARTNER_APP_IOS_URL?.trim() || process.env.NEXT_PUBLIC_PARTNER_APP_IOS_URL?.trim();
+    const androidStore = process.env.PARTNER_APP_ANDROID_URL?.trim() || process.env.NEXT_PUBLIC_PARTNER_APP_ANDROID_URL?.trim();
+    const deepLink = `masterservices://invite?quoteId=${encodeURIComponent(quoteId)}`;
+    const deepEsc = escapeHtmlAttr(deepLink);
+    const storeLinks: string[] = [];
+    if (iosStore) {
+      storeLinks.push(`<a href="${escapeHtmlAttr(iosStore)}">App Store</a>`);
+    }
+    if (androidStore) {
+      storeLinks.push(`<a href="${escapeHtmlAttr(androidStore)}">Google Play</a>`);
+    }
+    const storeBlock =
+      storeLinks.length > 0
+        ? `<p style="margin:12px 0">${storeLinks.join(" · ")}</p>`
+        : `<p style="margin:12px 0;color:#444;font-size:14px">Install <strong>Master Services</strong> from the App Store or Google Play, sign in, then open <strong>Invites</strong> to view this request and submit your bid.</p>`;
+
+    const officeQuoteUrl = `${publicOsBaseUrl(req)}/quotes?quoteId=${encodeURIComponent(quoteId)}&drawerTab=bids`;
+    const officeEsc = escapeHtmlAttr(officeQuoteUrl);
 
     const sendOne = async (p: { email?: string | null; company_name?: string | null }) => {
       const email = p.email?.trim();
@@ -86,7 +106,10 @@ export async function POST(req: NextRequest) {
         <p><strong>Property:</strong> ${escapeHtml(quote.property_address ?? "—")}</p>
         ${description.trim() ? `<p><strong>Service description:</strong><br/>${escapeHtml(description).replace(/\n/g, "<br/>")}</p>` : ""}
         ${imgHtml || "<p><em>No site photos were attached to this request.</em></p>"}
-        <p style="margin-top:16px">Open the <strong>partner app</strong> to view the full quote and submit your bid.</p>
+        <p style="margin-top:20px"><strong>Submit your bid in the partner app</strong></p>
+        ${storeBlock}
+        <p style="margin:12px 0;font-size:14px"><a href="${deepEsc}">Open invitation in app</a> (tap after installing Master Services)</p>
+        <p style="margin-top:16px;font-size:12px;color:#666">Office link (login required): <a href="${officeEsc}">View quote in Master OS</a></p>
       `;
       const { error } = await resend.emails.send({
         from: fromEmail,

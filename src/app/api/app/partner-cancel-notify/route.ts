@@ -3,6 +3,7 @@ import { Resend } from "resend";
 import { getUserFromBearer } from "@/lib/supabase/bearer-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
+import { escapeHtmlAttr } from "@/lib/email-asset-url";
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
@@ -74,6 +75,11 @@ export async function POST(req: NextRequest) {
       ? String(job.partner_cancellation_reason).trim()
       : "(none)";
 
+  const base =
+    process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") ||
+    new URL(req.url).origin;
+  const jobUrl = `${base}/jobs/${jobId}`;
+
   const html = `
     <h2>Partner cancelled a job</h2>
     <p><strong>Reference:</strong> ${ref}</p>
@@ -83,7 +89,7 @@ export async function POST(req: NextRequest) {
     <p><strong>Cancellation fee (GBP):</strong> ${fee}</p>
     <p><strong>Partner:</strong> ${String(partner.company_name ?? partner.contact_name ?? "—")} (${String(partner.email ?? "—")})</p>
     <p><strong>Reason:</strong> ${reason}</p>
-    <p><a href="${process.env.NEXT_PUBLIC_APP_URL ?? ""}/jobs/${jobId}">Open in Master OS</a></p>
+    <p><a href="${escapeHtmlAttr(jobUrl)}">Open in Master OS</a></p>
   `;
 
   try {

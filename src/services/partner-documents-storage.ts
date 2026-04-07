@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 
 const BUCKET = "partner-documents";
@@ -37,10 +38,11 @@ function safeFileName(name: string): string {
   return base.slice(0, 180);
 }
 
-export async function uploadPartnerDocumentFile(
+export async function uploadPartnerDocumentFileWithSupabase(
+  supabase: SupabaseClient,
   partnerId: string,
   documentId: string,
-  file: File
+  file: File,
 ): Promise<{ path: string; fileName: string }> {
   const type = (file.type || "").toLowerCase();
   if (!ALLOWED_MAIN.has(type)) {
@@ -49,7 +51,6 @@ export async function uploadPartnerDocumentFile(
   if (file.size > MAX_BYTES) {
     throw new Error("File must be 10 MB or less.");
   }
-  const supabase = getSupabase();
   const fileName = safeFileName(file.name);
   const path = `${partnerId}/${documentId}/${fileName}`;
   const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
@@ -59,6 +60,14 @@ export async function uploadPartnerDocumentFile(
   });
   if (error) throw new Error(error.message);
   return { path, fileName };
+}
+
+export async function uploadPartnerDocumentFile(
+  partnerId: string,
+  documentId: string,
+  file: File
+): Promise<{ path: string; fileName: string }> {
+  return uploadPartnerDocumentFileWithSupabase(getSupabase(), partnerId, documentId, file);
 }
 
 export async function uploadPartnerDocumentPreview(
@@ -85,16 +94,26 @@ export async function uploadPartnerDocumentPreview(
   return { path };
 }
 
-export async function removeStorageObjects(paths: string[]): Promise<void> {
+export async function removeStorageObjectsWithSupabase(supabase: SupabaseClient, paths: string[]): Promise<void> {
   if (paths.length === 0) return;
-  const supabase = getSupabase();
   const { error } = await supabase.storage.from(BUCKET).remove(paths);
   if (error) throw new Error(error.message);
 }
 
-export async function getPartnerDocumentSignedUrl(path: string, expiresSec = 3600): Promise<string> {
-  const supabase = getSupabase();
+export async function removeStorageObjects(paths: string[]): Promise<void> {
+  return removeStorageObjectsWithSupabase(getSupabase(), paths);
+}
+
+export async function getPartnerDocumentSignedUrlWithSupabase(
+  supabase: SupabaseClient,
+  path: string,
+  expiresSec = 3600,
+): Promise<string> {
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, expiresSec);
   if (error) throw new Error(error.message);
   return data.signedUrl;
+}
+
+export async function getPartnerDocumentSignedUrl(path: string, expiresSec = 3600): Promise<string> {
+  return getPartnerDocumentSignedUrlWithSupabase(getSupabase(), path, expiresSec);
 }
