@@ -1651,7 +1651,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   }, [open]);
 
   useEffect(() => {
-    if (!open) setSitePhotoFiles([]);
+    if (open) return;
+    queueMicrotask(() => setSitePhotoFiles([]));
   }, [open]);
 
   const sitePhotoPreviewUrls = useMemo(() => sitePhotoFiles.map((f) => URL.createObjectURL(f)), [sitePhotoFiles]);
@@ -1730,7 +1731,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     if (sitePhotoFiles.length > 0) {
       setUploadingPhotos(true);
       try {
-        uploadedImageUrls = await uploadQuoteInviteImages(sitePhotoFiles, `job-new/${Date.now()}`);
+        uploadedImageUrls = await uploadQuoteInviteImages(sitePhotoFiles, "job-new");
       } catch (err) {
         toast.error(getErrorMessage(err, "Photo upload failed"));
         setUploadingPhotos(false);

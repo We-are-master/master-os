@@ -415,6 +415,8 @@ export interface Account {
   /** Linked app user (`profiles.id`) as account owner for rollups / Top account owners. */
   account_owner_id?: string | null;
   email: string;
+  /** Optional invoices/billing email (if different from main account email). */
+  finance_email?: string | null;
   address?: string | null;
   crn?: string | null;
   contact_number?: string | null;

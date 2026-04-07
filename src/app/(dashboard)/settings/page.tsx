@@ -24,7 +24,15 @@ import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { getSupabase } from "@/services/base";
-import { listCommissionTiers, listCommissionPoolShares, updateCommissionTier, updateCommissionPoolShare, getCurrentMonthRevenue } from "@/services/tiers";
+import {
+  listCommissionTiers,
+  listCommissionPoolShares,
+  updateCommissionTier,
+  updateCommissionPoolShare,
+  getCurrentMonthRevenue,
+  createCommissionTier,
+  ensureCommissionConfigDefaults,
+} from "@/services/tiers";
 import { formatCurrency, setAppCurrencyCode } from "@/lib/utils";
 import type { Profile, CommissionTier, CommissionPoolShare } from "@/types/database";
 import type { NavGroup } from "@/lib/constants";
@@ -810,6 +818,44 @@ function TiersTab() {
     }
   };
 
+  const handleAddTier = async () => {
+    const nextTier = (tiers.reduce((m, t) => Math.max(m, Number(t.tier_number) || 0), 0) || 0) + 1;
+    const nextBreakeven =
+      tiers.length > 0 ? Math.max(...tiers.map((t) => Number(t.breakeven_amount) || 0)) + 5000 : 0;
+    setSavingId("new-tier");
+    try {
+      const created = await createCommissionTier({
+        tier_number: nextTier,
+        breakeven_amount: nextBreakeven,
+        rate_percent: 0,
+        sort_order: nextTier,
+      });
+      setTiers((prev) =>
+        [...prev, created].sort(
+          (a, b) => (Number(a.sort_order) - Number(b.sort_order)) || (Number(a.tier_number) - Number(b.tier_number)),
+        ),
+      );
+      toast.success(`Tier ${nextTier} added`);
+    } catch {
+      toast.error("Failed to add tier");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleInitializeDefaults = async () => {
+    setSavingId("init-defaults");
+    try {
+      await ensureCommissionConfigDefaults();
+      await load();
+      toast.success("Commission tiers defaults created");
+    } catch {
+      toast.error("Failed to initialize commission defaults");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   const roleLabel: Record<string, string> = { head_ops: "Head Ops", am: "Account Managers", biz_dev: "Biz Dev" };
   const currentTier = tiers.slice().sort((a, b) => b.breakeven_amount - a.breakeven_amount).find((t) => revenue >= t.breakeven_amount) ?? tiers[0];
 
@@ -838,7 +884,31 @@ function TiersTab() {
       </Card>
 
       <Card padding="md">
-        <h4 className="text-sm font-semibold text-text-primary mb-3">Tier structure</h4>
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <h4 className="text-sm font-semibold text-text-primary">Tier structure</h4>
+          <Button
+            size="sm"
+            variant="outline"
+            icon={savingId === "new-tier" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            disabled={savingId === "new-tier" || savingId === "init-defaults"}
+            onClick={handleAddTier}
+          >
+            Add tier
+          </Button>
+        </div>
+        {tiers.length === 0 ? (
+          <div className="rounded-lg border border-border-light bg-surface-hover p-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-text-tertiary">No tiers configured yet. Create defaults first, then edit values.</p>
+            <Button
+              size="sm"
+              icon={savingId === "init-defaults" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              disabled={savingId === "new-tier" || savingId === "init-defaults"}
+              onClick={handleInitializeDefaults}
+            >
+              Initialize defaults
+            </Button>
+          </div>
+        ) : null}
         <div className="space-y-2">
           {tiers.map((t) => (
             <TierRow
