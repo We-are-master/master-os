@@ -260,6 +260,7 @@ function JobsPageContent() {
     fetcher: listJobs,
     realtimeTable: "jobs",
     listParams,
+    initialStatus: "unassigned",
   });
   const { profile } = useProfile();
   const [viewMode, setViewMode] = useState("list");
@@ -665,6 +666,7 @@ function JobsPageContent() {
         customer_deposit: 0, customer_deposit_paid: false,
         customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
         scope: formData.scope?.trim() || undefined,
+        additional_notes: formData.additional_notes?.trim() || undefined,
         images: capJobImagesArray(coerceJobImagesArray(formData.images)),
       });
       await Promise.all([
@@ -1568,6 +1570,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     expected_finish_date: "",
     job_type: "fixed",
     scope: "",
+    additional_notes: "",
     hourly_client_rate: "",
     hourly_partner_rate: "",
     billed_hours: "1",
@@ -1739,6 +1742,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       scheduled_finish_date,
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
+      additional_notes: form.additional_notes.trim() || undefined,
       images: uploadedImageUrls.length ? uploadedImageUrls : undefined,
     });
     setSitePhotoFiles([]);
@@ -1756,6 +1760,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       expected_finish_date: "",
       job_type: "fixed",
       scope: "",
+      additional_notes: "",
       hourly_client_rate: "",
       hourly_partner_rate: "",
       billed_hours: "1",
@@ -1850,6 +1855,16 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             rows={3}
             placeholder="Required if you assign a partner (with schedule and address above)."
             className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Additional notes</label>
+          <textarea
+            value={form.additional_notes}
+            onChange={(e) => update("additional_notes", e.target.value)}
+            rows={2}
+            placeholder="Internal only — parking, keys, client preferences, things not in scope…"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[56px]"
           />
         </div>
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-2">

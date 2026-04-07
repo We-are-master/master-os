@@ -287,6 +287,8 @@ export interface Job {
   self_bill_id?: string;
   invoice_id?: string;
   scope?: string;
+  /** Office-only notes (e.g. access, client quirks); separate from scope and from system lines in internal_notes. */
+  additional_notes?: string | null;
   internal_notes?: string;
   /** Site reference photos (client request / quote / office); JSON array of public storage URLs (quote-invite-images). */
   images?: string[] | null;

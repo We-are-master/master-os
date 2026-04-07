@@ -61,21 +61,24 @@ export function endOfLocalMonth(anchor: Date): Date {
 
 /**
  * Day/month/year for placing a job on a local calendar grid.
- * Prefer `scheduled_date` as a civil date; otherwise use local components of `scheduled_start_at`.
+ * Prefer `scheduled_start_at` (same as {@link formatJobScheduleLine} and `jobExecutionWindowYmd` in job-period-overlap);
+ * otherwise `scheduled_date`. If a stale `scheduled_date` disagrees with the booking timestamps, the list still
+ * shows the real window — the calendar must match or jobs “disappear” from the month.
  */
 export function jobScheduleYmd(job: {
   scheduled_date?: string | null;
   scheduled_start_at?: string | null;
   scheduled_end_at?: string | null;
 }): { y: number; m: number; d: number } | null {
+  if (job.scheduled_start_at) {
+    const dt = new Date(job.scheduled_start_at);
+    if (!Number.isNaN(dt.getTime())) {
+      return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
+    }
+  }
   if (job.scheduled_date) {
     const p = parseIsoDateOnlyPrefix(job.scheduled_date);
     if (p) return p;
-  }
-  if (job.scheduled_start_at) {
-    const dt = new Date(job.scheduled_start_at);
-    if (Number.isNaN(dt.getTime())) return null;
-    return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
   }
   return null;
 }
