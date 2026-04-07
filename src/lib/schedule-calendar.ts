@@ -61,21 +61,24 @@ export function endOfLocalMonth(anchor: Date): Date {
 
 /**
  * Day/month/year for placing a job on a local calendar grid.
- * Prefer `scheduled_date` as a civil date; otherwise use local components of `scheduled_start_at`.
+ * Prefer `scheduled_start_at` (same as {@link formatJobScheduleLine} and `jobExecutionWindowYmd` in job-period-overlap);
+ * otherwise `scheduled_date`. If a stale `scheduled_date` disagrees with the booking timestamps, the list still
+ * shows the real window — the calendar must match or jobs “disappear” from the month.
  */
 export function jobScheduleYmd(job: {
   scheduled_date?: string | null;
   scheduled_start_at?: string | null;
   scheduled_end_at?: string | null;
 }): { y: number; m: number; d: number } | null {
+  if (job.scheduled_start_at) {
+    const dt = new Date(job.scheduled_start_at);
+    if (!Number.isNaN(dt.getTime())) {
+      return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
+    }
+  }
   if (job.scheduled_date) {
     const p = parseIsoDateOnlyPrefix(job.scheduled_date);
     if (p) return p;
-  }
-  if (job.scheduled_start_at) {
-    const dt = new Date(job.scheduled_start_at);
-    if (Number.isNaN(dt.getTime())) return null;
-    return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
   }
   return null;
 }
@@ -156,6 +159,64 @@ export function formatArrivalTimeRange(startIso: string, endIso: string): string
 
 function formatMediumDateFromLocalDate(d: Date): string {
   return d.toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+const UK_TIMEZONE = "Europe/London";
+
+function isoCalendarDateInUk(isoOrDate: string | Date): string | null {
+  const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: UK_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function ymdFromDateOnlyField(s: string): string | null {
+  const p = parseIsoDateOnlyPrefix(s);
+  if (!p) return null;
+  return `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
+}
+
+function addOneCalendarDayYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
+}
+
+function formatMediumDateEnGbFromYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+}
+
+/**
+ * Jobs list / kanban / map: start date only. “Tomorrow” when UK calendar day (Europe/London) is the day after today.
+ */
+export function formatJobScheduleListLabel(job: {
+  scheduled_date?: string | null;
+  scheduled_start_at?: string | null;
+}): string | null {
+  let startYmd: string | null = null;
+  if (job.scheduled_start_at) {
+    startYmd = isoCalendarDateInUk(job.scheduled_start_at);
+  } else if (job.scheduled_date) {
+    startYmd = ymdFromDateOnlyField(job.scheduled_date);
+  }
+  if (!startYmd) return null;
+
+  const todayUk = isoCalendarDateInUk(new Date());
+  if (!todayUk) return formatMediumDateEnGbFromYmd(startYmd);
+
+  const tomorrowUk = addOneCalendarDayYmd(todayUk);
+  if (startYmd === tomorrowUk) return "Tomorrow";
+
+  return formatMediumDateEnGbFromYmd(startYmd);
 }
 
 /**

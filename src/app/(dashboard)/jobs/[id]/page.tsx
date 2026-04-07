@@ -84,6 +84,8 @@ import {
   partnerSelfBillGrossAmount,
   customerScheduledTotal,
   jobCustomerBillableRevenueForCollections,
+  suggestedPartnerCostForTargetMargin,
+  SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import {
   ACCESS_CCZ_FEE_GBP,
@@ -329,6 +331,8 @@ export default function JobDetailPage() {
   const [openingReportImageKey, setOpeningReportImageKey] = useState<string | null>(null);
   const [scopeDraft, setScopeDraft] = useState("");
   const [savingScope, setSavingScope] = useState(false);
+  const [additionalNotesDraft, setAdditionalNotesDraft] = useState("");
+  const [savingAdditionalNotes, setSavingAdditionalNotes] = useState(false);
   const [sitePhotoUploading, setSitePhotoUploading] = useState(false);
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
@@ -796,6 +800,11 @@ export default function JobDetailPage() {
     if (!job) return;
     setScopeDraft(job.scope ?? "");
   }, [job?.id, job?.scope]);
+
+  useEffect(() => {
+    if (!job) return;
+    setAdditionalNotesDraft(job.additional_notes ?? "");
+  }, [job?.id, job?.additional_notes]);
 
   const handleJobUpdate = useCallback(async (
     jobId: string,
@@ -2006,6 +2015,21 @@ export default function JobDetailPage() {
     [job?.extras_amount, job?.id],
   );
 
+  /** Suggested partner_cost for ~40% gross margin on client_price + extras_amount (materials fixed). */
+  const suggestedPartnerCost40ForFinForm = useMemo(() => {
+    if (!job || job.job_type === "hourly") return null;
+    const cp = parseFloat(finForm.client_price) || 0;
+    const ex = parseFloat(finForm.extras_amount) || 0;
+    const mat = parseFloat(finForm.materials_cost) || 0;
+    if (cp + ex <= 0) return null;
+    return suggestedPartnerCostForTargetMargin({
+      clientPrice: cp,
+      extrasAmount: ex,
+      materialsCost: mat,
+      targetMarginPercent: SUGGESTED_PARTNER_MARGIN_HINT_PCT,
+    });
+  }, [job?.id, job?.job_type, finForm.client_price, finForm.extras_amount, finForm.materials_cost]);
+
   if (loading || !id) {
     return (
       <PageTransition>
@@ -2509,6 +2533,7 @@ export default function JobDetailPage() {
                           onChange={setPropertyEdit}
                           labelClient="Client"
                           labelAddress="Property address"
+                          jobCurrentAddressOnly
                         />
                         <Button
                           type="button"
@@ -2700,6 +2725,35 @@ export default function JobDetailPage() {
                   }
                 }}>
                   Save scope
+                </Button>
+              </div>
+
+              <div className="space-y-2 pt-3 border-t border-border-light">
+                <p className="text-xs font-medium text-text-secondary">Additional notes</p>
+                <p className="text-[11px] text-text-tertiary">Internal only — not shown to the client; use for access, keys, or context beyond the scope.</p>
+                <textarea
+                  value={additionalNotesDraft}
+                  onChange={(e) => setAdditionalNotesDraft(e.target.value)}
+                  rows={3}
+                  placeholder="Parking, entry, preferences…"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  loading={savingAdditionalNotes}
+                  onClick={async () => {
+                    if (!job) return;
+                    setSavingAdditionalNotes(true);
+                    try {
+                      await handleJobUpdate(job.id, { additional_notes: additionalNotesDraft.trim() || null });
+                    } finally {
+                      setSavingAdditionalNotes(false);
+                    }
+                  }}
+                >
+                  Save additional notes
                 </Button>
               </div>
             </div>
@@ -3056,6 +3110,22 @@ export default function JobDetailPage() {
                     <div>
                       <label className="block text-xs font-medium text-text-secondary mb-1.5">Subcontract labour — partner_cost</label>
                       <Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} />
+                      {suggestedPartnerCost40ForFinForm != null && (
+                        <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                          ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin hint:{" "}
+                          <span className="font-semibold text-text-secondary tabular-nums">{formatCurrency(suggestedPartnerCost40ForFinForm)}</span>
+                          {" "}(billable ticket + add-ons − materials).{" "}
+                          <button
+                            type="button"
+                            className="text-primary hover:underline font-medium"
+                            onClick={() =>
+                              setFinForm((f) => ({ ...f, partner_cost: String(suggestedPartnerCost40ForFinForm) }))
+                            }
+                          >
+                            Apply
+                          </button>
+                        </p>
+                      )}
                       <p className="text-[10px] text-text-tertiary mt-1">Amount owed to the partner for work (field <span className="font-mono text-[10px]">partner_cost</span>). “Add extra payout” in Cash Out increases this and <span className="font-mono text-[10px]">partner_extras_amount</span>.</p>
                     </div>
                     <div>

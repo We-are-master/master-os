@@ -22,6 +22,27 @@ export function jobMarginPercent(j: Pick<Job, "client_price" | "extras_amount" |
   return Math.round(((jobProfit(j) / revenue) * 1000)) / 10;
 }
 
+/** Hint shown next to partner cost: margin % matches {@link jobMarginPercent} (revenue = client + extras). */
+export const SUGGESTED_PARTNER_MARGIN_HINT_PCT = 40;
+
+/**
+ * Partner labour that would yield `targetMarginPercent` gross margin on billable revenue,
+ * holding materials fixed: margin = (revenue − partner − materials) / revenue.
+ */
+export function suggestedPartnerCostForTargetMargin(opts: {
+  clientPrice: number;
+  extrasAmount?: number;
+  materialsCost?: number;
+  targetMarginPercent: number;
+}): number {
+  const revenue = Number(opts.clientPrice ?? 0) + Number(opts.extrasAmount ?? 0);
+  const materials = Number(opts.materialsCost ?? 0);
+  if (revenue <= 0) return 0;
+  const t = Math.min(100, Math.max(0, opts.targetMarginPercent));
+  const partner = revenue * (1 - t / 100) - materials;
+  return Math.max(0, Math.round(partner * 100) / 100);
+}
+
 /** Values to persist when financial inputs change */
 export function deriveStoredJobFinancials(j: Job): Pick<Job, "margin_percent" | "service_value"> {
   const revenue = jobBillableRevenue(j);
