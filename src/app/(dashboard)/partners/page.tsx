@@ -69,6 +69,8 @@ import {
   pickRequiredDocMatches,
   pickRequiredDocMatch,
   buildRequiredDocumentChecklist,
+  buildMandatoryDocsForComplianceScore,
+  buildTradeCertificateRequirements,
   computeComplianceScore,
   getRequiredDocComplianceStatus,
   getOptionalDbsStatus,
@@ -170,6 +172,26 @@ function getPartnerTrades(partner: Pick<Partner, "trade" | "trades">): string[] 
   return normalizeTrades(partner.trades?.length ? partner.trades : [partner.trade]);
 }
 
+/** Legacy `partner.trade` / DB may still say "HVAC"; never show that label in UI. */
+function isHiddenTradeLabel(t: string): boolean {
+  return String(t).trim().toLowerCase() === "hvac";
+}
+
+/** Normalized trades for chips / subtitles (drops HVAC). */
+function partnerTradesForDisplay(partner: Pick<Partner, "trade" | "trades">): string[] {
+  return getPartnerTrades(partner).filter((t) => !isHiddenTradeLabel(t));
+}
+
+function overviewTradesForDisplay(
+  partner: Pick<Partner, "trade" | "trades">,
+  editing: boolean,
+  overviewTrades: string[],
+): string[] {
+  const raw = editing ? overviewTrades : partner.trades?.length ? partner.trades : [partner.trade];
+  const normalized = normalizeTrades(raw);
+  return normalized.filter((t) => !isHiddenTradeLabel(t));
+}
+
 interface PartnerJobRow {
   id: string;
   reference: string;
@@ -224,7 +246,7 @@ const emptyForm = {
   crn: "",
   utr: "",
   partner_legal_type: "self_employed" as PartnerLegalType,
-  trades: ["HVAC"] as string[],
+  trades: [TRADES[0]] as string[],
   uk_coverage_regions: defaultUkCoverage(),
   partner_address: "",
   /** New directory partners start in Onboarding until compliance + activation. */
@@ -341,24 +363,28 @@ export default function PartnersPage() {
       } as Partner),
     [form.partner_legal_type, form.trades, form.crn],
   );
-  const requiredDocumentsCreate = useMemo(
-    () => buildRequiredDocumentChecklist(partnerTradesForCreate, syntheticPartnerForCreateDocs),
-    [partnerTradesForCreate, syntheticPartnerForCreateDocs],
+  const mandatoryDocsCreate = useMemo(
+    () => buildMandatoryDocsForComplianceScore(syntheticPartnerForCreateDocs),
+    [syntheticPartnerForCreateDocs],
+  );
+  const tradeCertsDocsCreate = useMemo(
+    () => buildTradeCertificateRequirements(partnerTradesForCreate),
+    [partnerTradesForCreate],
   );
   const pendingDocsForCompliancePreview = useMemo(
     () => pendingCreateDocsAsPartnerDocs(pendingCreateDocs),
     [pendingCreateDocs],
   );
   const documentCompliancePreviewCreate = useMemo(
-    () => computeComplianceScore(pendingDocsForCompliancePreview, requiredDocumentsCreate),
-    [pendingDocsForCompliancePreview, requiredDocumentsCreate],
+    () => computeComplianceScore(pendingDocsForCompliancePreview, mandatoryDocsCreate),
+    [pendingDocsForCompliancePreview, mandatoryDocsCreate],
   );
   const missingRequiredDocsCreate = useMemo(
     () =>
-      requiredDocumentsCreate.filter(
+      mandatoryDocsCreate.filter(
         (req) => getRequiredDocComplianceStatus(pendingDocsForCompliancePreview, req) !== "valid",
       ),
-    [requiredDocumentsCreate, pendingDocsForCompliancePreview],
+    [mandatoryDocsCreate, pendingDocsForCompliancePreview],
   );
 
   const totalPartners = statusCounts["all"] ?? 0;
@@ -582,7 +608,7 @@ export default function PartnersPage() {
       key: "trade", label: "Trade",
       render: (item) => (
         <div className="flex flex-wrap gap-1">
-          {(item.trades?.length ? item.trades : [item.trade]).map((t) => (
+          {partnerTradesForDisplay(item).map((t) => (
             <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
               {t}
             </span>
@@ -1227,11 +1253,12 @@ export default function PartnersPage() {
                   </Button>
                 </div>
               </div>
-              {partnerTradesForCreate.some((t) => (OPTIONAL_TRADE_CERTS_BY_TRADE[t] ?? []).length > 0) && (
+              {partnerTradesForCreate.length > 0 &&
+                partnerTradesForCreate.some((t) => (OPTIONAL_TRADE_CERTS_BY_TRADE[t] ?? []).length > 0) && (
                 <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
                   <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Optional certificates</p>
                   <p className="text-[11px] text-text-tertiary leading-snug">
-                    Recommended but not required for the compliance score.
+                    CSCS etc. — shown only for selected trades; not part of the compliance score.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {partnerTradesForCreate.flatMap((t) =>
@@ -1255,10 +1282,11 @@ export default function PartnersPage() {
                   </div>
                 </div>
               )}
+              {partnerTradesForCreate.length > 0 && (
               <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
                 <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Other optional</p>
                 <p className="text-[11px] text-text-tertiary leading-snug">
-                  DBS (Disclosure and Barring Service) — upload if required for your contracts. Optional; not part of the compliance score.
+                  DBS — optional; not part of the compliance score. Shown when at least one trade is selected.
                 </p>
                 <Button
                   type="button"
@@ -1273,32 +1301,14 @@ export default function PartnersPage() {
                   DBS
                 </Button>
               </div>
-              <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Required documents</p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Input
-                      value={createCustomCertName}
-                      onChange={(e) => setCreateCustomCertName(e.target.value)}
-                      placeholder="Add custom certificate requirement"
-                      className="h-8 w-full min-[420px]:w-64"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={!createCustomCertName.trim()}
-                      onClick={() => {
-                        setCreateDocPreset({ docType: "certification", name: createCustomCertName.trim() });
-                        setCreateQueueDocOpen(true);
-                      }}
-                    >
-                      Add cert
-                    </Button>
-                  </div>
-                </div>
+              )}
+              <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-3">
+                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Mandatory documents</p>
+                <p className="text-[11px] text-text-tertiary leading-snug">
+                  Included in the compliance score preview (plus agreements). Trade-specific certificates are listed below.
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {requiredDocumentsCreate.map((req) => {
+                  {mandatoryDocsCreate.map((req) => {
                     const matchedDocs = pickRequiredDocMatches(pendingDocsForCompliancePreview, req);
                     const doc = matchedDocs[0] ?? null;
                     const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
@@ -1371,6 +1381,102 @@ export default function PartnersPage() {
                     );
                   })}
                 </div>
+                {tradeCertsDocsCreate.length > 0 && (
+                  <>
+                    <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide pt-1">Trade certificates</p>
+                    <p className="text-[11px] text-text-tertiary leading-snug">
+                      Only for the types of work you selected above — not included in the compliance score preview.
+                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                        <Input
+                          value={createCustomCertName}
+                          onChange={(e) => setCreateCustomCertName(e.target.value)}
+                          placeholder="Add custom certificate requirement"
+                          className="h-8 w-full min-[420px]:w-64"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={!createCustomCertName.trim()}
+                          onClick={() => {
+                            setCreateDocPreset({ docType: "certification", name: createCustomCertName.trim() });
+                            setCreateQueueDocOpen(true);
+                          }}
+                        >
+                          Add cert
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {tradeCertsDocsCreate.map((req) => {
+                        const matchedDocs = pickRequiredDocMatches(pendingDocsForCompliancePreview, req);
+                        const doc = matchedDocs[0] ?? null;
+                        const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
+                        const now = new Date();
+                        const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+                        const isExpired = !!(expiresAt && expiresAt < now);
+                        const isExpiringSoon = !!(expiresAt && expiresAt >= now && expiresAt <= in30Days);
+                        const certDocs = req.docType === "certification" ? matchedDocs : [];
+                        const certValidCount = certDocs.filter((d) => {
+                          if (!d.expires_at) return true;
+                          return new Date(d.expires_at) >= now;
+                        }).length;
+                        const certExpiringSoonCount = certDocs.filter((d) => {
+                          if (!d.expires_at) return false;
+                          const dt = new Date(d.expires_at);
+                          return dt >= now && dt <= in30Days;
+                        }).length;
+                        const certExpiredCount = certDocs.filter((d) => !!(d.expires_at && new Date(d.expires_at) < now)).length;
+                        const statusLabel = certDocs.length === 0
+                          ? "Missing"
+                          : certValidCount > 0
+                            ? certExpiringSoonCount > 0 ? "Valid (some expiring soon)" : "Valid"
+                            : certExpiredCount > 0 ? "Expired" : "Pending";
+                        const statusVariant = certDocs.length === 0
+                          ? "default"
+                          : certValidCount > 0
+                            ? certExpiringSoonCount > 0 ? "warning" : "success"
+                            : certExpiredCount > 0 ? "danger" : "default";
+
+                        return (
+                          <div key={req.id} className="rounded-lg border border-border-light bg-card p-3 space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-text-primary">{req.name}</p>
+                                <p className="text-[11px] text-text-tertiary">{req.description}</p>
+                              </div>
+                              <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                            </div>
+                            {doc?.expires_at && (
+                              <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
+                                Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                              </p>
+                            )}
+                            {matchedDocs.length > 0 && (
+                              <p className="text-[11px] text-text-tertiary">
+                                In queue: {matchedDocs.length}
+                              </p>
+                            )}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="w-full"
+                              onClick={() => {
+                                setCreateDocPreset({ docType: req.docType, name: req.name });
+                                setCreateQueueDocOpen(true);
+                              }}
+                            >
+                              {matchedDocs.length ? "Add another certificate" : "Add certificate"}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
               {pendingCreateDocs.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border-light bg-card/50 px-4 py-8 text-center">
@@ -2443,9 +2549,17 @@ function PartnerDetailDrawer({
     } catch (err) { toast.error(err instanceof Error ? err.message : "Failed"); }
   };
 
-  const partnerTradesForCompliance = partner ? (partner.trades?.length ? partner.trades : [partner.trade]) : [];
-  const requiredDocuments = buildRequiredDocumentChecklist(partnerTradesForCompliance, partner);
-  const documentComplianceScore = partner ? computeComplianceScore(documents, requiredDocuments) : 0;
+  const partnerTradesForCompliance = useMemo(
+    () => (partner ? partnerTradesForDisplay(partner) : []),
+    [partner],
+  );
+  const mandatoryDocsForScore = partner ? buildMandatoryDocsForComplianceScore(partner) : [];
+  const tradeCertificateDocs = partner ? buildTradeCertificateRequirements(partnerTradesForCompliance) : [];
+  const requiredDocuments = useMemo(
+    () => (partner ? buildRequiredDocumentChecklist(partnerTradesForCompliance, partner) : []),
+    [partner, partnerTradesForCompliance],
+  );
+  const documentComplianceScore = partner ? computeComplianceScore(documents, mandatoryDocsForScore) : 0;
   const profileCompletenessScore = partner ? computeProfileCompletenessScore(partner) : 0;
   const expiredDocCount = countExpiredDocuments(documents);
   const computedCompliance = partner
@@ -2456,12 +2570,12 @@ function PartnerDetailDrawer({
   const complianceAttentionCount =
     partner
       ? profileCompletenessItems.filter((i) => !i.done).length +
-        requiredDocuments.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid").length
+        mandatoryDocsForScore.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid").length
       : 0;
 
   const missingRequiredDocs =
     partner
-      ? requiredDocuments.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid")
+      ? mandatoryDocsForScore.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid")
       : [];
 
   const dbsOptionalStatus = getOptionalDbsStatus(documents);
@@ -2850,7 +2964,7 @@ function PartnerDetailDrawer({
       onClose={onClose}
       title={partner.company_name}
       subtitle={
-        partner.trade +
+        (partnerTradesForDisplay(partner).join(" · ") || "Trade TBC") +
         " · " +
         (formatUkCoverageLabel(partner.uk_coverage_regions, partner.location) || "Coverage TBC")
       }
@@ -3002,7 +3116,7 @@ function PartnerDetailDrawer({
                       </span>
                     ));
                   })()}
-                  {(editingOverview ? overviewForm.trades : (partner.trades?.length ? partner.trades : [partner.trade])).map((t) => (
+                  {overviewTradesForDisplay(partner, editingOverview, overviewForm.trades).map((t) => (
                     <span key={t} className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-md ring-1 ring-inset ${tradeColors[t] || "bg-surface-tertiary text-text-primary ring-border"}`}>
                       {t}
                     </span>
@@ -3558,9 +3672,9 @@ function PartnerDetailDrawer({
               />
               <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <div className="rounded-xl border border-border-light bg-card/90 px-3 py-2.5">
-                  <p className="text-[10px] font-medium text-text-tertiary">Required documents</p>
+                  <p className="text-[10px] font-medium text-text-tertiary">Mandatory + agreements</p>
                   <p className="text-xl font-bold text-text-primary">{documentComplianceScore}%</p>
-                  <p className="text-[10px] text-text-tertiary">Valid &amp; not expired per checklist</p>
+                  <p className="text-[10px] text-text-tertiary">Excludes trade-only certificates</p>
                 </div>
                 <div className="rounded-xl border border-border-light bg-card/90 px-3 py-2.5">
                   <p className="text-[10px] font-medium text-text-tertiary">Profile</p>
@@ -3614,13 +3728,13 @@ function PartnerDetailDrawer({
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold text-text-primary">Required documents</h3>
+                <h3 className="text-sm font-semibold text-text-primary">Mandatory documents (score)</h3>
                 <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setTab("documents")}>
                   Upload / replace
                 </Button>
               </div>
               <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
-                {requiredDocuments.map((req) => {
+                {mandatoryDocsForScore.map((req) => {
                   const st = getRequiredDocComplianceStatus(documents, req);
                   return (
                     <li key={req.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
@@ -3662,6 +3776,59 @@ function PartnerDetailDrawer({
                 })}
               </ul>
             </div>
+
+            {tradeCertificateDocs.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-text-primary">Trade certificates (not in score)</h3>
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setTab("documents")}>
+                  Upload / replace
+                </Button>
+              </div>
+              <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
+                {tradeCertificateDocs.map((req) => {
+                  const st = getRequiredDocComplianceStatus(documents, req);
+                  return (
+                    <li key={req.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex items-start gap-2">
+                        {st === "valid" ? (
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+                        ) : st === "expired" ? (
+                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden />
+                        ) : (
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                        )}
+                        <div>
+                          <p className="text-sm font-medium text-text-primary">{req.name}</p>
+                          <p className="text-[11px] text-text-tertiary">{req.description}</p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2 pl-6 sm:pl-0">
+                        <Badge
+                          variant={st === "valid" ? "success" : st === "expired" ? "danger" : "warning"}
+                          size="sm"
+                        >
+                          {st === "valid" ? "Valid" : st === "expired" ? "Expired" : "Missing"}
+                        </Badge>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="whitespace-nowrap"
+                          onClick={() => {
+                            setDocPreset({ docType: req.docType, name: req.name });
+                            setAddDocOpen(true);
+                            setTab("documents");
+                          }}
+                        >
+                          {st === "valid" ? "Update" : "Add"}
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            )}
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
@@ -4079,11 +4246,12 @@ function PartnerDetailDrawer({
                 </Button>
               </div>
             </div>
-            {partnerTradesForCompliance.some((t) => (OPTIONAL_TRADE_CERTS_BY_TRADE[t] ?? []).length > 0) && (
+            {partnerTradesForCompliance.length > 0 &&
+              partnerTradesForCompliance.some((t) => (OPTIONAL_TRADE_CERTS_BY_TRADE[t] ?? []).length > 0) && (
               <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
                 <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Optional certificates</p>
                 <p className="text-[11px] text-text-tertiary leading-snug">
-                  Recommended but not required for the compliance score.
+                  CSCS etc. — only for selected trades; not part of the compliance score.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {partnerTradesForCompliance.flatMap((t) =>
@@ -4106,10 +4274,11 @@ function PartnerDetailDrawer({
                 </div>
               </div>
             )}
+            {partnerTradesForCompliance.length > 0 && (
             <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/20 p-3 space-y-2">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Other optional</p>
               <p className="text-[11px] text-text-tertiary leading-snug">
-                DBS (Disclosure and Barring Service) — optional; not part of the compliance score.
+                DBS — optional; not part of the compliance score (shown when at least one trade is selected).
               </p>
               <Button
                 size="sm"
@@ -4123,31 +4292,14 @@ function PartnerDetailDrawer({
                 DBS
               </Button>
             </div>
-            <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Required documents</p>
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={customCertName}
-                    onChange={(e) => setCustomCertName(e.target.value)}
-                    placeholder="Add custom certificate requirement"
-                    className="h-8 w-64"
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!customCertName.trim()}
-                    onClick={() => {
-                      setDocPreset({ docType: "certification", name: customCertName.trim() });
-                      setAddDocOpen(true);
-                    }}
-                  >
-                    Add cert
-                  </Button>
-                </div>
-              </div>
+            )}
+            <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-3">
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Mandatory documents</p>
+              <p className="text-[11px] text-text-tertiary leading-snug">
+                Core IDs, insurance, UTR (if self-employed), and agreements — these drive the compliance score. Trade certificates are listed separately.
+              </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {requiredDocuments.map((req) => {
+                {mandatoryDocsForScore.map((req) => {
                   const matchedDocs = pickRequiredDocMatches(documents, req);
                   const doc = matchedDocs[0] ?? null;
                   const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
@@ -4219,6 +4371,110 @@ function PartnerDetailDrawer({
                   );
                 })}
               </div>
+              {tradeCertificateDocs.length > 0 && (
+                <>
+                  <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide pt-1">Trade certificates</p>
+                  <p className="text-[11px] text-text-tertiary leading-snug">
+                    Only for the types of work this partner selected — not included in the compliance score.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                      <Input
+                        value={customCertName}
+                        onChange={(e) => setCustomCertName(e.target.value)}
+                        placeholder="Add custom certificate requirement"
+                        className="h-8 w-full min-[420px]:w-64"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!customCertName.trim()}
+                        onClick={() => {
+                          setDocPreset({ docType: "certification", name: customCertName.trim() });
+                          setAddDocOpen(true);
+                        }}
+                      >
+                        Add cert
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {tradeCertificateDocs.map((req) => {
+                      const matchedDocs = pickRequiredDocMatches(documents, req);
+                      const doc = matchedDocs[0] ?? null;
+                      const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
+                      const now = new Date();
+                      const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+                      const isExpired = !!(expiresAt && expiresAt < now);
+                      const isExpiringSoon = !!(expiresAt && expiresAt >= now && expiresAt <= in30Days);
+                      const certDocs = matchedDocs;
+                      const certValidCount = certDocs.filter((d) => {
+                        if (!d.expires_at) return true;
+                        return new Date(d.expires_at) >= now;
+                      }).length;
+                      const certExpiringSoonCount = certDocs.filter((d) => {
+                        if (!d.expires_at) return false;
+                        const dt = new Date(d.expires_at);
+                        return dt >= now && dt <= in30Days;
+                      }).length;
+                      const certExpiredCount = certDocs.filter((d) => !!(d.expires_at && new Date(d.expires_at) < now)).length;
+                      const statusLabel =
+                        certDocs.length === 0
+                          ? "Missing"
+                          : certValidCount > 0
+                            ? certExpiringSoonCount > 0
+                              ? "Valid (some expiring soon)"
+                              : "Valid"
+                            : certExpiredCount > 0
+                              ? "Expired"
+                              : "Pending";
+                      const statusVariant =
+                        certDocs.length === 0
+                          ? "default"
+                          : certValidCount > 0
+                            ? certExpiringSoonCount > 0
+                              ? "warning"
+                              : "success"
+                            : certExpiredCount > 0
+                              ? "danger"
+                              : "default";
+
+                      return (
+                        <div key={req.id} className="rounded-lg border border-border-light bg-card p-3 space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-text-primary">{req.name}</p>
+                              <p className="text-[11px] text-text-tertiary">{req.description}</p>
+                            </div>
+                            <Badge variant={statusVariant} size="sm">
+                              {statusLabel}
+                            </Badge>
+                          </div>
+                          {doc?.expires_at && (
+                            <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
+                              Expires: {new Date(doc.expires_at).toLocaleDateString()}
+                            </p>
+                          )}
+                          {matchedDocs.length > 0 && (
+                            <p className="text-[11px] text-text-tertiary">Uploaded: {matchedDocs.length}</p>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => {
+                              setDocPreset({ docType: req.docType, name: req.name });
+                              setAddDocOpen(true);
+                            }}
+                          >
+                            {matchedDocs.length ? "Add another certificate" : "Add certificate"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
             <AddPartnerDocumentModal
               open={addDocOpen}
