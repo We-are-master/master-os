@@ -2193,6 +2193,18 @@ function PartnerDetailDrawer({
   const [partnerLocation, setPartnerLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
   const [addDocOpen, setAddDocOpen] = useState(false);
   const [addDocSubmitting, setAddDocSubmitting] = useState(false);
+  const [requestLinkOpen, setRequestLinkOpen] = useState(false);
+  const [requestLinkSubmitting, setRequestLinkSubmitting] = useState(false);
+  const [requestLinkDocTypes, setRequestLinkDocTypes] = useState<string[]>([]);
+  const [requestLinkMessage, setRequestLinkMessage] = useState("");
+  const [requestLinkResult, setRequestLinkResult] = useState<{
+    uploadUrl: string;
+    sentTo: string;
+    expiresAt: string;
+    emailSent: boolean;
+    emailError: string | null;
+  } | null>(null);
+  const [requestLinkError, setRequestLinkError] = useState<string | null>(null);
   const [docPreset, setDocPreset] = useState<{ docType: string; name: string } | null>(null);
   const [customCertName, setCustomCertName] = useState("");
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -4089,17 +4101,32 @@ function PartnerDetailDrawer({
             )}
             <div className="flex items-center justify-between">
               <p className="text-sm font-semibold text-text-primary">{documents.length} Documents</p>
-              <Button
-                size="sm"
-                variant="outline"
-                icon={<Upload className="h-3.5 w-3.5" />}
-                onClick={() => {
-                  setDocPreset(null);
-                  setAddDocOpen(true);
-                }}
-              >
-                Add document
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setRequestLinkDocTypes([]);
+                    setRequestLinkMessage("");
+                    setRequestLinkResult(null);
+                    setRequestLinkError(null);
+                    setRequestLinkOpen(true);
+                  }}
+                >
+                  Request from partner
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Upload className="h-3.5 w-3.5" />}
+                  onClick={() => {
+                    setDocPreset(null);
+                    setAddDocOpen(true);
+                  }}
+                >
+                  Add document
+                </Button>
+              </div>
             </div>
             <div className="rounded-xl border border-border-light bg-card/60 p-3 space-y-2">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agreements</p>
@@ -4283,6 +4310,164 @@ function PartnerDetailDrawer({
               initialName={docPreset?.name}
             />
             <PartnerDocumentDetailModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
+            <Modal
+              open={requestLinkOpen}
+              onClose={() => setRequestLinkOpen(false)}
+              title="Request documents from partner"
+              subtitle="Sends a secure link by email so the partner can upload documents and update their details without logging in."
+              size="md"
+            >
+              <div className="px-6 py-5 space-y-4">
+                {requestLinkResult ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                      {requestLinkResult.emailSent
+                        ? `Link sent to ${requestLinkResult.sentTo}.`
+                        : `Link generated, but email failed${requestLinkResult.emailError ? `: ${requestLinkResult.emailError}` : ""}. Copy it manually below.`}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Upload link</label>
+                      <div className="flex gap-2">
+                        <input
+                          readOnly
+                          value={requestLinkResult.uploadUrl}
+                          className="flex-1 h-9 px-3 rounded-lg border border-border bg-surface-tertiary text-xs font-mono"
+                          onFocus={(e) => e.currentTarget.select()}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(requestLinkResult.uploadUrl);
+                            toast.success("Link copied");
+                          }}
+                        >
+                          Copy
+                        </Button>
+                      </div>
+                    </div>
+                    <p className="text-xs text-text-tertiary">
+                      Expires {new Date(requestLinkResult.expiresAt).toLocaleDateString()} (7 business days).
+                    </p>
+                    <div className="flex justify-end">
+                      <Button size="sm" variant="outline" onClick={() => setRequestLinkOpen(false)}>
+                        Close
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                        Documents to request (optional)
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { value: "insurance", label: "Insurance" },
+                          { value: "certification", label: "Certification" },
+                          { value: "license", label: "License" },
+                          { value: "contract", label: "Contract" },
+                          { value: "tax", label: "Tax" },
+                          { value: "id_proof", label: "ID Proof" },
+                          { value: "other", label: "Other" },
+                        ].map((opt) => {
+                          const checked = requestLinkDocTypes.includes(opt.value);
+                          return (
+                            <label
+                              key={opt.value}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border cursor-pointer hover:bg-surface-hover"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  setRequestLinkDocTypes((prev) =>
+                                    e.target.checked
+                                      ? [...prev, opt.value]
+                                      : prev.filter((v) => v !== opt.value),
+                                  );
+                                }}
+                                className="h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
+                              />
+                              <span className="text-sm text-text-primary">{opt.label}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[11px] text-text-tertiary mt-1.5">
+                        Leave all unchecked to ask for any updated documents.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                        Custom message (optional)
+                      </label>
+                      <textarea
+                        value={requestLinkMessage}
+                        onChange={(e) => setRequestLinkMessage(e.target.value)}
+                        rows={3}
+                        maxLength={2000}
+                        placeholder="e.g. Your insurance certificate expired last month — please upload the renewed copy."
+                        className="w-full px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/15"
+                      />
+                    </div>
+                    {requestLinkError && (
+                      <p className="text-sm text-red-600">{requestLinkError}</p>
+                    )}
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setRequestLinkOpen(false)}
+                        disabled={requestLinkSubmitting}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          if (!partner) return;
+                          setRequestLinkSubmitting(true);
+                          setRequestLinkError(null);
+                          try {
+                            const res = await fetch(
+                              `/api/partners/${partner.id}/request-documents`,
+                              {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  docTypes: requestLinkDocTypes,
+                                  customMessage: requestLinkMessage.trim() || undefined,
+                                }),
+                              },
+                            );
+                            const data = await res.json();
+                            if (!res.ok) {
+                              setRequestLinkError(data.error ?? "Failed to send request.");
+                              return;
+                            }
+                            setRequestLinkResult({
+                              uploadUrl: data.uploadUrl,
+                              sentTo: data.sentTo,
+                              expiresAt: data.expiresAt,
+                              emailSent: Boolean(data.emailSent),
+                              emailError: data.emailError ?? null,
+                            });
+                          } catch {
+                            setRequestLinkError("Network error. Please try again.");
+                          } finally {
+                            setRequestLinkSubmitting(false);
+                          }
+                        }}
+                        disabled={requestLinkSubmitting}
+                      >
+                        {requestLinkSubmitting ? "Sending..." : "Send link"}
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </Modal>
             {loadingDocs && <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}</div>}
             {!loadingDocs && documents.length === 0 && (
               <div className="py-12 text-center">

@@ -406,6 +406,25 @@ export interface Partner {
   bank_name?: string | null;
 }
 
+/** Tokenized self-service link sent to partners so they can refresh docs + profile data without login. */
+export interface PartnerDocumentRequest {
+  id: string;
+  partner_id: string;
+  requested_doc_types: string[];
+  custom_message?: string | null;
+  requested_by?: string | null;
+  requested_by_name?: string | null;
+  sent_to_email?: string | null;
+  expires_at: string;
+  first_used_at?: string | null;
+  last_used_at?: string | null;
+  use_count: number;
+  revoked_at?: string | null;
+  revoked_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Account {
   id: string;
   company_name: string;
