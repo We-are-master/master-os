@@ -268,18 +268,45 @@ export type EnsureWeeklySelfBillOptions = {
 export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
   if (!job.partner_id?.trim()) return null;
   const supabase = getSupabase();
-  const partnerId = job.partner_id.trim();
+  let partnerId = job.partner_id.trim();
   /** `self_bills.partner_id` FK → `partners.id`; jobs can still hold a stale/invalid UUID. */
-  const { data: partnerRow, error: partnerLookupErr } = await supabase
+  let { data: partnerRow, error: partnerLookupErr } = await supabase
     .from("partners")
     .select("id")
     .eq("id", partnerId)
     .maybeSingle();
   if (partnerLookupErr) throw partnerLookupErr;
   if (!partnerRow?.id) {
-    throw new Error(
-      "This partner is not in the directory (link broken or partner removed). Re-assign the partner on the job, then create the self-bill again.",
-    );
+    const partnerName = (job.partner_name ?? "").trim();
+    if (partnerName) {
+      const byCompany = await supabase
+        .from("partners")
+        .select("id")
+        .ilike("company_name", partnerName)
+        .limit(1)
+        .maybeSingle();
+      if (byCompany.error) throw byCompany.error;
+      if (byCompany.data?.id) {
+        partnerRow = byCompany.data;
+      } else {
+        const byContact = await supabase
+          .from("partners")
+          .select("id")
+          .ilike("contact_name", partnerName)
+          .limit(1)
+          .maybeSingle();
+        if (byContact.error) throw byContact.error;
+        if (byContact.data?.id) partnerRow = byContact.data;
+      }
+    }
+    if (!partnerRow?.id) {
+      throw new Error(
+        "This partner is not in the directory (link broken or partner removed). Re-assign the partner on the job, then create the self-bill again.",
+      );
+    }
+    partnerId = String(partnerRow.id).trim();
+    const { error: repairErr } = await supabase.from("jobs").update({ partner_id: partnerId }).eq("id", job.id);
+    if (repairErr) throw repairErr;
   }
   const anchor = options?.weekAnchorDate ?? new Date(job.created_at);
   const { weekStart, weekEnd, weekLabel } = getWeekBoundsForDate(anchor);
