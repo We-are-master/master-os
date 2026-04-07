@@ -40,6 +40,8 @@ interface ButtonProps {
   title?: string;
   /** Associate a submit button with a form by id when the button is outside the `<form>`. */
   form?: string;
+  "aria-label"?: string;
+  "aria-pressed"?: boolean | "true" | "false" | "mixed";
 }
 
 export function Button({
@@ -54,12 +56,16 @@ export function Button({
   type = "button",
   title,
   form,
+  "aria-label": ariaLabel,
+  "aria-pressed": ariaPressed,
 }: ButtonProps) {
   return (
     <motion.button
       type={type}
       title={title}
       form={form}
+      aria-label={ariaLabel}
+      aria-pressed={ariaPressed}
       whileTap={!disabled ? buttonTap : undefined}
       className={cn(
         "inline-flex items-center justify-center font-medium transition-all duration-200 cursor-pointer select-none",
