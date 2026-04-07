@@ -60,3 +60,16 @@ export function safePartnerMatchesTypeOfWork(partner: Partner, serviceType: stri
     return false;
   }
 }
+
+/** Label for matched partner rows: selected TOW first, then how many other trades partner has. */
+export function partnerMatchTypeLabel(partner: Partner, selectedTypeOfWork: string): string {
+  const selected = normalizeTypeOfWork(String(selectedTypeOfWork ?? "").trim()).trim();
+  const rawTrades = (partner.trades?.length ? partner.trades : [partner.trade]).filter(Boolean) as string[];
+  if (!selected) {
+    return rawTrades[0] || partner.trade || "—";
+  }
+  const normalized = rawTrades.map((t) => normalizeTypeOfWork(String(t)));
+  const matchedIndex = normalized.findIndex((t) => t === selected);
+  const othersCount = matchedIndex >= 0 ? Math.max(0, rawTrades.length - 1) : Math.max(0, rawTrades.length);
+  return othersCount > 0 ? `${selected} and ${othersCount} other${othersCount > 1 ? "s" : ""}` : selected;
+}
