@@ -80,7 +80,8 @@ export const REQUIRED_PARTNER_DOCS = [
 ] as const;
 
 export const CERT_REQUIREMENTS_BY_TRADE: Record<string, string[]> = {
-  Plumber: ["Water Regulations", "WRAS"],
+  /** WRAS omitted for now (not required for small repairs). */
+  Plumber: ["Water Regulations"],
   Electrician: ["NICEIC", "ECS Card", "18th Edition Wiring Regulations"],
   "Gas Safety Certificate": ["Gas Safe Certificate", "ACS Gas Certificate"],
   "PAT Testing": ["PAT Testing Certificate"],
@@ -113,6 +114,32 @@ export const UTR_REQUIRED_DOC: RequiredDocDef = {
   docType: "utr",
   aliases: ["utr", "hmrc", "unique taxpayer", "utr (hmrc)", "tax reference"],
 };
+
+/** Always included in blended document score (with core mandatory IDs). */
+export const AGREEMENT_REQUIRED_DOCS: RequiredDocDef[] = [
+  {
+    id: "service_agreement",
+    name: "Service Agreement",
+    description: "Signed service agreement on file",
+    docType: "service_agreement",
+    aliases: ["service agreement", "service_agreement"],
+  },
+  {
+    id: "self_bill_agreement",
+    name: "Self Bill Agreement",
+    description: "Signed self-bill agreement on file",
+    docType: "self_bill_agreement",
+    aliases: ["self bill", "self-bill", "self_bill_agreement", "self bill agreement"],
+  },
+];
+
+/** Core mandatory IDs + UTR (if self-employed) + agreements — excludes trade certificates from the score. */
+export function buildMandatoryDocsForComplianceScore(partner: Partner | null): RequiredDocDef[] {
+  const core: RequiredDocDef[] = [...REQUIRED_PARTNER_DOCS];
+  const withUtr =
+    partner && inferPartnerLegal(partner) === "self_employed" ? [...core, UTR_REQUIRED_DOC] : [...core];
+  return [...withUtr, ...AGREEMENT_REQUIRED_DOCS];
+}
 
 export function pickRequiredDocMatch(docs: PartnerDocLike[], req: RequiredDocDef): PartnerDocLike | null {
   return pickRequiredDocMatches(docs, req)[0] ?? null;
