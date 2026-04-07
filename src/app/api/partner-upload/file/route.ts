@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { verifyPartnerUploadToken } from "@/lib/partner-upload-token";
+import { resolvePartnerUploadToken } from "@/lib/partner-upload-resolver";
 
 export const runtime = "nodejs";
 
@@ -26,6 +26,11 @@ const ALLOWED_DOC_TYPES = new Set([
   "tax",
   "id_proof",
   "other",
+  "proof_of_address",
+  "right_to_work",
+  "utr",
+  "public_liability",
+  "photo_id",
 ]);
 
 function safeFileName(name: string): string {
@@ -58,7 +63,8 @@ export async function POST(req: NextRequest) {
   if (!token) {
     return NextResponse.json({ error: "Missing token" }, { status: 400 });
   }
-  const payload = verifyPartnerUploadToken(token);
+  const supabase = createServiceClient();
+  const payload = await resolvePartnerUploadToken(supabase, token);
   if (!payload) {
     return NextResponse.json({ error: "Invalid or expired link" }, { status: 401 });
   }
@@ -82,8 +88,6 @@ export async function POST(req: NextRequest) {
   const docType = ALLOWED_DOC_TYPES.has(docTypeRaw) ? docTypeRaw : "other";
   const displayName =
     String(form.get("name") ?? "").trim().slice(0, 180) || file.name || "Document";
-
-  const supabase = createServiceClient();
 
   /** Re-verify the request row on every hit so revoke / expiry take effect immediately. */
   const { data: requestRow, error: reqErr } = await supabase
