@@ -90,7 +90,8 @@ export async function POST(req: NextRequest) {
         return withServerTiming({ error: "Failed to update quote" }, 500, marks);
       }
 
-      await supabase.from("audit_logs").insert({
+      /** Audit log is downstream: customer doesn't wait for it. */
+      void supabase.from("audit_logs").insert({
         entity_type: "quote",
         entity_id: quoteId,
         entity_ref: quote.reference,
@@ -99,7 +100,7 @@ export async function POST(req: NextRequest) {
         old_value: quote.status,
         new_value: "rejected",
         metadata: updates.rejection_reason ? { rejection_reason: updates.rejection_reason } : {},
-      });
+      }).then(({ error }) => { if (error) console.error("audit_logs insert (reject)", error); });
 
       marks.push(["total", performance.now() - startedAt]);
       return withServerTiming({
@@ -291,21 +292,32 @@ export async function POST(req: NextRequest) {
       marks.push(["stripe_calls", performance.now() - tStripe]);
 
       const tWrites = performance.now();
-      await supabase
-        .from("invoices")
-        .update({
-          stripe_payment_link_id: paymentLink.id,
-          stripe_payment_link_url: paymentLink.url,
-          stripe_payment_status: "pending",
-          stripe_customer_email: quote.client_email ?? null,
-        })
-        .eq("id", invoice.id);
+      /** Final invoice ref RPC can run in parallel with the post-Stripe writes. */
+      const finalRefPromise: Promise<string | null> = finalBalance > 0.01
+        ? Promise.resolve(supabase.rpc("next_invoice_ref")).then(({ data }) => (data as string | null) ?? `INV-F-${Date.now()}`)
+        : Promise.resolve(null);
 
-      await supabase.from("jobs").update({ invoice_id: invoice.id }).eq("id", job.id);
+      /** Three updates that touch different rows can all happen in parallel. */
+      await Promise.all([
+        supabase
+          .from("invoices")
+          .update({
+            stripe_payment_link_id: paymentLink.id,
+            stripe_payment_link_url: paymentLink.url,
+            stripe_payment_status: "pending",
+            stripe_customer_email: quote.client_email ?? null,
+          })
+          .eq("id", invoice.id),
+        supabase.from("jobs").update({ invoice_id: invoice.id }).eq("id", job.id),
+        supabase
+          .from("quotes")
+          .update({ status: "accepted", customer_accepted: true, updated_at: now })
+          .eq("id", quoteId)
+          .then(({ error }) => { if (error) console.error("Quote accept: quote update failed", error); }),
+      ]);
 
-      if (finalBalance > 0.01) {
-        const { data: finRefRow } = await supabase.rpc("next_invoice_ref");
-        const finalRef = (finRefRow as string) ?? `INV-F-${Date.now()}`;
+      const finalRef = await finalRefPromise;
+      if (finalRef) {
         const { error: finInvErr } = await supabase.from("invoices").insert({
           reference: finalRef,
           client_name: quote.client_name ?? "",
@@ -322,23 +334,16 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      await syncInvoicesFromJobCustomerPayments(supabase, job.id);
-      await maybeCompleteAwaitingPaymentJob(supabase, job.id);
-
-      const { error: quoteUpdateErr } = await supabase
-        .from("quotes")
-        .update({
-          status: "accepted",
-          customer_accepted: true,
-          updated_at: now,
-        })
-        .eq("id", quoteId);
-
-      if (quoteUpdateErr) {
-        console.error("Quote accept: quote update failed", quoteUpdateErr);
-      }
-
-      await supabase.from("audit_logs").insert({
+      /** Downstream syncs + audit log don't gate the response — fire-and-forget. */
+      void (async () => {
+        try {
+          await syncInvoicesFromJobCustomerPayments(supabase, job.id);
+          await maybeCompleteAwaitingPaymentJob(supabase, job.id);
+        } catch (e) {
+          console.error("Quote accept: downstream sync failed", e);
+        }
+      })();
+      void supabase.from("audit_logs").insert({
         entity_type: "quote",
         entity_id: quoteId,
         entity_ref: quote.reference,
@@ -347,7 +352,7 @@ export async function POST(req: NextRequest) {
         old_value: quote.status,
         new_value: "accepted",
         metadata: { job_id: job.id, invoice_id: invoice.id, deposit_invoice: true },
-      });
+      }).then(({ error }) => { if (error) console.error("audit_logs insert (accept)", error); });
       marks.push(["db_updates", performance.now() - tWrites]);
       marks.push(["total", performance.now() - startedAt]);
 

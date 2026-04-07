@@ -393,11 +393,13 @@ export async function createJob(
   const scheduledPre = Number(input.customer_deposit ?? 0) + Number(input.customer_final_payment ?? 0);
   const invoiceTotalPre = Math.max(0, Math.max(billablePre, scheduledPre));
   const needInvoice = invoiceTotalPre > 0.01 && !inputFromQuotePre;
-  const [jobRefRes, invRefRes] = await Promise.all([
+  /** Geocode in parallel with ref RPCs — same critical path, independent I/O. */
+  const [jobRefRes, invRefRes, coords] = await Promise.all([
     supabase.rpc("next_job_ref"),
     needInvoice
       ? supabase.rpc("next_invoice_ref")
       : Promise.resolve({ data: null as string | null, error: null }),
+    resolveJobGeocode(input.property_address),
   ]);
   if (jobRefRes.error) throw jobRefRes.error;
   const ref = jobRefRes.data as string;
@@ -420,7 +422,6 @@ export async function createJob(
   if (jobHasPartnerSet(input as Job) && (input as Job).status === "auto_assigning") {
     baseRow.status = "scheduled";
   }
-  const coords = await resolveJobGeocode(input.property_address);
   if (coords) {
     baseRow.latitude = coords.latitude;
     baseRow.longitude = coords.longitude;

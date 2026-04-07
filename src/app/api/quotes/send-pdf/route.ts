@@ -31,29 +31,32 @@ function isHttpsUrl(u: string): boolean {
   }
 }
 
-/** Fetch public site-photo URLs and build Resend attachment payloads (max 8 MB each). */
-async function sitePhotoAttachments(photoUrls: string[]): Promise<{ filename: string; content: Buffer; contentType: string }[]> {
-  const out: { filename: string; content: Buffer; contentType: string }[] = [];
-  for (let i = 0; i < photoUrls.length; i++) {
-    const raw = typeof photoUrls[i] === "string" ? photoUrls[i].trim() : "";
-    if (!raw || !isHttpsUrl(raw)) continue;
-    try {
-      const r = await fetch(raw);
-      if (!r.ok) continue;
-      const buf = Buffer.from(await r.arrayBuffer());
-      if (buf.length > 8 * 1024 * 1024) continue;
-      const ct = (r.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
-      const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : ct.includes("gif") ? "gif" : "jpg";
-      out.push({
-        filename: `site-photo-${i + 1}.${ext}`,
-        content: buf,
-        contentType: ct || "image/jpeg",
-      });
-    } catch {
-      /* skip broken or blocked URL */
-    }
-  }
-  return out;
+/** Fetch public site-photo URLs and build Resend attachment payloads (max 8 MB each).
+ *  Photos are fetched in parallel — sequential awaits added 100s of ms per attachment. */
+type SitePhotoAttachment = { filename: string; content: Buffer; contentType: string };
+async function sitePhotoAttachments(photoUrls: string[]): Promise<SitePhotoAttachment[]> {
+  const results = await Promise.all(
+    photoUrls.map(async (rawUrl, i): Promise<SitePhotoAttachment | null> => {
+      const raw = typeof rawUrl === "string" ? rawUrl.trim() : "";
+      if (!raw || !isHttpsUrl(raw)) return null;
+      try {
+        const r = await fetch(raw);
+        if (!r.ok) return null;
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (buf.length > 8 * 1024 * 1024) return null;
+        const ct = (r.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+        const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : ct.includes("gif") ? "gif" : "jpg";
+        return {
+          filename: `site-photo-${i + 1}.${ext}`,
+          content: buf,
+          contentType: ct || "image/jpeg",
+        };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return results.filter((r): r is SitePhotoAttachment => r !== null);
 }
 
 export async function POST(req: NextRequest) {
@@ -239,12 +242,13 @@ export async function POST(req: NextRequest) {
 
     const sentAt = new Date().toISOString();
     const tWrite = nowMs();
+    /** Quote status update is awaited (caller relies on it); audit log is fire-and-forget. */
     await supabase
       .from("quotes")
       .update({ status: "awaiting_customer", customer_pdf_sent_at: sentAt })
       .eq("id", quoteId);
 
-    await supabase.from("audit_logs").insert({
+    void supabase.from("audit_logs").insert({
       entity_type: "quote",
       entity_id: quoteId,
       entity_ref: quote.reference,
@@ -253,7 +257,7 @@ export async function POST(req: NextRequest) {
       old_value: quote.status,
       new_value: "awaiting_customer",
       metadata: { email_to: emailTo, resend_id: emailResult?.id },
-    });
+    }).then(({ error }) => { if (error) console.error("audit_logs insert (send-pdf)", error); });
     marks.push(["db_updates", nowMs() - tWrite]);
     marks.push(["total", nowMs() - startedAt]);
 
