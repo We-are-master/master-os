@@ -196,7 +196,8 @@ function formatMediumDateEnGbFromYmd(ymd: string): string {
 }
 
 /**
- * Jobs list / kanban / map: start date only. “Tomorrow” when UK calendar day (Europe/London) is the day after today.
+ * Jobs list / kanban / map: start date only.
+ * Uses relative labels in UK calendar (Europe/London): Today / Tomorrow.
  */
 export function formatJobScheduleListLabel(job: {
   scheduled_date?: string | null;
@@ -212,6 +213,8 @@ export function formatJobScheduleListLabel(job: {
 
   const todayUk = isoCalendarDateInUk(new Date());
   if (!todayUk) return formatMediumDateEnGbFromYmd(startYmd);
+
+  if (startYmd === todayUk) return "Today";
 
   const tomorrowUk = addOneCalendarDayYmd(todayUk);
   if (startYmd === tomorrowUk) return "Tomorrow";
