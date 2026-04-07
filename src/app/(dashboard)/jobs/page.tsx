@@ -560,7 +560,6 @@ function JobsPageContent() {
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
     { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.completed },
     { id: "cancelled", label: "Lost & Cancelled", count: tabCounts.cancelled ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.cancelled },
-    { id: "deleted", label: "Deleted", count: tabCounts.deleted ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.deleted },
   ];
 
   useEffect(() => {
@@ -1104,13 +1103,29 @@ function JobsPageContent() {
       render: (item) => {
         const line = formatJobScheduleListLabel(item);
         const detail = formatJobScheduleLine(item);
+        const isTomorrow = line === "Tomorrow";
+        const isToday = line === "Today";
         return line ? (
-          <span
-            className="text-xs text-text-secondary leading-snug block whitespace-normal break-words"
-            title={detail ?? undefined}
-          >
-            {line}
-          </span>
+          isTomorrow || isToday ? (
+            <span
+              className={cn(
+                "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
+                isTomorrow
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
+                  : "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300",
+              )}
+              title={detail ?? undefined}
+            >
+              {line}
+            </span>
+          ) : (
+            <span
+              className="text-xs text-text-secondary leading-snug block whitespace-normal break-words"
+              title={detail ?? undefined}
+            >
+              {line}
+            </span>
+          )
         ) : (
           <span className="text-xs text-text-tertiary">—</span>
         );
@@ -1374,10 +1389,7 @@ function JobsPageContent() {
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <BulkBtn label="Start Job" onClick={() => setBulkActionModal("start_job")} variant="success" />
-                    <BulkBtn label="Mark as Paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
-                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
-                    <BulkBtn label="Delete" onClick={() => setBulkActionModal("archive")} variant="danger" />
+                    <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 )
               }

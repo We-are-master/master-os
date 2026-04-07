@@ -822,35 +822,35 @@ export default function SelfBillPage() {
               )}
             </div>
           ) : (
-            <DataTable
-              columns={columns}
-              data={filtered}
-              getRowId={(item) => item.id}
-              loading={loading}
-              page={1}
-              totalPages={1}
-              totalItems={filtered.length}
+          <DataTable
+            columns={columns}
+            data={filtered}
+            getRowId={(item) => item.id}
+            loading={loading}
+            page={1}
+            totalPages={1}
+            totalItems={filtered.length}
               emptyMessage="No self-bills in this view."
               onRowClick={(item) => void openJobsModal(item)}
-              selectable
-              selectedIds={selectedIds}
-              onSelectionChange={setSelectedIds}
+            selectable
+            selectedIds={selectedIds}
+            onSelectionChange={setSelectedIds}
               tableClassName="min-w-[1220px]"
-              bulkActions={
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
+            bulkActions={
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
                   {activeTab === "pending_review" && (
-                    <>
-                      <BulkBtn label="Approve → Ready to pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="success" icon={<CheckCircle2 className="h-3 w-3" />} />
+                  <>
+                    <BulkBtn label="Approve → Ready to pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="success" icon={<CheckCircle2 className="h-3 w-3" />} />
                       <BulkBtn label="Reject" onClick={() => handleBulkStatusChange("rejected")} variant="danger" icon={<XCircle className="h-3 w-3" />} />
-                    </>
-                  )}
-                  <BulkBtn label="Ready to pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="info" />
-                  <BulkBtn label="Mark paid" onClick={() => handleBulkStatusChange("paid")} variant="success" />
-                  <BulkBtn label="Audit required" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
-                </div>
-              }
-            />
+                  </>
+                )}
+                <BulkBtn label="Ready to pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="info" />
+                <BulkBtn label="Mark paid" onClick={() => handleBulkStatusChange("paid")} variant="success" />
+                <BulkBtn label="Audit required" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
+              </div>
+            }
+          />
           )}
         </motion.div>
       </div>
@@ -893,7 +893,7 @@ export default function SelfBillPage() {
                 value={editForm.job_value}
                 onChange={(e) => setEditForm((f) => ({ ...f, job_value: e.target.value }))}
               />
-            </div>
+          </div>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1">Materials</label>
               <Input
