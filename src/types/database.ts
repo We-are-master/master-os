@@ -429,7 +429,7 @@ export interface Account {
   id: string;
   company_name: string;
   contact_name: string;
-  /** Internal account owner (sales / AM), same idea as jobs.owner_name. */
+  /** Legacy denormalized label; prefer `account_owner_id` → `profiles.id`. */
   owner_name?: string | null;
   /** Linked app user (`profiles.id`) as account owner for rollups / Top account owners. */
   account_owner_id?: string | null;

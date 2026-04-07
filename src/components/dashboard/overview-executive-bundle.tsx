@@ -247,24 +247,21 @@ export function OverviewExecutiveBundle() {
 
           const accMetaById = new Map<
             string,
-            { company_name: string; owner_name: string | null; account_owner_id: string | null }
+            { company_name: string; account_owner_id: string | null }
           >();
           if (accIds.size > 0) {
             const { data: accs } = await supabase
               .from("accounts")
-              .select("id, company_name, owner_name, account_owner_id")
+              .select("id, company_name, account_owner_id")
               .in("id", [...accIds])
               .is("deleted_at", null);
             for (const a of accs ?? []) {
               const id = (a as { id: string }).id;
-              const raw = (a as { owner_name?: string | null }).owner_name;
-              const owner = raw != null && String(raw).trim() !== "" ? String(raw).trim() : null;
               const oid = (a as { account_owner_id?: string | null }).account_owner_id;
               const account_owner_id =
                 oid != null && String(oid).trim() !== "" ? String(oid).trim() : null;
               accMetaById.set(id, {
                 company_name: String((a as { company_name?: string }).company_name ?? "Account"),
-                owner_name: owner,
                 account_owner_id,
               });
             }
@@ -301,7 +298,8 @@ export function OverviewExecutiveBundle() {
                 byAccountId.get(aid) ?? {
                   revenue: 0,
                   companyName: meta.company_name,
-                  ownerName: meta.owner_name,
+                  ownerName:
+                    meta.account_owner_id != null ? profileNames.get(meta.account_owner_id) ?? null : null,
                   accountOwnerId: meta.account_owner_id,
                 };
               cur.revenue += amt;
