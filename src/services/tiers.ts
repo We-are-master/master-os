@@ -13,7 +13,7 @@ export async function listCommissionTiers(): Promise<CommissionTier[]> {
 
 export async function updateCommissionTier(
   id: string,
-  updates: Partial<Pick<CommissionTier, "breakeven_amount" | "rate_percent" | "sort_order">>
+  updates: Partial<Pick<CommissionTier, "breakeven_amount" | "rate_percent" | "sort_order" | "sales_goal_monthly">>
 ): Promise<void> {
   const { error } = await getSupabase()
     .from("commission_tiers")
@@ -27,6 +27,7 @@ export async function createCommissionTier(input: {
   breakeven_amount: number;
   rate_percent: number;
   sort_order?: number;
+  sales_goal_monthly?: number | null;
 }): Promise<CommissionTier> {
   const { data, error } = await getSupabase()
     .from("commission_tiers")
@@ -35,6 +36,7 @@ export async function createCommissionTier(input: {
       breakeven_amount: input.breakeven_amount,
       rate_percent: input.rate_percent,
       sort_order: input.sort_order ?? input.tier_number,
+      ...(input.sales_goal_monthly != null ? { sales_goal_monthly: input.sales_goal_monthly } : {}),
     })
     .select("*")
     .single();

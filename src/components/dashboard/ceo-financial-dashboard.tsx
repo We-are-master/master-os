@@ -23,6 +23,8 @@ import {
   splitInvoiceOpenBalanceAwaitingVsOverdue,
 } from "@/lib/ceo-financial-metrics";
 import { getCompanySettings } from "@/services/company";
+import { listCommissionTiers } from "@/services/tiers";
+import type { CommissionTier } from "@/types/database";
 import {
   fetchPipelineJobsForDashboard,
   defaultMonthlySalesGoalGbp,
@@ -133,7 +135,7 @@ export function CeoFinancialDashboard() {
       const prevB = bounds ? previousPeriodBounds(bounds) : null;
 
       try {
-        const [companySettings, pipelineRows, pipelinePrev, jobsForWip, invoicesRes, billsRes, payrollRes] =
+        const [companySettings, pipelineRows, pipelinePrev, jobsForWip, invoicesRes, billsRes, payrollRes, tiersList] =
           await Promise.all([
             getCompanySettings(),
             fetchPipelineJobsForDashboard(supabase, bounds),
@@ -163,10 +165,11 @@ export function CeoFinancialDashboard() {
               }
               return q;
             })(),
+            listCommissionTiers().catch(() => [] as CommissionTier[]),
           ]);
 
         if (cancelled) return;
-        setMonthlyGoal(resolveMonthlySalesGoalFromCompany(companySettings));
+        setMonthlyGoal(resolveMonthlySalesGoalFromCompany(companySettings, tiersList));
 
         let s = 0;
         let cos = 0;

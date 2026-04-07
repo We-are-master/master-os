@@ -1,6 +1,7 @@
 import { getSupabase } from "@/services/base";
 import { isPostgrestSelectSchemaError, isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { jobExecutionOverlapsYmdRange } from "@/lib/job-period-overlap";
+import type { CommissionTier } from "@/types/database";
 
 export {
   jobExecutionOverlapsYmdRange,
@@ -131,8 +132,25 @@ export function defaultMonthlySalesGoalGbp(): number {
   return Number.isFinite(n) && n > 0 ? n : 35_000;
 }
 
-/** Prefer company_settings; fallback to env default. */
-export function resolveMonthlySalesGoalFromCompany(settings: { dashboard_sales_goal_monthly?: number | null } | null): number {
+export type CompanySalesGoalSettings = {
+  dashboard_sales_goal_monthly?: number | null;
+  dashboard_sales_goal_tier_id?: string | null;
+} | null;
+
+/**
+ * Prefer tier `sales_goal_monthly` when `dashboard_sales_goal_tier_id` is set and present in `tiers`;
+ * else `dashboard_sales_goal_monthly`; else env default.
+ */
+export function resolveMonthlySalesGoalFromCompany(
+  settings: CompanySalesGoalSettings,
+  tiers?: CommissionTier[] | null,
+): number {
+  const tierId = settings?.dashboard_sales_goal_tier_id?.trim();
+  if (tierId && tiers && tiers.length > 0) {
+    const t = tiers.find((x) => x.id === tierId);
+    const g = t?.sales_goal_monthly;
+    if (g != null && Number.isFinite(Number(g)) && Number(g) > 0) return Number(g);
+  }
   const db = settings?.dashboard_sales_goal_monthly;
   if (db != null && Number.isFinite(Number(db)) && Number(db) > 0) return Number(db);
   return defaultMonthlySalesGoalGbp();

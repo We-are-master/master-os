@@ -138,7 +138,7 @@ export function OverviewExecutiveBundle() {
         const fromDay = fromIso.slice(0, 10);
         const toDay = toBound.slice(0, 10);
 
-        setMonthlySalesGoal(resolveMonthlySalesGoalFromCompany(companySettings));
+        setMonthlySalesGoal(resolveMonthlySalesGoalFromCompany(companySettings, tiersList));
 
         const invoiceRows = (invoicesRes.error ? [] : invoicesRes.data ?? []) as {
           amount?: number;
@@ -569,7 +569,9 @@ export function OverviewExecutiveBundle() {
 
   useEffect(() => {
     function refreshGoal() {
-      void getCompanySettings().then((s) => setMonthlySalesGoal(resolveMonthlySalesGoalFromCompany(s)));
+      void Promise.all([getCompanySettings(), listCommissionTiers().catch(() => [] as CommissionTier[])]).then(([s, t]) => {
+        setMonthlySalesGoal(resolveMonthlySalesGoalFromCompany(s, t));
+      });
     }
     window.addEventListener("master-os-company-settings", refreshGoal);
     return () => window.removeEventListener("master-os-company-settings", refreshGoal);

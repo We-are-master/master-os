@@ -12,12 +12,11 @@ export function isLegacyJobSchema(): boolean {
   return process.env.NEXT_PUBLIC_LEGACY_JOB_SCHEMA === "true";
 }
 
-/** Newer `jobs` columns absent on some production DBs — strip + map status for compat. */
+/** Newer `jobs` columns absent on some production DBs — strip + map status for compat (legacy prepare + retry base list). */
 const JOB_DB_COMPAT_STRIP_KEYS = [
   "quote_id",
   "scheduled_finish_date",
   "extras_amount",
-  "partner_extras_amount",
   "partner_ids",
   "client_address_id",
   "catalog_service_id",
@@ -27,6 +26,12 @@ const JOB_DB_COMPAT_STRIP_KEYS = [
   "images",
   "additional_notes",
 ] as const;
+
+/**
+ * Stripped only on `applyJobDbCompat` (write retry). Omit from legacy `prepare*` so first-class
+ * PATCHes still persist `partner_extras_amount` when migration 105 is applied (Cash Out “Extra payout” line).
+ */
+const JOB_DB_COMPAT_RETRY_EXTRA_STRIP_KEYS = ["partner_extras_amount"] as const;
 
 /**
  * Migration `070_job_operational_flow` columns. If the DB was not migrated, PostgREST returns 400 on PATCH.
@@ -70,6 +75,7 @@ function mapUnassignedStatus(status: unknown): unknown {
 export function applyJobDbCompat(row: Record<string, unknown>): Record<string, unknown> {
   const out = { ...row };
   for (const k of JOB_DB_COMPAT_STRIP_KEYS) delete out[k];
+  for (const k of JOB_DB_COMPAT_RETRY_EXTRA_STRIP_KEYS) delete out[k];
   /** Only map unassigned→scheduled when legacy env is on. Otherwise retry would wrongly force "scheduled" with no partner. */
   if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   stripOperationalFlowKeysIfDisabled(out);

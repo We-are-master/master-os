@@ -39,6 +39,8 @@ export interface CompanySettings {
   partner_cancellation_fee_gbp?: number | null;
   /** Overview dashboard: monthly pipeline target (GBP), scaled to the selected period. */
   dashboard_sales_goal_monthly?: number | null;
+  /** When set, Overview uses that tier's `sales_goal_monthly` instead of the manual value above. */
+  dashboard_sales_goal_tier_id?: string | null;
   updated_at: string;
 }
 

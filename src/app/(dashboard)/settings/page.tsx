@@ -33,6 +33,7 @@ import {
   createCommissionTier,
   ensureCommissionConfigDefaults,
 } from "@/services/tiers";
+import { getCompanySettings, updateCompanySettings } from "@/services/company";
 import { formatCurrency, setAppCurrencyCode } from "@/lib/utils";
 import type { Profile, CommissionTier, CommissionPoolShare } from "@/types/database";
 import type { NavGroup } from "@/lib/constants";
@@ -767,20 +768,23 @@ function TiersTab() {
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
   const [poolShares, setPoolShares] = useState<CommissionPoolShare[]>([]);
   const [revenue, setRevenue] = useState<number>(0);
+  const [dashboardSalesGoalTierId, setDashboardSalesGoalTierId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [t, p, r] = await Promise.all([
+      const [t, p, r, company] = await Promise.all([
         listCommissionTiers(),
         listCommissionPoolShares(),
         getCurrentMonthRevenue(),
+        getCompanySettings().catch(() => null),
       ]);
       setTiers(t);
       setPoolShares(p);
       setRevenue(r);
+      setDashboardSalesGoalTierId(company?.dashboard_sales_goal_tier_id?.trim() ?? "");
     } catch {
       toast.error("Failed to load tiers");
     } finally {
@@ -792,14 +796,36 @@ function TiersTab() {
     load();
   }, [load]);
 
-  const handleSaveTier = async (id: string, breakeven_amount: number, rate_percent: number) => {
+  const handleSaveTier = async (
+    id: string,
+    breakeven_amount: number,
+    rate_percent: number,
+    sales_goal_monthly: number | null,
+  ) => {
     setSavingId(id);
     try {
-      await updateCommissionTier(id, { breakeven_amount, rate_percent });
-      setTiers((prev) => prev.map((x) => (x.id === id ? { ...x, breakeven_amount, rate_percent } : x)));
+      await updateCommissionTier(id, { breakeven_amount, rate_percent, sales_goal_monthly });
+      setTiers((prev) =>
+        prev.map((x) => (x.id === id ? { ...x, breakeven_amount, rate_percent, sales_goal_monthly } : x)),
+      );
       toast.success("Tier updated");
+      window.dispatchEvent(new Event("master-os-company-settings"));
     } catch {
       toast.error("Failed to update tier");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleSaveDashboardGoalSource = async (tierId: string) => {
+    setSavingId("dashboard-goal-source");
+    try {
+      await updateCompanySettings({ dashboard_sales_goal_tier_id: tierId.trim() ? tierId.trim() : null });
+      setDashboardSalesGoalTierId(tierId.trim());
+      toast.success("Dashboard sales goal source updated");
+      window.dispatchEvent(new Event("master-os-company-settings"));
+    } catch {
+      toast.error("Failed to save dashboard goal source");
     } finally {
       setSavingId(null);
     }
@@ -884,6 +910,37 @@ function TiersTab() {
       </Card>
 
       <Card padding="md">
+        <h4 className="text-sm font-semibold text-text-primary mb-1">Overview dashboard — sales goal source</h4>
+        <p className="text-xs text-text-tertiary mb-3">
+          Pick which tier’s <strong>Sales goal (monthly)</strong> drives the Sales goal bar on the main dashboard. If none is selected, Settings → System uses the manual monthly figure.
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[220px] flex-1">
+            <label className="block text-xs font-medium text-text-secondary mb-1">Use sales goal from tier</label>
+            <Select
+              value={dashboardSalesGoalTierId}
+              onChange={(e) => void handleSaveDashboardGoalSource(e.target.value)}
+              disabled={savingId === "dashboard-goal-source" || tiers.length === 0}
+              options={[
+                { value: "", label: "Manual value (System tab)" },
+                ...tiers
+                  .slice()
+                  .sort((a, b) => a.tier_number - b.tier_number)
+                  .map((t) => ({
+                    value: t.id,
+                    label: `Tier ${t.tier_number}${
+                      t.sales_goal_monthly != null && Number(t.sales_goal_monthly) > 0
+                        ? ` (${formatCurrency(Number(t.sales_goal_monthly))}/mo)`
+                        : " (set goal on tier row)"
+                    }`,
+                  })),
+              ]}
+            />
+          </div>
+        </div>
+      </Card>
+
+      <Card padding="md">
         <div className="flex items-center justify-between gap-2 mb-3">
           <h4 className="text-sm font-semibold text-text-primary">Tier structure</h4>
           <Button
@@ -946,18 +1003,28 @@ function TierRow({
   saving,
 }: {
   tier: CommissionTier;
-  onSave: (id: string, breakeven_amount: number, rate_percent: number) => void;
+  onSave: (id: string, breakeven_amount: number, rate_percent: number, sales_goal_monthly: number | null) => void;
   saving: boolean;
 }) {
   const [breakeven, setBreakeven] = useState(String(tier.breakeven_amount));
   const [rate, setRate] = useState(String(tier.rate_percent));
+  const [salesGoal, setSalesGoal] = useState(
+    tier.sales_goal_monthly != null && Number.isFinite(Number(tier.sales_goal_monthly))
+      ? String(tier.sales_goal_monthly)
+      : "",
+  );
 
   useEffect(() => {
     queueMicrotask(() => {
       setBreakeven(String(tier.breakeven_amount));
       setRate(String(tier.rate_percent));
+      setSalesGoal(
+        tier.sales_goal_monthly != null && Number.isFinite(Number(tier.sales_goal_monthly))
+          ? String(tier.sales_goal_monthly)
+          : "",
+      );
     });
-  }, [tier.id, tier.breakeven_amount, tier.rate_percent]);
+  }, [tier.id, tier.breakeven_amount, tier.rate_percent, tier.sales_goal_monthly]);
 
   return (
     <div className="flex flex-wrap items-center gap-2 p-3 rounded-lg bg-surface-hover">
@@ -976,11 +1043,35 @@ function TierRow({
         placeholder="Rate %"
         className="w-20"
       />
+      <div className="flex flex-col gap-0.5">
+        <span className="text-[10px] font-medium text-text-tertiary">Sales goal / mo</span>
+        <Input
+          type="number"
+          min={0}
+          step={100}
+          value={salesGoal}
+          onChange={(e) => setSalesGoal(e.target.value)}
+          placeholder="Optional"
+          className="w-28"
+        />
+      </div>
       <Button
         size="sm"
         disabled={saving}
         icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-        onClick={() => onSave(tier.id, parseFloat(breakeven) || 0, parseFloat(rate) || 0)}
+        onClick={() => {
+          const sg = salesGoal.trim();
+          const sales_goal_monthly =
+            sg === "" ? null : Math.max(0, Number.parseFloat(sg));
+          onSave(
+            tier.id,
+            parseFloat(breakeven) || 0,
+            parseFloat(rate) || 0,
+            sales_goal_monthly != null && Number.isFinite(sales_goal_monthly) && sales_goal_monthly > 0
+              ? sales_goal_monthly
+              : null,
+          );
+        }}
       >
         Save
       </Button>
@@ -1397,8 +1488,16 @@ function SystemTab() {
     quote_footer_notes: "",
     currency: "GBP",
     dashboard_sales_goal_monthly: "35000",
+    dashboard_sales_goal_tier_id: "",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
+  const [tiersForGoalSelect, setTiersForGoalSelect] = useState<CommissionTier[]>([]);
+
+  useEffect(() => {
+    void listCommissionTiers()
+      .then(setTiersForGoalSelect)
+      .catch(() => setTiersForGoalSelect([]));
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -1427,6 +1526,8 @@ function SystemTab() {
             const v = (data as { dashboard_sales_goal_monthly?: number | null }).dashboard_sales_goal_monthly;
             return v != null && Number.isFinite(Number(v)) && Number(v) > 0 ? String(v) : "35000";
           })(),
+          dashboard_sales_goal_tier_id:
+            (data as { dashboard_sales_goal_tier_id?: string | null }).dashboard_sales_goal_tier_id?.trim() ?? "",
         });
       }
       setLoading(false);
@@ -1447,6 +1548,7 @@ function SystemTab() {
         logo_dark_theme_url: form.logo_dark_theme_url.trim() || null,
         favicon_url: form.favicon_url.trim() || null,
         dashboard_sales_goal_monthly: Math.max(0, Number(form.dashboard_sales_goal_monthly) || 35000),
+        dashboard_sales_goal_tier_id: form.dashboard_sales_goal_tier_id.trim() || null,
       };
       if (settingsId) {
         const { error } = await supabase.from("company_settings").update(payload).eq("id", settingsId);
@@ -1527,7 +1629,31 @@ function SystemTab() {
               <p className="text-[10px] text-text-tertiary mt-1">Applied when VAT is ticked on manual quote lines (e.g. 20 for 20%).</p>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Monthly sales goal (Overview)</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Dashboard sales goal — use tier (optional)</label>
+              <Select
+                value={form.dashboard_sales_goal_tier_id}
+                onChange={(e) => update("dashboard_sales_goal_tier_id", e.target.value)}
+                options={[
+                  { value: "", label: "None — use manual monthly figure below" },
+                  ...tiersForGoalSelect
+                    .slice()
+                    .sort((a, b) => a.tier_number - b.tier_number)
+                    .map((t) => ({
+                      value: t.id,
+                      label: `Tier ${t.tier_number}${
+                        t.sales_goal_monthly != null && Number(t.sales_goal_monthly) > 0
+                          ? ` (${formatCurrency(Number(t.sales_goal_monthly))}/mo)`
+                          : ""
+                      }`,
+                    })),
+                ]}
+              />
+              <p className="text-[10px] text-text-tertiary mt-1 mb-3">
+                When a tier is selected, its <strong>Sales goal (monthly)</strong> from Commission tiers overrides the manual value. Set per-tier goals in Settings → Commission tiers.
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Monthly sales goal (Overview) — manual fallback</label>
               <Input
                 type="number"
                 min={0}
@@ -1537,8 +1663,8 @@ function SystemTab() {
                 placeholder="35000"
               />
               <p className="text-[10px] text-text-tertiary mt-1">
-                Pipeline target for the Sales goal bar on the dashboard (same currency as the app). Scales to the selected date range; falls back to{" "}
-                <code className="text-[10px]">NEXT_PUBLIC_DASHBOARD_SALES_GOAL_MONTHLY_GBP</code> if unset.
+                Used when no tier is selected above, or the selected tier has no sales goal. Scales to the selected date range; env fallback{" "}
+                <code className="text-[10px]">NEXT_PUBLIC_DASHBOARD_SALES_GOAL_MONTHLY_GBP</code>.
               </p>
             </div>
           </div>

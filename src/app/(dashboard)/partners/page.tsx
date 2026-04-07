@@ -114,8 +114,8 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 
 const PARTNER_STAGE_PILLS: { id: string; label: string; icon: typeof Clock }[] = [
   { id: "onboarding", label: "Onboarding", icon: Clock },
-  { id: "needs_attention", label: "Needs Attention", icon: AlertTriangle },
   { id: "active", label: "Active", icon: CheckCircle2 },
+  { id: "needs_attention", label: "Needs Attention", icon: AlertTriangle },
   { id: "inactive", label: "Inactive", icon: XCircle },
 ];
 
