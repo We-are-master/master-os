@@ -26,7 +26,10 @@ import {
   resolveMonthlySalesGoalFromCompany,
   type OverviewPipelineJobRow,
 } from "@/lib/dashboard-overview-jobs";
-import { getDashboardSalesGoalTierNumberPreference } from "@/lib/dashboard-sales-goal-preference";
+import {
+  getDashboardSalesGoalMonthlyOverrideGbp,
+  getDashboardSalesGoalTierNumberPreference,
+} from "@/lib/dashboard-sales-goal-preference";
 import { dashboardBoundsToInclusiveLocalYmd } from "@/lib/dashboard-date-range";
 import {
   localCalendarMonthYmdBounds,
@@ -147,6 +150,7 @@ export function OverviewExecutiveBundle() {
             companySettings,
             tiersList,
             getDashboardSalesGoalTierNumberPreference(),
+            getDashboardSalesGoalMonthlyOverrideGbp(),
           ),
         );
 
@@ -585,7 +589,12 @@ export function OverviewExecutiveBundle() {
     function refreshGoal() {
       void Promise.all([getCompanySettings(), listCommissionTiers().catch(() => [] as CommissionTier[])]).then(([s, t]) => {
         setMonthlySalesGoal(
-          resolveMonthlySalesGoalFromCompany(s, t, getDashboardSalesGoalTierNumberPreference()),
+          resolveMonthlySalesGoalFromCompany(
+            s,
+            t,
+            getDashboardSalesGoalTierNumberPreference(),
+            getDashboardSalesGoalMonthlyOverrideGbp(),
+          ),
         );
       });
     }

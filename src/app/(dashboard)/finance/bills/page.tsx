@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, type MouseEvent } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import {
   ChevronDown,
   ChevronRight,
   Archive,
+  Ban,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -243,10 +244,33 @@ export default function BillsPage() {
   const handleMarkPaid = async (bill: Bill) => {
     try {
       await markBillPaid(bill.id);
-      toast.success("Bill marked paid.");
+      toast.success("Marked paid — updated in Pay Run and cost views for this line.");
       load();
     } catch {
       toast.error("Failed to mark paid");
+    }
+  };
+
+  const openEditBill = (bill: Bill, e?: MouseEvent) => {
+    e?.stopPropagation();
+    setEditing(bill);
+    setModalOpen(true);
+  };
+
+  const handleVoidBill = async (bill: Bill) => {
+    if (
+      !confirm(
+        `Void this line (${formatDate(bill.due_date)} · ${formatCurrency(bill.amount)})? It will be archived: removed from pay runs, default lists, and cost KPIs (like deleted). You can restore from the Archived filter.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await archiveBillsByIds([bill.id]);
+      toast.success("Bill voided — archived and removed from pay runs");
+      load();
+    } catch {
+      toast.error("Failed to void bill");
     }
   };
 
@@ -401,9 +425,12 @@ export default function BillsPage() {
     );
   };
 
+  const canVoidBill = (r: Bill) =>
+    !r.archived_at && r.status !== "paid";
+
   const renderBillActions = (r: Bill) => (
-    <div className="flex flex-wrap gap-1 justify-end">
-      <Button variant="ghost" size="sm" icon={<Pencil className="h-3 w-3" />} onClick={() => { setEditing(r); setModalOpen(true); }}>
+    <div className="flex flex-wrap gap-1 justify-end items-center">
+      <Button variant="ghost" size="sm" icon={<Pencil className="h-3 w-3" />} onClick={() => openEditBill(r)}>
         Edit
       </Button>
       {r.archived_at ? (
@@ -421,8 +448,13 @@ export default function BillsPage() {
           </Button>
         </>
       )}
-      {!r.archived_at && r.status === "approved" && (
-        <Button variant="ghost" size="sm" onClick={() => handleMarkPaid(r)}>
+      {!r.archived_at && (r.status === "approved" || r.status === "needs_attention") && (
+        <Button
+          variant="secondary"
+          size="sm"
+          className="font-semibold"
+          onClick={() => void handleMarkPaid(r)}
+        >
           Mark paid
         </Button>
       )}
@@ -436,6 +468,18 @@ export default function BillsPage() {
           Back to submitted
         </Button>
       )}
+      {canVoidBill(r) ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-text-tertiary"
+          icon={<Ban className="h-3 w-3" />}
+          title="Archive this line — removes it from pay runs and cost KPIs"
+          onClick={() => void handleVoidBill(r)}
+        >
+          Void
+        </Button>
+      ) : null}
     </div>
   );
 
@@ -519,7 +563,8 @@ export default function BillsPage() {
                 ) : (
                   <>
                     Filter by workflow stage. Use <span className="font-medium text-text-secondary">Needs attention</span> for
-                    follow-up. <span className="font-medium text-text-secondary">Archived</span> hides bills without deleting them.
+                    follow-up. <span className="font-medium text-text-secondary">Mark paid</span> marks the line paid, clears it
+                    from the next Pay Run, and updates cost / cashflow dashboards. <span className="font-medium text-text-secondary">Void</span> archives the line.
                   </>
                 )}
               </p>
@@ -629,9 +674,18 @@ export default function BillsPage() {
                                 Debit
                               </Badge>
                             ) : null}
-                            <p className="text-sm font-semibold text-text-primary min-w-0 w-full sm:w-auto sm:inline sm:ml-0">
-                              {head.description}
-                            </p>
+                            <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
+                              <p className="text-sm font-semibold text-text-primary min-w-0 truncate">{head.description}</p>
+                              <button
+                                type="button"
+                                className="shrink-0 p-1 rounded-md text-text-tertiary hover:text-primary hover:bg-surface-hover -mr-1"
+                                title="Edit name & details"
+                                aria-label="Edit bill name"
+                                onClick={(e) => openEditBill(head, e)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            </span>
                           </div>
                           <p className="text-xs text-text-tertiary">{billCategoryLabel(head.category)}</p>
                           <p className="text-xs text-text-secondary">
@@ -741,11 +795,33 @@ export default function BillsPage() {
                                 Debit
                               </Badge>
                             ) : null}
-                            <p className="text-sm font-semibold text-text-primary min-w-0 w-full sm:w-auto">{r.description}</p>
+                            <span className="inline-flex items-center gap-1 min-w-0 w-full sm:w-auto">
+                              <p className="text-sm font-semibold text-text-primary min-w-0 truncate">{r.description}</p>
+                              <button
+                                type="button"
+                                className="shrink-0 p-1 rounded-md text-text-tertiary hover:text-primary hover:bg-surface-hover"
+                                title="Edit name & details"
+                                aria-label="Edit bill name"
+                                onClick={(e) => openEditBill(r, e)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            </span>
                           </div>
                         ) : (
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-medium text-text-primary">{r.description}</p>
+                            <span className="inline-flex items-center gap-1 min-w-0">
+                              <p className="text-sm font-medium text-text-primary truncate">{r.description}</p>
+                              <button
+                                type="button"
+                                className="shrink-0 p-1 rounded-md text-text-tertiary hover:text-primary hover:bg-surface-hover"
+                                title="Edit name & details"
+                                aria-label="Edit bill name"
+                                onClick={(e) => openEditBill(r, e)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            </span>
                             {r.category === "debit" ? (
                               <Badge variant="outline" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
                                 Debit

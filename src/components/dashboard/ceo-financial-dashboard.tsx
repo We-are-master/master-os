@@ -32,7 +32,10 @@ import {
   resolveMonthlySalesGoalFromCompany,
   type OverviewPipelineJobRow,
 } from "@/lib/dashboard-overview-jobs";
-import { getDashboardSalesGoalTierNumberPreference } from "@/lib/dashboard-sales-goal-preference";
+import {
+  getDashboardSalesGoalMonthlyOverrideGbp,
+  getDashboardSalesGoalTierNumberPreference,
+} from "@/lib/dashboard-sales-goal-preference";
 import { buildWeeklyCashPositionBuckets, type WeeklyCashPositionRow } from "@/lib/dashboard-cashflow-buckets";
 import {
   CEO_SERVICE_TIER_ORDER,
@@ -175,6 +178,7 @@ export function CeoFinancialDashboard() {
             companySettings,
             tiersList,
             getDashboardSalesGoalTierNumberPreference(),
+            getDashboardSalesGoalMonthlyOverrideGbp(),
           ),
         );
 
@@ -401,7 +405,12 @@ export function CeoFinancialDashboard() {
       void Promise.all([getCompanySettings(), listCommissionTiers().catch(() => [] as CommissionTier[])]).then(
         ([s, t]) => {
           setMonthlyGoal(
-            resolveMonthlySalesGoalFromCompany(s, t, getDashboardSalesGoalTierNumberPreference()),
+            resolveMonthlySalesGoalFromCompany(
+              s,
+              t,
+              getDashboardSalesGoalTierNumberPreference(),
+              getDashboardSalesGoalMonthlyOverrideGbp(),
+            ),
           );
         },
       );

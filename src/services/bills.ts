@@ -1,7 +1,7 @@
 import { getSupabase } from "./base";
 import type { Bill, BillRecurrence, BillStatus } from "@/types/database";
 import { recurringGroupKey } from "@/lib/bill-groups";
-import { removeBillIdsFromPayRunItems } from "./pay-runs";
+import { markPayRunItemsPaid, removeBillIdsFromPayRunItems } from "./pay-runs";
 import { generateRecurringDueDates, RECURRENCE_GENERATION_COUNTS } from "@/lib/bill-recurrence";
 
 export async function listBills(params?: { status?: string; from?: string; to?: string }): Promise<Bill[]> {
@@ -240,17 +240,34 @@ export async function approveAllSubmittedInScope(bills: Bill[]): Promise<{ total
   return { totalApproved };
 }
 
-/** Mark paid only — recurring bills are pre-generated; we do not chain the next row from payment. */
+/**
+ * Mark this bill paid (single row — e.g. one month of a recurring series).
+ * Also marks matching Pay Run lines paid so Pay Run, dashboards, and cashflow stay aligned.
+ */
 export async function markBillPaid(id: string, paidAt?: string): Promise<Bill> {
   const paidDate = paidAt ?? new Date().toISOString().split("T")[0];
-  const { data, error } = await getSupabase()
+  const now = new Date().toISOString();
+  const supabase = getSupabase();
+  const { data, error } = await supabase
     .from("bills")
-    .update({ status: "paid", paid_at: paidDate, updated_at: new Date().toISOString() })
+    .update({ status: "paid", paid_at: paidDate, updated_at: now })
     .eq("id", id)
     .select()
     .single();
   if (error) throw error;
-  return data as Bill;
+  const bill = data as Bill;
+
+  const { data: pri } = await supabase
+    .from("pay_run_items")
+    .select("id")
+    .eq("item_type", "bill")
+    .eq("source_id", id)
+    .eq("status", "pending");
+  const lineIds = (pri ?? []).map((r: { id: string }) => r.id);
+  if (lineIds.length > 0) {
+    await markPayRunItemsPaid(lineIds);
+  }
+  return bill;
 }
 
 export async function archiveBillsByIds(ids: string[]): Promise<void> {
