@@ -251,7 +251,7 @@ function DashboardInner() {
     try {
       const col = dashboardJobsFilterSelectColumns({ periodOverlap: Boolean(bounds) });
       const CHUNK = 600;
-      let jobs: {
+      type JobRow = {
         id: string;
         reference?: string;
         status: string;
@@ -262,30 +262,46 @@ function DashboardInner() {
         finance_status?: string;
         report_submitted?: boolean;
         commission?: number;
-      }[] = [];
+      };
 
+      /** Jobs fetch and the invoice-refs lookup don't depend on each other — fan them out in parallel.
+       *  Trimmed invoices select to `job_reference` only (was over-fetching `id` for nothing). */
+      const invoicesPromise = supabase
+        .from("invoices")
+        .select("job_reference")
+        .is("deleted_at", null);
+
+      let jobsPromise: Promise<JobRow[]>;
       if (bounds) {
         const fromD = bounds.fromIso.slice(0, 10);
         const toD = bounds.toIso.slice(0, 10);
-        for (let off = 0; ; off += CHUNK) {
-          const { data, error } = await supabase
+        jobsPromise = (async () => {
+          const out: JobRow[] = [];
+          for (let off = 0; ; off += CHUNK) {
+            const { data, error } = await supabase
+              .from("jobs")
+              .select(col)
+              .is("deleted_at", null)
+              .range(off, off + CHUNK - 1);
+            if (error) break;
+            const batch = (data ?? []) as unknown as JobRow[];
+            for (const j of batch) {
+              if (jobExecutionOverlapsYmdRange(j, fromD, toD)) out.push(j);
+            }
+            if (batch.length < CHUNK) break;
+          }
+          return out;
+        })();
+      } else {
+        jobsPromise = Promise.resolve(
+          supabase
             .from("jobs")
             .select(col)
-            .is("deleted_at", null)
-            .range(off, off + CHUNK - 1);
-          if (error) break;
-          const batch = (data ?? []) as unknown as typeof jobs;
-          for (const j of batch) {
-            if (jobExecutionOverlapsYmdRange(j, fromD, toD)) jobs.push(j);
-          }
-          if (batch.length < CHUNK) break;
-        }
-      } else {
-        const { data } = await supabase.from("jobs").select(col).is("deleted_at", null);
-        jobs = (data ?? []) as unknown as typeof jobs;
+            .is("deleted_at", null),
+        ).then(({ data }) => (data ?? []) as unknown as JobRow[]);
       }
 
-      const { data: invData } = await supabase.from("invoices").select("id, job_reference");
+      const [jobs, { data: invData }] = await Promise.all([jobsPromise, invoicesPromise]);
       const invoiceRefs = new Set(
         (invData ?? []).map((i: { job_reference?: string }) => i.job_reference?.trim()).filter(Boolean) as string[],
       );

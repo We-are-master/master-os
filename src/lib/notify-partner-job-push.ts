@@ -1,18 +1,38 @@
 import type { Job } from "@/types/database";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 
-const PARTNER_IRRELEVANT_ONLY = new Set(["owner_id", "owner_name"]);
-
 type JobPushScheduleFields = Pick<
   Job,
   "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date"
 >;
 
-/** True when every touched field is internal (office owner) — partner does not need a push. */
-export function updatesOnlyIrrelevantToPartner(updates: Partial<Job>): boolean {
+/**
+ * Partner push for generic `handleJobUpdate` patches should fire only when something
+ * material to the field partner changes — not on every office edit (notes, images, owner, client price, etc.).
+ */
+const PARTNER_PUSH_WORTHY_KEYS = new Set<string>([
+  "scheduled_date",
+  "scheduled_start_at",
+  "scheduled_end_at",
+  "scheduled_finish_date",
+  "property_address",
+  "latitude",
+  "longitude",
+  "partner_cost",
+  "partner_agreed_value",
+  "hourly_partner_rate",
+  "scope",
+]);
+
+/**
+ * Assignment changes always notify (handled separately as job_assigned / job_unassigned).
+ * Otherwise notify only if at least one partner-relevant field is in the patch.
+ */
+export function shouldNotifyPartnerForJobPatch(updates: Partial<Job>): boolean {
   const keys = Object.keys(updates).filter((k) => updates[k as keyof Job] !== undefined);
-  if (keys.length === 0) return true;
-  return keys.every((k) => PARTNER_IRRELEVANT_ONLY.has(k));
+  if (keys.length === 0) return false;
+  if (keys.some((k) => k === "partner_id" || k === "partner_ids")) return true;
+  return keys.some((k) => PARTNER_PUSH_WORTHY_KEYS.has(k));
 }
 
 export type PartnerJobPushKind =

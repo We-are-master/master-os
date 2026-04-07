@@ -144,22 +144,31 @@ export async function approveBillOrSeries(billId: string): Promise<{ approvedCou
   }
 
   if (bill.recurring_series_id) {
+    /** Single round-trip: bulk-update returns the rows it touched, no separate refetch needed. */
     const { data: updated, error: uErr } = await supabase
       .from("bills")
       .update({ status: "approved" as BillStatus, updated_at: now })
       .eq("recurring_series_id", bill.recurring_series_id)
       .in("status", ["submitted", "needs_attention"])
       .is("archived_at", null)
-      .select("id");
+      .select("*");
     if (uErr) throw uErr;
-    const { data: again, error: fErr } = await supabase.from("bills").select("*").eq("id", billId).single();
-    if (fErr) throw fErr;
-    return { approvedCount: (updated ?? []).length, bill: again as Bill };
+    const rows = (updated ?? []) as Bill[];
+    const matched = rows.find((r) => r.id === billId);
+    /** Edge case: target row was already approved before this call (not in [submitted, needs_attention]).
+     *  Refetch only in that rare case so callers always get the freshest representation. */
+    let billOut: Bill | undefined = matched;
+    if (!billOut) {
+      const { data: again, error: fErr } = await supabase.from("bills").select("*").eq("id", billId).single();
+      if (fErr) throw fErr;
+      billOut = again as Bill;
+    }
+    return { approvedCount: rows.length, bill: billOut };
   }
 
   const { data: candidates, error: cErr } = await supabase
     .from("bills")
-    .select("*")
+    .select("id, is_recurring, recurrence_interval, description, category, amount")
     .eq("is_recurring", true)
     .eq("recurrence_interval", bill.recurrence_interval)
     .is("archived_at", null)
@@ -179,14 +188,20 @@ export async function approveBillOrSeries(billId: string): Promise<{ approvedCou
     if (uErr) throw uErr;
     return { approvedCount: 1, bill: data as Bill };
   }
-  const { error: bulkErr } = await supabase
+  /** Single round-trip: bulk update + return the target row in one shot via .select(). */
+  const { data: bulkRows, error: bulkErr } = await supabase
     .from("bills")
     .update({ status: "approved" as BillStatus, updated_at: now })
-    .in("id", matchIds);
+    .in("id", matchIds)
+    .select("*");
   if (bulkErr) throw bulkErr;
+  const rows = (bulkRows ?? []) as Bill[];
+  const billOut = rows.find((r) => r.id === billId);
+  if (billOut) return { approvedCount: rows.length, bill: billOut };
+  /** Fallback (target wasn't in the bulk match window — extremely rare). */
   const { data: again, error: fErr } = await supabase.from("bills").select("*").eq("id", billId).single();
   if (fErr) throw fErr;
-  return { approvedCount: matchIds.length, bill: again as Bill };
+  return { approvedCount: rows.length, bill: again as Bill };
 }
 
 /**
@@ -206,11 +221,11 @@ export async function approveAllSubmittedInScope(bills: Bill[]): Promise<{ total
     if (!byKey.has(key)) byKey.set(key, b);
   }
 
-  let totalApproved = 0;
-  for (const b of byKey.values()) {
-    const { approvedCount } = await approveBillOrSeries(b.id);
-    totalApproved += approvedCount;
-  }
+  /** Each unique series/one-off is independent — fan them out in parallel rather than a serial loop. */
+  const results = await Promise.all(
+    Array.from(byKey.values()).map((b) => approveBillOrSeries(b.id)),
+  );
+  const totalApproved = results.reduce((sum, r) => sum + r.approvedCount, 0);
   return { totalApproved };
 }
 

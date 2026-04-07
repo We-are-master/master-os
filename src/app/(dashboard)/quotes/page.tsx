@@ -332,7 +332,7 @@ function QuotesPageContent() {
   const searchParams = useSearchParams();
   const {
     data, loading, page, totalPages, totalItems,
-    setPage, search, setSearch, status, setStatus, refresh,
+    setPage, search, setSearch, status, setStatus, refresh, refreshSilent,
   } = useSupabaseList<Quote>({
     fetcher: listQuotesForPage,
     realtimeTable: "quotes",
@@ -431,8 +431,9 @@ function QuotesPageContent() {
     if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
   }, []);
 
+  /** Background list refresh — avoids full-table loading skeleton on every action (enterprise UX). */
   const refreshWithKpis = useCallback((delayMs = 180) => {
-    refresh();
+    refreshSilent();
     if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
     kpiRefreshTimerRef.current = setTimeout(() => {
       void loadCounts();
@@ -681,13 +682,16 @@ function QuotesPageContent() {
         const quotePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
         const quotePartnerName = (formData.partner_name ?? quoteToConvert.partner_name)?.trim();
         const hasPartner = !!(quotePartnerId?.trim() || quotePartnerName);
-        const dupJobs = await findDuplicateJobs({
-          clientId: formData.client_id,
-          propertyAddress: formData.property_address,
-        });
+        /** Pre-fetch invoice due date in parallel with dup check + image resolve — it doesn't depend on the new job. */
+        const dueDatePromise = getInvoiceDueDateIsoForClient(formData.client_id ?? null);
+        const [dupJobs, siteImages] = await Promise.all([
+          findDuplicateJobs({
+            clientId: formData.client_id,
+            propertyAddress: formData.property_address,
+          }),
+          resolveImagesForJobFromQuote(quoteToConvert),
+        ]);
         if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJobs)))) return;
-
-        const siteImages = await resolveImagesForJobFromQuote(quoteToConvert);
 
         const job = await createJob({
           title: formData.title,
@@ -730,28 +734,31 @@ function QuotesPageContent() {
           images: siteImages.length ? siteImages : undefined,
         });
 
-        const dueStr = await getInvoiceDueDateIsoForClient(formData.client_id ?? null);
         const totalClient = Number(formData.client_price ?? 0);
-        if (totalClient > 0.01) {
+        /** Invoice flow runs in parallel with quote-status update + audit log — they touch different rows. */
+        const invoiceFlow = (async () => {
+          if (totalClient <= 0.01) return;
+          const dueStr = await dueDatePromise;
           const linked = await listInvoicesLinkedToJob(job.reference, job.invoice_id);
           if (linked.length > 0) {
             const pick = linked.find((i) => i.invoice_kind === "combined") ?? linked[linked.length - 1];
             await updateJob(job.id, { invoice_id: pick.id });
-          } else {
-            const combined = await createInvoice({
-              client_name: formData.client_name,
-              job_reference: job.reference,
-              amount: totalClient,
-              status: "pending",
-              due_date: dueStr,
-              collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
-              invoice_kind: "combined",
-            });
-            await updateJob(job.id, { invoice_id: combined.id });
+            return;
           }
-        }
+          const combined = await createInvoice({
+            client_name: formData.client_name,
+            job_reference: job.reference,
+            amount: totalClient,
+            status: "pending",
+            due_date: dueStr,
+            collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
+            invoice_kind: "combined",
+          });
+          await updateJob(job.id, { invoice_id: combined.id });
+        })();
 
         await Promise.all([
+          invoiceFlow,
           updateQuote(quoteToConvert.id, { status: "converted_to_job" }),
           logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: { from_quote: quoteToConvert.reference }, userId: profile?.id, userName: profile?.full_name }),
         ]);

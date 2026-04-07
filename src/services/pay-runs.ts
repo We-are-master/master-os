@@ -293,36 +293,46 @@ export async function syncPayRunItems(payRunId: string, weekStart: string, weekE
   if (exErr) throw exErr;
   const existing = (existingRows ?? []) as PayRunItem[];
 
-  const toDelete = existing.filter((r) => r.status === "pending" && !desiredKeys.has(itemKey(r.item_type, r.source_id))).map((r) => r.id);
-  if (toDelete.length > 0) {
-    const { error: delErr } = await supabase.from("pay_run_items").delete().in("id", toDelete);
+  const toDeleteIds = existing
+    .filter((r) => r.status === "pending" && !desiredKeys.has(itemKey(r.item_type, r.source_id)))
+    .map((r) => r.id);
+  if (toDeleteIds.length > 0) {
+    const { error: delErr } = await supabase.from("pay_run_items").delete().in("id", toDeleteIds);
     if (delErr) throw delErr;
   }
 
-  const refreshed = (await supabase.from("pay_run_items").select("*").eq("pay_run_id", payRunId)).data as PayRunItem[] | null;
-  const afterDelete = refreshed ?? [];
+  /** Compute the post-delete view from in-memory state — saves a full table refetch. */
+  const deletedIds = new Set(toDeleteIds);
+  const afterDelete = existing.filter((r) => !deletedIds.has(r.id));
+
+  /** Build per-pending update list and per-insert list, then dispatch them in parallel. */
+  const updates: Array<{ id: string; amount: number; due_date: string | null; source_label: string }> = [];
+  const inserts: Array<{
+    pay_run_id: string;
+    item_type: PayRunItem["item_type"];
+    source_id: string;
+    source_label: string;
+    amount: number;
+    due_date: string | null;
+    status: "pending";
+  }> = [];
 
   for (const d of desired) {
+    if (afterDelete.some(
+      (r) => r.status === "paid" && r.item_type === d.item_type && r.source_id === d.source_id,
+    )) continue;
     const pending = afterDelete.find(
       (r) => r.status === "pending" && r.item_type === d.item_type && r.source_id === d.source_id,
     );
-    const alreadyPaidHere = afterDelete.some(
-      (r) => r.status === "paid" && r.item_type === d.item_type && r.source_id === d.source_id,
-    );
-    if (alreadyPaidHere) continue;
-
     if (pending) {
-      const { error: upErr } = await supabase
-        .from("pay_run_items")
-        .update({
-          amount: d.amount,
-          due_date: d.due_date,
-          source_label: d.source_label,
-        })
-        .eq("id", pending.id);
-      if (upErr) throw upErr;
+      updates.push({
+        id: pending.id,
+        amount: d.amount,
+        due_date: d.due_date,
+        source_label: d.source_label,
+      });
     } else {
-      const { error: insErr } = await supabase.from("pay_run_items").insert({
+      inserts.push({
         pay_run_id: payRunId,
         item_type: d.item_type,
         source_id: d.source_id,
@@ -331,9 +341,28 @@ export async function syncPayRunItems(payRunId: string, weekStart: string, weekE
         due_date: d.due_date,
         status: "pending",
       });
-      if (insErr) throw insErr;
     }
   }
+
+  /** Pending updates have per-row values (different amount/due_date), so we still need one PATCH per row,
+   *  but they're all independent — run in parallel via Promise.all. Inserts can be a single bulk INSERT. */
+  const tasks: Promise<unknown>[] = [];
+  if (inserts.length > 0) {
+    tasks.push(
+      Promise.resolve(supabase.from("pay_run_items").insert(inserts)).then(({ error }) => { if (error) throw error; }),
+    );
+  }
+  for (const u of updates) {
+    tasks.push(
+      Promise.resolve(
+        supabase
+          .from("pay_run_items")
+          .update({ amount: u.amount, due_date: u.due_date, source_label: u.source_label })
+          .eq("id", u.id),
+      ).then(({ error }) => { if (error) throw error; }),
+    );
+  }
+  if (tasks.length > 0) await Promise.all(tasks);
 }
 
 /** @deprecated Use loadPayRunDesiredLines — kept for any external callers. */
@@ -388,35 +417,56 @@ export async function markPayRunItemsPaid(itemIds: string[]): Promise<void> {
   const { data: items } = await supabase.from("pay_run_items").select("id, item_type, source_id").in("id", itemIds);
   if (!items?.length) return;
 
+  /** Group source ids by item_type so each downstream table gets ONE bulk update instead of N. */
+  const selfBillIds: string[] = [];
+  const billIds: string[] = [];
+  const internalCostIds: string[] = [];
+  const lineIds: string[] = [];
   for (const item of items as PayRunItem[]) {
-    const { error: u0 } = await supabase.from("pay_run_items").update({ status: "paid", paid_at: now }).eq("id", item.id);
-    if (u0) throw u0;
-
-    if (item.item_type === "self_bill") {
-      const resPaid = await supabase
-        .from("self_bills")
-        .update({ status: "paid", paid_at: paidDay })
-        .eq("id", item.source_id);
-      if (resPaid.error && /paid_at|column|schema|PGRST204/i.test(String(resPaid.error.message ?? ""))) {
-        const { error: e2 } = await supabase.from("self_bills").update({ status: "paid" }).eq("id", item.source_id);
-        if (e2) throw e2;
-      } else if (resPaid.error) {
-        throw resPaid.error;
-      }
-    } else if (item.item_type === "bill") {
-      const { error: e3 } = await supabase
-        .from("bills")
-        .update({ status: "paid", paid_at: paidDay, updated_at: now })
-        .eq("id", item.source_id);
-      if (e3) throw e3;
-    } else if (item.item_type === "internal_cost") {
-      const { error: e4 } = await supabase
-        .from("payroll_internal_costs")
-        .update({ status: "paid", paid_at: paidDay, updated_at: now })
-        .eq("id", item.source_id);
-      if (e4) throw e4;
-    }
+    lineIds.push(item.id);
+    if (item.item_type === "self_bill") selfBillIds.push(item.source_id);
+    else if (item.item_type === "bill") billIds.push(item.source_id);
+    else if (item.item_type === "internal_cost") internalCostIds.push(item.source_id);
   }
+
+  /** Self-bill bulk update — keep the legacy paid_at-missing fallback (some prod DBs lack the column). */
+  const updateSelfBillsBulk = async () => {
+    if (selfBillIds.length === 0) return;
+    const res = await supabase
+      .from("self_bills")
+      .update({ status: "paid", paid_at: paidDay })
+      .in("id", selfBillIds);
+    if (res.error && /paid_at|column|schema|PGRST204/i.test(String(res.error.message ?? ""))) {
+      const { error } = await supabase.from("self_bills").update({ status: "paid" }).in("id", selfBillIds);
+      if (error) throw error;
+    } else if (res.error) {
+      throw res.error;
+    }
+  };
+
+  /** All four bulk updates are independent — fan them out in parallel. */
+  await Promise.all([
+    supabase
+      .from("pay_run_items")
+      .update({ status: "paid", paid_at: now })
+      .in("id", lineIds)
+      .then(({ error }) => { if (error) throw error; }),
+    updateSelfBillsBulk(),
+    billIds.length === 0
+      ? Promise.resolve()
+      : supabase
+          .from("bills")
+          .update({ status: "paid", paid_at: paidDay, updated_at: now })
+          .in("id", billIds)
+          .then(({ error }) => { if (error) throw error; }),
+    internalCostIds.length === 0
+      ? Promise.resolve()
+      : supabase
+          .from("payroll_internal_costs")
+          .update({ status: "paid", paid_at: paidDay, updated_at: now })
+          .in("id", internalCostIds)
+          .then(({ error }) => { if (error) throw error; }),
+  ]);
 }
 
 export function payRunItemTypeLabel(itemType: PayRunItem["item_type"]): string {
