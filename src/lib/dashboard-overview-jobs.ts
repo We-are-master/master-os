@@ -173,14 +173,19 @@ export type CompanySalesGoalSettings = {
 } | null;
 
 /**
- * If `preferredTierNumber` matches a tier’s `sales_goal_monthly`, use it (preference lives in localStorage).
+ * `monthlyGbpBrowserOverride`: optional £/month from localStorage (wins over tier + company).
+ * Then tier `sales_goal_monthly` if `preferredTierNumber` matches.
  * Else `dashboard_sales_goal_monthly`; else env default.
  */
 export function resolveMonthlySalesGoalFromCompany(
   settings: CompanySalesGoalSettings,
   tiers?: CommissionTier[] | null,
   preferredTierNumber?: number | null,
+  monthlyGbpBrowserOverride?: number | null,
 ): number {
+  const override = monthlyGbpBrowserOverride ?? null;
+  if (override != null && Number.isFinite(override) && override > 0) return Number(override);
+
   const tn = preferredTierNumber ?? null;
   if (tn != null && tiers && tiers.length > 0) {
     const t = tiers.find((x) => Number(x.tier_number) === tn);

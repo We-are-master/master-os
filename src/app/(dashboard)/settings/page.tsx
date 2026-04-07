@@ -34,7 +34,10 @@ import {
   ensureCommissionConfigDefaults,
 } from "@/services/tiers";
 import {
+  DASHBOARD_SALES_GOAL_MAX_TIER_NUMBER,
+  getDashboardSalesGoalMonthlyOverrideGbp,
   getDashboardSalesGoalTierNumberPreference,
+  setDashboardSalesGoalMonthlyOverrideGbp,
   setDashboardSalesGoalTierNumberPreference,
 } from "@/lib/dashboard-sales-goal-preference";
 import { formatCurrency, setAppCurrencyCode } from "@/lib/utils";
@@ -772,6 +775,7 @@ function TiersTab() {
   const [poolShares, setPoolShares] = useState<CommissionPoolShare[]>([]);
   const [revenue, setRevenue] = useState<number>(0);
   const [dashboardSalesGoalTierNumber, setDashboardSalesGoalTierNumber] = useState("");
+  const [dashboardMonthlyOverrideGbp, setDashboardMonthlyOverrideGbp] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
 
@@ -788,6 +792,8 @@ function TiersTab() {
       setRevenue(r);
       const n = getDashboardSalesGoalTierNumberPreference();
       setDashboardSalesGoalTierNumber(n != null ? String(n) : "");
+      const o = getDashboardSalesGoalMonthlyOverrideGbp();
+      setDashboardMonthlyOverrideGbp(o != null ? String(o) : "");
     } catch {
       toast.error("Failed to load tiers");
     } finally {
@@ -820,22 +826,70 @@ function TiersTab() {
     }
   };
 
+  const restoreTierFieldFromStorage = () => {
+    const n = getDashboardSalesGoalTierNumberPreference();
+    setDashboardSalesGoalTierNumber(n != null ? String(n) : "");
+  };
+
   const handleBlurDashboardSalesGoalTier = () => {
     const raw = dashboardSalesGoalTierNumber.trim();
     if (!raw) {
       setDashboardSalesGoalTierNumberPreference(null);
       window.dispatchEvent(new Event("master-os-company-settings"));
-      toast.success("Overview will use the manual monthly goal (System tab)");
+      toast.success("Tier cleared — Overview uses monthly £ override, then System manual, then env.");
       return;
     }
-    const num = Number(raw);
+    const num = Math.floor(Number(raw));
     if (!Number.isFinite(num) || num < 1) {
-      toast.error("Enter a tier number ≥ 1, or leave empty for the manual goal");
+      toast.error("Enter a tier number ≥ 1, or leave empty.");
+      restoreTierFieldFromStorage();
+      return;
+    }
+    if (num >= 1000) {
+      toast.error(
+        "That looks like a monthly amount (£), not a tier number. Use “Custom monthly goal (£)” below, or enter 1, 2, 3… as in the tier table.",
+      );
+      restoreTierFieldFromStorage();
+      return;
+    }
+    if (num > DASHBOARD_SALES_GOAL_MAX_TIER_NUMBER) {
+      toast.error(`Tier number must be 1–${DASHBOARD_SALES_GOAL_MAX_TIER_NUMBER}.`);
+      restoreTierFieldFromStorage();
+      return;
+    }
+    if (tiers.length > 0 && !tiers.some((t) => Number(t.tier_number) === num)) {
+      const available = tiers.map((t) => Number(t.tier_number)).sort((a, b) => a - b);
+      toast.error(`No Tier ${num}. Available: ${available.join(", ")}.`);
+      restoreTierFieldFromStorage();
       return;
     }
     setDashboardSalesGoalTierNumberPreference(num);
     window.dispatchEvent(new Event("master-os-company-settings"));
-    toast.success("Saved on this device — Overview uses that tier’s monthly sales goal");
+    toast.success("Saved — Overview uses that tier’s sales goal (unless monthly £ override is set).");
+  };
+
+  const restoreMonthlyOverrideFieldFromStorage = () => {
+    const o = getDashboardSalesGoalMonthlyOverrideGbp();
+    setDashboardMonthlyOverrideGbp(o != null ? String(o) : "");
+  };
+
+  const handleBlurDashboardMonthlyOverride = () => {
+    const raw = dashboardMonthlyOverrideGbp.trim();
+    if (!raw) {
+      setDashboardSalesGoalMonthlyOverrideGbp(null);
+      window.dispatchEvent(new Event("master-os-company-settings"));
+      toast.success("Cleared browser monthly override");
+      return;
+    }
+    const num = Number(raw);
+    if (!Number.isFinite(num) || num <= 0) {
+      toast.error("Enter a positive amount, or leave empty.");
+      restoreMonthlyOverrideFieldFromStorage();
+      return;
+    }
+    setDashboardSalesGoalMonthlyOverrideGbp(num);
+    window.dispatchEvent(new Event("master-os-company-settings"));
+    toast.success("Saved — this £/month overrides tier + System manual on Overview (this device only).");
   };
 
   const handleSavePool = async (id: string, share_percent: number) => {
@@ -919,14 +973,30 @@ function TiersTab() {
       <Card padding="md">
         <h4 className="text-sm font-semibold text-text-primary mb-1">Overview dashboard — sales goal source</h4>
         <p className="text-xs text-text-tertiary mb-3">
-          Enter the <strong>tier number</strong> (1, 2, 3…) whose <strong>Sales goal (monthly)</strong> drives the Overview bar. Stored only in this browser — no database column. Leave empty to use the manual monthly figure on System configuration.
+          All of this is <strong>only in this browser</strong> — no extra Supabase column. Priority:{" "}
+          <strong>Custom monthly £</strong> → <strong>tier’s Sales goal (monthly)</strong> from the table below → System → env.
         </p>
-        <div className="flex flex-wrap items-end gap-2">
+        <div className="flex flex-wrap items-end gap-4">
           <div className="min-w-[180px] flex-1">
-            <label className="block text-xs font-medium text-text-secondary mb-1">Tier number for sales goal</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1">Custom monthly goal (£) — optional</label>
             <Input
               type="number"
               min={1}
+              step={100}
+              value={dashboardMonthlyOverrideGbp}
+              onChange={(e) => setDashboardMonthlyOverrideGbp(e.target.value)}
+              onBlur={handleBlurDashboardMonthlyOverride}
+              placeholder="e.g. 30000"
+              className="h-10 max-w-[160px]"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">Use this if you want a fixed £/month target without editing tiers or System.</p>
+          </div>
+          <div className="min-w-[180px] flex-1">
+            <label className="block text-xs font-medium text-text-secondary mb-1">Tier number (1, 2, 3…)</label>
+            <Input
+              type="number"
+              min={1}
+              max={DASHBOARD_SALES_GOAL_MAX_TIER_NUMBER}
               step={1}
               value={dashboardSalesGoalTierNumber}
               onChange={(e) => setDashboardSalesGoalTierNumber(e.target.value)}
@@ -935,6 +1005,7 @@ function TiersTab() {
               disabled={tiers.length === 0}
               className="h-10 max-w-[140px]"
             />
+            <p className="text-[10px] text-text-tertiary mt-1">Must match a row in Tier structure. Not a £ amount.</p>
           </div>
         </div>
       </Card>
@@ -1490,10 +1561,13 @@ function SystemTab() {
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [overviewSalesGoalTierNum, setOverviewSalesGoalTierNum] = useState("");
+  const [overviewMonthlyOverrideGbp, setOverviewMonthlyOverrideGbp] = useState("");
 
   useEffect(() => {
     const n = getDashboardSalesGoalTierNumberPreference();
     setOverviewSalesGoalTierNum(n != null ? String(n) : "");
+    const o = getDashboardSalesGoalMonthlyOverrideGbp();
+    setOverviewMonthlyOverrideGbp(o != null ? String(o) : "");
   }, []);
 
   useEffect(() => {
@@ -1624,24 +1698,77 @@ function SystemTab() {
             </div>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Overview sales goal — tier number (this browser only)
+                Custom monthly goal (£) — this browser only
               </label>
               <Input
                 type="number"
                 min={1}
+                step={100}
+                value={overviewMonthlyOverrideGbp}
+                onChange={(e) => setOverviewMonthlyOverrideGbp(e.target.value)}
+                onBlur={() => {
+                  const raw = overviewMonthlyOverrideGbp.trim();
+                  if (!raw) {
+                    setDashboardSalesGoalMonthlyOverrideGbp(null);
+                    window.dispatchEvent(new Event("master-os-company-settings"));
+                    return;
+                  }
+                  const num = Number(raw);
+                  if (!Number.isFinite(num) || num <= 0) {
+                    toast.error("Enter a positive amount, or leave empty.");
+                    const o = getDashboardSalesGoalMonthlyOverrideGbp();
+                    setOverviewMonthlyOverrideGbp(o != null ? String(o) : "");
+                    return;
+                  }
+                  setDashboardSalesGoalMonthlyOverrideGbp(num);
+                  window.dispatchEvent(new Event("master-os-company-settings"));
+                  toast.success("Saved — overrides tier + manual below on Overview (this device)");
+                }}
+                placeholder="e.g. 30000"
+                className="max-w-[160px]"
+              />
+              <p className="text-[10px] text-text-tertiary mt-1 mb-3">
+                Highest priority for the Overview bar. Leave empty to use tier number or the company manual figure.
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Tier number for sales goal (this browser only)
+              </label>
+              <Input
+                type="number"
+                min={1}
+                max={DASHBOARD_SALES_GOAL_MAX_TIER_NUMBER}
                 step={1}
                 value={overviewSalesGoalTierNum}
                 onChange={(e) => setOverviewSalesGoalTierNum(e.target.value)}
                 onBlur={() => {
+                  const restore = () => {
+                    const n = getDashboardSalesGoalTierNumberPreference();
+                    setOverviewSalesGoalTierNum(n != null ? String(n) : "");
+                  };
                   const raw = overviewSalesGoalTierNum.trim();
                   if (!raw) {
                     setDashboardSalesGoalTierNumberPreference(null);
                     window.dispatchEvent(new Event("master-os-company-settings"));
                     return;
                   }
-                  const num = Number(raw);
+                  const num = Math.floor(Number(raw));
                   if (!Number.isFinite(num) || num < 1) {
-                    toast.error("Enter a tier number ≥ 1, or leave empty for the manual goal below");
+                    toast.error("Enter a tier number ≥ 1, or leave empty.");
+                    restore();
+                    return;
+                  }
+                  if (num >= 1000) {
+                    toast.error(
+                      "That looks like a £ amount. Use “Custom monthly goal” above, or tier 1, 2, 3…",
+                    );
+                    restore();
+                    return;
+                  }
+                  if (num > DASHBOARD_SALES_GOAL_MAX_TIER_NUMBER) {
+                    toast.error(`Tier number must be 1–${DASHBOARD_SALES_GOAL_MAX_TIER_NUMBER}.`);
+                    restore();
                     return;
                   }
                   setDashboardSalesGoalTierNumberPreference(num);
@@ -1652,11 +1779,11 @@ function SystemTab() {
                 className="max-w-[140px]"
               />
               <p className="text-[10px] text-text-tertiary mt-1 mb-3">
-                Matches <strong>Tier N</strong> in Commission tiers. Leave empty to use only the manual monthly figure below. Not synced to the database.
+                Same as Commission tiers tab — must be the tier <strong>index</strong> (1, 2, 3), not a pound amount.
               </p>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Monthly sales goal (Overview) — manual fallback</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Monthly sales goal (Overview) — company (saved to database)</label>
               <Input
                 type="number"
                 min={0}
@@ -1666,8 +1793,8 @@ function SystemTab() {
                 placeholder="35000"
               />
               <p className="text-[10px] text-text-tertiary mt-1">
-                Used when no tier is selected above, or the selected tier has no sales goal. Scales to the selected date range; env fallback{" "}
-                <code className="text-[10px]">NEXT_PUBLIC_DASHBOARD_SALES_GOAL_MONTHLY_GBP</code>.
+                Used when browser tier/£ overrides are empty, or the tier has no sales goal. Scales to the selected date range; env{" "}
+                <code className="text-[10px]">NEXT_PUBLIC_DASHBOARD_SALES_GOAL_MONTHLY_GBP</code> if unset.
               </p>
             </div>
           </div>
