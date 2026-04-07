@@ -84,6 +84,8 @@ import {
   partnerSelfBillGrossAmount,
   customerScheduledTotal,
   jobCustomerBillableRevenueForCollections,
+  suggestedPartnerCostForTargetMargin,
+  SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import {
   ACCESS_CCZ_FEE_GBP,
@@ -2013,6 +2015,21 @@ export default function JobDetailPage() {
     [job?.extras_amount, job?.id],
   );
 
+  /** Suggested partner_cost for ~40% gross margin on client_price + extras_amount (materials fixed). */
+  const suggestedPartnerCost40ForFinForm = useMemo(() => {
+    if (!job || job.job_type === "hourly") return null;
+    const cp = parseFloat(finForm.client_price) || 0;
+    const ex = parseFloat(finForm.extras_amount) || 0;
+    const mat = parseFloat(finForm.materials_cost) || 0;
+    if (cp + ex <= 0) return null;
+    return suggestedPartnerCostForTargetMargin({
+      clientPrice: cp,
+      extrasAmount: ex,
+      materialsCost: mat,
+      targetMarginPercent: SUGGESTED_PARTNER_MARGIN_HINT_PCT,
+    });
+  }, [job?.id, job?.job_type, finForm.client_price, finForm.extras_amount, finForm.materials_cost]);
+
   if (loading || !id) {
     return (
       <PageTransition>
@@ -3093,6 +3110,22 @@ export default function JobDetailPage() {
                     <div>
                       <label className="block text-xs font-medium text-text-secondary mb-1.5">Subcontract labour — partner_cost</label>
                       <Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} />
+                      {suggestedPartnerCost40ForFinForm != null && (
+                        <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                          ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin hint:{" "}
+                          <span className="font-semibold text-text-secondary tabular-nums">{formatCurrency(suggestedPartnerCost40ForFinForm)}</span>
+                          {" "}(billable ticket + add-ons − materials).{" "}
+                          <button
+                            type="button"
+                            className="text-primary hover:underline font-medium"
+                            onClick={() =>
+                              setFinForm((f) => ({ ...f, partner_cost: String(suggestedPartnerCost40ForFinForm) }))
+                            }
+                          >
+                            Apply
+                          </button>
+                        </p>
+                      )}
                       <p className="text-[10px] text-text-tertiary mt-1">Amount owed to the partner for work (field <span className="font-mono text-[10px]">partner_cost</span>). “Add extra payout” in Cash Out increases this and <span className="font-mono text-[10px]">partner_extras_amount</span>.</p>
                     </div>
                     <div>

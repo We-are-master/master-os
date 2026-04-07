@@ -63,6 +63,7 @@ import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import {
   formatJobScheduleLine,
+  formatJobScheduleListLabel,
   jobFinishYmd,
   jobScheduleYmd,
   formatLocalYmd,
@@ -80,6 +81,8 @@ import {
   jobCustomerBillableRevenueForCollections,
   jobMarginPercent,
   jobProfit,
+  suggestedPartnerCostForTargetMargin,
+  SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
@@ -1099,9 +1102,15 @@ function JobsPageContent() {
       minWidth: "200px",
       cellClassName: "min-w-[12.5rem] max-w-[16rem]",
       render: (item) => {
-        const line = formatJobScheduleLine(item);
+        const line = formatJobScheduleListLabel(item);
+        const detail = formatJobScheduleLine(item);
         return line ? (
-          <span className="text-xs text-text-secondary leading-snug block whitespace-normal break-words">{line}</span>
+          <span
+            className="text-xs text-text-secondary leading-snug block whitespace-normal break-words"
+            title={detail ?? undefined}
+          >
+            {line}
+          </span>
         ) : (
           <span className="text-xs text-text-tertiary">—</span>
         );
@@ -1386,7 +1395,8 @@ function JobsPageContent() {
                   renderCard={(j) => {
                     const disp = effectiveJobStatusForDisplay(j);
                     const sc = statusConfig[disp] ?? { label: disp };
-                    const sched = formatJobScheduleLine(j);
+                    const sched = formatJobScheduleListLabel(j);
+                    const schedDetail = formatJobScheduleLine(j);
                     const previousStatus = getPreviousJobStatus(j);
                     const prevLabel = previousStatus ? (statusConfig[previousStatus]?.label ?? previousStatus) : null;
                     return (
@@ -1400,7 +1410,11 @@ function JobsPageContent() {
                           <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
                           <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(j.title) || j.title}</p>
                           <p className="text-[10px] text-text-tertiary mt-1 truncate">{sc.label}</p>
-                          {sched ? <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug">{sched}</p> : null}
+                          {sched ? (
+                            <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug" title={schedDetail ?? undefined}>
+                              {sched}
+                            </p>
+                          ) : null}
                           <p className="text-[11px] text-text-secondary mt-0.5 truncate">{j.client_name}</p>
                           <JobCardFinanceRow job={j} />
                           {jobSitePhotoUrls(j).length > 0 ? (
@@ -1783,6 +1797,18 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
     : 0;
 
+  const suggestedPartnerAt40 = useMemo(() => {
+    if (form.job_type === "hourly") return null;
+    const client = Number(form.client_price) || 0;
+    if (client + accessSurchargePreview <= 0) return null;
+    return suggestedPartnerCostForTargetMargin({
+      clientPrice: client,
+      extrasAmount: accessSurchargePreview,
+      materialsCost: Number(form.materials_cost) || 0,
+      targetMarginPercent: SUGGESTED_PARTNER_MARGIN_HINT_PCT,
+    });
+  }, [form.job_type, form.client_price, form.materials_cost, accessSurchargePreview]);
+
   return (
     <Modal open={open} onClose={onClose} title="New Job" subtitle="Create a new job" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -2102,7 +2128,25 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" /></div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label>
+              <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
+              {suggestedPartnerAt40 != null && (
+                <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                  ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin hint:{" "}
+                  <span className="font-semibold text-text-secondary tabular-nums">{formatCurrency(suggestedPartnerAt40)}</span>
+                  {accessSurchargePreview > 0 ? " (client price + access add-ons − materials)" : " (client price − materials)"}
+                  .{" "}
+                  <button
+                    type="button"
+                    className="text-primary hover:underline font-medium"
+                    onClick={() => update("partner_cost", String(suggestedPartnerAt40))}
+                  >
+                    Apply
+                  </button>
+                </p>
+              )}
+            </div>
             <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
           </div>
         )}
@@ -2219,7 +2263,8 @@ function JobsMapView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boo
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {withAddress.slice(0, 12).map((j) => {
-        const mapSched = formatJobScheduleLine(j);
+        const mapSched = formatJobScheduleListLabel(j);
+        const mapSchedDetail = formatJobScheduleLine(j);
         return (
           <button
             key={j.id}
@@ -2234,7 +2279,11 @@ function JobsMapView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boo
               <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
               <p className="text-xs text-text-tertiary truncate mt-0.5">{normalizeTypeOfWork(j.title) || j.title}</p>
               <p className="text-xs text-text-tertiary truncate mt-1">{j.property_address}</p>
-              {mapSched ? <p className="text-[10px] text-text-secondary mt-1.5 line-clamp-2 leading-snug">{mapSched}</p> : null}
+              {mapSched ? (
+                <p className="text-[10px] text-text-secondary mt-1.5 line-clamp-2 leading-snug" title={mapSchedDetail ?? undefined}>
+                  {mapSched}
+                </p>
+              ) : null}
               <JobCardFinanceRow job={j} />
             </div>
           </button>

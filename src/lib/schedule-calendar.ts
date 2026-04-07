@@ -161,6 +161,64 @@ function formatMediumDateFromLocalDate(d: Date): string {
   return d.toLocaleDateString(undefined, { dateStyle: "medium" });
 }
 
+const UK_TIMEZONE = "Europe/London";
+
+function isoCalendarDateInUk(isoOrDate: string | Date): string | null {
+  const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: UK_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function ymdFromDateOnlyField(s: string): string | null {
+  const p = parseIsoDateOnlyPrefix(s);
+  if (!p) return null;
+  return `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
+}
+
+function addOneCalendarDayYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
+}
+
+function formatMediumDateEnGbFromYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+}
+
+/**
+ * Jobs list / kanban / map: start date only. “Tomorrow” when UK calendar day (Europe/London) is the day after today.
+ */
+export function formatJobScheduleListLabel(job: {
+  scheduled_date?: string | null;
+  scheduled_start_at?: string | null;
+}): string | null {
+  let startYmd: string | null = null;
+  if (job.scheduled_start_at) {
+    startYmd = isoCalendarDateInUk(job.scheduled_start_at);
+  } else if (job.scheduled_date) {
+    startYmd = ymdFromDateOnlyField(job.scheduled_date);
+  }
+  if (!startYmd) return null;
+
+  const todayUk = isoCalendarDateInUk(new Date());
+  if (!todayUk) return formatMediumDateEnGbFromYmd(startYmd);
+
+  const tomorrowUk = addOneCalendarDayYmd(todayUk);
+  if (startYmd === tomorrowUk) return "Tomorrow";
+
+  return formatMediumDateEnGbFromYmd(startYmd);
+}
+
 /**
  * One line for lists, emails, pushes: start date + arrival time range + optional expected finish (date only).
  * Example: `4 Apr 2026 · Arrival time 11AM – 2PM · Expected finish 6 Apr 2026`
