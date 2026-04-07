@@ -59,6 +59,11 @@ interface ClientAddressPickerProps {
   lockClient?: boolean;
   /** When true, opening the client dropdown with an empty search loads the first page of all clients (browse). */
   loadAllClientsOnOpen?: boolean;
+  /**
+   * Job detail: show only this job’s current property address (one card). Use “Choose another address”
+   * to open the full client address list + add new. Create flows should leave this off.
+   */
+  jobCurrentAddressOnly?: boolean;
 }
 
 export function ClientAddressPicker({
@@ -70,6 +75,7 @@ export function ClientAddressPicker({
   className = "",
   lockClient = false,
   loadAllClientsOnOpen = false,
+  jobCurrentAddressOnly = false,
 }: ClientAddressPickerProps) {
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const clientSectionLocked = lockClient && !!value.client_id;
@@ -109,6 +115,12 @@ export function ClientAddressPicker({
   const containerRef = useRef<HTMLDivElement>(null);
   /** Synchronous “who is selected” for the same event-loop tick as selectClient → selectAddress (React state lags). */
   const selectedClientRef = useRef<Client | null>(null);
+  /** Job card: collapsed = single address; expanded = full list (same client). */
+  const [jobAddressListExpanded, setJobAddressListExpanded] = useState(false);
+
+  useEffect(() => {
+    if (jobCurrentAddressOnly) setJobAddressListExpanded(false);
+  }, [value.client_id, jobCurrentAddressOnly]);
 
   useEffect(() => {
     if (!createClientOpen) return;
@@ -280,8 +292,9 @@ export function ClientAddressPicker({
       });
       setAddingNewAddress(false);
       setNewAddressRaw("");
+      if (jobCurrentAddressOnly) setJobAddressListExpanded(false);
     },
-    [onChange]
+    [onChange, jobCurrentAddressOnly]
   );
 
   const handleNewAddressSelect = useCallback(
@@ -312,6 +325,30 @@ export function ClientAddressPicker({
   );
 
   const showAddressSection = !!value.client_id || !!selectedClient;
+
+  const currentPropertyDisplayLine = (() => {
+    const raw = value.property_address?.trim();
+    if (value.client_address_id && addresses.length) {
+      const a = addresses.find((x) => x.id === value.client_address_id);
+      if (a) return [a.address, a.city, a.postcode].filter(Boolean).join(", ");
+    }
+    if (raw && addresses.length) {
+      const byLine = addresses.find(
+        (a) => [a.address, a.city, a.postcode].filter(Boolean).join(", ") === raw,
+      );
+      if (byLine) return raw;
+    }
+    return raw || "";
+  })();
+
+  const showJobAddressCollapsed =
+    jobCurrentAddressOnly &&
+    !jobAddressListExpanded &&
+    !addingNewAddress &&
+    !!selectedClient &&
+    !addressLoading &&
+    addresses.length > 0 &&
+    Boolean(currentPropertyDisplayLine.trim());
 
   const handleCreateClient = useCallback(async () => {
     if (!createClientForm.full_name.trim()) {
@@ -581,7 +618,28 @@ export function ClientAddressPicker({
               <Loader2 className="h-4 w-4 animate-spin" /> Loading addresses...
             </div>
           ) : selectedClient && !addressLoading ? (
+            showJobAddressCollapsed ? (
+              <div className="rounded-lg border border-border bg-card px-3 py-2.5 shadow-sm">
+                <p className="text-sm text-text-primary leading-snug break-words">{currentPropertyDisplayLine}</p>
+                <button
+                  type="button"
+                  onClick={() => setJobAddressListExpanded(true)}
+                  className="mt-2 text-xs font-medium text-primary hover:underline"
+                >
+                  Choose another address
+                </button>
+              </div>
+            ) : (
             <div className="space-y-2">
+              {jobCurrentAddressOnly && currentPropertyDisplayLine.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => setJobAddressListExpanded(false)}
+                  className="text-xs font-medium text-text-tertiary hover:text-primary mb-1"
+                >
+                  ← Back to current address only
+                </button>
+              ) : null}
               {addresses.map((addr) => {
                 const full = [addr.address, addr.city, addr.postcode].filter(Boolean).join(", ");
                 const isSelected = value.client_address_id === addr.id;
@@ -642,6 +700,7 @@ export function ClientAddressPicker({
                 </button>
               )}
             </div>
+            )
           ) : null}
           {selectedClient && addresses.length === 0 && !addressLoading && !addingNewAddress && (
             <p className="text-xs text-text-tertiary mb-2">No addresses. Add one below.</p>

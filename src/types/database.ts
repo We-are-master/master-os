@@ -287,6 +287,8 @@ export interface Job {
   self_bill_id?: string;
   invoice_id?: string;
   scope?: string;
+  /** Office-only notes (e.g. access, client quirks); separate from scope and from system lines in internal_notes. */
+  additional_notes?: string | null;
   internal_notes?: string;
   /** Site reference photos (client request / quote / office); JSON array of public storage URLs (quote-invite-images). */
   images?: string[] | null;
@@ -404,15 +406,36 @@ export interface Partner {
   bank_name?: string | null;
 }
 
+/** Tokenized self-service link sent to partners so they can refresh docs + profile data without login. */
+export interface PartnerDocumentRequest {
+  id: string;
+  partner_id: string;
+  requested_doc_types: string[];
+  custom_message?: string | null;
+  requested_by?: string | null;
+  requested_by_name?: string | null;
+  sent_to_email?: string | null;
+  expires_at: string;
+  first_used_at?: string | null;
+  last_used_at?: string | null;
+  use_count: number;
+  revoked_at?: string | null;
+  revoked_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Account {
   id: string;
   company_name: string;
   contact_name: string;
-  /** Internal account owner (sales / AM), same idea as jobs.owner_name. */
+  /** Legacy denormalized label; prefer `account_owner_id` → `profiles.id`. */
   owner_name?: string | null;
   /** Linked app user (`profiles.id`) as account owner for rollups / Top account owners. */
   account_owner_id?: string | null;
   email: string;
+  /** Optional invoices/billing email (if different from main account email). */
+  finance_email?: string | null;
   address?: string | null;
   crn?: string | null;
   contact_number?: string | null;

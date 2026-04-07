@@ -61,7 +61,7 @@ import { computeHourlyTotals, partnerHourlyRateFromCatalogBundle } from "@/lib/j
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
-import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
 import { mergeImageUrlLists, normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
@@ -1874,7 +1874,7 @@ function InvitePartnerToQuote({
             const isMatch = matchIdSet.has(p.id);
             const loc = (p.location ?? "").trim() || "—";
             const requestType = (request.service_type ?? "").trim() || "—";
-            const typeLine = isMatch ? requestType : partnerPrimaryTradeDisplay(p);
+            const typeLine = isMatch ? partnerMatchTypeLabel(p, requestType) : partnerPrimaryTradeDisplay(p);
             return (
               <label
                 key={p.id}
@@ -2469,7 +2469,7 @@ function ConvertToJobModal({
                             match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
                           )}
                         >
-                          {p.trade ?? "—"} · {p.location ?? "—"}
+                          {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">

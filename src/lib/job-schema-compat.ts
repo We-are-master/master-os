@@ -17,6 +17,7 @@ const JOB_DB_COMPAT_STRIP_KEYS = [
   "quote_id",
   "scheduled_finish_date",
   "extras_amount",
+  "partner_extras_amount",
   "partner_ids",
   "client_address_id",
   "catalog_service_id",
@@ -24,8 +25,7 @@ const JOB_DB_COMPAT_STRIP_KEYS = [
   "hourly_partner_rate",
   "billed_hours",
   "images",
-  "latitude",
-  "longitude",
+  "additional_notes",
 ] as const;
 
 /**
@@ -86,6 +86,12 @@ export function prepareJobRowForInsert(row: Record<string, unknown>): Record<str
   const out = { ...row };
   if (isLegacyJobSchema()) {
     for (const k of JOB_DB_COMPAT_STRIP_KEYS) delete out[k];
+    /**
+     * Keep `images` on first attempt even in legacy mode:
+     * many deployments still use legacy flag but already have migration 110.
+     * If the DB truly lacks the column, write retry falls back via `applyJobDbCompat`.
+     */
+    if ("images" in row) out.images = row.images;
     if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   }
   stripOperationalFlowKeysIfDisabled(out);
@@ -99,6 +105,12 @@ export function prepareJobRowForUpdate(patch: Record<string, unknown>): Record<s
     for (const k of JOB_DB_COMPAT_STRIP_KEYS) {
       if (k in out) delete out[k];
     }
+    /**
+     * Keep `images` on first attempt even in legacy mode:
+     * many deployments still use legacy flag but already have migration 110.
+     * If the DB truly lacks the column, write retry falls back via `applyJobDbCompat`.
+     */
+    if ("images" in patch) out.images = patch.images;
     if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   }
   stripOperationalFlowKeysIfDisabled(out);

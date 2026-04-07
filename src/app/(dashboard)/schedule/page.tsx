@@ -205,26 +205,11 @@ export default function SchedulePage() {
     }
   }, [year, month]);
 
-  const loadAllJobs = useCallback(async () => {
-    const supabase = getSupabase();
-    try {
-      const { data } = await supabase.from("jobs").select("*").is("deleted_at", null);
-      const allJobs = (data ?? []) as Job[];
-      const withoutDate = allJobs.filter(
-        (j) =>
-          !j.scheduled_date &&
-          !j.scheduled_start_at &&
-          j.status !== "completed" &&
-          j.status !== "cancelled",
-      );
-      setStats({
-        unscheduled: withoutDate.length,
-        active: allJobs.filter((j) => isJobInProgressStatus(j.status)).length,
-      });
-    } catch { /* cosmetic */ }
-  }, []);
-
-  const [stats, setStats] = useState({ unscheduled: 0, active: 0 });
+  const activeCount = useMemo(() => jobs.length, [jobs]);
+  const unassignedCount = useMemo(
+    () => jobs.filter((j) => j.status === "unassigned" || j.status === "auto_assigning").length,
+    [jobs],
+  );
 
   const loadLiveMap = useCallback(async () => {
     setLoadingLiveMap(true);
@@ -280,10 +265,6 @@ export default function SchedulePage() {
   useEffect(() => {
     loadJobs();
   }, [loadJobs]);
-
-  useEffect(() => {
-    loadAllJobs();
-  }, [loadAllJobs]);
 
   useEffect(() => {
     loadLiveMap();
@@ -387,6 +368,11 @@ export default function SchedulePage() {
       jobs.filter((j) => j.status !== "cancelled").reduce((sum, j) => sum + jobBillableRevenue(j), 0),
     [jobs],
   );
+  const inProgressCount = useMemo(
+    () => jobs.filter((j) => isJobInProgressStatus(j.status)).length,
+    [jobs],
+  );
+  const hasUnassigned = unassignedCount > 0;
   const liveActiveCount = useMemo(() => liveMapPoints.filter((p) => !p.inactive).length, [liveMapPoints]);
   const liveInactiveCount = useMemo(() => liveMapPoints.filter((p) => p.inactive).length, [liveMapPoints]);
 
@@ -449,21 +435,33 @@ export default function SchedulePage() {
         </div>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Active" value={stats.active} format="number" icon={Briefcase} accent="blue" />
-          <KpiCard title="Schedule this month" value={jobs.length} format="number" icon={CalIcon} accent="emerald" />
-          <KpiCard title="Unscheduled" value={stats.unscheduled} format="number" description="Need date assignment" icon={AlertTriangle} accent="amber" />
+          <KpiCard title="Active" value={activeCount} format="number" icon={Briefcase} accent="blue" />
+          <KpiCard title="In progress" value={inProgressCount} format="number" icon={RefreshCw} accent="emerald" />
           <KpiCard
-            title={view === "calendar" ? "Total revenue this month" : "Visible on map"}
-            value={view === "calendar" ? monthRevenue : filteredLiveMapPoints.length}
+            title={view === "calendar" ? "Total revenue this month" : "Total on map"}
+            value={view === "calendar" ? monthRevenue : liveMapPoints.length}
             format={view === "calendar" ? "currency" : "number"}
             icon={view === "calendar" ? DollarSign : MapPin}
             accent="purple"
             description={
               view === "live_map" && liveMapPoints.length > 0
                 ? liveMapFiltersActive
-                  ? `Showing ${filteredLiveMapPoints.length} of ${liveMapPoints.length}`
+                  ? `Visible ${filteredLiveMapPoints.length} / ${liveMapPoints.length}`
                   : `${liveMapPoints.length} with location`
                 : undefined
+            }
+          />
+          <KpiCard
+            title="Unassigned"
+            value={unassignedCount}
+            format="number"
+            description={hasUnassigned ? "Needs immediate attention" : "All assigned"}
+            icon={AlertTriangle}
+            accent={hasUnassigned ? "amber" : "emerald"}
+            className={
+              hasUnassigned
+                ? "border-red-300 bg-red-50/70 dark:bg-red-950/20"
+                : "border-emerald-300 bg-emerald-50/70 dark:bg-emerald-950/20"
             }
           />
         </StaggerContainer>

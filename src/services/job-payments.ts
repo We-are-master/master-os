@@ -73,19 +73,23 @@ export async function createJobPayment(input: CreateJobPaymentInput): Promise<Jo
 
   if (error) throw error;
 
-  await reconcileJobCustomerPaymentFlags(supabase, input.job_id);
-
-  /** Customer cash-in only: sync invoice balance due / stages / completion — not partner payouts (those are ledger-only). */
+  /** reconcile reads job_payments → updates jobs row; the customer cash-in chain reads job_payments → updates invoices.
+   *  They touch different rows so they can run in parallel. Inside the chain, collection stages + completion check
+   *  both depend on amount_paid being current, so they parallelize after the amount sync. */
   const isCustomerCashIn = input.type === "customer_deposit" || input.type === "customer_final";
-  if (isCustomerCashIn) {
-    await syncInvoicesFromJobCustomerPayments(supabase, input.job_id);
-    try {
-      await syncInvoiceCollectionStagesForJob(supabase, input.job_id);
-    } catch {
-      /* non-blocking — invoice rows may still show correct amount_paid */
-    }
-    await maybeCompleteAwaitingPaymentJob(supabase, input.job_id);
-  }
+  await Promise.all([
+    reconcileJobCustomerPaymentFlags(supabase, input.job_id),
+    (async () => {
+      if (!isCustomerCashIn) return;
+      await syncInvoicesFromJobCustomerPayments(supabase, input.job_id);
+      await Promise.all([
+        syncInvoiceCollectionStagesForJob(supabase, input.job_id).catch(() => {
+          /* non-blocking — invoice rows may still show correct amount_paid */
+        }),
+        maybeCompleteAwaitingPaymentJob(supabase, input.job_id),
+      ]);
+    })(),
+  ]);
 
   return data as JobPayment;
 }
@@ -123,17 +127,21 @@ export async function deleteJobPayment(id: string): Promise<void> {
 
   await softDeleteById("job_payments", id);
   if (jobId) {
-    await reconcileJobCustomerPaymentFlags(supabase, jobId);
+    /** Same parallelization as createJobPayment — reconcile and the invoice cascade touch disjoint rows. */
     const customerRowDeleted = payType === "customer_deposit" || payType === "customer_final";
-    if (customerRowDeleted) {
-      await syncInvoicesFromJobCustomerPayments(supabase, jobId);
-      try {
-        await syncInvoiceCollectionStagesForJob(supabase, jobId);
-      } catch {
-        /* non-blocking */
-      }
-      await maybeCompleteAwaitingPaymentJob(supabase, jobId);
-    }
+    await Promise.all([
+      reconcileJobCustomerPaymentFlags(supabase, jobId),
+      (async () => {
+        if (!customerRowDeleted) return;
+        await syncInvoicesFromJobCustomerPayments(supabase, jobId);
+        await Promise.all([
+          syncInvoiceCollectionStagesForJob(supabase, jobId).catch(() => {
+            /* non-blocking */
+          }),
+          maybeCompleteAwaitingPaymentJob(supabase, jobId),
+        ]);
+      })(),
+    ]);
   }
 }
 

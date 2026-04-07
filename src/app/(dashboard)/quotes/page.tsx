@@ -48,7 +48,7 @@ import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
-import { getStatusCounts, getAggregates, getSupabase, softDeleteById, type ListParams, type ListResult } from "@/services/base";
+import { getStatusCounts, getSupabase, softDeleteById, type ListParams, type ListResult } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logBulkAction } from "@/services/audit";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
@@ -68,7 +68,7 @@ import {
   BID_DEFAULT_MARGIN_ON_SELL,
   customerUnitSellFromPartnerUnit,
 } from "@/lib/quote-bid-payload";
-import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import {
   clampDepositPercent,
   depositAmountFromPercent,
@@ -88,6 +88,7 @@ function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>)
 }
 
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
+type KpiDatePreset = "day" | "week" | "month" | "range";
 
 /**
  * Label for proposal line 1: type of work only.
@@ -331,7 +332,7 @@ function QuotesPageContent() {
   const searchParams = useSearchParams();
   const {
     data, loading, page, totalPages, totalItems,
-    setPage, search, setSearch, status, setStatus, refresh,
+    setPage, search, setSearch, status, setStatus, refresh, refreshSilent,
   } = useSupabaseList<Quote>({
     fetcher: listQuotesForPage,
     realtimeTable: "quotes",
@@ -342,7 +343,24 @@ function QuotesPageContent() {
   const { profile } = useProfile();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
-  const [pipelineValue, setPipelineValue] = useState(0);
+  const [kpiDatePreset, setKpiDatePreset] = useState<KpiDatePreset>("month");
+  const [kpiRangeFrom, setKpiRangeFrom] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const [kpiRangeTo, setKpiRangeTo] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const [kpiLoading, setKpiLoading] = useState(false);
+  const [kpiSummary, setKpiSummary] = useState({
+    totalQuotedValue: 0,
+    biddingCount: 0,
+    rejectedValue: 0,
+    conversionPct: 0,
+    convertedCount: 0,
+    totalCount: 0,
+  });
   const [viewMode, setViewMode] = useState("list");
   const [createOpen, setCreateOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -408,26 +426,85 @@ function QuotesPageContent() {
     } catch { /* cosmetic */ }
   }, []);
 
-  const loadAggregates = useCallback(async () => {
-    try {
-      const agg = await getAggregates("quotes", "total_value");
-      setPipelineValue(agg.sum);
-    } catch { /* cosmetic */ }
-  }, []);
-
-  useEffect(() => { loadCounts(); loadAggregates(); }, [loadCounts, loadAggregates]);
+  useEffect(() => { loadCounts(); }, [loadCounts]);
   useEffect(() => () => {
     if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
   }, []);
 
+  /** Background list refresh — avoids full-table loading skeleton on every action (enterprise UX). */
   const refreshWithKpis = useCallback((delayMs = 180) => {
-    refresh();
+    refreshSilent();
     if (kpiRefreshTimerRef.current) clearTimeout(kpiRefreshTimerRef.current);
     kpiRefreshTimerRef.current = setTimeout(() => {
       void loadCounts();
-      void loadAggregates();
     }, delayMs);
-  }, [refresh, loadCounts, loadAggregates]);
+  }, [refresh, loadCounts]);
+
+  const kpiDateBounds = useMemo(() => {
+    const now = new Date();
+    const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    if (kpiDatePreset === "day") {
+      return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
+    }
+    if (kpiDatePreset === "week") {
+      const day = now.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
+      const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+      const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+      return { from: startOfDay(monday).toISOString(), to: endOfDay(sunday).toISOString() };
+    }
+    if (kpiDatePreset === "month") {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { from: startOfDay(first).toISOString(), to: endOfDay(last).toISOString() };
+    }
+    const from = new Date(`${kpiRangeFrom}T00:00:00`);
+    const to = new Date(`${kpiRangeTo}T23:59:59.999`);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+    return { from: from.toISOString(), to: to.toISOString() };
+  }, [kpiDatePreset, kpiRangeFrom, kpiRangeTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!kpiDateBounds) return;
+      setKpiLoading(true);
+      try {
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+          .from("quotes")
+          .select("status,total_value,created_at")
+          .gte("created_at", kpiDateBounds.from)
+          .lte("created_at", kpiDateBounds.to);
+        if (error) throw error;
+        const rows = (data ?? []) as Array<{ status: string; total_value?: number | null }>;
+        const openStatuses = new Set(["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "converted_to_job"]);
+        const totalQuotedValue = rows
+          .filter((r) => openStatuses.has(r.status))
+          .reduce((s, r) => s + (Number(r.total_value) || 0), 0);
+        const biddingCount = rows.filter((r) => r.status === "bidding").length;
+        const rejectedValue = rows
+          .filter((r) => r.status === "rejected")
+          .reduce((s, r) => s + (Number(r.total_value) || 0), 0);
+        const convertedCount = rows.filter((r) => r.status === "converted_to_job").length;
+        const totalCount = rows.length;
+        const conversionPct = totalCount > 0 ? Math.round((convertedCount / totalCount) * 1000) / 10 : 0;
+        if (!cancelled) {
+          setKpiSummary({ totalQuotedValue, biddingCount, rejectedValue, conversionPct, convertedCount, totalCount });
+        }
+      } catch {
+        if (!cancelled) {
+          setKpiSummary({ totalQuotedValue: 0, biddingCount: 0, rejectedValue: 0, conversionPct: 0, convertedCount: 0, totalCount: 0 });
+        }
+      } finally {
+        if (!cancelled) setKpiLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [kpiDateBounds]);
 
   const pipelineCount =
     (statusCounts.draft ?? 0) +
@@ -436,17 +513,11 @@ function QuotesPageContent() {
     (statusCounts.awaiting_customer ?? 0) +
     (statusCounts.accepted ?? 0);
 
-  /** Share of all quotes (non-deleted) that became jobs (`converted_to_job`). */
-  const quoteToJobConversion = useMemo(() => {
-    const total = statusCounts.all ?? 0;
-    const converted = statusCounts.converted_to_job ?? 0;
-    if (total <= 0) return { pct: 0, converted, total };
-    return {
-      pct: Math.round((converted / total) * 1000) / 10,
-      converted,
-      total,
-    };
-  }, [statusCounts]);
+  /** Share of quotes in selected KPI date window that became jobs (`converted_to_job`). */
+  const quoteToJobConversion = useMemo(
+    () => ({ pct: kpiSummary.conversionPct, converted: kpiSummary.convertedCount, total: kpiSummary.totalCount }),
+    [kpiSummary],
+  );
 
   const handleCreate = useCallback(
     async (formData: Partial<Quote>, options?: { manualLineItems?: ProposalLineRow[] }) => {
@@ -611,13 +682,16 @@ function QuotesPageContent() {
         const quotePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
         const quotePartnerName = (formData.partner_name ?? quoteToConvert.partner_name)?.trim();
         const hasPartner = !!(quotePartnerId?.trim() || quotePartnerName);
-        const dupJobs = await findDuplicateJobs({
-          clientId: formData.client_id,
-          propertyAddress: formData.property_address,
-        });
+        /** Pre-fetch invoice due date in parallel with dup check + image resolve — it doesn't depend on the new job. */
+        const dueDatePromise = getInvoiceDueDateIsoForClient(formData.client_id ?? null);
+        const [dupJobs, siteImages] = await Promise.all([
+          findDuplicateJobs({
+            clientId: formData.client_id,
+            propertyAddress: formData.property_address,
+          }),
+          resolveImagesForJobFromQuote(quoteToConvert),
+        ]);
         if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJobs)))) return;
-
-        const siteImages = await resolveImagesForJobFromQuote(quoteToConvert);
 
         const job = await createJob({
           title: formData.title,
@@ -660,28 +734,31 @@ function QuotesPageContent() {
           images: siteImages.length ? siteImages : undefined,
         });
 
-        const dueStr = await getInvoiceDueDateIsoForClient(formData.client_id ?? null);
         const totalClient = Number(formData.client_price ?? 0);
-        if (totalClient > 0.01) {
+        /** Invoice flow runs in parallel with quote-status update + audit log — they touch different rows. */
+        const invoiceFlow = (async () => {
+          if (totalClient <= 0.01) return;
+          const dueStr = await dueDatePromise;
           const linked = await listInvoicesLinkedToJob(job.reference, job.invoice_id);
           if (linked.length > 0) {
             const pick = linked.find((i) => i.invoice_kind === "combined") ?? linked[linked.length - 1];
             await updateJob(job.id, { invoice_id: pick.id });
-          } else {
-            const combined = await createInvoice({
-              client_name: formData.client_name,
-              job_reference: job.reference,
-              amount: totalClient,
-              status: "pending",
-              due_date: dueStr,
-              collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
-              invoice_kind: "combined",
-            });
-            await updateJob(job.id, { invoice_id: combined.id });
+            return;
           }
-        }
+          const combined = await createInvoice({
+            client_name: formData.client_name,
+            job_reference: job.reference,
+            amount: totalClient,
+            status: "pending",
+            due_date: dueStr,
+            collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
+            invoice_kind: "combined",
+          });
+          await updateJob(job.id, { invoice_id: combined.id });
+        })();
 
         await Promise.all([
+          invoiceFlow,
           updateQuote(quoteToConvert.id, { status: "converted_to_job" }),
           logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: { from_quote: quoteToConvert.reference }, userId: profile?.id, userName: profile?.full_name }),
         ]);
@@ -833,11 +910,35 @@ function QuotesPageContent() {
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={handleNewQuoteClick}>New Quote</Button>
         </PageHeader>
 
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="w-[180px]">
+            <Select
+              label="KPI date"
+              value={kpiDatePreset}
+              onChange={(e) => setKpiDatePreset(e.target.value as KpiDatePreset)}
+              options={[
+                { value: "day", label: "Day" },
+                { value: "week", label: "Week" },
+                { value: "month", label: "Month" },
+                { value: "range", label: "Range" },
+              ]}
+            />
+          </div>
+          {kpiDatePreset === "range" && (
+            <>
+              <Input type="date" value={kpiRangeFrom} onChange={(e) => setKpiRangeFrom(e.target.value)} className="w-[170px] h-9" />
+              <Input type="date" value={kpiRangeTo} onChange={(e) => setKpiRangeTo(e.target.value)} className="w-[170px] h-9" />
+            </>
+          )}
+          {kpiLoading ? <span className="text-xs text-text-tertiary animate-pulse">Updating KPIs…</span> : null}
+        </div>
+
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Pipeline Value" value={pipelineValue} format="currency" change={12.5} changeLabel="vs last month" icon={BarChart3} accent="primary" />
-          <KpiCard title="Total Quotes" value={statusCounts.all ?? 0} format="number" icon={FileText} accent="blue" />
+          <KpiCard title="Total Quoted" value={kpiSummary.totalQuotedValue} format="currency" icon={BarChart3} accent="primary" description="Includes Awaiting Customer value" />
+          <KpiCard title="Bidding" value={kpiSummary.biddingCount} format="number" icon={FileText} accent="blue" description="No. of quotes in bidding" />
+          <KpiCard title="Rejected Value" value={kpiSummary.rejectedValue} format="currency" icon={XCircle} accent="amber" />
           <KpiCard
-            title="Quotes → jobs"
+            title="Conversion Rate"
             value={quoteToJobConversion.pct}
             format="percent"
             icon={Briefcase}
@@ -848,7 +949,6 @@ function QuotesPageContent() {
                 : `${quoteToJobConversion.converted} job${quoteToJobConversion.converted === 1 ? "" : "s"} from ${quoteToJobConversion.total} quote${quoteToJobConversion.total === 1 ? "" : "s"} · conversion rate`
             }
           />
-          <KpiCard title="Awaiting Customer" value={statusCounts.awaiting_customer ?? 0} format="number" icon={Clock} accent="amber" />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
@@ -2079,9 +2179,32 @@ function QuoteDetailDrawer({
               )}
 
               <div className="rounded-xl border border-border-light bg-surface-hover/80 p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-text-tertiary" />
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer PDF preview</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="h-4 w-4 shrink-0 text-text-tertiary" />
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
+                      Customer PDF preview
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    icon={<Download className="h-3.5 w-3.5" />}
+                    onClick={() => {
+                      const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.rel = "noopener";
+                      a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                    }}
+                  >
+                    Download PDF
+                  </Button>
                 </div>
                 <p className="text-[11px] text-text-tertiary">
                   Matches the PDF attached when you email the client. Uses <strong className="text-text-secondary">saved</strong> scope, line items and figures — use <strong className="text-text-secondary">Save Quote</strong> to refresh.
@@ -2499,7 +2622,7 @@ function QuoteDetailDrawer({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-text-primary truncate">{p.company_name}</p>
                     <p className="text-xs text-text-tertiary mt-0.5 truncate">
-                      {p.trade}
+                      {isTradeMatch ? partnerMatchTypeLabel(p, invitePartnerTypeOfWork) : (p.trade || "—")}
                       {p.location?.trim() ? <> · {p.location}</> : null}
                     </p>
                   </div>
@@ -3756,7 +3879,7 @@ function CreateQuoteForm({
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-text-primary truncate">{p.company_name || p.contact_name}</p>
                         <p className="text-xs text-text-tertiary mt-0.5 truncate">
-                          {p.trade}
+                          {partnerMatchTypeLabel(p, form.title)}
                           {p.location?.trim() ? <> · {p.location}</> : null}
                         </p>
                       </div>

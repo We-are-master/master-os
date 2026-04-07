@@ -38,21 +38,14 @@ export async function getBidsByQuoteId(quoteId: string): Promise<QuoteBid[]> {
 export async function approveBid(
   bidId: string,
   quoteId: string,
-  partnerId: string,
-  partnerName: string | undefined,
-  bidAmount: number
+  _partnerId: string,
+  _partnerName: string | undefined,
+  _bidAmount: number
 ): Promise<void> {
   const supabase = getSupabase();
-  await supabase.from("quote_bids").update({ status: "rejected" }).eq("quote_id", quoteId).neq("id", bidId);
-  await supabase.from("quote_bids").update({ status: "approved", updated_at: new Date().toISOString() }).eq("id", bidId);
-  const { error: quoteError } = await supabase
-    .from("quotes")
-    .update({
-      partner_id: partnerId,
-      partner_name: partnerName ?? null,
-      partner_cost: bidAmount,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", quoteId);
-  if (quoteError) throw quoteError;
+  const { error } = await supabase.rpc("approve_quote_bid", {
+    p_bid_id: bidId,
+    p_quote_id: quoteId,
+  });
+  if (error) throw error;
 }

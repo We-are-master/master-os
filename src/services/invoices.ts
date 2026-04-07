@@ -203,8 +203,9 @@ export async function softDeleteInvoicesForArchivedJobs(
   }
 
   const primaryIds = [...new Set(jobs.map((j) => j.invoice_id).filter((id): id is string => id != null && String(id).trim() !== ""))];
-  for (const id of primaryIds) {
-    const { error } = await supabase.from("invoices").update(payload).eq("id", id).is("deleted_at", null);
+  if (primaryIds.length > 0) {
+    /** One bulk update instead of N sequential PATCHes (was O(jobs) round-trips). */
+    const { error } = await supabase.from("invoices").update(payload).in("id", primaryIds).is("deleted_at", null);
     if (error) throw error;
   }
 }

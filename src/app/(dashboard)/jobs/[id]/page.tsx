@@ -84,6 +84,8 @@ import {
   partnerSelfBillGrossAmount,
   customerScheduledTotal,
   jobCustomerBillableRevenueForCollections,
+  suggestedPartnerCostForTargetMargin,
+  SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import {
   ACCESS_CCZ_FEE_GBP,
@@ -97,7 +99,7 @@ import { isLegacyMisclassifiedPartnerPayment, sumPartnerRecordedPayoutsForCap } 
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
-import { notifyAssignedPartnerAboutJob, updatesOnlyIrrelevantToPartner } from "@/lib/notify-partner-job-push";
+import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
 import {
   effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
@@ -329,6 +331,8 @@ export default function JobDetailPage() {
   const [openingReportImageKey, setOpeningReportImageKey] = useState<string | null>(null);
   const [scopeDraft, setScopeDraft] = useState("");
   const [savingScope, setSavingScope] = useState(false);
+  const [additionalNotesDraft, setAdditionalNotesDraft] = useState("");
+  const [savingAdditionalNotes, setSavingAdditionalNotes] = useState(false);
   const [sitePhotoUploading, setSitePhotoUploading] = useState(false);
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
@@ -358,14 +362,17 @@ export default function JobDetailPage() {
 
   useEffect(() => {
     if (!id || !job || !isPartnerLiveTimerRunning(job)) return;
+    /** 2s polling generated ~1800 RPS / hour against the jobs row for every open tab.
+     *  Bumped to 10s — partner timer end transitions still feel near-realtime via the local 1s tick. */
     const poll = window.setInterval(async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const j = await getJob(id);
         if (j) setJob(j);
       } catch {
         /* ignore */
       }
-    }, 2000);
+    }, 10000);
     return () => window.clearInterval(poll);
   }, [id, job?.partner_timer_started_at, job?.partner_timer_ended_at]);
 
@@ -797,6 +804,11 @@ export default function JobDetailPage() {
     setScopeDraft(job.scope ?? "");
   }, [job?.id, job?.scope]);
 
+  useEffect(() => {
+    if (!job) return;
+    setAdditionalNotesDraft(job.additional_notes ?? "");
+  }, [job?.id, job?.additional_notes]);
+
   const handleJobUpdate = useCallback(async (
     jobId: string,
     updates: Partial<Job>,
@@ -868,7 +880,7 @@ export default function JobDetailPage() {
       const wantNotify =
         opts?.notifyPartner !== false &&
         !didAutoFinalCheck &&
-        !updatesOnlyIrrelevantToPartner(updates);
+        shouldNotifyPartnerForJobPatch(updates);
       if (wantNotify) {
         const prevPid = current?.id === jobId ? (current.partner_id ?? null) : null;
         const newPid = updated.partner_id ?? null;
@@ -1192,13 +1204,17 @@ export default function JobDetailPage() {
         const partnerDue = Math.max(0, partnerPaymentCap(j) - partnerPaid);
         let primarySelfBillId = j.self_bill_id ?? null;
         try {
-          const linkedSelfBills = await listSelfBillsLinkedToJob(j.reference, primarySelfBillId);
-          if (!primarySelfBillId && linkedSelfBills.length > 0) {
-            const pick =
-              linkedSelfBills.find((s) => s.status === "accumulating") ??
-              linkedSelfBills.find((s) => s.status === "pending_review") ??
-              linkedSelfBills[linkedSelfBills.length - 1];
-            primarySelfBillId = pick.id;
+          /** Skip the listSelfBillsLinkedToJob round-trip when the job already points at a self-bill —
+           *  the list was only used to *find* a candidate when none was set. */
+          if (!primarySelfBillId) {
+            const linkedSelfBills = await listSelfBillsLinkedToJob(j.reference, primarySelfBillId);
+            if (linkedSelfBills.length > 0) {
+              const pick =
+                linkedSelfBills.find((s) => s.status === "accumulating") ??
+                linkedSelfBills.find((s) => s.status === "pending_review") ??
+                linkedSelfBills[linkedSelfBills.length - 1];
+              primarySelfBillId = pick.id;
+            }
           }
           const shouldCreateSelfBill =
             partnerSelfBillGrossAmount(j) > 0 || partnerDue > 0.02;
@@ -1761,8 +1777,9 @@ export default function JobDetailPage() {
         throw new Error("Could not save approval and billing on the job.");
       }
       current = afterBatch;
+      /** Downstream payout-state refresh — does not feed any read below; fire-and-forget to keep the critical path lean. */
       if (current.self_bill_id) {
-        await syncSelfBillAfterJobChange(current);
+        void syncSelfBillAfterJobChange(current).catch(() => {});
       }
 
       const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
@@ -1774,10 +1791,20 @@ export default function JobDetailPage() {
 
       /** Single instant for invoice due date, weekly invoice week, and partner self-bill week (this approve action only). */
       const financeAnchorDate = new Date();
+      const wantsSelfBill = !!current.partner_id?.trim();
+      const selfBillIdBeforePartnerSection = current.self_bill_id ?? null;
+
+      /** Parallelize all reads needed before invoice/self-bill decisions — they're fully independent. */
+      const [linked, linkedSelfBills, dueForAnchor] = await Promise.all([
+        listInvoicesLinkedToJob(current.reference, current.invoice_id),
+        wantsSelfBill
+          ? listSelfBillsLinkedToJob(current.reference, current.self_bill_id ?? null)
+          : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
+        getInvoiceDueDateIsoForClient(current.client_id ?? null, financeAnchorDate),
+      ]);
 
       // Keep this action internal only: no external send/notify workflow.
       let primaryInvoiceId = current.invoice_id ?? null;
-      const linked = await listInvoicesLinkedToJob(current.reference, current.invoice_id);
       if (!primaryInvoiceId && linked.length > 0) {
         const pick =
           linked.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ?? linked[linked.length - 1];
@@ -1793,56 +1820,49 @@ export default function JobDetailPage() {
         (invoiceForPaidCheck!.status === "paid" || isInvoiceFullyPaidByAmount(invoiceForPaidCheck!));
       const customerDueForStatus = invoiceShowsPaidInDb ? 0 : customerDue;
 
-      if (!primaryInvoiceId && customerDue > 0.02) {
-        const inv = await createOrAppendJobInvoice(
-          current,
-          {
-            client_name: current.client_name ?? "Client",
-            amount: Math.max(0, customerDue),
-            status: customerDue <= 0.02 ? "paid" : "pending",
-            paid_date: customerDue <= 0.02 ? new Date().toISOString().slice(0, 10) : undefined,
-            invoice_kind: "combined",
-            collection_stage: customerDue <= 0.02 ? "completed" : "awaiting_final",
-          },
-          { financeAnchorDate },
-        );
-        primaryInvoiceId = inv.id;
-        if (inv.status === "paid") {
-          await syncJobAfterInvoicePaidToLedger(getSupabase(), inv.id, "Manual");
+      /** Invoice mutation and partner self-bill creation are independent — run them in parallel. */
+      const invoicePromise: Promise<{ id: string | null; markPaid: boolean }> = (async () => {
+        if (!primaryInvoiceId && customerDue > 0.02) {
+          const inv = await createOrAppendJobInvoice(
+            current,
+            {
+              client_name: current.client_name ?? "Client",
+              amount: Math.max(0, customerDue),
+              status: customerDue <= 0.02 ? "paid" : "pending",
+              paid_date: customerDue <= 0.02 ? new Date().toISOString().slice(0, 10) : undefined,
+              invoice_kind: "combined",
+              collection_stage: customerDue <= 0.02 ? "completed" : "awaiting_final",
+            },
+            { financeAnchorDate },
+          );
+          return { id: inv.id, markPaid: inv.status === "paid" };
         }
-      } else if (primaryInvoiceId && customerDue > 0.02 && !invoiceShowsPaidInDb) {
-        // Keep linked invoice aligned with the latest approved totals (incl. hourly billed-hours changes).
-        const dueForAnchor = await getInvoiceDueDateIsoForClient(current.client_id ?? null, financeAnchorDate);
-        await updateInvoice(primaryInvoiceId, {
-          amount: Math.max(0, customerDue),
-          paid_date: undefined,
-          collection_stage: "awaiting_final",
-          due_date: dueForAnchor,
-        });
-      } else if (customerDue <= 0.02 && primaryInvoiceId) {
-        await updateInvoice(primaryInvoiceId, {
-          status: "paid",
-          paid_date: new Date().toISOString().slice(0, 10),
-          collection_stage: "completed",
-        });
-        await syncJobAfterInvoicePaidToLedger(getSupabase(), primaryInvoiceId, "Manual");
-      }
-      if (primaryInvoiceId && primaryInvoiceId !== current.invoice_id) {
-        const withInvoice = await handleJobUpdate(current.id, { invoice_id: primaryInvoiceId }, {
-          notifyPartner: false,
-          silent: true,
-          skipSelfBillSync: true,
-        });
-        if (withInvoice) current = withInvoice;
-      }
+        if (primaryInvoiceId && customerDue > 0.02 && !invoiceShowsPaidInDb) {
+          // Keep linked invoice aligned with the latest approved totals (incl. hourly billed-hours changes).
+          await updateInvoice(primaryInvoiceId, {
+            amount: Math.max(0, customerDue),
+            paid_date: undefined,
+            collection_stage: "awaiting_final",
+            due_date: dueForAnchor,
+          });
+          return { id: primaryInvoiceId, markPaid: false };
+        }
+        if (customerDue <= 0.02 && primaryInvoiceId) {
+          await updateInvoice(primaryInvoiceId, {
+            status: "paid",
+            paid_date: new Date().toISOString().slice(0, 10),
+            collection_stage: "completed",
+          });
+          return { id: primaryInvoiceId, markPaid: true };
+        }
+        return { id: primaryInvoiceId, markPaid: false };
+      })();
 
-      // Partner self-bill: same idea as invoice, but never block approval if the DB rejects the insert.
-      // (Client invoice path above remains the source of truth for closing the job.)
-      const selfBillIdBeforePartnerSection = current.self_bill_id ?? null;
-      try {
-        let primarySelfBillId = current.self_bill_id ?? null;
-        if (current.partner_id?.trim()) {
-          const linkedSelfBills = await listSelfBillsLinkedToJob(current.reference, primarySelfBillId);
+      /** Partner self-bill: never block approval if the insert/lookup fails — log and continue. */
+      const selfBillPromise: Promise<string | null> = (async () => {
+        if (!wantsSelfBill) return current.self_bill_id ?? null;
+        try {
+          let primarySelfBillId = current.self_bill_id ?? null;
           if (!primarySelfBillId && linkedSelfBills.length > 0) {
             const pick =
               linkedSelfBills.find((s) => s.status === "accumulating") ??
@@ -1865,26 +1885,46 @@ export default function JobDetailPage() {
             );
             primarySelfBillId = selfBill.id;
           }
-          if (primarySelfBillId && primarySelfBillId !== current.self_bill_id) {
-            const withSelfBill = await handleJobUpdate(current.id, { self_bill_id: primarySelfBillId }, {
-              notifyPartner: false,
-              silent: true,
-              skipSelfBillSync: true,
-            });
-            if (withSelfBill) current = withSelfBill;
-          }
+          return primarySelfBillId;
+        } catch (e) {
+          console.error("Review & approve: self-bill link failed", e);
+          toast.warning(
+            e instanceof Error
+              ? e.message
+              : "Partner self-bill could not be linked automatically; you can attach it later from Finance or this job.",
+          );
+          return current.self_bill_id ?? null;
         }
-      } catch (e) {
-        console.error("Review & approve: self-bill link failed", e);
-        toast.warning(
-          e instanceof Error
-            ? e.message
-            : "Partner self-bill could not be linked automatically; you can attach it later from Finance or this job.",
+      })();
+
+      const [invoiceResult, resolvedSelfBillId] = await Promise.all([invoicePromise, selfBillPromise]);
+
+      if (invoiceResult.markPaid && invoiceResult.id) {
+        // Ledger sync is downstream; nothing below reads from it — fire-and-forget.
+        void syncJobAfterInvoicePaidToLedger(getSupabase(), invoiceResult.id, "Manual").catch((e) =>
+          console.error("syncJobAfterInvoicePaidToLedger failed", e),
         );
       }
 
+      /** Single batched job update for both invoice_id and self_bill_id (replaces 2 sequential updates). */
+      const linkPatch: Partial<Job> = {};
+      if (invoiceResult.id && invoiceResult.id !== current.invoice_id) {
+        linkPatch.invoice_id = invoiceResult.id;
+      }
+      if (resolvedSelfBillId && resolvedSelfBillId !== selfBillIdBeforePartnerSection) {
+        linkPatch.self_bill_id = resolvedSelfBillId;
+      }
+      if (Object.keys(linkPatch).length > 0) {
+        const withLinks = await handleJobUpdate(current.id, linkPatch, {
+          notifyPartner: false,
+          silent: true,
+          skipSelfBillSync: true,
+        });
+        if (withLinks) current = withLinks;
+      }
+
       if ((current.self_bill_id ?? null) !== selfBillIdBeforePartnerSection) {
-        await syncSelfBillAfterJobChange(current);
+        void syncSelfBillAfterJobChange(current).catch(() => {});
       }
 
       // Never re-derive hourly totals from the office timer here — this flow already applied modal hours + rates,
@@ -1902,27 +1942,31 @@ export default function JobDetailPage() {
       if (usedForceApprove && forceApprovalReason.trim()) {
         const reason = forceApprovalReason.trim();
         const stampLine = `[${new Date().toISOString().slice(0, 19)}Z] Forced approval (mandatory checks incomplete). Reason: ${reason} — ${profile?.full_name?.trim() || "User"}`;
-        await logAudit({
-          entityType: "job",
-          entityId: current.id,
-          entityRef: current.reference,
-          action: "note",
-          fieldName: "review_force_approve",
-          newValue: stampLine,
-          userId: profile?.id,
-          userName: profile?.full_name,
-          metadata: { forced: true, reason },
-        });
         const prevNotes = (current.internal_notes ?? "").trim();
         const combined = prevNotes ? `${prevNotes}\n\n${stampLine}` : stampLine;
-        const withNotes = await handleJobUpdate(current.id, { internal_notes: combined }, {
-          notifyPartner: false,
-          silent: true,
-          skipSelfBillSync: true,
-        });
+        /** Audit log + notes update are independent writes — run them in parallel. */
+        const [, withNotes] = await Promise.all([
+          logAudit({
+            entityType: "job",
+            entityId: current.id,
+            entityRef: current.reference,
+            action: "note",
+            fieldName: "review_force_approve",
+            newValue: stampLine,
+            userId: profile?.id,
+            userName: profile?.full_name,
+            metadata: { forced: true, reason },
+          }),
+          handleJobUpdate(current.id, { internal_notes: combined }, {
+            notifyPartner: false,
+            silent: true,
+            skipSelfBillSync: true,
+          }),
+        ]);
         if (withNotes) current = withNotes;
       }
-      await refreshJobFinance();
+      /** Finance refresh fans out 4 reads; nothing in this handler depends on it — let it run while the modal closes. */
+      void refreshJobFinance().catch(() => {});
       setValidateCompleteOpen(false);
       setOwnerApprovalChecked(false);
       setForceApprovalChecked(false);
@@ -2005,6 +2049,21 @@ export default function JobDetailPage() {
     () => (job ? Math.round(Math.max(0, Number(job.extras_amount ?? 0)) * 100) / 100 : 0),
     [job?.extras_amount, job?.id],
   );
+
+  /** Suggested partner_cost for ~40% gross margin on client_price + extras_amount (materials fixed). */
+  const suggestedPartnerCost40ForFinForm = useMemo(() => {
+    if (!job || job.job_type === "hourly") return null;
+    const cp = parseFloat(finForm.client_price) || 0;
+    const ex = parseFloat(finForm.extras_amount) || 0;
+    const mat = parseFloat(finForm.materials_cost) || 0;
+    if (cp + ex <= 0) return null;
+    return suggestedPartnerCostForTargetMargin({
+      clientPrice: cp,
+      extrasAmount: ex,
+      materialsCost: mat,
+      targetMarginPercent: SUGGESTED_PARTNER_MARGIN_HINT_PCT,
+    });
+  }, [job?.id, job?.job_type, finForm.client_price, finForm.extras_amount, finForm.materials_cost]);
 
   if (loading || !id) {
     return (
@@ -2509,6 +2568,7 @@ export default function JobDetailPage() {
                           onChange={setPropertyEdit}
                           labelClient="Client"
                           labelAddress="Property address"
+                          jobCurrentAddressOnly
                         />
                         <Button
                           type="button"
@@ -2700,6 +2760,35 @@ export default function JobDetailPage() {
                   }
                 }}>
                   Save scope
+                </Button>
+              </div>
+
+              <div className="space-y-2 pt-3 border-t border-border-light">
+                <p className="text-xs font-medium text-text-secondary">Additional notes</p>
+                <p className="text-[11px] text-text-tertiary">Internal only — not shown to the client; use for access, keys, or context beyond the scope.</p>
+                <textarea
+                  value={additionalNotesDraft}
+                  onChange={(e) => setAdditionalNotesDraft(e.target.value)}
+                  rows={3}
+                  placeholder="Parking, entry, preferences…"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  loading={savingAdditionalNotes}
+                  onClick={async () => {
+                    if (!job) return;
+                    setSavingAdditionalNotes(true);
+                    try {
+                      await handleJobUpdate(job.id, { additional_notes: additionalNotesDraft.trim() || null });
+                    } finally {
+                      setSavingAdditionalNotes(false);
+                    }
+                  }}
+                >
+                  Save additional notes
                 </Button>
               </div>
             </div>
@@ -3056,6 +3145,22 @@ export default function JobDetailPage() {
                     <div>
                       <label className="block text-xs font-medium text-text-secondary mb-1.5">Subcontract labour — partner_cost</label>
                       <Input type="number" min={0} step="0.01" value={finForm.partner_cost} onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))} />
+                      {suggestedPartnerCost40ForFinForm != null && (
+                        <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                          ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin hint:{" "}
+                          <span className="font-semibold text-text-secondary tabular-nums">{formatCurrency(suggestedPartnerCost40ForFinForm)}</span>
+                          {" "}(billable ticket + add-ons − materials).{" "}
+                          <button
+                            type="button"
+                            className="text-primary hover:underline font-medium"
+                            onClick={() =>
+                              setFinForm((f) => ({ ...f, partner_cost: String(suggestedPartnerCost40ForFinForm) }))
+                            }
+                          >
+                            Apply
+                          </button>
+                        </p>
+                      )}
                       <p className="text-[10px] text-text-tertiary mt-1">Amount owed to the partner for work (field <span className="font-mono text-[10px]">partner_cost</span>). “Add extra payout” in Cash Out increases this and <span className="font-mono text-[10px]">partner_extras_amount</span>.</p>
                     </div>
                     <div>

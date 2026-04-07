@@ -3,6 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (v: unknown): v is string => typeof v === "string" && UUID_RE.test(v);
+
 interface NotifyPartnerBody {
   /** Notify a single partner by their partners.id */
   partnerId?: string;
@@ -92,41 +95,32 @@ export async function POST(req: NextRequest) {
     };
 
     if (partnerId) {
-      const { data: partnerById } = await supabase
+      if (!isUuid(partnerId)) {
+        return NextResponse.json({ error: "partnerId must be a UUID" }, { status: 400 });
+      }
+      /** Single round-trip: callers may pass either partners.id or partners.auth_user_id. */
+      const { data: partnerRows } = await supabase
         .from("partners")
         .select("id, auth_user_id, expo_push_token")
-        .eq("id", partnerId)
+        .or(`id.eq.${partnerId},auth_user_id.eq.${partnerId}`)
         .eq("status", "active")
-        .single();
-      if (partnerById) {
-        tokens = await resolveTokens([partnerById as PartnerTokenRow]);
-      } else {
-        // Fallback: some callers may pass auth_user_id instead of partners.id.
-        const { data: partnerByAuth } = await supabase
-          .from("partners")
-          .select("id, auth_user_id, expo_push_token")
-          .eq("auth_user_id", partnerId)
-          .eq("status", "active")
-          .single();
-        if (partnerByAuth) tokens = await resolveTokens([partnerByAuth as PartnerTokenRow]);
+        .limit(1);
+      if (partnerRows && partnerRows.length > 0) {
+        tokens = await resolveTokens(partnerRows as PartnerTokenRow[]);
       }
     } else if (partnerIds && partnerIds.length > 0) {
+      const validIds = partnerIds.filter(isUuid);
+      if (validIds.length === 0) {
+        return NextResponse.json({ error: "partnerIds must contain valid UUIDs" }, { status: 400 });
+      }
+      /** Single round-trip for the bulk case as well — accepts ids that are either partners.id or auth_user_id. */
+      const idList = validIds.join(",");
       const { data: partners } = await supabase
         .from("partners")
         .select("id, auth_user_id, expo_push_token")
-        .in("id", partnerIds)
-        .eq("status", "active")
-      let rows = (partners ?? []) as PartnerTokenRow[];
-      if (rows.length < partnerIds.length) {
-        // Fallback for ids that are actually auth_user_id values.
-        const { data: byAuth } = await supabase
-          .from("partners")
-          .select("id, auth_user_id, expo_push_token")
-          .in("auth_user_id", partnerIds)
-          .eq("status", "active");
-        rows = [...rows, ...((byAuth ?? []) as PartnerTokenRow[])];
-      }
-      tokens = await resolveTokens(rows);
+        .or(`id.in.(${idList}),auth_user_id.in.(${idList})`)
+        .eq("status", "active");
+      tokens = await resolveTokens((partners ?? []) as PartnerTokenRow[]);
     } else if (trades && trades.length > 0) {
       // Find all active partners whose trades array overlaps the provided trades
       const orConditions = trades

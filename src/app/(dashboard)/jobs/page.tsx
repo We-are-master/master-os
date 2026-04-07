@@ -63,6 +63,7 @@ import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import {
   formatJobScheduleLine,
+  formatJobScheduleListLabel,
   jobFinishYmd,
   jobScheduleYmd,
   formatLocalYmd,
@@ -80,6 +81,8 @@ import {
   jobCustomerBillableRevenueForCollections,
   jobMarginPercent,
   jobProfit,
+  suggestedPartnerCostForTargetMargin,
+  SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
@@ -89,7 +92,7 @@ import {
   partnerHourlyRateFromCatalogBundle,
 } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
-import { safePartnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
+import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
@@ -260,6 +263,7 @@ function JobsPageContent() {
     fetcher: listJobs,
     realtimeTable: "jobs",
     listParams,
+    initialStatus: "unassigned",
   });
   const { profile } = useProfile();
   const [viewMode, setViewMode] = useState("list");
@@ -556,7 +560,6 @@ function JobsPageContent() {
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
     { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.completed },
     { id: "cancelled", label: "Lost & Cancelled", count: tabCounts.cancelled ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.cancelled },
-    { id: "deleted", label: "Deleted", count: tabCounts.deleted ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.deleted },
   ];
 
   useEffect(() => {
@@ -665,6 +668,7 @@ function JobsPageContent() {
         customer_deposit: 0, customer_deposit_paid: false,
         customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
         scope: formData.scope?.trim() || undefined,
+        additional_notes: formData.additional_notes?.trim() || undefined,
         images: capJobImagesArray(coerceJobImagesArray(formData.images)),
       });
       await Promise.all([
@@ -1097,9 +1101,31 @@ function JobsPageContent() {
       minWidth: "200px",
       cellClassName: "min-w-[12.5rem] max-w-[16rem]",
       render: (item) => {
-        const line = formatJobScheduleLine(item);
+        const line = formatJobScheduleListLabel(item);
+        const detail = formatJobScheduleLine(item);
+        const isTomorrow = line === "Tomorrow";
+        const isToday = line === "Today";
         return line ? (
-          <span className="text-xs text-text-secondary leading-snug block whitespace-normal break-words">{line}</span>
+          isTomorrow || isToday ? (
+            <span
+              className={cn(
+                "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
+                isTomorrow
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
+                  : "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300",
+              )}
+              title={detail ?? undefined}
+            >
+              {line}
+            </span>
+          ) : (
+            <span
+              className="text-xs text-text-secondary leading-snug block whitespace-normal break-words"
+              title={detail ?? undefined}
+            >
+              {line}
+            </span>
+          )
         ) : (
           <span className="text-xs text-text-tertiary">—</span>
         );
@@ -1363,10 +1389,7 @@ function JobsPageContent() {
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <BulkBtn label="Start Job" onClick={() => setBulkActionModal("start_job")} variant="success" />
-                    <BulkBtn label="Mark as Paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
-                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
-                    <BulkBtn label="Delete" onClick={() => setBulkActionModal("archive")} variant="danger" />
+                    <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 )
               }
@@ -1384,7 +1407,8 @@ function JobsPageContent() {
                   renderCard={(j) => {
                     const disp = effectiveJobStatusForDisplay(j);
                     const sc = statusConfig[disp] ?? { label: disp };
-                    const sched = formatJobScheduleLine(j);
+                    const sched = formatJobScheduleListLabel(j);
+                    const schedDetail = formatJobScheduleLine(j);
                     const previousStatus = getPreviousJobStatus(j);
                     const prevLabel = previousStatus ? (statusConfig[previousStatus]?.label ?? previousStatus) : null;
                     return (
@@ -1398,7 +1422,11 @@ function JobsPageContent() {
                           <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
                           <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(j.title) || j.title}</p>
                           <p className="text-[10px] text-text-tertiary mt-1 truncate">{sc.label}</p>
-                          {sched ? <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug">{sched}</p> : null}
+                          {sched ? (
+                            <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug" title={schedDetail ?? undefined}>
+                              {sched}
+                            </p>
+                          ) : null}
                           <p className="text-[11px] text-text-secondary mt-0.5 truncate">{j.client_name}</p>
                           <JobCardFinanceRow job={j} />
                           {jobSitePhotoUrls(j).length > 0 ? (
@@ -1568,6 +1596,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     expected_finish_date: "",
     job_type: "fixed",
     scope: "",
+    additional_notes: "",
     hourly_client_rate: "",
     hourly_partner_rate: "",
     billed_hours: "1",
@@ -1622,7 +1651,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   }, [open]);
 
   useEffect(() => {
-    if (!open) setSitePhotoFiles([]);
+    if (open) return;
+    queueMicrotask(() => setSitePhotoFiles([]));
   }, [open]);
 
   const sitePhotoPreviewUrls = useMemo(() => sitePhotoFiles.map((f) => URL.createObjectURL(f)), [sitePhotoFiles]);
@@ -1701,7 +1731,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     if (sitePhotoFiles.length > 0) {
       setUploadingPhotos(true);
       try {
-        uploadedImageUrls = await uploadQuoteInviteImages(sitePhotoFiles, `job-new/${Date.now()}`);
+        uploadedImageUrls = await uploadQuoteInviteImages(sitePhotoFiles, "job-new");
       } catch (err) {
         toast.error(getErrorMessage(err, "Photo upload failed"));
         setUploadingPhotos(false);
@@ -1739,6 +1769,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       scheduled_finish_date,
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
+      additional_notes: form.additional_notes.trim() || undefined,
       images: uploadedImageUrls.length ? uploadedImageUrls : undefined,
     });
     setSitePhotoFiles([]);
@@ -1756,6 +1787,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       expected_finish_date: "",
       job_type: "fixed",
       scope: "",
+      additional_notes: "",
       hourly_client_rate: "",
       hourly_partner_rate: "",
       billed_hours: "1",
@@ -1777,6 +1809,18 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const hourlyMarginPct = hourlyPreview.clientTotal > 0
     ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
     : 0;
+
+  const suggestedPartnerAt40 = useMemo(() => {
+    if (form.job_type === "hourly") return null;
+    const client = Number(form.client_price) || 0;
+    if (client + accessSurchargePreview <= 0) return null;
+    return suggestedPartnerCostForTargetMargin({
+      clientPrice: client,
+      extrasAmount: accessSurchargePreview,
+      materialsCost: Number(form.materials_cost) || 0,
+      targetMarginPercent: SUGGESTED_PARTNER_MARGIN_HINT_PCT,
+    });
+  }, [form.job_type, form.client_price, form.materials_cost, accessSurchargePreview]);
 
   return (
     <Modal open={open} onClose={onClose} title="New Job" subtitle="Create a new job" size="lg">
@@ -1850,6 +1894,16 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             rows={3}
             placeholder="Required if you assign a partner (with schedule and address above)."
             className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">Additional notes</label>
+          <textarea
+            value={form.additional_notes}
+            onChange={(e) => update("additional_notes", e.target.value)}
+            rows={2}
+            placeholder="Internal only — parking, keys, client preferences, things not in scope…"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[56px]"
           />
         </div>
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-2">
@@ -2039,7 +2093,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                             match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
                           )}
                         >
-                          {p.trade ?? "—"} · {p.location ?? "—"}
+                          {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -2087,7 +2141,25 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" /></div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label>
+              <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
+              {suggestedPartnerAt40 != null && (
+                <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                  ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin hint:{" "}
+                  <span className="font-semibold text-text-secondary tabular-nums">{formatCurrency(suggestedPartnerAt40)}</span>
+                  {accessSurchargePreview > 0 ? " (client price + access add-ons − materials)" : " (client price − materials)"}
+                  .{" "}
+                  <button
+                    type="button"
+                    className="text-primary hover:underline font-medium"
+                    onClick={() => update("partner_cost", String(suggestedPartnerAt40))}
+                  >
+                    Apply
+                  </button>
+                </p>
+              )}
+            </div>
             <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
           </div>
         )}
@@ -2204,7 +2276,8 @@ function JobsMapView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boo
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {withAddress.slice(0, 12).map((j) => {
-        const mapSched = formatJobScheduleLine(j);
+        const mapSched = formatJobScheduleListLabel(j);
+        const mapSchedDetail = formatJobScheduleLine(j);
         return (
           <button
             key={j.id}
@@ -2219,7 +2292,11 @@ function JobsMapView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boo
               <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
               <p className="text-xs text-text-tertiary truncate mt-0.5">{normalizeTypeOfWork(j.title) || j.title}</p>
               <p className="text-xs text-text-tertiary truncate mt-1">{j.property_address}</p>
-              {mapSched ? <p className="text-[10px] text-text-secondary mt-1.5 line-clamp-2 leading-snug">{mapSched}</p> : null}
+              {mapSched ? (
+                <p className="text-[10px] text-text-secondary mt-1.5 line-clamp-2 leading-snug" title={mapSchedDetail ?? undefined}>
+                  {mapSched}
+                </p>
+              ) : null}
               <JobCardFinanceRow job={j} />
             </div>
           </button>

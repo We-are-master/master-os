@@ -4,8 +4,16 @@ import type { Account, Client, Invoice, Job } from "@/types/database";
 
 const ACCOUNT_OWNER_MIGRATION_HINT =
   "This database is missing the account owner column or migration — run migration 107 (supabase/migrations/107_accounts_account_owner_id.sql), or clear Account owner and save.";
+const ACCOUNT_FINANCE_EMAIL_MIGRATION_HINT =
+  "This database is missing the finance email column — run migration 121 (supabase/migrations/121_accounts_finance_email.sql), or clear Finance email and save.";
 
 function wantsAccountOwnerId(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  const t = typeof value === "string" ? value.trim() : "";
+  return t.length > 0;
+}
+
+function wantsFinanceEmail(value: unknown): boolean {
   if (value === undefined || value === null) return false;
   const t = typeof value === "string" ? value.trim() : "";
   return t.length > 0;
@@ -14,35 +22,38 @@ function wantsAccountOwnerId(value: unknown): boolean {
 type AccountInsert = Omit<Account, "id" | "created_at" | "total_revenue" | "active_jobs">;
 
 function normalizeAccountInsert(input: AccountInsert): AccountInsert {
+  /** Owner is stored only as `account_owner_id` → `profiles.id`; do not persist legacy `owner_name`. */
+  const { owner_name: _ignoredOwnerName, ...inputRest } = input;
   const account_owner_id =
-    input.account_owner_id === undefined
+    inputRest.account_owner_id === undefined
       ? undefined
-      : input.account_owner_id && String(input.account_owner_id).trim()
-        ? String(input.account_owner_id).trim()
+      : inputRest.account_owner_id && String(inputRest.account_owner_id).trim()
+        ? String(inputRest.account_owner_id).trim()
         : null;
   return {
-    ...input,
+    ...inputRest,
     ...(account_owner_id !== undefined ? { account_owner_id } : {}),
-    email: input.email.trim().toLowerCase(),
-    company_name: input.company_name.trim(),
-    contact_name: input.contact_name.trim(),
-    owner_name: input.owner_name?.trim() || null,
-    address: input.address?.trim() || null,
-    crn: input.crn?.trim() || null,
-    contact_number: input.contact_number?.trim() || null,
-    contract_url: input.contract_url?.trim() || null,
+    email: inputRest.email.trim().toLowerCase(),
+    finance_email: inputRest.finance_email?.trim().toLowerCase() || null,
+    company_name: inputRest.company_name.trim(),
+    contact_name: inputRest.contact_name.trim(),
+    address: inputRest.address?.trim() || null,
+    crn: inputRest.crn?.trim() || null,
+    contact_number: inputRest.contact_number?.trim() || null,
+    contract_url: inputRest.contract_url?.trim() || null,
   };
 }
 
 function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
   const next = { ...input };
+  delete (next as { owner_name?: unknown }).owner_name;
   if (next.email !== undefined) next.email = next.email.trim().toLowerCase();
+  if (next.finance_email !== undefined) {
+    const t = typeof next.finance_email === "string" ? next.finance_email.trim() : "";
+    next.finance_email = t.length > 0 ? t.toLowerCase() : null;
+  }
   if (next.company_name !== undefined) next.company_name = next.company_name.trim();
   if (next.contact_name !== undefined) next.contact_name = next.contact_name.trim();
-  if (next.owner_name !== undefined) {
-    const t = typeof next.owner_name === "string" ? next.owner_name.trim() : "";
-    next.owner_name = t.length > 0 ? t : null;
-  }
   if (next.account_owner_id !== undefined) {
     const t = typeof next.account_owner_id === "string" ? next.account_owner_id.trim() : "";
     next.account_owner_id = t.length > 0 ? t : null;
@@ -111,7 +122,7 @@ export function formatAccountDbError(error: unknown): Error {
 
 export async function listAccounts(params: ListParams): Promise<ListResult<Account>> {
   return queryList<Account>("accounts", params, {
-    searchColumns: ["company_name", "contact_name", "owner_name", "email", "industry"],
+    searchColumns: ["company_name", "contact_name", "email", "finance_email", "industry"],
     defaultSort: "created_at",
   });
 }
@@ -142,6 +153,19 @@ export async function createAccount(input: AccountInsert): Promise<Account> {
     return retry.data as Account;
   }
 
+  if (
+    isSupabaseMissingColumnError(first.error, "finance_email") &&
+    Object.prototype.hasOwnProperty.call(payload, "finance_email")
+  ) {
+    if (wantsFinanceEmail(payload.finance_email)) {
+      throw new Error(ACCOUNT_FINANCE_EMAIL_MIGRATION_HINT);
+    }
+    const { finance_email: _f, ...rest } = payload;
+    const retry = await supabase.from("accounts").insert(rest).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
   throw formatAccountDbError(first.error);
 }
 
@@ -159,6 +183,19 @@ export async function updateAccount(id: string, input: Partial<Account>): Promis
       throw new Error(ACCOUNT_OWNER_MIGRATION_HINT);
     }
     const { account_owner_id: _a, ...rest } = payload;
+    const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
+  if (
+    isSupabaseMissingColumnError(first.error, "finance_email") &&
+    Object.prototype.hasOwnProperty.call(payload, "finance_email")
+  ) {
+    if (wantsFinanceEmail(payload.finance_email)) {
+      throw new Error(ACCOUNT_FINANCE_EMAIL_MIGRATION_HINT);
+    }
+    const { finance_email: _f, ...rest } = payload;
     const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();
     if (retry.error) throw formatAccountDbError(retry.error);
     return retry.data as Account;
@@ -219,8 +256,8 @@ export async function ensureSourceAccountForClient(
     const account = await createAccount({
       company_name: company,
       contact_name: company,
-      owner_name: null,
       email: safeEmail,
+      finance_email: null,
       address: null,
       crn: null,
       contact_number: null,

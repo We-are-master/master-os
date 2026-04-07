@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
@@ -80,6 +80,23 @@ const ACCOUNT_STATUS_OPTIONS = [
   { value: "inactive", label: "Inactive" },
 ];
 
+/** Display name for account owner: resolve `account_owner_id` → profiles list; optional legacy `owner_name` if present. */
+function accountOwnerLabel(
+  accountOwnerId: string | null | undefined,
+  legacyOwnerName: string | null | undefined,
+  users: AssignableUser[],
+): string {
+  const id = accountOwnerId?.trim();
+  if (id) {
+    const u = users.find((x) => x.id === id);
+    if (u?.full_name?.trim()) return u.full_name.trim();
+    if (u?.email?.trim()) return u.email.trim();
+  }
+  const leg = legacyOwnerName?.trim();
+  if (leg) return leg;
+  return "—";
+}
+
 function jobStatusBadge(status: string) {
   const v = jobStatusBadgeVariant(status);
   const label = status.replace(/_/g, " ");
@@ -103,6 +120,7 @@ const emptyForm = {
   contact_name: "",
   account_owner_id: "",
   email: "",
+  finance_email: "",
   address: "",
   crn: "",
   contact_number: "",
@@ -128,6 +146,8 @@ export default function AccountsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [createAssignableUsers, setCreateAssignableUsers] = useState<AssignableUser[]>([]);
+  /** Resolve account_owner_id → name in the main table (same directory as job/account owner pickers). */
+  const [accountOwnerDirectory, setAccountOwnerDirectory] = useState<AssignableUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   useProfile();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
@@ -159,6 +179,10 @@ export default function AccountsPage() {
   }, [loadKpis]);
 
   useEffect(() => {
+    void listActiveAssignableUsers().then(setAccountOwnerDirectory).catch(() => setAccountOwnerDirectory([]));
+  }, []);
+
+  useEffect(() => {
     if (!createOpen) return;
     void listActiveAssignableUsers().then(setCreateAssignableUsers).catch(() => setCreateAssignableUsers([]));
   }, [createOpen]);
@@ -182,13 +206,12 @@ export default function AccountsPage() {
     setSubmitting(true);
     try {
       const ownerId = form.account_owner_id.trim();
-      const ownerRow = ownerId ? createAssignableUsers.find((u) => u.id === ownerId) : undefined;
       const created = await createAccount({
         company_name: form.company_name.trim(),
         contact_name: form.contact_name.trim(),
-        owner_name: ownerRow?.full_name?.trim() || null,
         account_owner_id: ownerId || null,
         email: form.email.trim(),
+        finance_email: form.finance_email.trim() || null,
         address: form.address.trim() || null,
         crn: form.crn.trim() || null,
         contact_number: form.contact_number.trim() || null,
@@ -258,7 +281,7 @@ export default function AccountsPage() {
       label: "Account owner",
       render: (item) => (
         <span className="text-sm text-text-secondary">
-          {item.owner_name?.trim() ? item.owner_name.trim() : <span className="text-text-tertiary">—</span>}
+          {accountOwnerLabel(item.account_owner_id, item.owner_name, accountOwnerDirectory)}
         </span>
       ),
     },
@@ -421,6 +444,18 @@ export default function AccountsPage() {
               placeholder="contact@company.com"
             />
           </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Finance Email (Invoices)</label>
+            <Input
+              type="email"
+              value={form.finance_email}
+              onChange={(e) => setForm((f) => ({ ...f, finance_email: e.target.value }))}
+              placeholder="finance@company.com"
+            />
+            <p className="text-[10px] text-text-tertiary mt-1">
+              Optional. Used when billing/invoice contact differs from the main account email.
+            </p>
+          </div>
 
           <div>
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Address</label>
@@ -525,9 +560,9 @@ function AccountDetailDrawer({
   const [edit, setEdit] = useState({
     company_name: "",
     contact_name: "",
-    owner_name: "",
     account_owner_id: "",
     email: "",
+    finance_email: "",
     address: "",
     crn: "",
     contact_number: "",
@@ -544,9 +579,9 @@ function AccountDetailDrawer({
     setEdit({
       company_name: account.company_name,
       contact_name: account.contact_name,
-      owner_name: account.owner_name ?? "",
       account_owner_id: account.account_owner_id ?? "",
       email: account.email,
+      finance_email: account.finance_email ?? "",
       address: account.address ?? "",
       crn: account.crn ?? "",
       contact_number: account.contact_number ?? "",
@@ -563,6 +598,11 @@ function AccountDetailDrawer({
     if (!account) return;
     void listActiveAssignableUsers().then(setDrawerAssignableUsers).catch(() => setDrawerAssignableUsers([]));
   }, [account?.id]);
+
+  const editOwnerLabel = useMemo(
+    () => accountOwnerLabel(edit.account_owner_id, account?.owner_name, drawerAssignableUsers),
+    [account?.owner_name, edit.account_owner_id, drawerAssignableUsers],
+  );
 
   useEffect(() => {
     if (!account?.id) return;
@@ -693,9 +733,9 @@ function AccountDetailDrawer({
       const updated = await updateAccount(account.id, {
         company_name: edit.company_name.trim(),
         contact_name: edit.contact_name.trim(),
-        owner_name: edit.owner_name.trim() || null,
         account_owner_id: edit.account_owner_id.trim() || null,
         email: edit.email.trim(),
+        finance_email: edit.finance_email.trim() || null,
         address: edit.address.trim() || null,
         crn: edit.crn.trim() || null,
         contact_number: edit.contact_number.trim() || null,
@@ -737,10 +777,11 @@ function AccountDetailDrawer({
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-text-primary truncate">{account.company_name}</p>
             <p className="text-xs text-text-tertiary truncate">{account.contact_name}</p>
-            {account.owner_name?.trim() ? (
+            {accountOwnerLabel(account.account_owner_id, account.owner_name, drawerAssignableUsers) !== "—" ? (
               <p className="text-[11px] text-text-secondary mt-1 inline-flex items-center gap-1">
                 <User className="h-3 w-3 shrink-0" />
-                <span className="font-medium text-text-primary">Account owner:</span> {account.owner_name.trim()}
+                <span className="font-medium text-text-primary">Account owner:</span>{" "}
+                {accountOwnerLabel(account.account_owner_id, account.owner_name, drawerAssignableUsers)}
               </p>
             ) : null}
             <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-text-tertiary">
@@ -882,21 +923,19 @@ function AccountDetailDrawer({
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Account owner</label>
                   <JobOwnerSelect
                     value={edit.account_owner_id || undefined}
-                    fallbackName={edit.owner_name?.trim() || undefined}
+                    fallbackName={editOwnerLabel === "—" ? undefined : editOwnerLabel}
                     users={drawerAssignableUsers}
                     emptyLabel="No internal owner"
                     disabled={saving}
                     onChange={(id) => {
-                      const u = drawerAssignableUsers.find((x) => x.id === id);
                       setEdit((p) => ({
                         ...p,
                         account_owner_id: id ?? "",
-                        owner_name: id ? (u?.full_name ?? "") : "",
                       }));
                     }}
                   />
                   <p className="text-[10px] text-text-tertiary mt-1">
-                    Active platform users — links to profiles for dashboard rollups; name stays in sync when you pick someone.
+                    Stored as the selected user&apos;s profile id — used for dashboards and rollups.
                   </p>
                 </div>
                 <div>
@@ -994,6 +1033,10 @@ function AccountDetailDrawer({
                 <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Email</label>
                   <Input type="email" value={edit.email} onChange={(e) => setEdit((p) => ({ ...p, email: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Finance email (invoices)</label>
+                  <Input type="email" value={edit.finance_email} onChange={(e) => setEdit((p) => ({ ...p, finance_email: e.target.value }))} />
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Address</label>
@@ -1116,10 +1159,15 @@ function AccountDetailDrawer({
               <div className="rounded-xl border border-border-light bg-surface-hover/50 divide-y divide-border-light">
                 <DetailRow icon={User} label="Contact">{account.contact_name}</DetailRow>
                 <DetailRow icon={User} label="Account owner">
-                  {account.owner_name?.trim() || "—"}
+                  {accountOwnerLabel(account.account_owner_id, account.owner_name, drawerAssignableUsers)}
                 </DetailRow>
                 <DetailRow icon={Mail} label="Email">
                   <a href={`mailto:${account.email}`} className="text-primary hover:underline break-all">{account.email}</a>
+                </DetailRow>
+                <DetailRow icon={Mail} label="Finance email">
+                  {account.finance_email?.trim() ? (
+                    <a href={`mailto:${account.finance_email}`} className="text-primary hover:underline break-all">{account.finance_email}</a>
+                  ) : "—"}
                 </DetailRow>
                 <DetailRow label="Contact number">{account.contact_number || "—"}</DetailRow>
                 <DetailRow label="CRN">{account.crn || "—"}</DetailRow>
