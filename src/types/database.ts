@@ -657,6 +657,8 @@ export interface CommissionTier {
   tier_number: number;
   breakeven_amount: number;
   rate_percent: number;
+  /** Optional monthly sales target (GBP); used when selected as dashboard sales goal source. */
+  sales_goal_monthly?: number | null;
   sort_order: number;
   created_at: string;
   updated_at: string;

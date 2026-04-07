@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
-import { jobVisibleOnSchedule } from "@/services/jobs";
 import { getLatestLocation, getTeamMembers } from "@/services/partner-detail";
 import type { Job } from "@/types/database";
 import {
@@ -43,6 +42,12 @@ import {
 } from "@/lib/schedule-job-type-style";
 import { isJobInProgressStatus } from "@/lib/job-phases";
 import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financials";
+import {
+  isJobExcludedFromScheduleView,
+  scheduleJobBarDoneVisually,
+  scheduleJobNeedsAssignmentHighlight,
+  sumScheduleMonthRevenue,
+} from "@/lib/schedule-visible-jobs";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
@@ -190,7 +195,7 @@ export default function SchedulePage() {
         merged.set(row.id, row as Job);
       }
       const list = Array.from(merged.values())
-        .filter((j) => jobVisibleOnSchedule(j))
+        .filter((j) => !isJobExcludedFromScheduleView(j))
         .filter((j) => jobIntersectsLocalMonth(j, year, month));
       list.sort((a, b) => {
         const ka = a.scheduled_start_at ?? (a.scheduled_date ? `${a.scheduled_date}T00:00:00` : "");
@@ -264,6 +269,15 @@ export default function SchedulePage() {
 
   useEffect(() => {
     loadJobs();
+  }, [loadJobs]);
+
+  /** Refresh when returning from Jobs (or another tab) so deletes/cancels drop off without a full reload. */
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") void loadJobs();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
   }, [loadJobs]);
 
   useEffect(() => {
@@ -363,11 +377,7 @@ export default function SchedulePage() {
 
   const selectedScheduleLine = selectedJob ? formatJobScheduleLine(selectedJob) : null;
 
-  const monthRevenue = useMemo(
-    () =>
-      jobs.filter((j) => j.status !== "cancelled").reduce((sum, j) => sum + jobBillableRevenue(j), 0),
-    [jobs],
-  );
+  const monthRevenue = useMemo(() => sumScheduleMonthRevenue(jobs), [jobs]);
   const inProgressCount = useMemo(
     () => jobs.filter((j) => isJobInProgressStatus(j.status)).length,
     [jobs],
@@ -435,7 +445,7 @@ export default function SchedulePage() {
         </div>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Active" value={activeCount} format="number" icon={Briefcase} accent="blue" />
+          <KpiCard title="Jobs this month" value={activeCount} format="number" icon={Briefcase} accent="blue" />
           <KpiCard title="In progress" value={inProgressCount} format="number" icon={RefreshCw} accent="emerald" />
           <KpiCard
             title={view === "calendar" ? "Total revenue this month" : "Total on map"}
@@ -444,11 +454,13 @@ export default function SchedulePage() {
             icon={view === "calendar" ? DollarSign : MapPin}
             accent="purple"
             description={
-              view === "live_map" && liveMapPoints.length > 0
-                ? liveMapFiltersActive
-                  ? `Visible ${filteredLiveMapPoints.length} / ${liveMapPoints.length}`
-                  : `${liveMapPoints.length} with location`
-                : undefined
+              view === "calendar"
+                ? "Billable total for jobs in this month (excl. cancelled / deleted / lost)"
+                : view === "live_map" && liveMapPoints.length > 0
+                  ? liveMapFiltersActive
+                    ? `Visible ${filteredLiveMapPoints.length} / ${liveMapPoints.length}`
+                    : `${liveMapPoints.length} with location`
+                  : undefined
             }
           />
           <KpiCard
@@ -564,7 +576,12 @@ export default function SchedulePage() {
                               whileTap={{ scale: 0.99 }}
                               onClick={() => setSelectedJob(job)}
                               title={formatScheduleCalendarBarTooltip(job)}
-                              className={scheduleBarSegmentClass(segment, scheduleJobStatusColorClasses(job.status))}
+                              className={cn(
+                                scheduleBarSegmentClass(segment, scheduleJobStatusColorClasses(job.status)),
+                                scheduleJobBarDoneVisually(job) && "opacity-[0.68] line-through decoration-text-current/90",
+                                scheduleJobNeedsAssignmentHighlight(job) &&
+                                  "ring-2 ring-amber-500/85 ring-offset-1 ring-offset-card shadow-sm",
+                              )}
                             >
                               <span className="min-w-0 flex-1 truncate">{formatScheduleCalendarBarCompact(job)}</span>
                             </motion.div>
