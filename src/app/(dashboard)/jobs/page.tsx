@@ -66,12 +66,6 @@ import {
   formatJobScheduleListLabel,
   jobFinishYmd,
   jobScheduleYmd,
-  formatLocalYmd,
-  addLocalCalendarDays,
-  startOfLocalWeekMonday,
-  endOfLocalWeekSunday,
-  startOfLocalMonth,
-  endOfLocalMonth,
 } from "@/lib/schedule-calendar";
 import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
@@ -112,6 +106,56 @@ const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
 
 type ScheduleDatePreset = "all" | "today" | "tomorrow" | "week" | "month" | "custom";
 type JobsSortMode = "schedule_nearest" | "schedule_farthest" | "booking_recent" | "booking_oldest";
+const UK_TIMEZONE = "Europe/London";
+
+function ukTodayYmd(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: UK_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+function addDaysYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + days));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
+}
+
+function startOfWeekMondayYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const day = date.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setUTCDate(date.getUTCDate() + diff);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function endOfWeekSundayYmd(ymd: string): string {
+  return addDaysYmd(startOfWeekMondayYmd(ymd), 6);
+}
+
+function startOfMonthYmd(ymd: string): string {
+  const [y, m] = ymd.split("-").map(Number);
+  return `${y}-${String(m).padStart(2, "0")}-01`;
+}
+
+function endOfMonthYmd(ymd: string): string {
+  const [y, m] = ymd.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+}
+
+function jobScheduleStartYmdUk(job: Pick<Job, "scheduled_start_at" | "scheduled_date">): string | null {
+  if (job.scheduled_start_at) {
+    const dt = new Date(job.scheduled_start_at);
+    if (!Number.isNaN(dt.getTime())) return ukTodayYmd(dt);
+  }
+  const raw = String(job.scheduled_date ?? "").trim();
+  const ymd = raw.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;
+}
 
 const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v1";
 const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "custom"];
@@ -208,7 +252,7 @@ function JobsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
-  const anchorDayKey = formatLocalYmd(new Date());
+  const anchorDayKey = ukTodayYmd(new Date());
   const [scheduleDatePreset, setScheduleDatePresetState] = useState<ScheduleDatePreset>("all");
   const setScheduleDatePreset = useCallback((p: ScheduleDatePreset) => {
     setScheduleDatePresetState(p);
@@ -223,31 +267,26 @@ function JobsPageContent() {
     const stored = readStoredJobsSchedulePreset();
     if (stored !== "all") setScheduleDatePresetState(stored);
   }, []);
-  const [customScheduleFrom, setCustomScheduleFrom] = useState(() => formatLocalYmd(new Date()));
-  const [customScheduleTo, setCustomScheduleTo] = useState(() => formatLocalYmd(new Date()));
+  const [customScheduleFrom, setCustomScheduleFrom] = useState(() => ukTodayYmd(new Date()));
+  const [customScheduleTo, setCustomScheduleTo] = useState(() => ukTodayYmd(new Date()));
   const [dateFilterOpen, setDateFilterOpen] = useState(false);
   const dateFilterRef = useRef<HTMLDivElement>(null);
 
   const scheduleRange = useMemo((): { from: string; to: string } | null => {
     if (scheduleDatePreset === "all") return null;
-    const anchor = new Date();
+    const anchor = ukTodayYmd(new Date());
     if (scheduleDatePreset === "today") {
-      const d = formatLocalYmd(anchor);
-      return { from: d, to: d };
+      return { from: anchor, to: anchor };
     }
     if (scheduleDatePreset === "tomorrow") {
-      const t = formatLocalYmd(addLocalCalendarDays(anchor, 1));
+      const t = addDaysYmd(anchor, 1);
       return { from: t, to: t };
     }
     if (scheduleDatePreset === "week") {
-      const a = startOfLocalWeekMonday(anchor);
-      const b = endOfLocalWeekSunday(anchor);
-      return { from: formatLocalYmd(a), to: formatLocalYmd(b) };
+      return { from: startOfWeekMondayYmd(anchor), to: endOfWeekSundayYmd(anchor) };
     }
     if (scheduleDatePreset === "month") {
-      const a = startOfLocalMonth(anchor);
-      const b = endOfLocalMonth(anchor);
-      return { from: formatLocalYmd(a), to: formatLocalYmd(b) };
+      return { from: startOfMonthYmd(anchor), to: endOfMonthYmd(anchor) };
     }
     let from = customScheduleFrom;
     let to = customScheduleTo;
@@ -315,12 +354,10 @@ function JobsPageContent() {
 
   /** Default sorting for Jobs Management: nearest schedule first (today -> tomorrow -> future). */
   const sortedData = useMemo(() => {
-    const today = formatLocalYmd(new Date());
+    const today = ukTodayYmd(new Date());
     const clone = [...filteredData];
-    const ymdKey = (parts: { y: number; m: number; d: number } | null): string | null =>
-      parts ? `${parts.y}-${String(parts.m).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}` : null;
     const scheduleMeta = (j: Job) => {
-      const day = ymdKey(jobScheduleYmd(j));
+      const day = jobScheduleStartYmdUk(j);
       if (!day) return { bucket: 3 as const, day: "9999-99-99" };
       if (day < today) return { bucket: 0 as const, day };
       if (day === today) return { bucket: 1 as const, day };
@@ -1133,13 +1170,10 @@ function JobsPageContent() {
       render: (item) => {
         const line = formatJobScheduleListLabel(item);
         const detail = formatJobScheduleLine(item);
-        const scheduleParts = jobScheduleYmd(item);
-        const scheduleYmd = scheduleParts
-          ? `${scheduleParts.y}-${String(scheduleParts.m).padStart(2, "0")}-${String(scheduleParts.d).padStart(2, "0")}`
-          : "";
-        const todayYmd = formatLocalYmd(new Date());
-        const tomorrowYmd = formatLocalYmd(addLocalCalendarDays(new Date(), 1));
-        const inTwoDaysYmd = formatLocalYmd(addLocalCalendarDays(new Date(), 2));
+        const scheduleYmd = jobScheduleStartYmdUk(item) ?? "";
+        const todayYmd = ukTodayYmd(new Date());
+        const tomorrowYmd = addDaysYmd(todayYmd, 1);
+        const inTwoDaysYmd = addDaysYmd(todayYmd, 2);
         const isTomorrow = scheduleYmd === tomorrowYmd || line === "Tomorrow";
         const isToday = scheduleYmd === todayYmd || line === "Today";
         const isInTwoDays = scheduleYmd === inTwoDaysYmd;
