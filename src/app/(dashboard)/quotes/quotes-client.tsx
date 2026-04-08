@@ -693,6 +693,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           findDuplicateJobs({
             clientId: formData.client_id,
             propertyAddress: formData.property_address,
+            title: formData.title,
           }),
           resolveImagesForJobFromQuote(quoteToConvert),
         ]);
