@@ -17,7 +17,7 @@ import {
   User, Shield, Users, Cog, Save, Plus, Trash2,
   Mail, Phone, Building2, Key, Eye, EyeOff,
   CheckCircle2, AlertTriangle, Lock, Unlock,
-  Palette, Globe, Upload, FileText, Loader2, Moon, Sun, Image,
+  Palette, Globe, Upload, FileText, Loader2, Moon, Sun, Image, ClipboardCheck,
   SlidersHorizontal, X, MinusCircle, ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -43,6 +43,7 @@ import type { NavGroup } from "@/lib/constants";
 import type { PermissionKey, RoleKey, PermissionsByRole, UserPermissionOverride } from "@/types/admin-config";
 import { saveUserPermissions, resolvePermission } from "@/services/admin-config";
 import { AiBriefsTab } from "./ai-briefs-tab";
+import { getAllConfigurableComplianceRequirementDefs } from "@/lib/partner-required-docs";
 
 const settingsTabs = [
   { id: "profile", label: "My Profile" },
@@ -1469,6 +1470,7 @@ function SystemTab() {
     dashboard_sales_goal_monthly: "35000",
   });
   const [settingsId, setSettingsId] = useState<string | null>(null);
+  const [complianceExcludedDocIds, setComplianceExcludedDocIds] = useState<string[]>([]);
   const [overviewMonthlyOverrideGbp, setOverviewMonthlyOverrideGbp] = useState("");
 
   useEffect(() => {
@@ -1482,7 +1484,10 @@ function SystemTab() {
       const { data } = await supabase.from("company_settings").select("*").limit(1).single();
       if (data) {
         setSettingsId(data.id);
-        const row = data as typeof data & { currency?: string | null };
+        const row = data as typeof data & { currency?: string | null; compliance_score_excluded_doc_ids?: string[] | null };
+        setComplianceExcludedDocIds(
+          Array.isArray(row.compliance_score_excluded_doc_ids) ? [...row.compliance_score_excluded_doc_ids] : [],
+        );
         setForm({
           company_name: data.company_name ?? "",
           email: data.email ?? "",
@@ -1523,6 +1528,7 @@ function SystemTab() {
         logo_dark_theme_url: form.logo_dark_theme_url.trim() || null,
         favicon_url: form.favicon_url.trim() || null,
         dashboard_sales_goal_monthly: Math.max(0, Number(form.dashboard_sales_goal_monthly) || 35000),
+        compliance_score_excluded_doc_ids: complianceExcludedDocIds,
       };
       if (settingsId) {
         const { error } = await supabase.from("company_settings").update(payload).eq("id", settingsId);
@@ -1652,6 +1658,57 @@ function SystemTab() {
                 <code className="text-[10px]">NEXT_PUBLIC_DASHBOARD_SALES_GOAL_MONTHLY_GBP</code> if unset.
               </p>
             </div>
+          </div>
+        </Card>
+
+        <Card padding="none" className="lg:col-span-2">
+          <CardHeader className="px-6 pt-6">
+            <div className="flex items-center gap-2">
+              <ClipboardCheck className="h-4 w-4 text-text-tertiary" />
+              <CardTitle>Partner compliance (documents)</CardTitle>
+            </div>
+            <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
+              Tick which mandatory document types <strong>count toward the document compliance score</strong> for partners
+              (Directory → Compliance). Untick to treat a type as optional for scoring (upload prompts still appear). UTR applies
+              to self-employed partners; limited companies ignore that row in the checklist.
+            </p>
+          </CardHeader>
+          <div className="px-6 pb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {getAllConfigurableComplianceRequirementDefs().map((req) => {
+                const mandatoryForScore = !complianceExcludedDocIds.includes(req.id);
+                return (
+                  <label
+                    key={req.id}
+                    className={`flex items-start gap-3 rounded-lg border border-border-light bg-card px-3 py-2.5 ${
+                      canEditConfig ? "cursor-pointer hover:bg-surface-hover/80" : ""
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-3.5 w-3.5 rounded border-border text-primary shrink-0"
+                      checked={mandatoryForScore}
+                      disabled={!canEditConfig}
+                      onChange={(e) => {
+                        setComplianceExcludedDocIds((prev) => {
+                          const n = new Set(prev);
+                          if (e.target.checked) n.delete(req.id);
+                          else n.add(req.id);
+                          return [...n];
+                        });
+                      }}
+                    />
+                    <span className="min-w-0">
+                      <span className="text-sm font-medium text-text-primary block">{req.name}</span>
+                      <span className="text-[11px] text-text-tertiary">{req.description}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            {!canEditConfig ? (
+              <p className="text-[11px] text-text-tertiary mt-3">Only admins with config access can change these.</p>
+            ) : null}
           </div>
         </Card>
 

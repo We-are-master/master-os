@@ -18,7 +18,7 @@ import { fadeInUp, staggerContainer, staggerItem } from "@/lib/motion";
 import {
   UserPlus, Filter, Users, Star, Briefcase, ShieldCheck, MapPin,
   ArrowRight, Mail, Phone, Calendar, DollarSign, Landmark,
-  FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
+  FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle, Circle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus,
   Home, Sparkles, Link2,
@@ -27,6 +27,7 @@ import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
+import { getCompanySettings } from "@/services/company";
 import { listPartners, createPartner, updatePartner } from "@/services/partners";
 import { findDuplicatePartners, formatPartnerDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
@@ -52,6 +53,7 @@ import {
 } from "@/services/partner-detail";
 import { LocationMiniMapByCoords } from "@/components/ui/location-picker";
 import { UkCoveragePicker } from "@/components/partners/uk-coverage-picker";
+import { PartnerAvatarCropModal } from "@/components/partners/partner-avatar-crop-modal";
 import {
   defaultUkCoverage,
   formatUkCoverageLabel,
@@ -69,6 +71,7 @@ import {
   pickRequiredDocMatches,
   pickRequiredDocMatch,
   buildRequiredDocumentChecklist,
+  buildMandatoryDocsChecklist,
   buildMandatoryDocsForComplianceScore,
   buildTradeCertificateRequirements,
   computeComplianceScore,
@@ -288,6 +291,8 @@ type PendingCreatePartnerDoc = {
   previewFile: File | null;
   expiresAt?: string;
   certificateNumber?: string;
+  /** Default true — include in compliance preview. */
+  countsTowardCompliance?: boolean;
 };
 
 type ViewMode = "directory" | "team";
@@ -295,10 +300,12 @@ type ViewMode = "directory" | "team";
 export default function PartnersPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("directory");
   const [tradeFilter, setTradeFilter] = useState("all");
+  const [companyComplianceExcludedDocIds, setCompanyComplianceExcludedDocIds] = useState<string[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalTab, setCreateModalTab] = useState<"info" | "documents">("info");
   const [pendingCreateDocs, setPendingCreateDocs] = useState<PendingCreatePartnerDoc[]>([]);
   const [createAvatarFile, setCreateAvatarFile] = useState<File | null>(null);
+  const [createAvatarCropFile, setCreateAvatarCropFile] = useState<File | null>(null);
   const createAvatarInputRef = useRef<HTMLInputElement>(null);
   const [createQueueDocOpen, setCreateQueueDocOpen] = useState(false);
   const [createDocPreset, setCreateDocPreset] = useState<{ docType: string; name: string } | null>(null);
@@ -350,6 +357,17 @@ export default function PartnersPage() {
     } catch { /* cosmetic */ }
   }, []);
 
+  useEffect(() => {
+    function syncCompanyCompliance() {
+      void getCompanySettings().then((s) =>
+        setCompanyComplianceExcludedDocIds(s?.compliance_score_excluded_doc_ids ?? []),
+      );
+    }
+    syncCompanyCompliance();
+    window.addEventListener("master-os-company-settings", syncCompanyCompliance);
+    return () => window.removeEventListener("master-os-company-settings", syncCompanyCompliance);
+  }, []);
+
   useEffect(() => { loadCounts(); }, [loadCounts]);
   useEffect(() => { refresh(); }, [tradeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -366,6 +384,7 @@ export default function PartnersPage() {
   useEffect(() => {
     if (!createOpen) {
       setCreateAvatarFile(null);
+      setCreateAvatarCropFile(null);
       return;
     }
     setCreateModalTab("info");
@@ -391,8 +410,8 @@ export default function PartnersPage() {
     [form.partner_legal_type, form.trades, form.crn],
   );
   const mandatoryDocsCreate = useMemo(
-    () => buildMandatoryDocsForComplianceScore(syntheticPartnerForCreateDocs),
-    [syntheticPartnerForCreateDocs],
+    () => buildMandatoryDocsForComplianceScore(syntheticPartnerForCreateDocs, companyComplianceExcludedDocIds),
+    [syntheticPartnerForCreateDocs, companyComplianceExcludedDocIds],
   );
   const tradeCertsDocsCreate = useMemo(
     () => buildTradeCertificateRequirements(partnerTradesForCreate),
@@ -489,6 +508,7 @@ export default function PartnersPage() {
             previewFile: d.previewFile,
             expiresAt: d.expiresAt,
             certificateNumber: d.certificateNumber,
+            countsTowardCompliance: d.countsTowardCompliance !== false,
           });
         } catch {
           docUploadFailed += 1;
@@ -528,12 +548,22 @@ export default function PartnersPage() {
       preview: File | null,
       expiresAt?: string,
       certificateNumber?: string,
+      countsTowardCompliance = true,
     ) => {
       const id =
         typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setPendingCreateDocs((prev) => [
         ...prev,
-        { id, docType, name, file, previewFile: preview, expiresAt, certificateNumber },
+        {
+          id,
+          docType,
+          name,
+          file,
+          previewFile: preview,
+          expiresAt,
+          certificateNumber,
+          countsTowardCompliance,
+        },
       ]);
       setCreateQueueDocOpen(false);
       setCreateModalTab("documents");
@@ -951,6 +981,7 @@ export default function PartnersPage() {
         partner={selectedPartner}
         teamMember={selectedTeamMember}
         initialTab={partnerDrawerInitialTab}
+        companyComplianceExcludedDocIds={companyComplianceExcludedDocIds}
         onClose={() => {
           setSelectedPartner(null);
           setSelectedTeamMember(null);
@@ -1014,7 +1045,7 @@ export default function PartnersPage() {
                     toast.error("Image must be 5 MB or less.");
                     return;
                   }
-                  setCreateAvatarFile(f);
+                  setCreateAvatarCropFile(f);
                 }}
               />
               <div className="flex flex-col items-center gap-1">
@@ -1039,7 +1070,7 @@ export default function PartnersPage() {
               </div>
             </div>
             <p className="text-xs text-text-tertiary pt-1 sm:pt-0">
-              Optional profile photo. JPEG, PNG, WebP or GIF, up to 5 MB. Saved when you create the partner.
+              Optional profile photo. After choosing a file you can drag and zoom to centre it in the circle. JPEG, PNG, WebP or GIF, up to 5 MB. Saved when you create the partner.
             </p>
           </div>
           <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
@@ -1558,6 +1589,17 @@ export default function PartnersPage() {
         </div>
       </Modal>
 
+      <PartnerAvatarCropModal
+        open={!!createAvatarCropFile}
+        imageFile={createAvatarCropFile}
+        onClose={() => setCreateAvatarCropFile(null)}
+        onConfirm={(blob) => {
+          setCreateAvatarFile(new File([blob], "avatar.jpg", { type: "image/jpeg" }));
+          setCreateAvatarCropFile(null);
+        }}
+        title="Adjust profile photo"
+      />
+
       <AddPartnerDocumentModal
         open={createQueueDocOpen}
         onClose={() => {
@@ -1636,6 +1678,8 @@ interface PartnerDoc {
   expires_at?: string;
   notes?: string;
   created_at: string;
+  /** When false, file is reference-only and ignored for compliance score. */
+  counts_toward_compliance?: boolean | null;
 }
 
 interface PartnerNote {
@@ -1655,9 +1699,21 @@ async function insertAndUploadPartnerDocument(opts: {
   previewFile: File | null;
   expiresAt?: string;
   certificateNumber?: string;
+  /** When false, stored for reference only — excluded from compliance score. Default true. */
+  countsTowardCompliance?: boolean;
 }): Promise<void> {
   const supabase = getSupabase();
-  const { partnerId, uploadedByName, docType, name, file, previewFile, expiresAt, certificateNumber } = opts;
+  const {
+    partnerId,
+    uploadedByName,
+    docType,
+    name,
+    file,
+    previewFile,
+    expiresAt,
+    certificateNumber,
+    countsTowardCompliance = true,
+  } = opts;
   const expiresIso = resolvePartnerDocExpiresAt(docType, expiresAt);
   const { data: row, error: insErr } = await supabase
     .from("partner_documents")
@@ -1669,6 +1725,7 @@ async function insertAndUploadPartnerDocument(opts: {
       uploaded_by: uploadedByName ?? undefined,
       expires_at: expiresIso,
       notes: docType === "certification" && certificateNumber ? `certificate_number: ${certificateNumber}` : null,
+      counts_toward_compliance: countsTowardCompliance,
     })
     .select()
     .single();
@@ -1739,6 +1796,7 @@ function pendingCreateDocsAsPartnerDocs(queue: PendingCreatePartnerDoc[]): Partn
     created_at: new Date().toISOString(),
     expires_at: resolvePartnerDocExpiresAt(d.docType, d.expiresAt) ?? undefined,
     notes: d.certificateNumber ? `certificate_number: ${d.certificateNumber}` : undefined,
+    counts_toward_compliance: d.countsTowardCompliance !== false,
   }));
 }
 
@@ -1781,6 +1839,7 @@ function AddPartnerDocumentModal({
     preview: File | null,
     expiresAt?: string,
     certificateNumber?: string,
+    countsTowardCompliance?: boolean,
   ) => Promise<void>;
   initialDocType?: string;
   initialName?: string;
@@ -1791,6 +1850,7 @@ function AddPartnerDocumentModal({
   const [preview, setPreview] = useState<File | null>(null);
   const [expiresAt, setExpiresAt] = useState("");
   const [certificateNumber, setCertificateNumber] = useState("");
+  const [countsTowardCompliance, setCountsTowardCompliance] = useState(true);
   const [aiExpiryLoading, setAiExpiryLoading] = useState(false);
 
   useEffect(() => {
@@ -1802,6 +1862,7 @@ function AddPartnerDocumentModal({
       setExpiresAt("");
       setCertificateNumber("");
       setDocType(initialDocType ?? "insurance");
+      setCountsTowardCompliance(true);
       setAiExpiryLoading(false);
     });
   }, [open, initialDocType, initialName]);
@@ -1833,6 +1894,7 @@ function AddPartnerDocumentModal({
       preview,
       expiryPol === "manual" && expiresAt.trim() ? expiresAt.trim() : undefined,
       certificateNumber.trim() || undefined,
+      countsTowardCompliance,
     );
   };
 
@@ -1959,6 +2021,20 @@ function AddPartnerDocumentModal({
             </p>
           </div>
         )}
+        <label className="flex items-start gap-2.5 rounded-lg border border-border-light bg-card px-3 py-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={countsTowardCompliance}
+            onChange={(e) => setCountsTowardCompliance(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
+          />
+          <span>
+            <span className="text-sm font-medium text-text-primary">Mandatory for compliance score</span>
+            <span className="block text-[11px] text-text-tertiary mt-0.5">
+              Uncheck for archive or duplicate copies — they stay on file but do not count toward the partner&apos;s compliance %.
+            </span>
+          </span>
+        </label>
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>
             Cancel
@@ -1975,13 +2051,17 @@ function AddPartnerDocumentModal({
 function PartnerDocumentDetailModal({
   doc,
   onClose,
+  onComplianceChange,
 }: {
   doc: PartnerDoc | null;
   onClose: () => void;
+  /** Persist counts_toward_compliance toggle from detail modal. */
+  onComplianceChange?: (docId: string, countsTowardCompliance: boolean) => void | Promise<void>;
 }) {
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingUrls, setLoadingUrls] = useState(false);
+  const [complianceSaving, setComplianceSaving] = useState(false);
 
   useEffect(() => {
     if (!doc) return;
@@ -2022,6 +2102,31 @@ function PartnerDocumentDetailModal({
           {isExpired && <Badge variant="danger" size="sm">Expired</Badge>}
           <span className="text-xs text-text-tertiary">{typeConfig.label}</span>
         </div>
+
+        {onComplianceChange ? (
+          <label className="flex items-start gap-2.5 rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
+              checked={doc.counts_toward_compliance !== false}
+              disabled={complianceSaving}
+              onChange={async (e) => {
+                setComplianceSaving(true);
+                try {
+                  await onComplianceChange(doc.id, e.target.checked);
+                } finally {
+                  setComplianceSaving(false);
+                }
+              }}
+            />
+            <span>
+              <span className="text-sm font-medium text-text-primary">Mandatory for compliance score</span>
+              <span className="block text-[11px] text-text-tertiary mt-0.5">
+                Off = kept for reference only; excluded from compliance %.
+              </span>
+            </span>
+          </label>
+        ) : null}
 
         {previewUrl && (
           <div className="rounded-xl border border-border-light overflow-hidden">
@@ -2096,6 +2201,7 @@ function PartnerDetailDrawer({
   partner,
   teamMember,
   initialTab,
+  companyComplianceExcludedDocIds,
   onClose,
   onPartnerPatch,
   onVerify,
@@ -2106,6 +2212,8 @@ function PartnerDetailDrawer({
   teamMember: TeamMember | null;
   /** When opening the drawer (e.g. after create), start on this tab. */
   initialTab?: string;
+  /** From Settings → System (`company_settings.compliance_score_excluded_doc_ids`). */
+  companyComplianceExcludedDocIds: string[];
   onClose: () => void;
   onPartnerPatch: (patch: Partial<Partner>) => Promise<void>;
   onVerify: (partner: Partner) => void;
@@ -2157,6 +2265,7 @@ function PartnerDetailDrawer({
   const [docPreset, setDocPreset] = useState<{ docType: string; name: string } | null>(null);
   const [customCertName, setCustomCertName] = useState("");
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarCropFile, setAvatarCropFile] = useState<File | null>(null);
   const partnerAvatarInputRef = useRef<HTMLInputElement>(null);
   const [selectedDoc, setSelectedDoc] = useState<PartnerDoc | null>(null);
   const [linkEmail, setLinkEmail] = useState("");
@@ -2206,6 +2315,10 @@ function PartnerDetailDrawer({
     if (!portalLinkModalOpen || !partner) return;
     setPortalLinkSelectedIds(new Set(getPartnerPortalAllowlistIds(partner)));
   }, [portalLinkModalOpen, partner]);
+
+  useEffect(() => {
+    setAvatarCropFile(null);
+  }, [partner?.id]);
 
   useEffect(() => {
     if (teamMember) {
@@ -2502,6 +2615,34 @@ function PartnerDetailDrawer({
     }
   }, [partner, overviewForm, onPartnerUpdate]);
 
+  const handleDocComplianceToggle = async (docId: string, countsTowardCompliance: boolean) => {
+    if (!partner) return;
+    const supabase = getSupabase();
+    try {
+      const { error } = await supabase
+        .from("partner_documents")
+        .update({ counts_toward_compliance: countsTowardCompliance })
+        .eq("id", docId);
+      if (error) throw error;
+      toast.success(
+        countsTowardCompliance ? "Document counts toward compliance" : "Document excluded from compliance score",
+      );
+      const { data } = await supabase
+        .from("partner_documents")
+        .select("*")
+        .eq("partner_id", partner.id)
+        .order("created_at", { ascending: false });
+      setDocuments((data ?? []) as PartnerDoc[]);
+      setSelectedDoc((prev) => {
+        if (!prev || prev.id !== docId) return prev;
+        const row = (data ?? []).find((r) => (r as PartnerDoc).id === docId);
+        return row ? (row as PartnerDoc) : prev;
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update");
+    }
+  };
+
   const handleAddDocument = async (
     docType: string,
     name: string,
@@ -2509,6 +2650,7 @@ function PartnerDetailDrawer({
     previewFile: File | null,
     expiresAt?: string,
     certificateNumber?: string,
+    countsTowardCompliance = true,
   ) => {
     if (!partner) return;
     setAddDocSubmitting(true);
@@ -2522,6 +2664,7 @@ function PartnerDetailDrawer({
         previewFile,
         expiresAt,
         certificateNumber,
+        countsTowardCompliance,
       });
       toast.success("Document uploaded");
       setAddDocOpen(false);
@@ -2580,7 +2723,10 @@ function PartnerDetailDrawer({
     () => (partner ? partnerTradesForDisplay(partner) : []),
     [partner],
   );
-  const mandatoryDocsForScore = partner ? buildMandatoryDocsForComplianceScore(partner) : [];
+  const mandatoryDocsChecklist = partner ? buildMandatoryDocsChecklist(partner) : [];
+  const mandatoryDocsForScore = partner
+    ? buildMandatoryDocsForComplianceScore(partner, companyComplianceExcludedDocIds)
+    : [];
   const tradeCertificateDocs = partner ? buildTradeCertificateRequirements(partnerTradesForCompliance) : [];
   const requiredDocuments = useMemo(
     () => (partner ? buildRequiredDocumentChecklist(partnerTradesForCompliance, partner) : []),
@@ -2596,7 +2742,9 @@ function PartnerDetailDrawer({
   const profileCompletenessItems = partner ? getProfileCompletenessItems(partner) : [];
   const complianceAttentionCount =
     partner
-      ? profileCompletenessItems.filter((i) => !i.done).length +
+      ? profileCompletenessItems.filter(
+          (i) => i.scoresTowardCompliance !== false && !i.done,
+        ).length +
         mandatoryDocsForScore.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid").length
       : 0;
 
@@ -3006,7 +3154,8 @@ function PartnerDetailDrawer({
   ];
 
   return (
-    <Drawer
+    <>
+      <Drawer
       open={!!partner}
       onClose={onClose}
       title={partner.company_name}
@@ -3049,21 +3198,20 @@ function PartnerDetailDrawer({
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"
                   className="hidden"
-                  onChange={async (e) => {
+                  onChange={(e) => {
                     const f = e.target.files?.[0];
+                    e.target.value = "";
                     if (!f || !partner) return;
-                    setUploadingAvatar(true);
-                    try {
-                      const url = await uploadPartnerAvatar(partner.id, f);
-                      const updated = await updatePartner(partner.id, { avatar_url: url });
-                      onPartnerUpdate?.(updated);
-                      toast.success("Photo saved");
-                    } catch (err) {
-                      toast.error(err instanceof Error ? err.message : "Upload failed");
-                    } finally {
-                      setUploadingAvatar(false);
-                      e.target.value = "";
+                    const type = (f.type || "").toLowerCase();
+                    if (!["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"].includes(type)) {
+                      toast.error("Use JPEG, PNG, WebP or GIF.");
+                      return;
                     }
+                    if (f.size > 5 * 1024 * 1024) {
+                      toast.error("Image must be 5 MB or less.");
+                      return;
+                    }
+                    setAvatarCropFile(f);
                   }}
                 />
                 <Button
@@ -3770,24 +3918,33 @@ function PartnerDetailDrawer({
                 </Button>
               </div>
               <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
-                {profileCompletenessItems.map((item) => (
+                {profileCompletenessItems.map((item) => {
+                  const optionalNoScore = item.scoresTowardCompliance === false;
+                  return (
                   <li key={item.id} className="flex gap-3 px-3 py-2.5 first:rounded-t-xl last:rounded-b-xl">
                     <span className="mt-0.5 shrink-0">
                       {item.done ? (
                         <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden />
+                      ) : optionalNoScore ? (
+                        <Circle className="h-4 w-4 text-text-tertiary" aria-hidden />
                       ) : (
                         <AlertTriangle className="h-4 w-4 text-amber-500" aria-hidden />
                       )}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-sm ${item.done ? "text-text-secondary" : "font-medium text-text-primary"}`}>
+                      <p className={`text-sm ${item.done ? "text-text-secondary" : optionalNoScore ? "text-text-secondary" : "font-medium text-text-primary"}`}>
                         {item.label}
-                        {!item.done && <span className="text-text-tertiary font-normal"> · +{item.weight} pts</span>}
+                        {!item.done && item.weight > 0 && (
+                          <span className="text-text-tertiary font-normal"> · +{item.weight} pts</span>
+                        )}
                       </p>
-                      {!item.done && <p className="text-[11px] text-text-tertiary mt-0.5">{item.hint}</p>}
+                      {!item.done && (
+                        <p className="text-[11px] text-text-tertiary mt-0.5">{item.hint}</p>
+                      )}
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
 
@@ -4283,6 +4440,9 @@ function PartnerDetailDrawer({
                 </Button>
               </div>
             </div>
+            <p className="text-[11px] text-text-tertiary -mt-2">
+              Toggle <span className="font-medium text-text-secondary">Compliance</span> per file: mandatory items count toward the score; uncheck for duplicate or archive copies.
+            </p>
             <div className="rounded-xl border border-border-light bg-card/60 p-3 space-y-2">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Agreements</p>
               <p className="text-[11px] text-text-tertiary leading-snug">
@@ -4361,10 +4521,11 @@ function PartnerDetailDrawer({
             <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 space-y-3">
               <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Mandatory documents</p>
               <p className="text-[11px] text-text-tertiary leading-snug">
-                Core IDs, insurance, UTR (if self-employed), and agreements — these drive the compliance score. Trade certificates are listed separately.
+                Core IDs, insurance, UTR (if self-employed), and agreements — which types count toward the document score is set in{" "}
+                <strong className="text-text-secondary">Settings → System</strong> (admin). Trade certificates are listed separately.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {mandatoryDocsForScore.map((req) => {
+                {mandatoryDocsChecklist.map((req) => {
                   const matchedDocs = pickRequiredDocMatches(documents, req);
                   const doc = matchedDocs[0] ?? null;
                   const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
@@ -4553,7 +4714,11 @@ function PartnerDetailDrawer({
               initialDocType={docPreset?.docType}
               initialName={docPreset?.name}
             />
-            <PartnerDocumentDetailModal doc={selectedDoc} onClose={() => setSelectedDoc(null)} />
+            <PartnerDocumentDetailModal
+              doc={selectedDoc}
+              onClose={() => setSelectedDoc(null)}
+              onComplianceChange={handleDocComplianceToggle}
+            />
             <Modal
               open={requestLinkOpen}
               onClose={() => setRequestLinkOpen(false)}
@@ -4755,6 +4920,7 @@ function PartnerDetailDrawer({
               const sConfig = docStatusConfig[doc.status] || docStatusConfig.pending;
               const Icon = typeConfig.icon;
               const isExpired = doc.expires_at && new Date(doc.expires_at) < new Date();
+              const countsForCompliance = doc.counts_toward_compliance !== false;
               return (
                 <motion.div
                   key={doc.id}
@@ -4771,11 +4937,31 @@ function PartnerDetailDrawer({
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold text-text-primary truncate">{doc.name}</p>
                         <Badge variant={sConfig.variant} size="sm">{sConfig.label}</Badge>
                         {isExpired && <Badge variant="danger" size="sm">Expired</Badge>}
+                        {!countsForCompliance ? (
+                          <Badge variant="outline" size="sm">Reference only</Badge>
+                        ) : (
+                          <Badge variant="success" size="sm">
+                            Compliance
+                          </Badge>
+                        )}
                       </div>
+                      <label
+                        className="mt-1.5 inline-flex items-center gap-2 text-[11px] text-text-secondary cursor-pointer"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/30"
+                          checked={countsForCompliance}
+                          onChange={(e) => void handleDocComplianceToggle(doc.id, e.target.checked)}
+                        />
+                        <span>Mandatory for compliance score</span>
+                      </label>
                       <p className="text-xs text-text-tertiary mt-0.5">{typeConfig.label}</p>
                       {doc.file_name && <p className="text-[10px] text-text-tertiary mt-0.5 truncate">{doc.file_name}</p>}
                       {doc.doc_type === "certification" && extractCertificateNumber(doc) && (
@@ -5122,6 +5308,30 @@ function PartnerDetailDrawer({
         </div>
       </Modal>
     </Drawer>
+
+    <PartnerAvatarCropModal
+      open={!!avatarCropFile}
+      imageFile={avatarCropFile}
+      onClose={() => setAvatarCropFile(null)}
+      onConfirm={async (blob) => {
+        if (!partner) return;
+        const file = new File([blob], "avatar.jpg", { type: "image/jpeg" });
+        setUploadingAvatar(true);
+        try {
+          const url = await uploadPartnerAvatar(partner.id, file);
+          const updated = await updatePartner(partner.id, { avatar_url: url });
+          onPartnerUpdate?.(updated);
+          toast.success("Photo saved");
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Upload failed");
+        } finally {
+          setUploadingAvatar(false);
+          setAvatarCropFile(null);
+        }
+      }}
+      title="Adjust profile photo"
+    />
+    </>
   );
 }
 

@@ -22,16 +22,14 @@ import {
   fetchPipelineJobsForDashboard,
   jobExecutionStartYmd,
   defaultMonthlySalesGoalGbp,
+  periodSalesGoalGbp,
   resolveMonthlySalesGoalFromCompany,
   type OverviewPipelineJobRow,
 } from "@/lib/dashboard-overview-jobs";
 import {
   getDashboardSalesGoalMonthlyOverrideGbp,
 } from "@/lib/dashboard-sales-goal-preference";
-import {
-  dashboardBoundsToInclusiveLocalYmd,
-  getLocalCalendarMonthDashboardBounds,
-} from "@/lib/dashboard-date-range";
+import { dashboardBoundsToInclusiveLocalYmd } from "@/lib/dashboard-date-range";
 import {
   localCalendarMonthYmdBounds,
   sumInvoiceOpenBalanceOutstanding,
@@ -81,8 +79,9 @@ function tierProgress(revenue: number, tiers: CommissionTier[]): {
 }
 
 export function OverviewExecutiveBundle() {
-  const { bounds, rangeLabel } = useDashboardDateRange();
+  const { bounds, rangeLabel, preset, customFrom, customTo } = useDashboardDateRange();
   const boundsKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
+  const rangeDepsKey = `${preset}|${customFrom}|${customTo}`;
 
   const [loading, setLoading] = useState(true);
   const [revenue, setRevenue] = useState(0);
@@ -116,8 +115,6 @@ export function OverviewExecutiveBundle() {
     outstandingAr: 0,
   });
   const [monthlySalesGoal, setMonthlySalesGoal] = useState(() => defaultMonthlySalesGoalGbp());
-  /** Calendar month label for Revenue / Sales (always current month, not dashboard range). */
-  const [revenueSoldMonthLabel, setRevenueSoldMonthLabel] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -130,12 +127,13 @@ export function OverviewExecutiveBundle() {
         const fromIso = bounds?.fromIso ?? "2000-01-01T00:00:00.000Z";
         const toBound = bounds?.toIso ?? toIso;
 
-        const soldInMonthBounds = getLocalCalendarMonthDashboardBounds(clock);
-        setRevenueSoldMonthLabel(localCalendarMonthYmdBounds(clock).monthLabel);
-
         const [companySettings, pipelineRows, tiersList, customerCashTotal, invoicesRes] = await Promise.all([
           getCompanySettings(),
-          fetchPipelineJobsForDashboard(supabase, soldInMonthBounds, { dateBasis: "created_at" }),
+          fetchPipelineJobsForDashboard(
+            supabase,
+            bounds,
+            bounds ? { dateBasis: "schedule_start" } : undefined,
+          ),
           listCommissionTiers().catch(() => [] as CommissionTier[]),
           customerPaymentsTotalInRange(supabase, fromIso, toBound),
           supabase
@@ -149,6 +147,11 @@ export function OverviewExecutiveBundle() {
         /** Match invoice `due_date` civil dates — do not use UTC slice of `bounds` ISO strings. */
         const fromDay = bounds ? dashboardBoundsToInclusiveLocalYmd(bounds).fromDay : fromIso.slice(0, 10);
         const toDay = bounds ? dashboardBoundsToInclusiveLocalYmd(bounds).toDay : toBound.slice(0, 10);
+        const monthClock = localCalendarMonthYmdBounds(clock);
+        /** Bills/payroll for net margin: dashboard range, or current calendar month when range is “all time”. */
+        const overheadFromDay = bounds ? fromDay : monthClock.fromDay;
+        const overheadToDay = bounds ? toDay : monthClock.toDay;
+        const overheadPeriodLabel = bounds ? rangeLabel : monthClock.monthLabel;
 
         setMonthlySalesGoal(
           resolveMonthlySalesGoalFromCompany(
@@ -179,7 +182,7 @@ export function OverviewExecutiveBundle() {
         setRevenue(rev);
         setPartnerDirect(direct);
         setGrossProfit(gross);
-        const { fromDay: tierFromDay, toDay: tierToDay, monthLabel: tierLabel } = localCalendarMonthYmdBounds(clock);
+        const { fromDay: tierFromDay, toDay: tierToDay, monthLabel: tierLabel } = monthClock;
         const tierPaymentsTotal = await customerPaymentsTotalInRange(
           supabase,
           `${tierFromDay}T00:00:00.000Z`,
@@ -192,15 +195,13 @@ export function OverviewExecutiveBundle() {
         let billsTotal = 0;
         let payrollTotal = 0;
         try {
-          let billsQ = supabase
+          const { data: billRows, error: billErr } = await supabase
             .from("bills")
             .select("amount")
             .is("archived_at", null)
-            .neq("status", "rejected");
-          if (bounds) {
-            billsQ = billsQ.gte("due_date", fromDay).lte("due_date", toDay);
-          }
-          const { data: billRows, error: billErr } = await billsQ;
+            .neq("status", "rejected")
+            .gte("due_date", overheadFromDay)
+            .lte("due_date", overheadToDay);
           if (!billErr && billRows) {
             billsTotal = billRows.reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
           }
@@ -208,11 +209,12 @@ export function OverviewExecutiveBundle() {
           billsTotal = 0;
         }
         try {
-          let payrollQ = supabase.from("payroll_internal_costs").select("amount");
-          if (bounds) {
-            payrollQ = payrollQ.not("due_date", "is", null).gte("due_date", fromDay).lte("due_date", toDay);
-          }
-          const { data: payrollRows, error: payErr } = await payrollQ;
+          const { data: payrollRows, error: payErr } = await supabase
+            .from("payroll_internal_costs")
+            .select("amount")
+            .not("due_date", "is", null)
+            .gte("due_date", overheadFromDay)
+            .lte("due_date", overheadToDay);
           if (!payErr && payrollRows) {
             payrollTotal = payrollRows.reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
           }
@@ -465,34 +467,7 @@ export function OverviewExecutiveBundle() {
         );
         const quotesAwaitingCount = quotesAwaitingCountRes.count ?? 0;
 
-        /** Calendar month (local) — same for fixed overhead as for prior “projection” KPI: not tied to dashboard range. */
-        const { fromDay: overheadMonthFrom, toDay: overheadMonthTo, monthLabel: overheadMonthLabel } =
-          localCalendarMonthYmdBounds(clock);
-
-        const [billsFixedRes, payrollFixedRes] = await Promise.all([
-          supabase
-            .from("bills")
-            .select("amount")
-            .is("archived_at", null)
-            .neq("status", "rejected")
-            .gte("due_date", overheadMonthFrom)
-            .lte("due_date", overheadMonthTo),
-          supabase
-            .from("payroll_internal_costs")
-            .select("amount")
-            .not("due_date", "is", null)
-            .gte("due_date", overheadMonthFrom)
-            .lte("due_date", overheadMonthTo),
-        ]);
-        const billsFixedSum = (billsFixedRes.error ? [] : billsFixedRes.data ?? []).reduce(
-          (s, r) => s + Number((r as { amount?: number }).amount ?? 0),
-          0,
-        );
-        const payrollFixedSum = (payrollFixedRes.error ? [] : payrollFixedRes.data ?? []).reduce(
-          (s, r) => s + Number((r as { amount?: number }).amount ?? 0),
-          0,
-        );
-        const fixedMonthlyOverhead = billsFixedSum + payrollFixedSum;
+        const fixedMonthlyOverhead = billsTotal + payrollTotal;
         const outstandingAr = sumInvoiceOpenBalanceOutstanding(invoiceRows);
 
         setFunnel({
@@ -504,7 +479,7 @@ export function OverviewExecutiveBundle() {
           salesBookedValue: rev,
           collectedCash: customerCashTotal,
           fixedMonthlyOverhead,
-          overheadMonthLabel,
+          overheadMonthLabel: overheadPeriodLabel,
           outstandingAr,
         });
 
@@ -607,7 +582,7 @@ export function OverviewExecutiveBundle() {
     return () => {
       cancelled = true;
     };
-  }, [boundsKey]);
+  }, [boundsKey, rangeDepsKey]);
 
   useEffect(() => {
     function refreshGoal() {
@@ -625,6 +600,17 @@ export function OverviewExecutiveBundle() {
     window.addEventListener("master-os-company-settings", refreshGoal);
     return () => window.removeEventListener("master-os-company-settings", refreshGoal);
   }, []);
+
+  const revenuePeriodSubtext = useMemo(() => {
+    if (!bounds) return "Booked pipeline · no date filter (all open pipeline jobs)";
+    return `Booked pipeline · schedule start in ${rangeLabel} (same filter as Jobs → schedule window)`;
+  }, [bounds, rangeLabel]);
+
+  const salesGoalTargetGbp = useMemo(() => {
+    if (!monthlySalesGoal || monthlySalesGoal <= 0) return null;
+    if (bounds) return periodSalesGoalGbp(bounds, monthlySalesGoal);
+    return monthlySalesGoal;
+  }, [bounds, monthlySalesGoal]);
 
   /** Pipeline revenue minus direct job cost, company bills (due in range), and payroll internal lines (due in range). */
   const netProfit = grossProfit - billsCost - payrollCost;
@@ -653,9 +639,10 @@ export function OverviewExecutiveBundle() {
   );
   const { current, next, fillPct } = tierProgress(billingForTier, tiers);
 
-  /** Revenue KPI is always current calendar month booked; goal compares to monthly baseline. */
-  const monthVsBaselinePct =
-    monthlySalesGoal > 0 ? Math.min(100, (revenue / monthlySalesGoal) * 100) : 0;
+  const goalVsTargetPct =
+    salesGoalTargetGbp != null && salesGoalTargetGbp > 0
+      ? Math.min(100, (revenue / salesGoalTargetGbp) * 100)
+      : 0;
 
   const topWeeksByRevenue = useMemo(
     () => [...forecastWeeks].sort((a, b) => b.sold - a.sold).slice(0, 5),
@@ -691,9 +678,7 @@ export function OverviewExecutiveBundle() {
             {
               label: "Revenue",
               value: revenue,
-              sub: loading
-                ? "—"
-                : `Booked value · jobs created in ${revenueSoldMonthLabel || "this month"} · ignores dashboard range`,
+              sub: loading ? "—" : revenuePeriodSubtext,
               accent: "text-emerald-600",
             },
             { label: "Costs", value: partnerDirect, sub: "Direct cost on those jobs", accent: "text-amber-600" },
@@ -737,7 +722,7 @@ export function OverviewExecutiveBundle() {
               {loading ? "—" : formatCurrency(funnel.salesBookedValue)}
             </p>
             <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              {loading ? "—" : `${funnel.salesJobCount} booked`}
+              {loading ? "—" : `${funnel.salesJobCount} jobs on calendar`}
             </p>
           </div>
           {[
@@ -754,7 +739,7 @@ export function OverviewExecutiveBundle() {
               display: loading ? "—" : formatCurrency(funnel.fixedMonthlyOverhead),
               sub: loading
                 ? "—"
-                : `Bills + workforce (internal payroll) · due in ${funnel.overheadMonthLabel || "this month"} · ignores dashboard range`,
+                : `Bills + workforce (internal payroll) · due ${funnel.overheadMonthLabel || "in period"}`,
               accent: "text-rose-600",
             },
             {
@@ -782,24 +767,30 @@ export function OverviewExecutiveBundle() {
             <div className="min-w-0">
               <p className="text-xs font-semibold text-text-primary">Sales goal</p>
               <p className="text-[10px] text-text-tertiary truncate">
-                Baseline {formatCurrency(monthlySalesGoal)} · same month as Revenue above
+                {bounds && salesGoalTargetGbp != null ? (
+                  <>
+                    Target {formatCurrency(salesGoalTargetGbp)} ({formatCurrency(monthlySalesGoal)}/mo scaled to range)
+                  </>
+                ) : (
+                  <>Baseline {formatCurrency(monthlySalesGoal)} · compares to Revenue above</>
+                )}
               </p>
             </div>
           </div>
           {!loading && (
             <span className="text-xs font-bold tabular-nums text-text-primary">
-              {monthlySalesGoal > 0 ? `${Math.round(monthVsBaselinePct)}%` : "—"}
+              {salesGoalTargetGbp != null && salesGoalTargetGbp > 0 ? `${Math.round(goalVsTargetPct)}%` : "—"}
             </span>
           )}
         </div>
         <div className="px-4 pb-2.5 pt-2">
           {loading ? (
             <div className="h-2 animate-pulse rounded-full bg-surface-hover" />
-          ) : monthlySalesGoal > 0 ? (
+          ) : salesGoalTargetGbp != null && salesGoalTargetGbp > 0 ? (
             <div className="h-2 rounded-full overflow-hidden bg-surface-hover ring-1 ring-inset ring-border-light/50">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
-                style={{ width: `${monthVsBaselinePct}%` }}
+                style={{ width: `${goalVsTargetPct}%` }}
               />
             </div>
           ) : (
@@ -923,7 +914,7 @@ export function OverviewExecutiveBundle() {
             <div>
               <CardTitle className="text-sm font-semibold">Top 5 — partners</CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5">
-                Gross margin · jobs created in {revenueSoldMonthLabel || "this month"}
+                Gross margin · same booked jobs as Revenue
               </p>
             </div>
             <Users className="h-3.5 w-3.5 text-text-tertiary" />
@@ -956,8 +947,8 @@ export function OverviewExecutiveBundle() {
               <div className="min-w-0">
                 <CardTitle className="text-sm font-semibold">Top 5 — account owners</CardTitle>
                 <p className="text-[10px] text-text-tertiary mt-0.5">
-                  By <strong className="text-text-secondary">account_owner_id</strong> · booked revenue · jobs created in{" "}
-                  {revenueSoldMonthLabel || "this month"}
+                  By <strong className="text-text-secondary">account_owner_id</strong> · booked revenue ·{" "}
+                  {revenuePeriodSubtext}
                 </p>
               </div>
             </div>
@@ -1017,7 +1008,7 @@ export function OverviewExecutiveBundle() {
             <div>
               <CardTitle className="text-sm font-semibold">Top 5 — weeks</CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5">
-                Booked revenue from jobs created in {revenueSoldMonthLabel || "this month"} · by execution-start week
+                {revenuePeriodSubtext} · by execution-start week
               </p>
             </div>
             <CalendarDays className="h-3.5 w-3.5 text-text-tertiary" />
@@ -1085,9 +1076,7 @@ export function OverviewExecutiveBundle() {
                 k: "rev",
                 label: "Revenue",
                 main: loading ? "—" : formatCurrency(revenue),
-                sub: loading
-                  ? "—"
-                  : `Booked · created in ${revenueSoldMonthLabel || "this month"}`,
+                sub: loading ? "—" : revenuePeriodSubtext,
                 accent: "text-emerald-700 dark:text-emerald-400",
               },
               {

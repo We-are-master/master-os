@@ -11,9 +11,11 @@ export type ProfileCompletenessItem = {
   weight: number;
   done: boolean;
   hint: string;
+  /** When false, row is informational only (e.g. optional VAT for self-employed) — excluded from profile score and attention count. */
+  scoresTowardCompliance?: boolean;
 };
 
-/** Limited: complete when not VAT registered, or registered with number; legacy: number on file. Self-employed: optional VAT number for points. */
+/** Limited: complete when not VAT registered, or registered with number; legacy: number on file. Self-employed VAT is optional and does not affect compliance score. */
 export function isVatProfileComplete(partner: Partner): boolean {
   const legal = inferPartnerLegal(partner);
   if (legal === "limited_company") {
@@ -55,19 +57,26 @@ export function getProfileCompletenessItems(partner: Partner): ProfileCompletene
       done: legal === "limited_company" ? !!partner.crn?.trim() : !!partner.utr?.trim(),
       hint: legal === "limited_company" ? "Add CRN in Overview." : "Add UTR in Overview.",
     },
-    {
-      id: "vat",
-      label:
-        legal === "limited_company"
-          ? "VAT (registered + number, or not registered)"
-          : "VAT number",
-      weight: 8,
-      done: isVatProfileComplete(partner),
-      hint:
-        legal === "limited_company"
-          ? "Say if VAT registered; if yes, add the VAT number."
-          : "Optional — add if VAT registered.",
-    },
+    ...(legal === "limited_company"
+      ? [
+          {
+            id: "vat",
+            label: "VAT (registered + number, or not registered)",
+            weight: 8,
+            done: isVatProfileComplete(partner),
+            hint: "Say if VAT registered; if yes, add the VAT number.",
+          },
+        ]
+      : [
+          {
+            id: "vat",
+            label: "VAT number (optional)",
+            weight: 0,
+            done: !!partner.vat_number?.trim(),
+            hint: "Add if VAT registered — not included in compliance score.",
+            scoresTowardCompliance: false,
+          },
+        ]),
     {
       id: "identity",
       label: "Company and contact name",
@@ -86,6 +95,7 @@ export function computeProfileCompletenessScore(partner: Partner): number {
   let earned = 0;
   let max = 0;
   for (const it of items) {
+    if (it.scoresTowardCompliance === false) continue;
     max += it.weight;
     if (it.done) earned += it.weight;
   }
@@ -110,10 +120,13 @@ export function computeDocumentChecklistScore(
 }
 
 export function countExpiredDocuments(
-  docs: { expires_at?: string | null }[],
+  docs: { expires_at?: string | null; counts_toward_compliance?: boolean | null }[],
 ): number {
   const now = new Date();
-  return docs.filter((d) => d.expires_at && new Date(d.expires_at) < now).length;
+  return docs.filter(
+    (d) =>
+      d.counts_toward_compliance !== false && d.expires_at && new Date(d.expires_at) < now,
+  ).length;
 }
 
 /**

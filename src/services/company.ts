@@ -39,6 +39,11 @@ export interface CompanySettings {
   partner_cancellation_fee_gbp?: number | null;
   /** Overview dashboard: monthly pipeline target (GBP), scaled to the selected period. */
   dashboard_sales_goal_monthly?: number | null;
+  /**
+   * Partner directory: requirement ids excluded from document compliance score (e.g. `public_liability`).
+   * Configured in Settings → System (admin).
+   */
+  compliance_score_excluded_doc_ids?: string[] | null;
   updated_at: string;
 }
 
