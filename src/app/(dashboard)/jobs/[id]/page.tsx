@@ -1334,7 +1334,7 @@ export default function JobDetailPage() {
   }, [job, cancelPresetId, cancelDetail, profile?.id, profile?.full_name]);
 
   const handleStatusChange = useCallback(
-    async (j: Job, newStatus: Job["status"], opts?: { skipHourlyRecalc?: boolean }): Promise<Job | null> => {
+    async (j: Job, newStatus: Job["status"], opts?: { skipHourlyRecalc?: boolean; silent?: boolean; skipSelfBillSync?: boolean; extraPatch?: Partial<Job> }): Promise<Job | null> => {
     const forceCloseFromAwaitingPayment = j.status === "awaiting_payment" && newStatus === "completed";
     if (!forceCloseFromAwaitingPayment) {
       const check = canAdvanceJob(j, newStatus, {
@@ -1455,8 +1455,9 @@ export default function JobDetailPage() {
         ...hourlyPatch,
         ...statusChangePartnerTimerPatch(j, newStatus),
         ...statusChangeOfficeTimerPatch(j, newStatus),
+        ...(opts?.extraPatch ?? {}),
       };
-      const updated = await updateJob(j.id, statusPatch);
+      const updated = await updateJob(j.id, statusPatch, { skipSelfBillSync: opts?.skipSelfBillSync });
       if (forceCloseFromAwaitingPayment) {
         const linked = await listInvoicesLinkedToJob(updated.reference, updated.invoice_id);
         await Promise.all(
@@ -1471,13 +1472,15 @@ export default function JobDetailPage() {
       }
       await logAudit({ entityType: "job", entityId: j.id, entityRef: j.reference, action: "status_changed", fieldName: "status", oldValue: j.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
       setJob(updated);
-      toast.success(
-        forceCloseFromAwaitingPayment
-          ? "Job marked Completed & paid."
-          : selfBillId && selfBillId !== j.self_bill_id
-            ? "Self-bill linked. Job updated."
-            : "Job updated",
-      );
+      if (!opts?.silent) {
+        toast.success(
+          forceCloseFromAwaitingPayment
+            ? "Job marked Completed & paid."
+            : selfBillId && selfBillId !== j.self_bill_id
+              ? "Self-bill linked. Job updated."
+              : "Job updated",
+        );
+      }
       if (updated.partner_id && j.status !== newStatus) {
         notifyAssignedPartnerAboutJob({
           partnerId: updated.partner_id,
@@ -2060,7 +2063,7 @@ export default function JobDetailPage() {
         );
       }
 
-      /** Single batched job update for both invoice_id and self_bill_id (replaces 2 sequential updates). */
+      /** Merge invoice_id + self_bill_id links into the status change PATCH — eliminates a separate round-trip. */
       const linkPatch: Partial<Job> = {};
       if (invoiceResult.id && invoiceResult.id !== current.invoice_id) {
         linkPatch.invoice_id = invoiceResult.id;
@@ -2068,30 +2071,23 @@ export default function JobDetailPage() {
       if (resolvedSelfBillId && resolvedSelfBillId !== selfBillIdBeforePartnerSection) {
         linkPatch.self_bill_id = resolvedSelfBillId;
       }
-      if (Object.keys(linkPatch).length > 0) {
-        const withLinks = await handleJobUpdate(current.id, linkPatch, {
-          notifyPartner: false,
-          silent: true,
-          skipSelfBillSync: true,
-        });
-        if (withLinks) current = withLinks;
-      }
-
-      if ((current.self_bill_id ?? null) !== selfBillIdBeforePartnerSection) {
-        void syncSelfBillAfterJobChange(current).catch(() => {});
-      }
 
       // Never re-derive hourly totals from the office timer here — this flow already applied modal hours + rates,
       // and timer-based recalc would overwrite approved amounts (and desync the finance summary from the invoice).
-      const statusOpts = { skipHourlyRecalc: current.job_type === "hourly" };
+      const statusOpts = { skipHourlyRecalc: current.job_type === "hourly", silent: true, skipSelfBillSync: true, extraPatch: linkPatch };
+      let approvalToast: string;
       if (customerDueForStatus > 0.02 || partnerDue > 0.02) {
         const next = await handleStatusChange(current, "awaiting_payment", statusOpts);
         if (next) current = next;
-        toast.success("Approved. Job moved to Awaiting payment.");
+        approvalToast = "Approved. Job moved to Awaiting payment.";
       } else {
         const next = await handleStatusChange(current, "completed", statusOpts);
         if (next) current = next;
-        toast.success("Approved. Job marked Completed & paid.");
+        approvalToast = "Approved. Job marked Completed & paid.";
+      }
+      /** Self-bill sync after status change — fire-and-forget to keep critical path lean. */
+      if (current.self_bill_id) {
+        void syncSelfBillAfterJobChange(current).catch(() => {});
       }
       if (usedForceApprove && forceApprovalReason.trim()) {
         const reason = forceApprovalReason.trim();
@@ -2119,6 +2115,7 @@ export default function JobDetailPage() {
         ]);
         if (withNotes) current = withNotes;
       }
+      toast.success(approvalToast);
       /** Finance refresh fans out 4 reads; nothing in this handler depends on it — let it run while the modal closes. */
       void refreshJobFinance().catch(() => {});
       setValidateCompleteOpen(false);
@@ -3963,9 +3960,23 @@ export default function JobDetailPage() {
                                       <p className="text-[10px] text-text-tertiary mt-0.5">Due {formatDate(inv.due_date)}</p>
                                     ) : null}
                                   </div>
-                                  <p className="text-lg font-bold tabular-nums text-primary tracking-tight shrink-0">
-                                    {formatCurrency(inv.amount)}
-                                  </p>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <p className="text-lg font-bold tabular-nums text-primary tracking-tight">
+                                      {formatCurrency(inv.amount)}
+                                    </p>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      icon={<FileText className="h-3 w-3" />}
+                                      title="Download receipt PDF"
+                                      onClick={() =>
+                                        window.open(`/api/invoices/${inv.id}/pdf`, "_blank", "noopener,noreferrer")
+                                      }
+                                    >
+                                      PDF
+                                    </Button>
+                                  </div>
                                 </div>
                               ) : (
                                 <>
@@ -4025,6 +4036,17 @@ export default function JobDetailPage() {
                                     </p>
                                   ) : null}
                                   <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      icon={<FileText className="h-3 w-3" />}
+                                      onClick={() =>
+                                        window.open(`/api/invoices/${inv.id}/pdf`, "_blank", "noopener,noreferrer")
+                                      }
+                                    >
+                                      Receipt PDF
+                                    </Button>
                                     <Badge variant={stripePaid ? "success" : "default"} size="sm">Stripe: {inv.stripe_payment_status ?? "none"}</Badge>
                                     {inv.stripe_payment_link_url && (
                                       <>

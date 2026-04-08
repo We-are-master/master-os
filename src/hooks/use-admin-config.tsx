@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import type { NavGroup } from "@/lib/constants";
 import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
 import { getAdminConfig, setAdminConfig as saveAdminConfig } from "@/services/admin-config";
@@ -84,7 +84,7 @@ export function AdminConfigProvider({ children }: { children: React.ReactNode })
     [profile, permissions]
   );
 
-  const filteredNavigation = useCallback((): NavGroup[] => {
+  const filteredNavigation = useMemo((): NavGroup[] => {
     if (!profile || navigation.length === 0) return navigation;
     // Admin sees everything
     if (profile.role === "admin") return navigation;
@@ -116,7 +116,7 @@ export function AdminConfigProvider({ children }: { children: React.ReactNode })
     setNavigation,
     setPermissions,
     can,
-    filteredNavigation: filteredNavigation(),
+    filteredNavigation,
   };
 
   return (

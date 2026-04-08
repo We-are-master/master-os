@@ -9,8 +9,6 @@ import { ThemeContext, useThemeProvider } from "@/hooks/use-theme";
 import { AdminConfigProvider } from "@/hooks/use-admin-config";
 import { DuplicateConfirmProvider } from "@/contexts/duplicate-confirm-context";
 import { MasterBrainAssistant } from "@/components/layout/master-brain-assistant";
-import { motion } from "framer-motion";
-
 export default function DashboardLayout({
   children,
 }: {
@@ -35,18 +33,16 @@ export default function DashboardLayout({
           <DuplicateConfirmProvider>
           <div className="min-h-screen bg-surface-secondary">
             <Sidebar />
-            <motion.div
-              initial={false}
-              animate={{ marginLeft: collapsed ? 72 : 256 }}
-              transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="flex flex-col h-screen"
+            <div
+              style={{ marginLeft: collapsed ? 72 : 256 }}
+              className="flex flex-col h-screen transition-[margin-left] duration-300 ease-in-out"
             >
               <Header />
               <main className="flex-1 overflow-y-auto p-6 lg:p-8">
                 {children}
               </main>
               <MasterBrainAssistant />
-            </motion.div>
+            </div>
           </div>
           </DuplicateConfirmProvider>
           </AdminConfigProvider>

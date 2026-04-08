@@ -9,7 +9,7 @@ import { Select } from "@/components/ui/select";
 import { getSupabase } from "@/services/base";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { BarChart, Bar, CartesianGrid, Cell, LineChart, Line, PieChart, Pie, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { Job, Partner } from "@/types/database";
+import type { Job } from "@/types/database";
 import { ExternalLink, CheckCircle2 } from "lucide-react";
 
 type DatePreset = "this_week" | "this_month" | "last_30_days" | "custom";
@@ -75,7 +75,7 @@ function lineKeyMonth(d: Date): string {
 export function OperationsStatus() {
   const router = useRouter();
   const [jobs, setJobs] = useState<OpsJob[]>([]);
-  const [partners, setPartners] = useState<Partner[]>([]);
+  const [activePartnersCount, setActivePartnersCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [squadFilter, setSquadFilter] = useState("all");
   const [datePreset, setDatePreset] = useState<DatePreset>("this_month");
@@ -85,36 +85,48 @@ export function OperationsStatus() {
   const [serviceWindow, setServiceWindow] = useState<ChartWindow>("last_30_days");
   const [trendWindow, setTrendWindow] = useState<TrendWindow>("daily_30");
 
-  const load = useCallback(async () => {
-      const supabase = getSupabase();
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    const supabase = getSupabase();
+    if (!silent) setLoading(true);
     try {
       const [jobsRes, partnersRes] = await Promise.all([
         supabase
           .from("jobs")
-          .select("id, reference, title, client_name, status, partner_id, partner_name, scheduled_date, scheduled_start_at, updated_at, created_at, timer_last_started_at, start_report_submitted, customer_review_rating, service_type, squad_name"),
-        supabase.from("partners").select("*"),
+          .select("id, reference, title, client_name, status, partner_id, partner_name, scheduled_date, scheduled_start_at, updated_at, created_at, timer_last_started_at, start_report_submitted, customer_review_rating, service_type, squad_name")
+          .is("deleted_at", null),
+        supabase
+          .from("partners")
+          .select("*", { count: "exact", head: true })
+          .eq("status", "active"),
       ]);
       setJobs((jobsRes.data ?? []) as OpsJob[]);
-      setPartners((partnersRes.data ?? []) as Partner[]);
-      } catch {
-      setJobs([]);
-      setPartners([]);
-      } finally {
-        setLoading(false);
+      setActivePartnersCount(partnersRes.count ?? 0);
+    } catch {
+      if (!silent) {
+        setJobs([]);
+        setActivePartnersCount(0);
       }
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     void load();
     const supabase = getSupabase();
+    let jobsDebounce: ReturnType<typeof setTimeout> | undefined;
+    let partnersDebounce: ReturnType<typeof setTimeout> | undefined;
     const jobsCh = supabase.channel("ops:jobs").on("postgres_changes", { event: "*", schema: "public", table: "jobs" }, () => {
-      void load();
+      if (jobsDebounce) clearTimeout(jobsDebounce);
+      jobsDebounce = setTimeout(() => void load(true), 350);
     }).subscribe();
     const partnersCh = supabase.channel("ops:partners").on("postgres_changes", { event: "*", schema: "public", table: "partners" }, () => {
-      void load();
+      if (partnersDebounce) clearTimeout(partnersDebounce);
+      partnersDebounce = setTimeout(() => void load(true), 350);
     }).subscribe();
     return () => {
+      if (jobsDebounce) clearTimeout(jobsDebounce);
+      if (partnersDebounce) clearTimeout(partnersDebounce);
       supabase.removeChannel(jobsCh);
       supabase.removeChannel(partnersCh);
     };
@@ -135,10 +147,6 @@ export function OperationsStatus() {
     return ["all", ...Array.from(set)];
   }, [jobs]);
 
-  const activePartnersCount = useMemo(
-    () => partners.filter((p) => String(p.status).toLowerCase() === "active").length,
-    [partners]
-  );
   const jobsInProgressCount = useMemo(() => jobs.filter(isJobInProgress).length, [jobs]);
   const onSiteTodayCount = useMemo(
     () =>
