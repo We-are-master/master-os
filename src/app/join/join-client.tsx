@@ -225,6 +225,64 @@ function normalizeEmailInput(s: string): string {
 }
 
 /**
+ * Bullet-proof error extractor.
+ *
+ * Walks any value (Error, plain object, nested Supabase error, array, primitive)
+ * looking for a usable string message. Strips technical noise and returns one of:
+ *  - the cleanest message field found, OR
+ *  - a friendly fallback (never `[object Object]`, never `expected pattern`).
+ */
+const FRIENDLY_FALLBACK =
+  "We could not complete your registration. Please double-check your details and try again.";
+
+const TECHNICAL_NOISE_RE = /(expected pattern|\[object object\]|undefined|null)/i;
+
+function pickStringMessage(value: unknown, depth = 0): string | null {
+  if (value == null || depth > 4) return null;
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t || TECHNICAL_NOISE_RE.test(t)) return null;
+    return t;
+  }
+  if (value instanceof Error) {
+    return pickStringMessage(value.message, depth + 1);
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const m = pickStringMessage(item, depth + 1);
+      if (m) return m;
+    }
+    return null;
+  }
+  if (typeof value === "object") {
+    // Prioritised keys commonly used by Supabase / Next / Postgres
+    const keys = ["error_description", "message", "msg", "error", "details", "hint", "description"];
+    for (const k of keys) {
+      const m = pickStringMessage((value as Record<string, unknown>)[k], depth + 1);
+      if (m) return m;
+    }
+    // Last resort: any string value in the object
+    for (const v of Object.values(value as Record<string, unknown>)) {
+      const m = pickStringMessage(v, depth + 1);
+      if (m) return m;
+    }
+  }
+  return null;
+}
+
+function extractFriendlyError(value: unknown, status?: number): string {
+  // Network/HTTP-status hints take priority
+  if (status === 409) return "An account with this email already exists.";
+  if (status === 413) return "One of your files is too large. Please upload smaller files.";
+  if (status === 422) {
+    const m = pickStringMessage(value);
+    return m ?? "Some of the details look invalid. Please review and try again.";
+  }
+  const msg = pickStringMessage(value);
+  return msg ?? FRIENDLY_FALLBACK;
+}
+
+/**
  * iOS Safari throws "The string did not match the expected pattern." when FormData.append
  * receives a File whose `name` contains characters WebKit considers invalid for
  * Content-Disposition (HEIC capture without extension, special chars, accents, etc.).
@@ -361,37 +419,24 @@ function RegistrationForm() {
         if (f) form.append(key, sanitizeFileForUpload(f, key));
       });
 
-      const res  = await fetch("/api/join/register", {
+      const res = await fetch("/api/join/register", {
         method: "POST",
         body: form,
         headers: { Accept: "application/json" },
       });
 
-      let json: { error?: unknown; ok?: boolean } = {};
-      try { json = await res.json(); } catch { /* non-JSON response — ignore */ }
+      let payload: unknown = null;
+      try { payload = await res.json(); } catch { /* non-JSON response — ignore */ }
 
       if (!res.ok) {
-        const apiErr = typeof json.error === "string"
-          ? json.error.trim()
-          : json.error != null
-            ? String(json.error)
-            : "";
-        // Never display raw WebKit/Supabase pattern errors to the user
-        const safeMsg = apiErr && !/expected pattern/i.test(apiErr)
-          ? apiErr
-          : "We could not complete your registration. Please double-check your details and try again.";
-        throw new Error(safeMsg);
+        console.error("[join] API error:", res.status, payload);
+        setError(extractFriendlyError(payload, res.status));
+        return;
       }
       setSuccess(true);
     } catch (e: unknown) {
-      const raw = e instanceof Error ? e.message : "";
-      // Iff the WebKit pattern error leaks through (e.g. thrown by FormData itself),
-      // replace it with a friendly message.
-      const safe = raw && !/expected pattern/i.test(raw)
-        ? raw
-        : "We could not submit your application. Please check your photo/document files and try again.";
-      console.error("[join] submit error:", e);
-      setError(safe);
+      console.error("[join] submit exception:", e);
+      setError(extractFriendlyError(e));
     } finally {
       setLoading(false);
     }
