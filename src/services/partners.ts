@@ -1,16 +1,74 @@
-import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
+import { getSupabase, type ListParams, type ListResult } from "./base";
 import type { Partner } from "@/types/database";
 
 export interface PartnerListParams extends ListParams {
   trade?: string;
 }
 
+/**
+ * List partners via the consolidated `get_partners_list_bundle` RPC
+ * (migration 125). One round-trip returns paged rows + per-partner doc/job
+ * aggregates instead of N parallel queries.
+ *
+ * Falls back to the legacy direct-query path if the RPC is unavailable
+ * (older databases or RLS misconfig). The fallback path is unchanged from
+ * the original implementation so the contract is identical.
+ */
 export async function listPartners(params: PartnerListParams): Promise<ListResult<Partner>> {
   const supabase = getSupabase();
-  const page = params.page ?? 1;
+  const page     = params.page ?? 1;
   const pageSize = params.pageSize ?? 10;
+
+  // ─── Fast path: bundle RPC (one round-trip) ─────────────────────────────
+  const statusArg =
+    !params.status || params.status === "all"
+      ? null
+      // The RPC takes a single status string. The page treats "inactive" as
+      // ("inactive" + "on_break") for legacy reasons; we'll fall back to the
+      // direct path in that one case so the IN-list filter is preserved.
+      : params.status === "inactive"
+        ? "__needs_fallback__"
+        : params.status;
+
+  const tradeArg = params.trade && params.trade !== "all" ? params.trade : null;
+  const searchArg = params.search?.trim() || null;
+
+  if (statusArg !== "__needs_fallback__") {
+    const { data, error } = await supabase.rpc("get_partners_list_bundle", {
+      p_status: statusArg,
+      p_trade:  tradeArg,
+      p_search: searchArg,
+      p_limit:  pageSize,
+      p_offset: (page - 1) * pageSize,
+    });
+
+    if (!error && data) {
+      const payload = data as { rows: Partner[]; total: number };
+      const total   = payload.total ?? 0;
+      return {
+        data:       payload.rows ?? [],
+        count:      total,
+        page,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      };
+    }
+    // RPC missing or RLS issue → fall through to legacy path
+  }
+
+  // ─── Legacy fallback: direct table queries ──────────────────────────────
+  return listPartnersLegacy(params, page, pageSize);
+}
+
+/** Original direct-query path. Kept as fallback for envs where the RPC is missing. */
+async function listPartnersLegacy(
+  params: PartnerListParams,
+  page: number,
+  pageSize: number,
+): Promise<ListResult<Partner>> {
+  const supabase = getSupabase();
   const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
+  const to   = from + pageSize - 1;
 
   let query = supabase.from("partners").select("*", { count: "exact" });
 

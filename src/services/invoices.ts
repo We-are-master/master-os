@@ -8,7 +8,52 @@ export type CreateInvoiceInput = Omit<Invoice, "id" | "reference" | "created_at"
   collection_stage?: InvoiceCollectionStage;
 };
 
+/**
+ * Invoices list — fast path uses `get_invoices_list_bundle` RPC (migration 125),
+ * which returns paged rows + per-invoice customer payment totals in a single
+ * round-trip. The legacy chunked .in("job_reference", slice) loop fired by
+ * /finance/invoices is now server-side. Falls back to direct queryList path
+ * on RPC failure.
+ *
+ * Note: the bundle RPC takes a single status string and does not yet support
+ * the "pending → ['pending','partially_paid']" expansion. When `params.status`
+ * is "pending", we fall through to the legacy path so that filter still works.
+ */
 export async function listInvoices(params: ListParams): Promise<ListResult<Invoice>> {
+  const supabase = getSupabase();
+  const page     = params.page ?? 1;
+  const pageSize = params.pageSize ?? 10;
+
+  // Pending = (pending OR partially_paid). RPC doesn't support multi-status yet.
+  const needsLegacyMultiStatus = params.status === "pending";
+
+  if (!needsLegacyMultiStatus) {
+    const statusArg = params.status && params.status !== "all" ? params.status : null;
+    const searchArg = params.search?.trim() || null;
+
+    const { data, error } = await supabase.rpc("get_invoices_list_bundle", {
+      p_period_start: null,
+      p_period_end:   null,
+      p_status:       statusArg,
+      p_search:       searchArg,
+      p_limit:        pageSize,
+      p_offset:       (page - 1) * pageSize,
+    });
+
+    if (!error && data) {
+      const payload = data as { rows: Invoice[]; total: number };
+      const total   = payload.total ?? 0;
+      return {
+        data:       payload.rows ?? [],
+        count:      total,
+        page,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      };
+    }
+  }
+
+  // Legacy fallback (also handles the "pending" multi-status case)
   const p: ListParams = { ...params };
   if (p.status === "pending") {
     p.statusIn = ["pending", "partially_paid"];

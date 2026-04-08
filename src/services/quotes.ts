@@ -66,13 +66,47 @@ async function enrichQuotesWithAccountNames(quotes: Quote[]): Promise<Quote[]> {
   }));
 }
 
+/**
+ * Quotes list — fast path uses `get_quotes_list_bundle` RPC (migration 125),
+ * which returns paged rows + per-quote line item counts/totals in a single
+ * round-trip. Falls back to the legacy `queryList` path on RPC failure so
+ * older databases still work.
+ */
 export async function listQuotes(params: ListParams): Promise<ListResult<Quote>> {
+  const supabase = getSupabase();
+  const page     = params.page ?? 1;
+  const pageSize = params.pageSize ?? 10;
+
+  const statusArg = params.status && params.status !== "all" ? params.status : null;
+  const searchArg = params.search?.trim() || null;
+
+  const { data, error } = await supabase.rpc("get_quotes_list_bundle", {
+    p_status: statusArg,
+    p_search: searchArg,
+    p_limit:  pageSize,
+    p_offset: (page - 1) * pageSize,
+  });
+
+  if (!error && data) {
+    const payload = data as { rows: Quote[]; total: number };
+    const total   = payload.total ?? 0;
+    const enriched = await enrichQuotesWithAccountNames(payload.rows ?? []);
+    return {
+      data:       enriched,
+      count:      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
+  // Legacy fallback
   const result = await queryList<Quote>("quotes", params, {
     searchColumns: ["reference", "title", "client_name", "client_email"],
     defaultSort: "created_at",
   });
-  const data = await enrichQuotesWithAccountNames(result.data);
-  return { ...result, data };
+  const enriched = await enrichQuotesWithAccountNames(result.data);
+  return { ...result, data: enriched };
 }
 
 export async function getQuote(id: string): Promise<Quote | null> {

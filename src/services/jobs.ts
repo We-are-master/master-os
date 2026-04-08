@@ -367,6 +367,38 @@ export async function getJob(id: string): Promise<Job | null> {
   return data as Job | null;
 }
 
+/**
+ * Job detail bundle returned by `get_job_detail_bundle` RPC (migration 125).
+ * One round-trip: job + linked client/partner + payments + self_bill +
+ * invoice + quote line items + reports + recent audit timeline.
+ *
+ * Replaces the 4-6 sequential Promise.all chains in the legacy
+ * /jobs/[id] page (which fired ~15 separate queries on initial load).
+ */
+export interface JobDetailBundle {
+  job: Job;
+  client: Record<string, unknown> | null;
+  partner: Record<string, unknown> | null;
+  payments: Record<string, unknown>[];
+  self_bill: Record<string, unknown> | null;
+  invoice: Record<string, unknown> | null;
+  line_items: Record<string, unknown>[];
+  reports: Record<string, unknown>[];
+  audit: Record<string, unknown>[];
+}
+
+export async function getJobDetailBundle(id: string): Promise<JobDetailBundle | null> {
+  if (!id?.trim()) return null;
+  const supabase = getSupabase();
+  const { data, error } = await supabase.rpc("get_job_detail_bundle", {
+    p_job_id: id.trim(),
+  });
+  if (error || !data) return null;
+  const payload = data as JobDetailBundle | { error: string };
+  if ("error" in payload) return null;
+  return payload;
+}
+
 export async function getJobByQuoteId(quoteId: string): Promise<Job | null> {
   if (isLegacyJobSchema()) return null;
   const supabase = getSupabase();
