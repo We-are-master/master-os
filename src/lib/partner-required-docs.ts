@@ -14,6 +14,8 @@ export interface PartnerDocLike {
   expires_at?: string;
   notes?: string;
   created_at: string;
+  /** When false, excluded from compliance score (reference / archive copy). Default true for legacy rows. */
+  counts_toward_compliance?: boolean | null;
 }
 
 const DOC_TYPES_NO_EXPIRY = new Set([
@@ -133,12 +135,36 @@ export const AGREEMENT_REQUIRED_DOCS: RequiredDocDef[] = [
   },
 ];
 
-/** Core mandatory IDs + UTR (if self-employed) + agreements — excludes trade certificates from the score. */
-export function buildMandatoryDocsForComplianceScore(partner: Partner | null): RequiredDocDef[] {
+/**
+ * Full mandatory checklist for the partner (Documents UI): core IDs, UTR when self-employed, agreements.
+ * Trade certificates are separate ({@link buildTradeCertificateRequirements}).
+ */
+export function buildMandatoryDocsChecklist(partner: Partner | null): RequiredDocDef[] {
   const core: RequiredDocDef[] = [...REQUIRED_PARTNER_DOCS];
   const withUtr =
     partner && inferPartnerLegal(partner) === "self_employed" ? [...core, UTR_REQUIRED_DOC] : [...core];
   return [...withUtr, ...AGREEMENT_REQUIRED_DOCS];
+}
+
+/**
+ * All requirement definitions that can be toggled in Settings (core + UTR + agreements).
+ * Trade certs are configured per partner trade, not here.
+ */
+export function getAllConfigurableComplianceRequirementDefs(): RequiredDocDef[] {
+  return [...REQUIRED_PARTNER_DOCS, UTR_REQUIRED_DOC, ...AGREEMENT_REQUIRED_DOCS];
+}
+
+/**
+ * Subset of {@link buildMandatoryDocsChecklist} that counts toward the numeric document score.
+ * @param companyExcludedDocIds — from `company_settings.compliance_score_excluded_doc_ids` (Settings → admin).
+ */
+export function buildMandatoryDocsForComplianceScore(
+  partner: Partner | null,
+  companyExcludedDocIds?: string[] | null,
+): RequiredDocDef[] {
+  const full = buildMandatoryDocsChecklist(partner);
+  const excluded = new Set(companyExcludedDocIds ?? []);
+  return full.filter((r) => !excluded.has(r.id));
 }
 
 export function pickRequiredDocMatch(docs: PartnerDocLike[], req: RequiredDocDef): PartnerDocLike | null {
@@ -146,11 +172,12 @@ export function pickRequiredDocMatch(docs: PartnerDocLike[], req: RequiredDocDef
 }
 
 export function pickRequiredDocMatches(docs: PartnerDocLike[], req: RequiredDocDef): PartnerDocLike[] {
-  const aliasMatch = docs.filter((d) => {
+  const eligible = docs.filter((d) => d.counts_toward_compliance !== false);
+  const aliasMatch = eligible.filter((d) => {
     const n = String(d.name ?? "").toLowerCase();
     return req.aliases.some((a) => n.includes(a));
   });
-  const byType = docs.filter((d) => d.doc_type === req.docType);
+  const byType = eligible.filter((d) => d.doc_type === req.docType);
   const byId = new Map<string, PartnerDocLike>();
   for (const doc of [...aliasMatch, ...byType]) byId.set(doc.id, doc);
   return [...byId.values()].sort(
@@ -199,38 +226,112 @@ export function buildRequiredDocumentChecklist(
   return [...core, ...tradeCerts];
 }
 
+/** True only when the row is explicitly approved and not past file expiry. */
+export function partnerDocIsApprovedForScore(d: PartnerDocLike): boolean {
+  const st = String(d.status ?? "").trim().toLowerCase();
+  if (st !== "approved") return false;
+  const now = new Date();
+  return !d.expires_at || new Date(d.expires_at) >= now;
+}
+
 export function computeComplianceScore(docs: PartnerDocLike[], requiredDocs: RequiredDocDef[]): number {
   if (requiredDocs.length === 0) return 100;
   const now = new Date();
   let validCount = 0;
   for (const req of requiredDocs) {
     const matches = pickRequiredDocMatches(docs, req);
-    const hasValidDoc = matches.some((d) => !d.expires_at || new Date(d.expires_at) >= now);
+    const hasValidDoc = matches.some((d) => {
+      if (!partnerDocIsApprovedForScore(d)) return false;
+      return !d.expires_at || new Date(d.expires_at) >= now;
+    });
     if (hasValidDoc) validCount += 1;
   }
   return Math.round((validCount / requiredDocs.length) * 100);
 }
 
-/** Same rules as `computeComplianceScore` — one row per required checklist item. */
+/**
+ * Checklist / score line: same as before, plus pending & rejected when review workflow is used.
+ * “valid” = approved (or legacy row) and not past file expiry.
+ */
 export function getRequiredDocComplianceStatus(
   docs: PartnerDocLike[],
   req: RequiredDocDef,
-): "valid" | "expired" | "missing" {
+): "valid" | "expired" | "missing" | "pending" | "rejected" {
   const matches = pickRequiredDocMatches(docs, req);
-  const now = new Date();
-  const hasValid = matches.some((d) => !d.expires_at || new Date(d.expires_at) >= now);
-  if (hasValid) return "valid";
-  if (matches.length > 0) return "expired";
-  return "missing";
+  if (matches.length === 0) return "missing";
+  const primary = matches[0];
+  const st = String(primary.status ?? "").trim().toLowerCase();
+  if (st === "pending") return "pending";
+  if (st === "rejected") return "rejected";
+  if (st === "expired") return "expired";
+  if (primary.expires_at && new Date(primary.expires_at) < new Date()) return "expired";
+  if (st === "approved") return "valid";
+  /* Uploaded but not yet reviewed (or legacy row before backfill) — same as list rows. */
+  return "pending";
 }
 
-export function getOptionalDbsStatus(docs: PartnerDocLike[]): "valid" | "expired" | "missing" {
-  const dbsDocs = docs.filter((d) => d.doc_type === "dbs");
+/**
+ * Mandatory onboarding cards (Documents tab grid): pending → yellow; approved / rejected after review.
+ */
+export type MandatoryDocOnboardingStatus = "missing" | "pending" | "rejected" | "approved" | "expired";
+
+export function getMandatoryDocOnboardingStatus(
+  docs: PartnerDocLike[],
+  req: RequiredDocDef,
+): MandatoryDocOnboardingStatus {
+  const st = getRequiredDocComplianceStatus(docs, req);
+  if (st === "missing") return "missing";
+  if (st === "pending") return "pending";
+  if (st === "rejected") return "rejected";
+  if (st === "expired") return "expired";
+  return "approved";
+}
+
+/** Badge label + variant for mandatory onboarding cards (Documents tab + create flow). */
+export function mandatoryOnboardingBadge(st: MandatoryDocOnboardingStatus): {
+  label: string;
+  variant: "default" | "success" | "warning" | "danger";
+} {
+  switch (st) {
+    case "missing":
+      return { label: "Missing", variant: "default" };
+    case "pending":
+      return { label: "Pending", variant: "warning" };
+    case "rejected":
+      return { label: "Rejected", variant: "danger" };
+    case "expired":
+      return { label: "Expired", variant: "danger" };
+    case "approved":
+      return { label: "Approved", variant: "success" };
+  }
+}
+
+/** Compliance tab list rows — same labels; “valid” → Approved. */
+export function complianceChecklistRowBadge(
+  st: ReturnType<typeof getRequiredDocComplianceStatus>,
+): { label: string; variant: "default" | "success" | "warning" | "danger" } {
+  if (st === "valid") return { label: "Approved", variant: "success" };
+  if (st === "pending") return { label: "Pending", variant: "warning" };
+  if (st === "rejected") return { label: "Rejected", variant: "danger" };
+  if (st === "expired") return { label: "Expired", variant: "danger" };
+  return { label: "Missing", variant: "default" };
+}
+
+export function getOptionalDbsStatus(
+  docs: PartnerDocLike[],
+): "valid" | "expired" | "missing" | "pending" | "rejected" {
+  const dbsDocs = docs
+    .filter((d) => d.doc_type === "dbs" && d.counts_toward_compliance !== false)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   if (dbsDocs.length === 0) return "missing";
-  const now = new Date();
-  const hasValid = dbsDocs.some((d) => !d.expires_at || new Date(d.expires_at) >= now);
-  if (hasValid) return "valid";
-  return "expired";
+  const primary = dbsDocs[0];
+  const st = String(primary.status ?? "").trim().toLowerCase();
+  if (st === "pending") return "pending";
+  if (st === "rejected") return "rejected";
+  if (st === "expired") return "expired";
+  if (primary.expires_at && new Date(primary.expires_at) < new Date()) return "expired";
+  if (st === "approved") return "valid";
+  return "pending";
 }
 
 /** Human label for doc_type (no icon). */

@@ -399,6 +399,8 @@ export interface Partner {
   auth_user_id?: string | null;
   /** Public photo URL (company-assets bucket). */
   avatar_url?: string | null;
+  /** @deprecated Use `company_settings.compliance_score_excluded_doc_ids` (Settings → System). */
+  compliance_score_excluded_doc_ids?: string[] | null;
   /** UK sort code, 6 digits stored without hyphens (BACS). */
   bank_sort_code?: string | null;
   bank_account_number?: string | null;

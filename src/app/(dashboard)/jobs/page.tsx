@@ -66,12 +66,6 @@ import {
   formatJobScheduleListLabel,
   jobFinishYmd,
   jobScheduleYmd,
-  formatLocalYmd,
-  addLocalCalendarDays,
-  startOfLocalWeekMonday,
-  endOfLocalWeekSunday,
-  startOfLocalMonth,
-  endOfLocalMonth,
 } from "@/lib/schedule-calendar";
 import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
@@ -111,6 +105,57 @@ function parseRestoredJobStatus(raw: string | null | undefined): Job["status"] {
 const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
 
 type ScheduleDatePreset = "all" | "today" | "tomorrow" | "week" | "month" | "custom";
+type JobsSortMode = "schedule_nearest" | "schedule_farthest" | "booking_recent" | "booking_oldest";
+const UK_TIMEZONE = "Europe/London";
+
+function ukTodayYmd(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: UK_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+function addDaysYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + days));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
+}
+
+function startOfWeekMondayYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const day = date.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setUTCDate(date.getUTCDate() + diff);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function endOfWeekSundayYmd(ymd: string): string {
+  return addDaysYmd(startOfWeekMondayYmd(ymd), 6);
+}
+
+function startOfMonthYmd(ymd: string): string {
+  const [y, m] = ymd.split("-").map(Number);
+  return `${y}-${String(m).padStart(2, "0")}-01`;
+}
+
+function endOfMonthYmd(ymd: string): string {
+  const [y, m] = ymd.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+}
+
+function jobScheduleStartYmdUk(job: Pick<Job, "scheduled_start_at" | "scheduled_date">): string | null {
+  if (job.scheduled_start_at) {
+    const dt = new Date(job.scheduled_start_at);
+    if (!Number.isNaN(dt.getTime())) return ukTodayYmd(dt);
+  }
+  const raw = String(job.scheduled_date ?? "").trim();
+  const ymd = raw.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;
+}
 
 const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v1";
 const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "custom"];
@@ -137,8 +182,10 @@ function scheduleFilterSubtitle(
   range: { from: string; to: string } | null
 ): string | null {
   if (!range || preset === "all") return null;
-  if (range.from === range.to) return `Scheduled ${formatMediumYmd(range.from)} · tabs & KPIs match this window`;
-  return `Scheduled ${formatMediumYmd(range.from)} – ${formatMediumYmd(range.to)} · tabs & KPIs match this window`;
+  if (range.from === range.to) {
+    return `Scheduled ${formatMediumYmd(range.from)} · Revenue & averages = all jobs below; tabs only filter the list`;
+  }
+  return `Scheduled ${formatMediumYmd(range.from)} – ${formatMediumYmd(range.to)} · Revenue & averages = all jobs below; tabs only filter the list`;
 }
 
 function jobBillableAmount(j: Job) {
@@ -207,7 +254,7 @@ function JobsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
-  const anchorDayKey = formatLocalYmd(new Date());
+  const anchorDayKey = ukTodayYmd(new Date());
   const [scheduleDatePreset, setScheduleDatePresetState] = useState<ScheduleDatePreset>("all");
   const setScheduleDatePreset = useCallback((p: ScheduleDatePreset) => {
     setScheduleDatePresetState(p);
@@ -222,31 +269,26 @@ function JobsPageContent() {
     const stored = readStoredJobsSchedulePreset();
     if (stored !== "all") setScheduleDatePresetState(stored);
   }, []);
-  const [customScheduleFrom, setCustomScheduleFrom] = useState(() => formatLocalYmd(new Date()));
-  const [customScheduleTo, setCustomScheduleTo] = useState(() => formatLocalYmd(new Date()));
+  const [customScheduleFrom, setCustomScheduleFrom] = useState(() => ukTodayYmd(new Date()));
+  const [customScheduleTo, setCustomScheduleTo] = useState(() => ukTodayYmd(new Date()));
   const [dateFilterOpen, setDateFilterOpen] = useState(false);
   const dateFilterRef = useRef<HTMLDivElement>(null);
 
   const scheduleRange = useMemo((): { from: string; to: string } | null => {
     if (scheduleDatePreset === "all") return null;
-    const anchor = new Date();
+    const anchor = ukTodayYmd(new Date());
     if (scheduleDatePreset === "today") {
-      const d = formatLocalYmd(anchor);
-      return { from: d, to: d };
+      return { from: anchor, to: anchor };
     }
     if (scheduleDatePreset === "tomorrow") {
-      const t = formatLocalYmd(addLocalCalendarDays(anchor, 1));
+      const t = addDaysYmd(anchor, 1);
       return { from: t, to: t };
     }
     if (scheduleDatePreset === "week") {
-      const a = startOfLocalWeekMonday(anchor);
-      const b = endOfLocalWeekSunday(anchor);
-      return { from: formatLocalYmd(a), to: formatLocalYmd(b) };
+      return { from: startOfWeekMondayYmd(anchor), to: endOfWeekSundayYmd(anchor) };
     }
     if (scheduleDatePreset === "month") {
-      const a = startOfLocalMonth(anchor);
-      const b = endOfLocalMonth(anchor);
-      return { from: formatLocalYmd(a), to: formatLocalYmd(b) };
+      return { from: startOfMonthYmd(anchor), to: endOfMonthYmd(anchor) };
     }
     let from = customScheduleFrom;
     let to = customScheduleTo;
@@ -272,6 +314,7 @@ function JobsPageContent() {
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterPartner, setFilterPartner] = useState<"all" | "with" | "without">("all");
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
+  const [filterSort, setFilterSort] = useState<JobsSortMode>("schedule_nearest");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover">(null);
   const [bulkRunning, setBulkRunning] = useState(false);
@@ -310,6 +353,32 @@ function JobsPageContent() {
       return true;
     });
   }, [data, filterPartner, filterScheduled]);
+
+  /** Default sorting for Jobs Management: nearest schedule first (today -> tomorrow -> future). */
+  const sortedData = useMemo(() => {
+    const today = ukTodayYmd(new Date());
+    const clone = [...filteredData];
+    const scheduleMeta = (j: Job) => {
+      const day = jobScheduleStartYmdUk(j);
+      if (!day) return { bucket: 3 as const, day: "9999-99-99" };
+      if (day < today) return { bucket: 0 as const, day };
+      if (day === today) return { bucket: 1 as const, day };
+      return { bucket: 2 as const, day };
+    };
+    const createdAt = (j: Job) => new Date(j.created_at ?? 0).getTime();
+    clone.sort((a, b) => {
+      if (filterSort === "booking_recent") return createdAt(b) - createdAt(a);
+      if (filterSort === "booking_oldest") return createdAt(a) - createdAt(b);
+      const sa = scheduleMeta(a);
+      const sb = scheduleMeta(b);
+      if (sa.bucket !== sb.bucket) return sa.bucket - sb.bucket;
+      if (filterSort === "schedule_farthest") return sb.day.localeCompare(sa.day);
+      const dayCmp = sa.day.localeCompare(sb.day);
+      if (dayCmp !== 0) return dayCmp;
+      return createdAt(b) - createdAt(a);
+    });
+    return clone;
+  }, [filteredData, filterSort]);
 
   const [customerPaidByJobId, setCustomerPaidByJobId] = useState<Record<string, number>>({});
   const [customerPaidSumsReady, setCustomerPaidSumsReady] = useState(true);
@@ -359,7 +428,7 @@ function JobsPageContent() {
           id,
           title: "In progress",
           color: "bg-blue-500",
-          items: filteredData.filter((j) => jobRowMatchesJobsManagementTab(j, "in_progress")),
+          items: sortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "in_progress")),
         };
       }
       if (id === "scheduled") {
@@ -367,7 +436,7 @@ function JobsPageContent() {
           id,
           title: "Scheduled",
           color: "bg-emerald-500",
-          items: filteredData.filter((j) => jobRowMatchesJobsManagementTab(j, "scheduled")),
+          items: sortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "scheduled")),
         };
       }
       if (id === "final_check") {
@@ -375,7 +444,7 @@ function JobsPageContent() {
           id,
           title: "Final checks",
           color: "bg-violet-500",
-          items: filteredData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
+          items: sortedData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
         };
       }
       return {
@@ -391,14 +460,14 @@ function JobsPageContent() {
                     : id === "unassigned"
                       ? "bg-red-500"
                       : "bg-blue-500",
-        items: filteredData.filter((j) =>
+        items: sortedData.filter((j) =>
           id === "unassigned"
             ? jobRowMatchesJobsManagementTab(j, "unassigned")
             : j.status === id,
         ),
       };
     });
-  }, [filteredData]);
+  }, [sortedData]);
 
   const jobIdFromUrl = searchParams.get("jobId");
   useEffect(() => { if (jobIdFromUrl) router.replace(`/jobs/${jobIdFromUrl}`); }, [jobIdFromUrl, router]);
@@ -425,36 +494,25 @@ function JobsPageContent() {
       }
       try {
         const rows = await fetchAllJobsFinancialKpiRows(scheduleRange);
-        const tabFiltered = rows.filter((r) =>
+        /** Same “All jobs” bucket as the first tab badge — not the currently selected tab. */
+        const allWindowRows = rows.filter((r) =>
           jobRowMatchesJobsManagementTab(
             {
               status: r.status,
               partner_id: r.partner_id,
               partner_ids: r.partner_ids,
             } as Job,
-            status,
+            "all",
           ),
         );
-        const revenueBasis =
-          status === "cancelled"
-            ? tabFiltered
-            : tabFiltered.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
+        const revenueBasis = allWindowRows.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
         const ticketSum = revenueBasis.reduce((s, r) => s + jobBillableRevenue(r), 0);
         setTotalRevenue(ticketSum);
         setAvgTicket(revenueBasis.length ? ticketSum / revenueBasis.length : 0);
 
-        let marginRows: typeof rows;
-        if (status === "deleted") {
-          marginRows = [];
-        } else if (status === "all") {
-          marginRows = rows.filter(
-            (r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted",
-          );
-        } else if (status === "completed" || status === "cancelled") {
-          marginRows = tabFiltered;
-        } else {
-          marginRows = tabFiltered.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
-        }
+        const marginRows = allWindowRows.filter(
+          (r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted",
+        );
         const margins = marginRows.map((r) => jobMarginPercent(r));
         const avgM = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
         setAvgMarginPct(Math.round(avgM * 10) / 10);
@@ -464,7 +522,7 @@ function JobsPageContent() {
     } finally {
       setKpiFinancialLoading(false);
     }
-  }, [scheduleRange, status]);
+  }, [scheduleRange]);
   useEffect(() => {
     void loadDashboardStats();
   }, [loadDashboardStats]);
@@ -496,60 +554,8 @@ function JobsPageContent() {
 
   const unassignedTabCount = (tabCounts.unassigned ?? 0) + (tabCounts.auto_assigning ?? 0);
 
-  /** Pipeline stages shown in tabs (excl. Paid & Completed, Lost & Cancelled, Deleted). Must match tab badge sums. */
-  const activeJobsKpiCount = useMemo(
-    () =>
-      unassignedTabCount +
-      scheduledTabCount +
-      inProgressTabCount +
-      finalChecksTabCount +
-      (tabCounts.awaiting_payment ?? 0),
-    [
-      unassignedTabCount,
-      scheduledTabCount,
-      inProgressTabCount,
-      finalChecksTabCount,
-      tabCounts.awaiting_payment,
-    ],
-  );
-
-  /** Jobs count for KPI strip — matches selected tab + date range (same badges as tabs). */
-  const kpiJobsCount = useMemo(() => {
-    switch (status) {
-      case "all":
-        return activeJobsKpiCount;
-      case "unassigned":
-        return unassignedTabCount;
-      case "scheduled":
-        return scheduledTabCount;
-      case "in_progress":
-        return inProgressTabCount;
-      case "final_check":
-        return finalChecksTabCount;
-      case "awaiting_payment":
-        return tabCounts.awaiting_payment ?? 0;
-      case "completed":
-        return tabCounts.completed ?? 0;
-      case "cancelled":
-        return tabCounts.cancelled ?? 0;
-      case "deleted":
-        return tabCounts.deleted ?? 0;
-      default:
-        return tabCounts.all ?? 0;
-    }
-  }, [
-    status,
-    activeJobsKpiCount,
-    unassignedTabCount,
-    scheduledTabCount,
-    inProgressTabCount,
-    finalChecksTabCount,
-    tabCounts.awaiting_payment,
-    tabCounts.completed,
-    tabCounts.cancelled,
-    tabCounts.deleted,
-    tabCounts.all,
-  ]);
+  /** First KPI: same count as the “All Jobs” tab badge (entire window), not the selected tab. */
+  const kpiAllJobsCount = tabCounts.all ?? 0;
 
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.all },
@@ -618,6 +624,10 @@ function JobsPageContent() {
       const dupJobs = await findDuplicateJobs({
         clientId: formData.client_id,
         propertyAddress: formData.property_address ?? "",
+        title: formData.title ?? "",
+        scheduled_date: formData.scheduled_date ?? null,
+        scheduled_start_at: formData.scheduled_start_at ?? null,
+        scheduled_end_at: formData.scheduled_end_at ?? null,
       });
       if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJobs)))) return;
 
@@ -1103,20 +1113,28 @@ function JobsPageContent() {
       render: (item) => {
         const line = formatJobScheduleListLabel(item);
         const detail = formatJobScheduleLine(item);
-        const isTomorrow = line === "Tomorrow";
-        const isToday = line === "Today";
+        const scheduleYmd = jobScheduleStartYmdUk(item) ?? "";
+        const todayYmd = ukTodayYmd(new Date());
+        const tomorrowYmd = addDaysYmd(todayYmd, 1);
+        const inTwoDaysYmd = addDaysYmd(todayYmd, 2);
+        const isTomorrow = scheduleYmd === tomorrowYmd || line === "Tomorrow";
+        const isToday = scheduleYmd === todayYmd || line === "Today";
+        const isInTwoDays = scheduleYmd === inTwoDaysYmd;
+        const chipLabel = isToday ? "Today" : isTomorrow ? "Tomorrow" : isInTwoDays ? "In 2 days" : line;
         return line ? (
-          isTomorrow || isToday ? (
+          isTomorrow || isToday || isInTwoDays ? (
             <span
               className={cn(
                 "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
-                isTomorrow
-                  ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
-                  : "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300",
+                isToday
+                  ? "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
+                  : isTomorrow
+                    ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                    : "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
               )}
               title={detail ?? undefined}
             >
-              {line}
+              {chipLabel}
             </span>
           ) : (
             <span
@@ -1236,7 +1254,7 @@ function JobsPageContent() {
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="relative flex items-center gap-2" ref={filterRef}>
               <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-              {(filterPartner !== "all" || filterScheduled !== "all") && <span className="text-[10px] font-medium text-primary">Active</span>}
+              {(filterPartner !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest") && <span className="text-[10px] font-medium text-primary">Active</span>}
               {filterOpen && (
                 <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
                   <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
@@ -1247,7 +1265,14 @@ function JobsPageContent() {
                   <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
                     <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
                   </select>
-                  <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); }}>Clear filters</Button>
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Sort</p>
+                  <select value={filterSort} onChange={(e) => setFilterSort(e.target.value as JobsSortMode)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                    <option value="schedule_nearest">Nearest schedule (default)</option>
+                    <option value="schedule_farthest">Farthest schedule</option>
+                    <option value="booking_recent">Most recent booking</option>
+                    <option value="booking_oldest">Oldest booking</option>
+                  </select>
+                  <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); }}>Clear filters</Button>
                 </div>
               )}
             </div>
@@ -1322,8 +1347,8 @@ function JobsPageContent() {
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
           <KpiCard
             className="min-h-[128px] h-full"
-            title={status === "all" ? "Active jobs" : "Jobs"}
-            value={kpiFinancialLoading ? "—" : kpiJobsCount}
+            title={scheduleRange ? "All jobs (window)" : "All jobs"}
+            value={kpiFinancialLoading ? "—" : kpiAllJobsCount}
             format="number"
             icon={Briefcase}
             accent="blue"
@@ -1371,7 +1396,7 @@ function JobsPageContent() {
           {viewMode === "list" && (
             <DataTable
               columns={columns}
-              data={data}
+              data={sortedData}
               loading={loading}
               getRowId={(item) => item.id}
               onRowClick={(job) => router.push(`/jobs/${job.id}`)}
@@ -1589,7 +1614,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     partner_ids: [] as string[],
     client_price: "",
     partner_cost: "",
-    materials_cost: "",
+    materials_cost: "0",
     scheduled_date: "",
     arrival_from: "09:00",
     arrival_window_mins: "180",
@@ -1612,6 +1637,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const sitePhotosInputId = useId();
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
+  /** When fixed-price partner cost still matches the last auto-filled value, keep syncing to ~40% margin as inputs change. */
+  const lastAutoPartnerCost = useRef<string | null>(null);
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
   const isHousekeepJob = isHousekeepWorkLabel(selectedCatalogService?.name) || isHousekeepWorkLabel(form.title);
   const targetWorkType =
@@ -1788,6 +1815,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       images: uploadedImageUrls.length ? uploadedImageUrls : undefined,
     });
     setSitePhotoFiles([]);
+    lastAutoPartnerCost.current = null;
     setForm({
       title: "",
       catalog_service_id: "",
@@ -1795,7 +1823,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       partner_ids: [],
       client_price: "",
       partner_cost: "",
-      materials_cost: "",
+      materials_cost: "0",
       scheduled_date: "",
       arrival_from: "09:00",
       arrival_window_mins: "180",
@@ -1836,6 +1864,24 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       targetMarginPercent: SUGGESTED_PARTNER_MARGIN_HINT_PCT,
     });
   }, [form.job_type, form.client_price, form.materials_cost, accessSurchargePreview]);
+
+  useEffect(() => {
+    if (form.job_type === "hourly") {
+      lastAutoPartnerCost.current = null;
+      return;
+    }
+    if (suggestedPartnerAt40 == null) return;
+    const next = String(suggestedPartnerAt40);
+    setForm((prev) => {
+      const cur = prev.partner_cost.trim();
+      const empty = cur === "";
+      const unchangedFromAuto =
+        lastAutoPartnerCost.current != null && cur === lastAutoPartnerCost.current;
+      if (!empty && !unchangedFromAuto) return prev;
+      lastAutoPartnerCost.current = next;
+      return { ...prev, partner_cost: next };
+    });
+  }, [form.job_type, suggestedPartnerAt40]);
 
   return (
     <Modal open={open} onClose={onClose} title="New Job" subtitle="Create a new job" size="lg">
@@ -2160,21 +2206,10 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label>
               <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
-              {suggestedPartnerAt40 != null && (
-                <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
-                  ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin hint:{" "}
-                  <span className="font-semibold text-text-secondary tabular-nums">{formatCurrency(suggestedPartnerAt40)}</span>
-                  {accessSurchargePreview > 0 ? " (client price + access add-ons − materials)" : " (client price − materials)"}
-                  .{" "}
-                  <button
-                    type="button"
-                    className="text-primary hover:underline font-medium"
-                    onClick={() => update("partner_cost", String(suggestedPartnerAt40))}
-                  >
-                    Apply
-                  </button>
-                </p>
-              )}
+              <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin
+                {accessSurchargePreview > 0 ? " (client price + access add-ons − materials)" : " (client price − materials)"}; edit if needed.
+              </p>
             </div>
             <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
           </div>

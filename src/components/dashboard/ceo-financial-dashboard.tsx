@@ -34,7 +34,6 @@ import {
 } from "@/lib/dashboard-overview-jobs";
 import {
   getDashboardSalesGoalMonthlyOverrideGbp,
-  getDashboardSalesGoalTierNumberPreference,
 } from "@/lib/dashboard-sales-goal-preference";
 import { buildWeeklyCashPositionBuckets, type WeeklyCashPositionRow } from "@/lib/dashboard-cashflow-buckets";
 import {
@@ -177,7 +176,7 @@ export function CeoFinancialDashboard() {
           resolveMonthlySalesGoalFromCompany(
             companySettings,
             tiersList,
-            getDashboardSalesGoalTierNumberPreference(),
+            null,
             getDashboardSalesGoalMonthlyOverrideGbp(),
           ),
         );
@@ -408,7 +407,7 @@ export function CeoFinancialDashboard() {
             resolveMonthlySalesGoalFromCompany(
               s,
               t,
-              getDashboardSalesGoalTierNumberPreference(),
+              null,
               getDashboardSalesGoalMonthlyOverrideGbp(),
             ),
           );

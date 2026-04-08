@@ -1,5 +1,6 @@
 import { getSupabase } from "@/services/base";
 import { isUuid } from "@/lib/utils";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
 export function normalizeEmailForDedupe(raw?: string | null): string | null {
   const s = String(raw ?? "").trim().toLowerCase();
@@ -17,6 +18,38 @@ function normalizeAddressForDedupe(raw?: string | null): string {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
+}
+
+/** Same service + same free-text body (requests). */
+function normalizeRequestBodyForDedupe(raw?: string | null): string {
+  return String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function requestContentKey(serviceType: string, description: string): string {
+  const st = normalizeTypeOfWork(serviceType).trim().toLowerCase();
+  const body = normalizeRequestBodyForDedupe(description);
+  return `${st}\n${body}`;
+}
+
+/** Aligns with job titles stored from type-of-work / request conversion. */
+function normalizeJobTitleForDedupe(title?: string | null): string {
+  const t = normalizeTypeOfWork(title ?? "").trim();
+  return t.toLowerCase();
+}
+
+function jobScheduleKey(input: {
+  scheduled_date?: string | null;
+  scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
+}): string {
+  return [
+    String(input.scheduled_date ?? "").trim().slice(0, 10),
+    String(input.scheduled_start_at ?? "").trim(),
+    String(input.scheduled_end_at ?? "").trim(),
+  ].join("\t");
 }
 
 function escapeIlikePattern(s: string): string {
@@ -138,9 +171,15 @@ export async function findDuplicateRequests(input: {
   clientId?: string | null;
   clientEmail: string;
   propertyAddress: string;
+  /** Service line + description together define the same “request”. */
+  serviceType: string;
+  description: string;
 }): Promise<DuplicateRequestHint[]> {
   const addr = normalizeAddressForDedupe(input.propertyAddress);
   if (addr.length < 6) return [];
+
+  const contentKey = requestContentKey(input.serviceType ?? "", input.description ?? "");
+  if (!contentKey.trim()) return [];
 
   const supabase = getSupabase();
   const terminal = new Set(["converted_to_quote", "converted_to_job", "declined"]);
@@ -150,7 +189,7 @@ export async function findDuplicateRequests(input: {
   if (cid && isUuid(cid)) {
     const { data, error } = await supabase
       .from("service_requests")
-      .select("reference, client_name, property_address, status")
+      .select("reference, client_name, property_address, status, service_type, description")
       .is("deleted_at", null)
       .eq("client_id", cid)
       .limit(25);
@@ -161,9 +200,12 @@ export async function findDuplicateRequests(input: {
         client_name: string;
         property_address: string;
         status: string;
+        service_type: string;
+        description: string;
       };
       if (terminal.has(r.status)) continue;
       if (normalizeAddressForDedupe(r.property_address) !== addr) continue;
+      if (requestContentKey(r.service_type, r.description) !== contentKey) continue;
       out.push({ reference: r.reference, client_name: r.client_name, status: r.status });
     }
     return out.slice(0, 8);
@@ -174,7 +216,7 @@ export async function findDuplicateRequests(input: {
 
   const { data, error } = await supabase
     .from("service_requests")
-    .select("reference, client_name, property_address, status")
+    .select("reference, client_name, property_address, status, service_type, description")
     .is("deleted_at", null)
     .ilike("client_email", email)
     .limit(40);
@@ -186,9 +228,12 @@ export async function findDuplicateRequests(input: {
       client_name: string;
       property_address: string;
       status: string;
+      service_type: string;
+      description: string;
     };
     if (terminal.has(r.status)) continue;
     if (normalizeAddressForDedupe(r.property_address) !== addr) continue;
+    if (requestContentKey(r.service_type, r.description) !== contentKey) continue;
     out.push({ reference: r.reference, client_name: r.client_name, status: r.status });
   }
   return out.slice(0, 8);
@@ -200,17 +245,23 @@ export async function findDuplicateQuotes(input: {
   clientEmail: string;
   title: string;
   propertyAddress?: string | null;
+  startDateOption1?: string | null;
+  startDateOption2?: string | null;
 }): Promise<DuplicateQuoteHint[]> {
   const email = normalizeEmailForDedupe(input.clientEmail);
   if (!email) return [];
 
   const titleNorm = input.title.trim().toLowerCase();
   const propNorm = normalizeAddressForDedupe(input.propertyAddress ?? "");
+  if (propNorm.length < 6) return [];
+
+  const opt1 = String(input.startDateOption1 ?? "").trim();
+  const opt2 = String(input.startDateOption2 ?? "").trim();
 
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("quotes")
-    .select("reference, title, property_address, status, client_email")
+    .select("reference, title, property_address, status, client_email, start_date_option_1, start_date_option_2")
     .is("deleted_at", null)
     .ilike("client_email", email)
     .in("status", ["draft", "in_survey", "bidding", "awaiting_customer"])
@@ -224,12 +275,14 @@ export async function findDuplicateQuotes(input: {
       title: string;
       property_address?: string | null;
       status: string;
+      start_date_option_1?: string | null;
+      start_date_option_2?: string | null;
     };
     const sameTitle = titleNorm.length >= 3 && r.title.trim().toLowerCase() === titleNorm;
-    const sameProp =
-      propNorm.length >= 6 &&
-      normalizeAddressForDedupe(r.property_address ?? "") === propNorm;
-    if (sameTitle || sameProp) {
+    const sameProp = normalizeAddressForDedupe(r.property_address ?? "") === propNorm;
+    const sameSchedule =
+      String(r.start_date_option_1 ?? "").trim() === opt1 && String(r.start_date_option_2 ?? "").trim() === opt2;
+    if (sameTitle && sameProp && sameSchedule) {
       out.push({ reference: r.reference, title: r.title, status: r.status });
     }
   }
@@ -241,14 +294,29 @@ export type DuplicateJobHint = { reference: string; title: string; status: strin
 export async function findDuplicateJobs(input: {
   clientId?: string | null;
   propertyAddress: string;
+  title: string;
+  scheduled_date?: string | null;
+  scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
 }): Promise<DuplicateJobHint[]> {
   const addr = normalizeAddressForDedupe(input.propertyAddress);
   if (!input.clientId?.trim() || addr.length < 6) return [];
 
+  const titleKey = normalizeJobTitleForDedupe(input.title);
+  if (!titleKey) return [];
+
+  const schedKey = jobScheduleKey({
+    scheduled_date: input.scheduled_date,
+    scheduled_start_at: input.scheduled_start_at,
+    scheduled_end_at: input.scheduled_end_at,
+  });
+
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("jobs")
-    .select("reference, title, property_address, status, client_id")
+    .select(
+      "reference, title, property_address, status, client_id, scheduled_date, scheduled_start_at, scheduled_end_at",
+    )
     .is("deleted_at", null)
     .eq("client_id", input.clientId.trim())
     .not("status", "eq", "completed")
@@ -258,8 +326,26 @@ export async function findDuplicateJobs(input: {
 
   const out: DuplicateJobHint[] = [];
   for (const row of data ?? []) {
-    const r = row as { reference: string; title: string; property_address: string; status: string };
+    const r = row as {
+      reference: string;
+      title: string;
+      property_address: string;
+      status: string;
+      scheduled_date?: string | null;
+      scheduled_start_at?: string | null;
+      scheduled_end_at?: string | null;
+    };
     if (normalizeAddressForDedupe(r.property_address) !== addr) continue;
+    if (normalizeJobTitleForDedupe(r.title) !== titleKey) continue;
+    if (
+      jobScheduleKey({
+        scheduled_date: r.scheduled_date,
+        scheduled_start_at: r.scheduled_start_at,
+        scheduled_end_at: r.scheduled_end_at,
+      }) !== schedKey
+    ) {
+      continue;
+    }
     out.push({ reference: r.reference, title: r.title, status: r.status });
   }
   return out.slice(0, 8);

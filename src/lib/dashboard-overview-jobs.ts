@@ -1,6 +1,11 @@
 import { getSupabase } from "@/services/base";
 import { isPostgrestSelectSchemaError, isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
-import { jobExecutionOverlapsYmdRange, jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
+import { dashboardBoundsToInclusiveLocalYmd } from "@/lib/dashboard-date-range";
+import {
+  hasExecutionScheduleSignal,
+  jobExecutionOverlapsYmdRange,
+  jobScheduleStartInYmdRange,
+} from "@/lib/job-period-overlap";
 import type { CommissionTier } from "@/types/database";
 
 export {
@@ -30,7 +35,8 @@ const CHUNK = 800;
  * share a single fetch. Prevents 4+ duplicate full-table scans on dashboard load.
  */
 const pipelineJobsInflight = new Map<string, { promise: Promise<OverviewPipelineJobRow[]>; at: number }>();
-const PIPELINE_COALESCE_TTL_MS = 5_000;
+/** 0 = always refetch; avoids showing stale pipeline totals briefly after changing the date range. */
+const PIPELINE_COALESCE_TTL_MS = 0;
 
 /** Jobs aligned with Jobs Management: not deleted, not cancelled/lost, optional created_at window. */
 export type OverviewPipelineJobRow = {
@@ -70,21 +76,47 @@ const SELECT_EXEC_FULL =
 const SELECT_EXEC_LEGACY = SELECT_FULL;
 
 /**
- * Dashboard booked revenue: pipeline jobs whose **schedule start day** falls in the selected range
- * (same rule as Jobs Management “Schedule window”: {@link jobScheduleStartInYmdRange}).
+ * True if `created_at` falls on a **local calendar** day in `[fromDay, toDay]` (YYYY-MM-DD).
+ * Matches {@link dashboardBoundsToInclusiveLocalYmd} and {@link jobExecutionOverlapsYmdRange} — unlike raw ISO
+ * instant comparison, which mis-assigns sales near timezone/midnight boundaries.
+ */
+function jobCreatedAtLocalYmdInInclusiveRange(
+  row: Pick<OverviewPipelineJobRow, "created_at">,
+  fromDay: string,
+  toDay: string,
+): boolean {
+  const ca = row.created_at;
+  if (!ca) return false;
+  const d = new Date(ca);
+  if (Number.isNaN(d.getTime())) return false;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const ymd = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return ymd >= fromDay && ymd <= toDay;
+}
+
+/**
+ * Dashboard booked revenue: pipeline jobs filtered by either:
+ * - **schedule_start**: schedule start day in range — same as Jobs Management “Schedule window”
+ *   ({@link jobScheduleStartInYmdRange})
+ * - **created_at**: job row `created_at` on a local calendar day in range (sold / booked in period)
+ * - **sale_or_execution**: sold (local day) in range **or** (when the job has schedule/finish/completion
+ *   signals) execution window overlaps range — Overview revenue KPIs. Active jobs **without** schedule
+ *   signals only count on the sold day, not via a synthetic “runs until end of period” window.
  * Soft-deleted rows excluded; statuses are {@link DASHBOARD_BOOKED_PIPELINE_STATUSES} (not completed).
  * When `bounds` is null, all matching pipeline jobs are included (no date filter).
  */
 export function fetchPipelineJobsForDashboard(
   supabase: ReturnType<typeof getSupabase>,
   bounds: { fromIso: string; toIso: string } | null,
+  opts?: { dateBasis?: "schedule_start" | "created_at" | "sale_or_execution" },
 ): Promise<OverviewPipelineJobRow[]> {
-  const cacheKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
+  const basis = opts?.dateBasis ?? "schedule_start";
+  const cacheKey = bounds ? `${bounds.fromIso}|${bounds.toIso}|${basis}` : `all|${basis}`;
   const cached = pipelineJobsInflight.get(cacheKey);
   if (cached && Date.now() - cached.at < PIPELINE_COALESCE_TTL_MS) {
     return cached.promise;
   }
-  const promise = _fetchPipelineJobsForDashboard(supabase, bounds);
+  const promise = _fetchPipelineJobsForDashboard(supabase, bounds, opts);
   pipelineJobsInflight.set(cacheKey, { promise, at: Date.now() });
   return promise;
 }
@@ -92,10 +124,13 @@ export function fetchPipelineJobsForDashboard(
 async function _fetchPipelineJobsForDashboard(
   supabase: ReturnType<typeof getSupabase>,
   bounds: { fromIso: string; toIso: string } | null,
+  opts?: { dateBasis?: "schedule_start" | "created_at" | "sale_or_execution" },
 ): Promise<OverviewPipelineJobRow[]> {
+  const dateBasis = opts?.dateBasis ?? "schedule_start";
   const statusList = [...DASHBOARD_BOOKED_PIPELINE_STATUSES];
-  const fromDay = bounds?.fromIso.slice(0, 10) ?? null;
-  const toDay = bounds?.toIso.slice(0, 10) ?? null;
+  const localInclusive = bounds ? dashboardBoundsToInclusiveLocalYmd(bounds) : null;
+  const fromDay = localInclusive?.fromDay ?? bounds?.fromIso.slice(0, 10) ?? null;
+  const toDay = localInclusive?.toDay ?? bounds?.toIso.slice(0, 10) ?? null;
 
   async function loadChunked(cols: string): Promise<OverviewPipelineJobRow[]> {
     const seen = new Set<string>();
@@ -137,6 +172,18 @@ async function _fetchPipelineJobsForDashboard(
 
   if (!bounds || fromDay == null || toDay == null) return rows;
 
+  if (dateBasis === "created_at") {
+    return rows.filter((r) => jobCreatedAtLocalYmdInInclusiveRange(r, fromDay, toDay));
+  }
+  if (dateBasis === "sale_or_execution") {
+    return rows.filter((r) => {
+      if (jobCreatedAtLocalYmdInInclusiveRange(r, fromDay, toDay)) return true;
+      if (hasExecutionScheduleSignal(r)) {
+        return jobExecutionOverlapsYmdRange(r, fromDay, toDay);
+      }
+      return false;
+    });
+  }
   return rows.filter((r) => jobScheduleStartInYmdRange(r, fromDay, toDay));
 }
 

@@ -95,6 +95,16 @@ export function getBoundsForPreset(
   return { fromIso: start.toISOString(), toIso: end.toISOString() };
 }
 
+/**
+ * Local calendar month (1st 00:00 → last day 23:59:59.999), same span as the “This month (full)” preset.
+ * Used for Overview revenue KPIs (booked in month) independent of the global dashboard range.
+ */
+export function getLocalCalendarMonthDashboardBounds(now = new Date()): DashboardDateBounds {
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  return { fromIso: start.toISOString(), toIso: end.toISOString() };
+}
+
 export const PRESET_OPTIONS: { id: DateRangePreset; label: string }[] = [
   { id: "1d", label: "Today" },
   { id: "wtd", label: "Week to date" },

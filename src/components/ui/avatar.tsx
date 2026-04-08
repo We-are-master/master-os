@@ -45,7 +45,7 @@ export function Avatar({ src, name, size = "md", className }: AvatarProps) {
         src={src}
         alt={displayName || "Avatar"}
         className={cn(
-          "rounded-full object-cover ring-2 ring-white",
+          "rounded-full object-cover object-center ring-2 ring-white",
           sizeStyles[size],
           className
         )}
