@@ -44,9 +44,13 @@ export async function POST(req: NextRequest) {
   const password         = String(form.get("password")         ?? "").trim();
   const fullName         = String(form.get("fullName")         ?? "").trim();
   const companyName      = String(form.get("companyName")      ?? "").trim();
+  const tradesRaw        = String(form.get("trades")           ?? "").trim();
+  const trades           = tradesRaw ? tradesRaw.split(",").map((t) => t.trim()).filter(Boolean) : [];
   const servicesProvided = String(form.get("servicesProvided") ?? "").trim();
   const utr              = String(form.get("utr")              ?? "").trim();
   const website          = String(form.get("website")          ?? "").trim();
+  const profilePhoto     = form.get("profile_photo");
+  const profilePhotoFile = profilePhoto instanceof File && profilePhoto.size > 0 ? profilePhoto : null;
 
   if (!email || !password || !fullName) {
     return NextResponse.json({ error: "Name, email and password are required." }, { status: 400 });
@@ -96,10 +100,12 @@ export async function POST(req: NextRequest) {
   await supabase
     .from("users")
     .update({
-      company_name:      companyName      || null,
-      website:           website          || null,
-      services_provided: servicesProvided || null,
-      utr:               utr              || null,
+      company_name:      companyName               || null,
+      website:           website                   || null,
+      services_provided: servicesProvided          || null,
+      utr:               utr                       || null,
+      work_type:         trades[0]                 || null,
+      service_type:      trades[0]                 || null,
     })
     .eq("id", userId);
 
@@ -111,7 +117,8 @@ export async function POST(req: NextRequest) {
       contact_name: fullName,
       email,
       phone:        null,
-      trade:        "General",
+      trade:        trades[0] || "General",
+      trades:       trades.length > 0 ? trades : null,
       status:       "onboarding",
       location:     "UK",
       auth_user_id: userId,
@@ -160,6 +167,26 @@ export async function POST(req: NextRequest) {
     } catch (uploadErr) {
       console.error(`Upload error for ${key}:`, uploadErr);
       // Leave the row with status "pending" but no file — team can request re-upload
+    }
+  }
+
+  // 5. Upload profile photo / logo if provided
+  if (profilePhotoFile) {
+    try {
+      const ext      = profilePhotoFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
+      const path     = `${userId}/profile.${ext}`;
+      const buf      = Buffer.from(await profilePhotoFile.arrayBuffer());
+      const { error: photoErr } = await supabase.storage
+        .from("partner-documents")
+        .upload(path, buf, { contentType: profilePhotoFile.type, upsert: true });
+
+      if (!photoErr) {
+        const { data: urlData } = supabase.storage.from("partner-documents").getPublicUrl(path);
+        await supabase.from("users").update({ avatar_url: urlData.publicUrl }).eq("id", userId);
+      }
+    } catch (photoUploadErr) {
+      console.error("Profile photo upload error:", photoUploadErr);
+      // Non-blocking — registration still succeeds
     }
   }
 
