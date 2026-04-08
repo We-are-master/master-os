@@ -70,10 +70,10 @@ const statusConfig: Record<
   { label: string; variant: "default" | "primary" | "warning" | "success" | "danger" | "info" }
 > = {
   submitted: { label: "Submitted", variant: "warning" },
-  approved: { label: "Approved", variant: "primary" },
+  approved: { label: "Approved", variant: "success" },
   paid: { label: "Paid", variant: "success" },
   rejected: { label: "Rejected", variant: "danger" },
-  needs_attention: { label: "Needs attention", variant: "info" },
+  needs_attention: { label: "Needs attention", variant: "danger" },
 };
 
 export default function BillsPage() {
@@ -395,6 +395,18 @@ export default function BillsPage() {
       .join(" · ");
   };
 
+  /** Next due line in this group (skips paid/rejected); used in card header visibility. */
+  const getNextDueDate = (rows: Bill[]): string | null => {
+    const candidate = rows
+      .filter((b) => !b.archived_at && b.status !== "paid" && b.status !== "rejected" && !!b.due_date)
+      .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))[0];
+    if (candidate?.due_date) return candidate.due_date;
+    const fallback = rows
+      .filter((b) => !b.archived_at && !!b.due_date)
+      .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))[0];
+    return fallback?.due_date ?? null;
+  };
+
   /** One badge for the series row: single status or “Mixed”. */
   const renderSeriesHeadlineStatusBadge = (visible: Bill[]) => {
     const statuses = [...new Set(visible.map((b) => b.status))];
@@ -628,6 +640,7 @@ export default function BillsPage() {
                   const expanded = expandedSeries[item.key] ?? false;
                   const summary = formatStatusSummary(item.visible);
                   const cadence = recurrenceLabel(head.recurrence_interval as BillRecurrence | undefined);
+                  const nextDue = getNextDueDate(item.all);
                   const submittedCountInSeries = scopedBills.filter(
                     (b) => !b.archived_at && recurringGroupKey(b) === item.key && b.status === "submitted"
                   ).length;
@@ -706,6 +719,11 @@ export default function BillsPage() {
                         </button>
                         {statusFilter !== "archived" && (
                           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                            {nextDue ? (
+                              <span className="text-[11px] font-medium text-text-secondary whitespace-nowrap">
+                                Next due {formatDate(nextDue)}
+                              </span>
+                            ) : null}
                             {renderSeriesHeadlineStatusBadge(item.visible)}
                             {submittedCountInSeries > 0 ? (
                               <Button
@@ -772,6 +790,7 @@ export default function BillsPage() {
                 }
 
                 const r = item.bill;
+                const singleNextDue = getNextDueDate([r]);
                 return (
                   <div
                     key={r.id}
@@ -841,6 +860,11 @@ export default function BillsPage() {
                         <span className="text-text-tertiary whitespace-nowrap">
                           {r.submitted_by_name ?? "—"}
                         </span>
+                        {singleNextDue ? (
+                          <span className="text-[11px] font-medium text-text-secondary whitespace-nowrap">
+                            Next due {formatDate(singleNextDue)}
+                          </span>
+                        ) : null}
                         {renderStatusBadge(r)}
                       </div>
                     </div>
