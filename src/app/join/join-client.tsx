@@ -210,6 +210,20 @@ const TRADE_OPTIONS = [...TYPE_OF_WORK_OPTIONS] as string[];
 
 const STEPS = ["Account", "Business", "Documents"];
 
+/** Stops Safari/iOS native "The string did not match the expected pattern" (HTML constraint validation UI). */
+function suppressHtml5ValidityBubble(
+  e: React.InvalidEvent<HTMLInputElement | HTMLTextAreaElement>,
+) {
+  e.preventDefault();
+}
+
+const invalidNoBubble = { onInvalid: suppressHtml5ValidityBubble };
+
+/** Strip zero-width / BOM characters that sometimes break WebKit email handling. */
+function normalizeEmailInput(s: string): string {
+  return s.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+}
+
 export function JoinClient() {
   const [phase, setPhase] = useState<"onboarding" | "form">("onboarding");
 
@@ -250,7 +264,7 @@ function RegistrationForm() {
     if (s === 0) {
       if (!fullName.trim()) return "Please enter your full name.";
       // Permissive email check — avoid rejecting valid addresses; server validates again.
-      const emailTrim = email.trim();
+      const emailTrim = normalizeEmailInput(email);
       if (!emailTrim || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
         return "Please enter a valid email address.";
       }
@@ -297,7 +311,7 @@ function RegistrationForm() {
 
     const form = new FormData();
     form.append("fullName",         fullName.trim());
-    form.append("email",            email.trim().toLowerCase());
+    form.append("email", normalizeEmailInput(email).toLowerCase());
     form.append("password",         password);
     form.append("companyName",      companyName.trim());
     form.append("trades",           selectedTrades.join(","));
@@ -370,10 +384,11 @@ function RegistrationForm() {
         ))}
       </div>
 
-      {/* Form card — noValidate: Safari iOS otherwise shows native "pattern" bubbles on fields */}
+      {/* Form card: noValidate + autoComplete=off + per-input onInvalid — Safari iOS HTML5 validation bubbles */}
       <form
         className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-7"
         noValidate
+        autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault();
         }}
@@ -495,14 +510,20 @@ function Step0({
     <>
       <h2 className="text-lg font-bold text-slate-800 mb-5">Create your account</h2>
       <Field label="Full name" required>
-        <input className={inputCls} placeholder="John Smith" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+        <input
+          className={inputCls}
+          placeholder="John Smith"
+          value={fullName}
+          onChange={(e) => setFullName(e.target.value)}
+          name="join_full_name"
+          autoComplete="name"
+          {...invalidNoBubble}
+        />
       </Field>
       <Field label="Email address" required>
         <input
           className={inputCls}
           type="text"
-          inputMode="email"
-          enterKeyHint="next"
           placeholder="john@example.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -510,6 +531,8 @@ function Step0({
           autoCorrect="off"
           spellCheck={false}
           autoComplete="email"
+          name="join_email"
+          {...invalidNoBubble}
         />
       </Field>
       <Field label="Password" required>
@@ -524,6 +547,8 @@ function Step0({
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
+            name="join_password"
+            {...invalidNoBubble}
           />
           <button type="button" onClick={() => setShowPassword((p) => !p)}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-medium">
@@ -542,6 +567,8 @@ function Step0({
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
+          name="join_password_confirm"
+          {...invalidNoBubble}
         />
       </Field>
     </>
@@ -581,7 +608,15 @@ function Step1({
     <>
       <h2 className="text-lg font-bold text-slate-800 mb-5">Business details</h2>
       <Field label="Company / trading name">
-        <input className={inputCls} placeholder="Smith Plumbing Ltd" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+        <input
+          className={inputCls}
+          placeholder="Smith Plumbing Ltd"
+          value={companyName}
+          onChange={(e) => setCompanyName(e.target.value)}
+          name="join_company"
+          autoComplete="organization"
+          {...invalidNoBubble}
+        />
       </Field>
       <Field label="Service type" required>
         <p className="text-xs text-slate-400 mb-2">Select all that apply</p>
@@ -606,10 +641,25 @@ function Step1({
         </div>
       </Field>
       <Field label="Additional details (optional)">
-        <textarea className={`${inputCls} resize-none`} rows={2} placeholder="e.g. specialisations, certifications…" value={services} onChange={(e) => setServices(e.target.value)} />
+        <textarea
+          className={`${inputCls} resize-none`}
+          rows={2}
+          placeholder="e.g. specialisations, certifications…"
+          value={services}
+          onChange={(e) => setServices(e.target.value)}
+          name="join_services"
+          {...invalidNoBubble}
+        />
       </Field>
       <Field label="UTR number (optional)">
-        <input className={inputCls} placeholder="1234567890" value={utr} onChange={(e) => setUtr(e.target.value)} />
+        <input
+          className={inputCls}
+          placeholder="1234567890"
+          value={utr}
+          onChange={(e) => setUtr(e.target.value)}
+          name="join_utr"
+          {...invalidNoBubble}
+        />
       </Field>
       <Field label="Website (optional)">
         <input
@@ -621,6 +671,8 @@ function Step1({
           placeholder="https://yoursite.co.uk"
           value={website}
           onChange={(e) => setWebsite(e.target.value)}
+          name="join_website"
+          {...invalidNoBubble}
         />
       </Field>
     </>
@@ -667,8 +719,9 @@ function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePh
               ref={profilePhotoRef}
               type="file"
               className="hidden"
-              accept="image/jpeg,image/jpg,image/png,image/webp,image/heic,image/heif"
+              accept="image/*"
               onChange={onProfilePhotoChange}
+              {...invalidNoBubble}
             />
             <div className="w-10 h-10 rounded-lg bg-slate-200 group-hover:bg-orange-100 flex items-center justify-center transition-colors shrink-0">
               <svg viewBox="0 0 24 24" className="w-5 h-5 fill-slate-400 group-hover:fill-orange-400 transition-colors">
@@ -704,8 +757,9 @@ function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePh
                   ref={(el) => { fileRefs.current[key] = el ?? undefined; }}
                   type="file"
                   className="hidden"
-                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf"
+                  accept="image/*,application/pdf"
                   onChange={(e) => onFileChange(key, e)}
+                  {...invalidNoBubble}
                 />
                 <div className="w-8 h-8 rounded-lg bg-slate-200 group-hover:bg-orange-100 flex items-center justify-center transition-colors shrink-0">
                   <span className="text-slate-500 group-hover:text-orange-500 text-lg leading-none">+</span>
