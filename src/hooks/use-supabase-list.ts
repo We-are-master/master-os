@@ -13,6 +13,16 @@ interface UseSupabaseListOptions<T> {
   realtimeTable?: string;
   /** Merged into every fetch (use a stable reference when values are unchanged, e.g. module-level `{}`). */
   listParams?: Partial<ListParams>;
+  /**
+   * Pre-fetched first page (Phase 3 server-shell optimisation).
+   * When provided:
+   *  - First render skips the initial fetch (loading=false immediately).
+   *  - Data, totalPages, totalItems hydrate synchronously from this payload.
+   *  - All subsequent navigations (filter/page change) use the normal fetcher.
+   * This eliminates the initial useEffect waterfall while keeping the rest of
+   * the hook's contract identical.
+   */
+  initialData?: ListResult<T> | null;
 }
 
 interface UseSupabaseListReturn<T> {
@@ -34,7 +44,14 @@ interface UseSupabaseListReturn<T> {
 }
 
 export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupabaseListReturn<T> {
-  const { fetcher, pageSize = 10, realtimeTable, initialStatus = "all", listParams } = options;
+  const {
+    fetcher,
+    pageSize = 10,
+    realtimeTable,
+    initialStatus = "all",
+    listParams,
+    initialData,
+  } = options;
   const fetcherRef = useRef(fetcher);
   const listParamsRef = useRef(listParams);
   useLayoutEffect(() => {
@@ -44,16 +61,19 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
     listParamsRef.current = listParams;
   }, [listParams]);
 
-  const [data, setData] = useState<T[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Hydrate from server-rendered initial payload when provided. Skips the
+  // initial useEffect fetch — saves one round-trip on the critical path.
+  const [data, setData] = useState<T[]>(initialData?.data ?? []);
+  const [loading, setLoading] = useState(initialData ? false : true);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalItems, setTotalItems] = useState(0);
+  const [page, setPage] = useState(initialData?.page ?? 1);
+  const [totalPages, setTotalPages] = useState(initialData?.totalPages ?? 1);
+  const [totalItems, setTotalItems] = useState(initialData?.count ?? 0);
   const [search, setSearchRaw] = useState("");
   const [status, setStatusRaw] = useState(initialStatus);
   const [tick, setTick] = useState(0);
   const skipLoadingRef = useRef(false);
+  const skipFirstFetchRef = useRef(initialData != null);
 
   const scheduleRangeKey = listParams?.scheduleRange
     ? `${listParams.scheduleRange.from}|${listParams.scheduleRange.to}`
@@ -105,6 +125,13 @@ export function useSupabaseList<T>(options: UseSupabaseListOptions<T>): UseSupab
   }, []);
 
   useEffect(() => {
+    // Skip exactly once when hydrated from server initialData — the data is
+    // already rendered, no need to refetch on mount.
+    if (skipFirstFetchRef.current) {
+      skipFirstFetchRef.current = false;
+      return;
+    }
+
     let cancelled = false;
     const silent = skipLoadingRef.current;
     skipLoadingRef.current = false;
