@@ -1,0 +1,567 @@
+"use client";
+
+import { useRef, useState } from "react";
+
+const APP_STORE_URL = "https://apps.apple.com/br/app/master-services/id6747205225";
+// TODO: add PLAY_STORE_URL once Android is published
+
+// ─── Onboarding slides (mirrors OnboardingScreen in the app) ─────────────────
+const SLIDES = [
+  {
+    gradient: "linear-gradient(160deg,#020034 0%,#0A0054 50%,#1A0085 100%)",
+    icon: "flash",
+    title: "Welcome to\nMaster Partner",
+    subtitle: "Your professional hub for jobs, earnings, and schedules — all in one place.",
+  },
+  {
+    gradient: "linear-gradient(160deg,#E94A02 0%,#C73A00 50%,#9A2A00 100%)",
+    icon: "mail",
+    title: "Receive Job\nInvitations",
+    subtitle: "Get notified instantly when a new job matches your skills and area.",
+  },
+  {
+    gradient: "linear-gradient(160deg,#059669 0%,#047857 50%,#065F46 100%)",
+    icon: "briefcase",
+    title: "Complete Jobs\n& File Reports",
+    subtitle: "Track time, document your work, and submit reports directly from the field.",
+  },
+  {
+    gradient: "linear-gradient(160deg,#4F46E5 0%,#3730A3 50%,#1E1A78 100%)",
+    icon: "cash",
+    title: "Track Your\nEarnings",
+    subtitle: "Monitor payments, download invoices, and grow your business with real-time data.",
+  },
+] as const;
+
+// ─── SVG icons ────────────────────────────────────────────────────────────────
+function SlideIcon({ name }: { name: typeof SLIDES[number]["icon"] }) {
+  const cls = "w-[72px] h-[72px] fill-white";
+  if (name === "flash") return (
+    <svg viewBox="0 0 24 24" className={cls}>
+      <path d="M13 2L4.5 14H11L10 22L19.5 10H13L13 2Z"/>
+    </svg>
+  );
+  if (name === "mail") return (
+    <svg viewBox="0 0 24 24" className={cls}>
+      <path d="M20 4H4C2.9 4 2 4.9 2 6v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+    </svg>
+  );
+  if (name === "briefcase") return (
+    <svg viewBox="0 0 24 24" className={cls}>
+      <path d="M20 7h-4V5c0-1.1-.9-2-2-2h-4C8.9 3 8 3.9 8 5v2H4C2.9 7 2 7.9 2 9v11c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zm-8-2h4v2h-4V5zM4 20V9h16v11H4z"/>
+    </svg>
+  );
+  return (
+    <svg viewBox="0 0 24 24" className={cls}>
+      <path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>
+    </svg>
+  );
+}
+
+// ─── Onboarding phase ─────────────────────────────────────────────────────────
+function OnboardingPhase({ onComplete }: { onComplete: () => void }) {
+  const [active, setActive] = useState(0);
+  const touchStartX = useRef(0);
+  const isLast = active === SLIDES.length - 1;
+
+  function next() {
+    if (isLast) { onComplete(); return; }
+    setActive((i) => i + 1);
+  }
+  function skip() { onComplete(); }
+
+  return (
+    <div
+      className="relative min-h-screen overflow-hidden flex flex-col select-none"
+      onPointerDown={(e) => { touchStartX.current = e.clientX; }}
+      onPointerUp={(e) => {
+        const diff = touchStartX.current - e.clientX;
+        if (diff > 50 && !isLast) setActive((i) => i + 1);
+        else if (diff < -50 && active > 0) setActive((i) => i - 1);
+      }}
+    >
+      <style>{`
+        @keyframes ob-zoom {
+          from { opacity:0; transform:scale(.7) translateY(40px); }
+          to   { opacity:1; transform:scale(1) translateY(0); }
+        }
+        @keyframes ob-fadeup {
+          from { opacity:0; transform:translateY(16px); }
+          to   { opacity:1; transform:translateY(0); }
+        }
+        .ob-icon { animation: ob-zoom .45s cubic-bezier(.34,1.56,.64,1) forwards; }
+        .ob-text { animation: ob-fadeup .35s ease forwards; }
+      `}</style>
+
+      {/* Gradient backgrounds — crossfade */}
+      {SLIDES.map((s, i) => (
+        <div
+          key={i}
+          className="absolute inset-0 transition-opacity duration-500"
+          style={{ background: s.gradient, opacity: i === active ? 1 : 0 }}
+        />
+      ))}
+
+      {/* Decorative circles */}
+      <div className="absolute -top-32 -right-20 w-80 h-80 rounded-full pointer-events-none"
+           style={{ background: "rgba(255,255,255,0.04)" }} />
+      <div className="absolute bottom-[42%] -left-16 w-56 h-56 rounded-full pointer-events-none"
+           style={{ background: "rgba(255,255,255,0.06)" }} />
+
+      {/* Skip */}
+      <div className="relative z-10 flex justify-end pt-12 pr-6">
+        {!isLast ? (
+          <button
+            onClick={skip}
+            className="px-4 py-2 rounded-full text-sm font-semibold text-white/75 hover:text-white transition-colors"
+            style={{ background: "rgba(255,255,255,0.12)" }}
+          >
+            Skip
+          </button>
+        ) : (
+          <div className="h-9" />
+        )}
+      </div>
+
+      {/* Icon — centered in top 60% */}
+      <div className="relative z-10 flex-1 flex items-center justify-center pb-8">
+        <div
+          key={`icon-${active}`}
+          className="ob-icon flex items-center justify-center rounded-full"
+          style={{ width: 200, height: 200, background: "rgba(255,255,255,0.1)" }}
+        >
+          <div
+            className="flex items-center justify-center rounded-full"
+            style={{ width: 160, height: 160, background: "rgba(255,255,255,0.15)" }}
+          >
+            <SlideIcon name={SLIDES[active].icon} />
+          </div>
+        </div>
+      </div>
+
+      {/* White bottom panel */}
+      <div
+        className="relative z-10 bg-white rounded-t-[32px] pt-8 pb-10 px-7"
+        style={{ boxShadow: "0 -8px 40px rgba(0,0,0,0.15)" }}
+      >
+        {/* Title + subtitle */}
+        <div key={`text-${active}`} className="ob-text mb-7">
+          <h1 className="text-[28px] font-extrabold text-[#020034] leading-tight tracking-tight mb-3 whitespace-pre-line">
+            {SLIDES[active].title}
+          </h1>
+          <p className="text-[15px] text-slate-500 leading-relaxed font-medium">
+            {SLIDES[active].subtitle}
+          </p>
+        </div>
+
+        {/* Dots */}
+        <div className="flex items-center gap-1.5 mb-7">
+          {SLIDES.map((_, i) => (
+            <div
+              key={i}
+              className="h-2 rounded-full transition-all duration-300"
+              style={{
+                width: i === active ? 28 : 8,
+                background: i === active ? "#E94A02" : "#E2E8F0",
+                opacity: i === active ? 1 : 0.5,
+              }}
+            />
+          ))}
+        </div>
+
+        {/* CTA button */}
+        <button
+          onClick={next}
+          className="w-full flex items-center justify-center gap-2.5 py-[18px] rounded-[18px] font-bold text-white text-[17px] mb-5"
+          style={{
+            background: "linear-gradient(90deg,#FF6B2B,#E94A02)",
+            boxShadow: "0 6px 24px rgba(233,74,2,0.35)",
+          }}
+        >
+          {isLast ? "Get Started" : "Continue"}
+          <svg viewBox="0 0 24 24" className="w-5 h-5 fill-white">
+            {isLast
+              ? <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
+              : <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+            }
+          </svg>
+        </button>
+
+      </div>
+    </div>
+  );
+}
+
+// ─── Registration form ────────────────────────────────────────────────────────
+
+type DocKey = "photo_id" | "public_liability" | "proof_of_address" | "right_to_work";
+
+const DOC_FIELDS: { key: DocKey; label: string; hint: string }[] = [
+  { key: "photo_id",         label: "Photo ID",                  hint: "Passport or driving licence" },
+  { key: "public_liability", label: "Public Liability Insurance", hint: "Active insurance certificate" },
+  { key: "proof_of_address", label: "Proof of Address",          hint: "Utility bill or bank statement" },
+  { key: "right_to_work",    label: "Right to Work",             hint: "Visa or passport biometric page" },
+];
+
+const STEPS = ["Account", "Business", "Documents"];
+
+export function JoinClient() {
+  const [phase, setPhase] = useState<"onboarding" | "form">("onboarding");
+
+  if (phase === "onboarding") {
+    return <OnboardingPhase onComplete={() => setPhase("form")} />;
+  }
+
+  return <RegistrationForm />;
+}
+
+function RegistrationForm() {
+  const [step, setStep]       = useState(0);
+  const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+
+  // Step 0 — Account
+  const [fullName,        setFullName]        = useState("");
+  const [email,           setEmail]           = useState("");
+  const [password,        setPassword]        = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword,    setShowPassword]    = useState(false);
+
+  // Step 1 — Business
+  const [companyName, setCompanyName] = useState("");
+  const [services,    setServices]    = useState("");
+  const [utr,         setUtr]         = useState("");
+  const [website,     setWebsite]     = useState("");
+
+  // Step 2 — Documents (all required)
+  const [docs, setDocs] = useState<Partial<Record<DocKey, File>>>({});
+  const fileRefs = useRef<Partial<Record<DocKey, HTMLInputElement>>>({});
+
+  function validateStep(s: number): string | null {
+    if (s === 0) {
+      if (!fullName.trim())                              return "Please enter your full name.";
+      if (!email.trim() || !email.includes("@"))        return "Please enter a valid email address.";
+      if (password.length < 6)                          return "Password must be at least 6 characters.";
+      if (password !== confirmPassword)                  return "Passwords do not match.";
+    }
+    if (s === 2) {
+      const missing = DOC_FIELDS.filter(({ key }) => !docs[key]).map(({ label }) => label);
+      if (missing.length) return `Please upload: ${missing.join(", ")}.`;
+    }
+    return null;
+  }
+
+  function handleNext() {
+    const err = validateStep(step);
+    if (err) { setError(err); return; }
+    setError(null);
+    setStep((s) => s + 1);
+  }
+
+  function handleBack() { setError(null); setStep((s) => s - 1); }
+
+  function handleFileChange(key: DocKey, e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) setDocs((prev) => ({ ...prev, [key]: file }));
+  }
+
+  function removeDoc(key: DocKey) {
+    setDocs((prev) => { const n = { ...prev }; delete n[key]; return n; });
+    if (fileRefs.current[key]) fileRefs.current[key]!.value = "";
+  }
+
+  async function handleSubmit() {
+    const err = validateStep(2);
+    if (err) { setError(err); return; }
+    setError(null);
+    setLoading(true);
+
+    const form = new FormData();
+    form.append("fullName",         fullName.trim());
+    form.append("email",            email.trim().toLowerCase());
+    form.append("password",         password);
+    form.append("companyName",      companyName.trim());
+    form.append("servicesProvided", services.trim());
+    form.append("utr",              utr.trim());
+    form.append("website",          website.trim());
+
+    (Object.keys(docs) as DocKey[]).forEach((key) => {
+      if (docs[key]) form.append(key, docs[key]!);
+    });
+
+    try {
+      const res  = await fetch("/api/join/register", { method: "POST", body: form });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Registration failed.");
+      setSuccess(true);
+    } catch (e: any) {
+      setError(e.message ?? "Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (success) return <SuccessScreen />;
+
+  return (
+    <div
+      className="min-h-screen flex flex-col items-center justify-center px-4 py-12"
+      style={{ background: "linear-gradient(160deg,#020034 0%,#0D006E 55%,#E94A02 100%)" }}
+    >
+      {/* Logo */}
+      <div className="mb-8 text-center">
+        <div
+          className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-4 overflow-hidden"
+          style={{
+            background: "rgba(255,255,255,0.1)",
+            border: "1px solid rgba(255,255,255,0.2)",
+            boxShadow: "0 8px 32px rgba(233,74,2,0.35)",
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="https://wearemaster.com/favicon.png"
+            alt="Master"
+            className="w-12 h-12 object-contain"
+          />
+        </div>
+        <h1 className="text-3xl font-black text-white tracking-tight">Become a Partner</h1>
+        <p className="text-white/55 text-sm mt-1">Join the Master network and start earning</p>
+      </div>
+
+      {/* Step indicator */}
+      <div className="flex items-center gap-2 mb-6">
+        {STEPS.map((label, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+              i < step ? "bg-[#E94A02] text-white" : i === step ? "bg-white text-[#020034]" : "bg-white/15 text-white/50"
+            }`}>
+              {i < step ? "✓" : i + 1}
+            </div>
+            <span className={`text-xs font-medium hidden sm:block ${i === step ? "text-white" : "text-white/40"}`}>
+              {label}
+            </span>
+            {i < STEPS.length - 1 && (
+              <div className={`w-8 h-px ${i < step ? "bg-[#E94A02]" : "bg-white/20"}`} />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Form card */}
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-7">
+        {error && (
+          <div className="mb-5 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+            {error}
+          </div>
+        )}
+
+        {step === 0 && (
+          <Step0
+            fullName={fullName}             setFullName={setFullName}
+            email={email}                   setEmail={setEmail}
+            password={password}             setPassword={setPassword}
+            confirmPassword={confirmPassword} setConfirmPassword={setConfirmPassword}
+            showPassword={showPassword}     setShowPassword={setShowPassword}
+          />
+        )}
+        {step === 1 && (
+          <Step1
+            companyName={companyName} setCompanyName={setCompanyName}
+            services={services}       setServices={setServices}
+            utr={utr}                 setUtr={setUtr}
+            website={website}         setWebsite={setWebsite}
+          />
+        )}
+        {step === 2 && (
+          <Step2
+            docs={docs}
+            fileRefs={fileRefs}
+            onFileChange={handleFileChange}
+            onRemove={removeDoc}
+          />
+        )}
+
+        {/* Navigation */}
+        <div className="flex gap-3 mt-6">
+          {step > 0 && (
+            <button
+              onClick={handleBack}
+              className="flex-1 py-3.5 rounded-xl border-2 border-slate-200 text-slate-700 font-semibold text-sm hover:bg-slate-50 transition-colors"
+            >
+              Back
+            </button>
+          )}
+          {step < 2 ? (
+            <button
+              onClick={handleNext}
+              className="flex-1 py-3.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90"
+              style={{ background: "linear-gradient(90deg,#FF6B2B,#E94A02)" }}
+            >
+              Continue
+            </button>
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="flex-1 py-3.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+              style={{ background: "linear-gradient(90deg,#FF6B2B,#E94A02)" }}
+            >
+              {loading ? "Submitting…" : "Submit Application"}
+            </button>
+          )}
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+// ─── Step sub-components ──────────────────────────────────────────────────────
+
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="mb-4">
+      <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+const inputCls = "w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition";
+
+function Step0({ fullName, setFullName, email, setEmail, password, setPassword, confirmPassword, setConfirmPassword, showPassword, setShowPassword }: any) {
+  return (
+    <>
+      <h2 className="text-lg font-bold text-slate-800 mb-5">Create your account</h2>
+      <Field label="Full name" required>
+        <input className={inputCls} placeholder="John Smith" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+      </Field>
+      <Field label="Email address" required>
+        <input className={inputCls} type="email" placeholder="john@example.com" value={email} onChange={(e) => setEmail(e.target.value)} autoCapitalize="none" />
+      </Field>
+      <Field label="Password" required>
+        <div className="relative">
+          <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Min. 6 characters" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <button type="button" onClick={() => setShowPassword((p: boolean) => !p)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-medium">
+            {showPassword ? "Hide" : "Show"}
+          </button>
+        </div>
+      </Field>
+      <Field label="Confirm password" required>
+        <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Repeat password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+      </Field>
+    </>
+  );
+}
+
+function Step1({ companyName, setCompanyName, services, setServices, utr, setUtr, website, setWebsite }: any) {
+  return (
+    <>
+      <h2 className="text-lg font-bold text-slate-800 mb-5">Business details</h2>
+      <Field label="Company / trading name">
+        <input className={inputCls} placeholder="Smith Plumbing Ltd" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+      </Field>
+      <Field label="Services provided">
+        <textarea className={`${inputCls} resize-none`} rows={3} placeholder="e.g. Plumbing, heating, boiler installation…" value={services} onChange={(e) => setServices(e.target.value)} />
+      </Field>
+      <Field label="UTR number (optional)">
+        <input className={inputCls} placeholder="1234567890" value={utr} onChange={(e) => setUtr(e.target.value)} />
+      </Field>
+      <Field label="Website (optional)">
+        <input className={inputCls} type="url" placeholder="https://yoursite.co.uk" value={website} onChange={(e) => setWebsite(e.target.value)} />
+      </Field>
+    </>
+  );
+}
+
+function Step2({ docs, fileRefs, onFileChange, onRemove }: {
+  docs: Partial<Record<DocKey, File>>;
+  fileRefs: React.MutableRefObject<Partial<Record<DocKey, HTMLInputElement>>>;
+  onFileChange: (key: DocKey, e: React.ChangeEvent<HTMLInputElement>) => void;
+  onRemove: (key: DocKey) => void;
+}) {
+  return (
+    <>
+      <h2 className="text-lg font-bold text-slate-800 mb-1">Documents</h2>
+      <p className="text-sm text-slate-500 mb-5">All documents are required to process your application.</p>
+      <div className="space-y-3">
+        {DOC_FIELDS.map(({ key, label, hint }) => (
+          <div key={key}
+            className={`rounded-xl border-2 p-3.5 transition-colors ${docs[key] ? "border-green-400 bg-green-50" : "border-slate-200 bg-slate-50 hover:border-orange-300"}`}>
+            {docs[key] ? (
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-green-600 text-lg">✓</span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-800">{label}</p>
+                    <p className="text-xs text-slate-500 truncate">{docs[key]!.name}</p>
+                  </div>
+                </div>
+                <button onClick={() => onRemove(key)} className="text-slate-400 hover:text-red-500 text-xs font-medium shrink-0">Remove</button>
+              </div>
+            ) : (
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  ref={(el) => { fileRefs.current[key] = el ?? undefined; }}
+                  type="file" className="hidden"
+                  accept="image/*,application/pdf"
+                  onChange={(e) => onFileChange(key, e)}
+                />
+                <div className="w-8 h-8 rounded-lg bg-slate-200 group-hover:bg-orange-100 flex items-center justify-center transition-colors shrink-0">
+                  <span className="text-slate-500 group-hover:text-orange-500 text-lg leading-none">+</span>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">{label} <span className="text-red-400 text-xs">*</span></p>
+                  <p className="text-xs text-slate-400">{hint}</p>
+                </div>
+              </label>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ─── Success screen ───────────────────────────────────────────────────────────
+function SuccessScreen() {
+  return (
+    <div
+      className="min-h-screen flex flex-col items-center justify-center px-4 py-12"
+      style={{ background: "linear-gradient(160deg,#020034 0%,#0D006E 55%,#E94A02 100%)" }}
+    >
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 text-center">
+        <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-5">
+          <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <h2 className="text-2xl font-black text-slate-800 mb-2">Application submitted!</h2>
+        <p className="text-slate-500 text-sm mb-8 leading-relaxed">
+          Your documents are under review. Once approved, you'll be able to start accepting jobs.
+          Download the app and sign in to track your status.
+        </p>
+        <a
+          href={APP_STORE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl py-4 px-6 transition-colors"
+        >
+          <svg viewBox="0 0 24 24" className="w-7 h-7 fill-white shrink-0">
+            <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+          </svg>
+          <div className="text-left">
+            <div className="text-xs text-white/60 leading-none">Download on the</div>
+            <div className="text-base font-bold leading-tight">App Store</div>
+          </div>
+        </a>
+        <p className="text-xs text-slate-400 mt-4">Use the same email and password to sign in.</p>
+      </div>
+    </div>
+  );
+}
