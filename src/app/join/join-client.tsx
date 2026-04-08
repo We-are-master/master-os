@@ -458,7 +458,7 @@ function Step0({ fullName, setFullName, email, setEmail, password, setPassword, 
         <input className={inputCls} placeholder="John Smith" value={fullName} onChange={(e) => setFullName(e.target.value)} />
       </Field>
       <Field label="Email address" required>
-        <input className={inputCls} type="email" placeholder="john@example.com" value={email} onChange={(e) => setEmail(e.target.value)} autoCapitalize="none" />
+        <input className={inputCls} type="text" inputMode="email" placeholder="john@example.com" value={email} onChange={(e) => setEmail(e.target.value)} autoCapitalize="none" autoCorrect="off" />
       </Field>
       <Field label="Password" required>
         <div className="relative">
