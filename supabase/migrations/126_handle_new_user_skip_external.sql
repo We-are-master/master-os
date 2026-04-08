@@ -59,19 +59,28 @@ COMMENT ON FUNCTION public.handle_new_user() IS
   'Auto-creates public.profiles row on internal-staff auth signup. Skips external_partner accounts (those use public.users via handle_new_app_user from migration 124).';
 
 -- =============================================================================
--- CLEAN UP existing duplicates
+-- HANDLING EXISTING DUPLICATES (non-destructive)
 -- =============================================================================
--- Any partner who signed up via /join before this fix has both a profiles
--- row AND a users row. Delete the orphaned profiles rows so the team page
--- doesn't list them as internal staff.
+-- Partners who signed up before this fix already have both a profiles row
+-- and a users row. We CANNOT simply DELETE the profiles rows because many
+-- columns reference profiles(id) without ON DELETE SET NULL (owner_id on
+-- service_requests/quotes/jobs from migration 001, etc.) — the FK would
+-- block the delete.
 --
--- Safe filter: only delete profiles rows whose id is also present in
--- public.users with user_type = 'external_partner'. We never touch internal
--- staff profiles.
+-- Instead we set is_active = false on those rows so the team page can hide
+-- them. The /team query is also updated client-side to filter by
+-- "exclude IDs that exist in public.users with user_type='external_partner'"
+-- which is the authoritative test.
+--
+-- Both changes are non-destructive — internal staff profiles are never
+-- touched, and historical FK references stay intact.
 
-DELETE FROM public.profiles p
+UPDATE public.profiles p
+SET is_active = false,
+    updated_at = now()
 WHERE EXISTS (
   SELECT 1 FROM public.users u
   WHERE u.id = p.id
     AND u.user_type = 'external_partner'
-);
+)
+AND coalesce(p.is_active, true) = true;
