@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const APP_STORE_URL = "https://apps.apple.com/br/app/master-services/id6747205225";
 // TODO: add PLAY_STORE_URL once Android is published
@@ -203,6 +204,8 @@ const DOC_FIELDS: { key: DocKey; label: string; hint: string }[] = [
   { key: "right_to_work",    label: "Right to Work",             hint: "Visa or passport biometric page" },
 ];
 
+const TRADE_OPTIONS = [...TYPE_OF_WORK_OPTIONS] as string[];
+
 const STEPS = ["Account", "Business", "Documents"];
 
 export function JoinClient() {
@@ -229,13 +232,16 @@ function RegistrationForm() {
   const [showPassword,    setShowPassword]    = useState(false);
 
   // Step 1 — Business
-  const [companyName, setCompanyName] = useState("");
-  const [services,    setServices]    = useState("");
-  const [utr,         setUtr]         = useState("");
-  const [website,     setWebsite]     = useState("");
+  const [companyName,    setCompanyName]    = useState("");
+  const [selectedTrades, setSelectedTrades] = useState<string[]>([]);
+  const [services,       setServices]       = useState("");
+  const [utr,            setUtr]            = useState("");
+  const [website,        setWebsite]        = useState("");
 
-  // Step 2 — Documents (all required)
-  const [docs, setDocs] = useState<Partial<Record<DocKey, File>>>({});
+  // Step 2 — Documents (all required) + profile/logo photo (optional)
+  const [docs,         setDocs]         = useState<Partial<Record<DocKey, File>>>({});
+  const [profilePhoto, setProfilePhoto] = useState<File | null>(null);
+  const profilePhotoRef                 = useRef<HTMLInputElement | null>(null);
   const fileRefs = useRef<Partial<Record<DocKey, HTMLInputElement>>>({});
 
   function validateStep(s: number): string | null {
@@ -244,6 +250,9 @@ function RegistrationForm() {
       if (!email.trim() || !email.includes("@"))        return "Please enter a valid email address.";
       if (password.length < 6)                          return "Password must be at least 6 characters.";
       if (password !== confirmPassword)                  return "Passwords do not match.";
+    }
+    if (s === 1) {
+      if (selectedTrades.length === 0) return "Please select at least one service type.";
     }
     if (s === 2) {
       const missing = DOC_FIELDS.filter(({ key }) => !docs[key]).map(({ label }) => label);
@@ -282,9 +291,12 @@ function RegistrationForm() {
     form.append("email",            email.trim().toLowerCase());
     form.append("password",         password);
     form.append("companyName",      companyName.trim());
+    form.append("trades",           selectedTrades.join(","));
     form.append("servicesProvided", services.trim());
     form.append("utr",              utr.trim());
     form.append("website",          website.trim());
+
+    if (profilePhoto) form.append("profile_photo", profilePhoto);
 
     (Object.keys(docs) as DocKey[]).forEach((key) => {
       if (docs[key]) form.append(key, docs[key]!);
@@ -368,10 +380,11 @@ function RegistrationForm() {
         )}
         {step === 1 && (
           <Step1
-            companyName={companyName} setCompanyName={setCompanyName}
-            services={services}       setServices={setServices}
-            utr={utr}                 setUtr={setUtr}
-            website={website}         setWebsite={setWebsite}
+            companyName={companyName}       setCompanyName={setCompanyName}
+            selectedTrades={selectedTrades} setSelectedTrades={setSelectedTrades}
+            services={services}             setServices={setServices}
+            utr={utr}                       setUtr={setUtr}
+            website={website}               setWebsite={setWebsite}
           />
         )}
         {step === 2 && (
@@ -380,6 +393,10 @@ function RegistrationForm() {
             fileRefs={fileRefs}
             onFileChange={handleFileChange}
             onRemove={removeDoc}
+            profilePhoto={profilePhoto}
+            profilePhotoRef={profilePhotoRef}
+            onProfilePhotoChange={(e) => { const f = e.target.files?.[0]; if (f) setProfilePhoto(f); }}
+            onRemoveProfilePhoto={() => { setProfilePhoto(null); if (profilePhotoRef.current) profilePhotoRef.current.value = ""; }}
           />
         )}
 
@@ -459,15 +476,43 @@ function Step0({ fullName, setFullName, email, setEmail, password, setPassword, 
   );
 }
 
-function Step1({ companyName, setCompanyName, services, setServices, utr, setUtr, website, setWebsite }: any) {
+function Step1({ companyName, setCompanyName, selectedTrades, setSelectedTrades, services, setServices, utr, setUtr, website, setWebsite }: any) {
+  function toggleTrade(trade: string) {
+    setSelectedTrades((prev: string[]) =>
+      prev.includes(trade) ? prev.filter((t: string) => t !== trade) : [...prev, trade]
+    );
+  }
+
   return (
     <>
       <h2 className="text-lg font-bold text-slate-800 mb-5">Business details</h2>
       <Field label="Company / trading name">
         <input className={inputCls} placeholder="Smith Plumbing Ltd" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
       </Field>
-      <Field label="Services provided">
-        <textarea className={`${inputCls} resize-none`} rows={3} placeholder="e.g. Plumbing, heating, boiler installation…" value={services} onChange={(e) => setServices(e.target.value)} />
+      <Field label="Service type" required>
+        <p className="text-xs text-slate-400 mb-2">Select all that apply</p>
+        <div className="flex flex-wrap gap-2">
+          {TRADE_OPTIONS.map((trade) => {
+            const active = selectedTrades.includes(trade);
+            return (
+              <button
+                key={trade}
+                type="button"
+                onClick={() => toggleTrade(trade)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  active
+                    ? "bg-[#E94A02] border-[#E94A02] text-white"
+                    : "bg-slate-50 border-slate-200 text-slate-600 hover:border-orange-300 hover:text-orange-600"
+                }`}
+              >
+                {trade}
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+      <Field label="Additional details (optional)">
+        <textarea className={`${inputCls} resize-none`} rows={2} placeholder="e.g. specialisations, certifications…" value={services} onChange={(e) => setServices(e.target.value)} />
       </Field>
       <Field label="UTR number (optional)">
         <input className={inputCls} placeholder="1234567890" value={utr} onChange={(e) => setUtr(e.target.value)} />
@@ -479,16 +524,62 @@ function Step1({ companyName, setCompanyName, services, setServices, utr, setUtr
   );
 }
 
-function Step2({ docs, fileRefs, onFileChange, onRemove }: {
+function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePhotoRef, onProfilePhotoChange, onRemoveProfilePhoto }: {
   docs: Partial<Record<DocKey, File>>;
   fileRefs: React.MutableRefObject<Partial<Record<DocKey, HTMLInputElement>>>;
   onFileChange: (key: DocKey, e: React.ChangeEvent<HTMLInputElement>) => void;
   onRemove: (key: DocKey) => void;
+  profilePhoto: File | null;
+  profilePhotoRef: React.MutableRefObject<HTMLInputElement | null>;
+  onProfilePhotoChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onRemoveProfilePhoto: () => void;
 }) {
+  const photoPreview = profilePhoto ? URL.createObjectURL(profilePhoto) : null;
+
   return (
     <>
       <h2 className="text-lg font-bold text-slate-800 mb-1">Documents</h2>
       <p className="text-sm text-slate-500 mb-5">All documents are required to process your application.</p>
+
+      {/* Profile / logo photo — optional */}
+      <div className="mb-4">
+        <p className="text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+          Profile photo or company logo <span className="text-slate-400 font-normal normal-case">(optional)</span>
+        </p>
+        {profilePhoto ? (
+          <div className="flex items-center gap-3 rounded-xl border-2 border-blue-300 bg-blue-50 p-3.5">
+            {photoPreview && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={photoPreview} alt="preview" className="w-12 h-12 rounded-lg object-cover shrink-0 border border-blue-200" />
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-slate-800 truncate">{profilePhoto.name}</p>
+              <p className="text-xs text-slate-500">Profile / logo photo</p>
+            </div>
+            <button onClick={onRemoveProfilePhoto} className="text-slate-400 hover:text-red-500 text-xs font-medium shrink-0">Remove</button>
+          </div>
+        ) : (
+          <label className="flex items-center gap-3 cursor-pointer group rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 hover:border-orange-300 p-3.5 transition-colors">
+            <input
+              ref={profilePhotoRef}
+              type="file"
+              className="hidden"
+              accept="image/*"
+              onChange={onProfilePhotoChange}
+            />
+            <div className="w-10 h-10 rounded-lg bg-slate-200 group-hover:bg-orange-100 flex items-center justify-center transition-colors shrink-0">
+              <svg viewBox="0 0 24 24" className="w-5 h-5 fill-slate-400 group-hover:fill-orange-400 transition-colors">
+                <path d="M12 12c2.7 0 4-1.8 4-4s-1.3-4-4-4-4 1.8-4 4 1.3 4 4 4zm0 2c-2.7 0-8 1.35-8 4v2h16v-2c0-2.65-5.3-4-8-4z"/>
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-700">Upload photo or logo</p>
+              <p className="text-xs text-slate-400">JPG, PNG or WebP</p>
+            </div>
+          </label>
+        )}
+      </div>
+
       <div className="space-y-3">
         {DOC_FIELDS.map(({ key, label, hint }) => (
           <div key={key}
