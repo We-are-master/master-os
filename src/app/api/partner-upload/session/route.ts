@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
       name: string;
       description: string;
       docType: string;
-      status: "valid" | "expired" | "missing";
+      status: ReturnType<typeof getOptionalDbsStatus>;
       matchedIds: string[];
     }[] = [];
 

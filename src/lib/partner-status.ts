@@ -58,8 +58,10 @@ export function computeAutoReasonCodes(flags: PartnerAutoFlags): string[] {
 }
 
 /**
- * When compliance flags require attention, elevate to `needs_attention` and merge reasons.
- * Does not change `inactive` partners.
+ * When compliance flags require attention, merge reason codes.
+ * - **Onboarding** stays `onboarding` (no auto move to needs_attention) until someone activates or deactivates.
+ * - **Active** → `needs_attention` only when the caller passes reason codes (e.g. `expired_docs` — not pending review).
+ * Does not change `inactive` / `on_break` partners.
  */
 export function deriveAutoStatusAndReasons(
   partner: Pick<Partner, "status" | "partner_status_reasons">,
@@ -74,7 +76,10 @@ export function deriveAutoStatusAndReasons(
   if (autoCodes.length === 0) {
     return { status: current, partner_status_reasons: partner.partner_status_reasons ?? [] };
   }
-  if (current === "onboarding" || current === "active") {
+  if (current === "onboarding") {
+    return { status: "onboarding", partner_status_reasons: merged };
+  }
+  if (current === "active") {
     return { status: "needs_attention", partner_status_reasons: merged };
   }
   if (current === "needs_attention") {

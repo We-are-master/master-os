@@ -77,6 +77,9 @@ import {
   computeComplianceScore,
   getRequiredDocComplianceStatus,
   getOptionalDbsStatus,
+  getMandatoryDocOnboardingStatus,
+  mandatoryOnboardingBadge,
+  complianceChecklistRowBadge,
   resolvePartnerDocExpiresAt,
   partnerDocExpiryPolicy,
   extractCertificateNumber,
@@ -1369,40 +1372,10 @@ export default function PartnersPage() {
                   {mandatoryDocsCreate.map((req) => {
                     const matchedDocs = pickRequiredDocMatches(pendingDocsForCompliancePreview, req);
                     const doc = matchedDocs[0] ?? null;
+                    const onb = getMandatoryDocOnboardingStatus(pendingDocsForCompliancePreview, req);
+                    const badge = mandatoryOnboardingBadge(onb);
                     const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
-                    const now = new Date();
-                    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-                    const isExpired = !!(expiresAt && expiresAt < now);
-                    const isExpiringSoon = !!(expiresAt && expiresAt >= now && expiresAt <= in30Days);
-                    const certDocs = req.docType === "certification" ? matchedDocs : [];
-                    const certValidCount = certDocs.filter((d) => {
-                      if (!d.expires_at) return true;
-                      return new Date(d.expires_at) >= now;
-                    }).length;
-                    const certExpiringSoonCount = certDocs.filter((d) => {
-                      if (!d.expires_at) return false;
-                      const dt = new Date(d.expires_at);
-                      return dt >= now && dt <= in30Days;
-                    }).length;
-                    const certExpiredCount = certDocs.filter((d) => !!(d.expires_at && new Date(d.expires_at) < now)).length;
-                    const statusLabel = req.docType === "certification"
-                      ? certDocs.length === 0
-                        ? "Missing"
-                        : certValidCount > 0
-                          ? certExpiringSoonCount > 0 ? "Valid (some expiring soon)" : "Valid"
-                          : certExpiredCount > 0 ? "Expired" : "Pending"
-                      : !doc
-                        ? "Missing"
-                        : isExpired ? "Expired" : isExpiringSoon ? "Expiring soon" : "Valid";
-                    const statusVariant = req.docType === "certification"
-                      ? certDocs.length === 0
-                        ? "default"
-                        : certValidCount > 0
-                          ? certExpiringSoonCount > 0 ? "warning" : "success"
-                          : certExpiredCount > 0 ? "danger" : "default"
-                      : !doc
-                        ? "default"
-                        : isExpired ? "danger" : isExpiringSoon ? "warning" : "success";
+                    const isExpired = !!(expiresAt && expiresAt < new Date());
 
                     return (
                       <div key={req.id} className="rounded-lg border border-border-light bg-card p-3 space-y-2">
@@ -1411,7 +1384,9 @@ export default function PartnersPage() {
                             <p className="text-sm font-semibold text-text-primary">{req.name}</p>
                             <p className="text-[11px] text-text-tertiary">{req.description}</p>
                           </div>
-                          <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                          <Badge variant={badge.variant} size="sm">
+                            {badge.label}
+                          </Badge>
                         </div>
                         {doc?.expires_at && (
                           <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
@@ -1471,32 +1446,10 @@ export default function PartnersPage() {
                       {tradeCertsDocsCreate.map((req) => {
                         const matchedDocs = pickRequiredDocMatches(pendingDocsForCompliancePreview, req);
                         const doc = matchedDocs[0] ?? null;
+                        const onb = getMandatoryDocOnboardingStatus(pendingDocsForCompliancePreview, req);
+                        const badge = mandatoryOnboardingBadge(onb);
                         const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
-                        const now = new Date();
-                        const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-                        const isExpired = !!(expiresAt && expiresAt < now);
-                        const isExpiringSoon = !!(expiresAt && expiresAt >= now && expiresAt <= in30Days);
-                        const certDocs = req.docType === "certification" ? matchedDocs : [];
-                        const certValidCount = certDocs.filter((d) => {
-                          if (!d.expires_at) return true;
-                          return new Date(d.expires_at) >= now;
-                        }).length;
-                        const certExpiringSoonCount = certDocs.filter((d) => {
-                          if (!d.expires_at) return false;
-                          const dt = new Date(d.expires_at);
-                          return dt >= now && dt <= in30Days;
-                        }).length;
-                        const certExpiredCount = certDocs.filter((d) => !!(d.expires_at && new Date(d.expires_at) < now)).length;
-                        const statusLabel = certDocs.length === 0
-                          ? "Missing"
-                          : certValidCount > 0
-                            ? certExpiringSoonCount > 0 ? "Valid (some expiring soon)" : "Valid"
-                            : certExpiredCount > 0 ? "Expired" : "Pending";
-                        const statusVariant = certDocs.length === 0
-                          ? "default"
-                          : certValidCount > 0
-                            ? certExpiringSoonCount > 0 ? "warning" : "success"
-                            : certExpiredCount > 0 ? "danger" : "default";
+                        const isExpired = !!(expiresAt && expiresAt < new Date());
 
                         return (
                           <div key={req.id} className="rounded-lg border border-border-light bg-card p-3 space-y-2">
@@ -1505,7 +1458,9 @@ export default function PartnersPage() {
                                 <p className="text-sm font-semibold text-text-primary">{req.name}</p>
                                 <p className="text-[11px] text-text-tertiary">{req.description}</p>
                               </div>
-                              <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                              <Badge variant={badge.variant} size="sm">
+                                {badge.label}
+                              </Badge>
                             </div>
                             {doc?.expires_at && (
                               <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
@@ -1780,7 +1735,7 @@ const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = 
 };
 
 const docStatusConfig: Record<string, { label: string; variant: "default" | "success" | "warning" | "danger" }> = {
-  pending: { label: "Pending Review", variant: "warning" },
+  pending: { label: "Pending", variant: "warning" },
   approved: { label: "Approved", variant: "success" },
   rejected: { label: "Rejected", variant: "danger" },
   expired: { label: "Expired", variant: "default" },
@@ -2753,6 +2708,19 @@ function PartnerDetailDrawer({
       ? mandatoryDocsForScore.filter((req) => getRequiredDocComplianceStatus(documents, req) !== "valid")
       : [];
 
+  const onboardingDocProgress =
+    partner?.status === "onboarding"
+      ? {
+          total: mandatoryDocsForScore.length,
+          approved: mandatoryDocsForScore.filter(
+            (req) => getRequiredDocComplianceStatus(documents, req) === "valid",
+          ).length,
+          pending: mandatoryDocsForScore.filter(
+            (req) => getRequiredDocComplianceStatus(documents, req) === "pending",
+          ).length,
+        }
+      : null;
+
   const dbsOptionalStatus = getOptionalDbsStatus(documents);
 
   useEffect(() => {
@@ -2813,12 +2781,19 @@ function PartnerDetailDrawer({
   useEffect(() => {
     if (!partner || teamMember) return;
     if (isPartnerInactiveStage(partner)) return;
-    const auto = computeAutoReasonCodes({
-      missingMandatoryDocs: missingRequiredDocs.length > 0,
+    /** Stay in Onboarding until you activate — compliance edits (e.g. approving docs) must not change stage. */
+    if (partner.status === "onboarding") return;
+
+    /** Pending approval does not count as “missing” for stage changes — stay in Onboarding until activate; after Active, only expired files trigger Needs attention. */
+    const docEscalationCodes = computeAutoReasonCodes({
+      missingMandatoryDocs: false,
       hasExpiredDocs: expiredDocCount > 0,
-      complianceBelowThreshold: computedCompliance < ACTIVATION_COMPLIANCE_MIN_SCORE,
+      complianceBelowThreshold: false,
     });
-    const { status: nextStatus, partner_status_reasons: nextReasons } = deriveAutoStatusAndReasons(partner, auto);
+    const escalateCodes =
+      partner.status === "active" || partner.status === "needs_attention" ? docEscalationCodes : [];
+
+    const { status: nextStatus, partner_status_reasons: nextReasons } = deriveAutoStatusAndReasons(partner, escalateCodes);
     const curR = [...(partner.partner_status_reasons ?? [])].sort().join("|");
     const nextR = [...nextReasons].sort().join("|");
     if (nextStatus === partner.status && curR === nextR) return;
@@ -2826,16 +2801,7 @@ function PartnerDetailDrawer({
       void onPartnerPatch({ status: nextStatus, partner_status_reasons: nextReasons });
     }, 800);
     return () => window.clearTimeout(t);
-  }, [
-    partner?.id,
-    partner?.status,
-    partner?.partner_status_reasons,
-    teamMember,
-    missingRequiredDocs.length,
-    expiredDocCount,
-    computedCompliance,
-    onPartnerPatch,
-  ]);
+  }, [partner?.id, partner?.status, partner?.partner_status_reasons, teamMember, expiredDocCount, onPartnerPatch]);
 
   const togglePortalDocId = useCallback((id: string) => {
     setPortalLinkSelectedIds((prev) => {
@@ -3958,11 +3924,16 @@ function PartnerDetailDrawer({
               <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
                 {mandatoryDocsForScore.map((req) => {
                   const st = getRequiredDocComplianceStatus(documents, req);
+                  const rowBadge = complianceChecklistRowBadge(st);
                   return (
                     <li key={req.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0 flex items-start gap-2">
                         {st === "valid" ? (
                           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+                        ) : st === "pending" ? (
+                          <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                        ) : st === "rejected" ? (
+                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden />
                         ) : st === "expired" ? (
                           <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden />
                         ) : (
@@ -3974,11 +3945,8 @@ function PartnerDetailDrawer({
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2 pl-6 sm:pl-0">
-                        <Badge
-                          variant={st === "valid" ? "success" : st === "expired" ? "danger" : "warning"}
-                          size="sm"
-                        >
-                          {st === "valid" ? "Valid" : st === "expired" ? "Expired" : "Missing"}
+                        <Badge variant={rowBadge.variant} size="sm">
+                          {rowBadge.label}
                         </Badge>
                         <Button
                           size="sm"
@@ -3990,7 +3958,7 @@ function PartnerDetailDrawer({
                             setTab("documents");
                           }}
                         >
-                          {st === "valid" ? "Update" : "Add"}
+                          {st === "missing" ? "Add" : "Update"}
                         </Button>
                       </div>
                     </li>
@@ -4010,11 +3978,16 @@ function PartnerDetailDrawer({
               <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
                 {tradeCertificateDocs.map((req) => {
                   const st = getRequiredDocComplianceStatus(documents, req);
+                  const rowBadge = complianceChecklistRowBadge(st);
                   return (
                     <li key={req.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0 flex items-start gap-2">
                         {st === "valid" ? (
                           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+                        ) : st === "pending" ? (
+                          <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                        ) : st === "rejected" ? (
+                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden />
                         ) : st === "expired" ? (
                           <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden />
                         ) : (
@@ -4026,11 +3999,8 @@ function PartnerDetailDrawer({
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2 pl-6 sm:pl-0">
-                        <Badge
-                          variant={st === "valid" ? "success" : st === "expired" ? "danger" : "warning"}
-                          size="sm"
-                        >
-                          {st === "valid" ? "Valid" : st === "expired" ? "Expired" : "Missing"}
+                        <Badge variant={rowBadge.variant} size="sm">
+                          {rowBadge.label}
                         </Badge>
                         <Button
                           size="sm"
@@ -4042,7 +4012,7 @@ function PartnerDetailDrawer({
                             setTab("documents");
                           }}
                         >
-                          {st === "valid" ? "Update" : "Add"}
+                          {st === "missing" ? "Add" : "Update"}
                         </Button>
                       </div>
                     </li>
@@ -4064,6 +4034,10 @@ function PartnerDetailDrawer({
                   <div className="min-w-0 flex items-start gap-2">
                     {dbsOptionalStatus === "valid" ? (
                       <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+                    ) : dbsOptionalStatus === "pending" ? (
+                      <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                    ) : dbsOptionalStatus === "rejected" ? (
+                      <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden />
                     ) : dbsOptionalStatus === "expired" ? (
                       <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden />
                     ) : (
@@ -4079,17 +4053,25 @@ function PartnerDetailDrawer({
                       variant={
                         dbsOptionalStatus === "valid"
                           ? "success"
-                          : dbsOptionalStatus === "expired"
-                            ? "danger"
-                            : "warning"
+                          : dbsOptionalStatus === "pending"
+                            ? "warning"
+                            : dbsOptionalStatus === "rejected"
+                              ? "danger"
+                              : dbsOptionalStatus === "expired"
+                                ? "danger"
+                                : "default"
                       }
                       size="sm"
                     >
                       {dbsOptionalStatus === "valid"
-                        ? "On file"
-                        : dbsOptionalStatus === "expired"
-                          ? "Expired"
-                          : "Not uploaded"}
+                        ? "Approved"
+                        : dbsOptionalStatus === "pending"
+                          ? "Pending"
+                          : dbsOptionalStatus === "rejected"
+                            ? "Rejected"
+                            : dbsOptionalStatus === "expired"
+                              ? "Expired"
+                              : "Not uploaded"}
                     </Badge>
                     <Button
                       size="sm"
@@ -4101,7 +4083,7 @@ function PartnerDetailDrawer({
                         setTab("documents");
                       }}
                     >
-                      {dbsOptionalStatus === "valid" ? "Update" : "Add"}
+                      {dbsOptionalStatus === "missing" ? "Add" : "Update"}
                     </Button>
                   </div>
                 </li>
@@ -4528,40 +4510,10 @@ function PartnerDetailDrawer({
                 {mandatoryDocsChecklist.map((req) => {
                   const matchedDocs = pickRequiredDocMatches(documents, req);
                   const doc = matchedDocs[0] ?? null;
+                  const onb = getMandatoryDocOnboardingStatus(documents, req);
+                  const badge = mandatoryOnboardingBadge(onb);
                   const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
-                  const now = new Date();
-                  const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
                   const isExpired = !!(expiresAt && expiresAt < now);
-                  const isExpiringSoon = !!(expiresAt && expiresAt >= now && expiresAt <= in30Days);
-                  const certDocs = req.docType === "certification" ? matchedDocs : [];
-                  const certValidCount = certDocs.filter((d) => {
-                    if (!d.expires_at) return true;
-                    return new Date(d.expires_at) >= now;
-                  }).length;
-                  const certExpiringSoonCount = certDocs.filter((d) => {
-                    if (!d.expires_at) return false;
-                    const dt = new Date(d.expires_at);
-                    return dt >= now && dt <= in30Days;
-                  }).length;
-                  const certExpiredCount = certDocs.filter((d) => !!(d.expires_at && new Date(d.expires_at) < now)).length;
-                  const statusLabel = req.docType === "certification"
-                    ? certDocs.length === 0
-                      ? "Missing"
-                      : certValidCount > 0
-                        ? certExpiringSoonCount > 0 ? "Valid (some expiring soon)" : "Valid"
-                        : certExpiredCount > 0 ? "Expired" : "Pending"
-                    : !doc
-                      ? "Missing"
-                      : isExpired ? "Expired" : isExpiringSoon ? "Expiring soon" : "Valid";
-                  const statusVariant = req.docType === "certification"
-                    ? certDocs.length === 0
-                      ? "default"
-                      : certValidCount > 0
-                        ? certExpiringSoonCount > 0 ? "warning" : "success"
-                        : certExpiredCount > 0 ? "danger" : "default"
-                    : !doc
-                      ? "default"
-                      : isExpired ? "danger" : isExpiringSoon ? "warning" : "success";
 
                   return (
                     <div key={req.id} className="rounded-lg border border-border-light bg-card p-3 space-y-2">
@@ -4570,7 +4522,9 @@ function PartnerDetailDrawer({
                           <p className="text-sm font-semibold text-text-primary">{req.name}</p>
                           <p className="text-[11px] text-text-tertiary">{req.description}</p>
                         </div>
-                        <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+                        <Badge variant={badge.variant} size="sm">
+                          {badge.label}
+                        </Badge>
                       </div>
                       {doc?.expires_at && (
                         <p className={`text-[11px] ${isExpired ? "text-red-500" : "text-text-tertiary"}`}>
@@ -4628,42 +4582,10 @@ function PartnerDetailDrawer({
                     {tradeCertificateDocs.map((req) => {
                       const matchedDocs = pickRequiredDocMatches(documents, req);
                       const doc = matchedDocs[0] ?? null;
+                      const onb = getMandatoryDocOnboardingStatus(documents, req);
+                      const badge = mandatoryOnboardingBadge(onb);
                       const expiresAt = doc?.expires_at ? new Date(doc.expires_at) : null;
-                      const now = new Date();
-                      const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-                      const isExpired = !!(expiresAt && expiresAt < now);
-                      const isExpiringSoon = !!(expiresAt && expiresAt >= now && expiresAt <= in30Days);
-                      const certDocs = matchedDocs;
-                      const certValidCount = certDocs.filter((d) => {
-                        if (!d.expires_at) return true;
-                        return new Date(d.expires_at) >= now;
-                      }).length;
-                      const certExpiringSoonCount = certDocs.filter((d) => {
-                        if (!d.expires_at) return false;
-                        const dt = new Date(d.expires_at);
-                        return dt >= now && dt <= in30Days;
-                      }).length;
-                      const certExpiredCount = certDocs.filter((d) => !!(d.expires_at && new Date(d.expires_at) < now)).length;
-                      const statusLabel =
-                        certDocs.length === 0
-                          ? "Missing"
-                          : certValidCount > 0
-                            ? certExpiringSoonCount > 0
-                              ? "Valid (some expiring soon)"
-                              : "Valid"
-                            : certExpiredCount > 0
-                              ? "Expired"
-                              : "Pending";
-                      const statusVariant =
-                        certDocs.length === 0
-                          ? "default"
-                          : certValidCount > 0
-                            ? certExpiringSoonCount > 0
-                              ? "warning"
-                              : "success"
-                            : certExpiredCount > 0
-                              ? "danger"
-                              : "default";
+                      const isExpired = !!(expiresAt && expiresAt < new Date());
 
                       return (
                         <div key={req.id} className="rounded-lg border border-border-light bg-card p-3 space-y-2">
@@ -4672,8 +4594,8 @@ function PartnerDetailDrawer({
                               <p className="text-sm font-semibold text-text-primary">{req.name}</p>
                               <p className="text-[11px] text-text-tertiary">{req.description}</p>
                             </div>
-                            <Badge variant={statusVariant} size="sm">
-                              {statusLabel}
+                            <Badge variant={badge.variant} size="sm">
+                              {badge.label}
                             </Badge>
                           </div>
                           {doc?.expires_at && (
