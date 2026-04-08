@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import dynamic from "next/dynamic";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Badge } from "@/components/ui/badge";
@@ -16,9 +17,21 @@ import {
 } from "@/hooks/use-dashboard-date-range";
 import { DashboardDateToolbar } from "@/components/dashboard/dashboard-date-toolbar";
 import { WidgetRenderer } from "@/components/dashboard/widget-renderer";
-import { DashboardViewEditor } from "@/components/dashboard/dashboard-view-editor";
-import { OperationsStatus } from "@/components/dashboard/operations-status";
-import { CeoFinancialDashboard } from "@/components/dashboard/ceo-financial-dashboard";
+
+// Lazy-loaded chart-heavy components — removes ~200 KB from initial bundle.
+// Each of these pulls in recharts (Bar/Line/Pie/Area) plus D3 helpers.
+const DashboardViewEditor = dynamic(
+  () => import("@/components/dashboard/dashboard-view-editor").then((m) => ({ default: m.DashboardViewEditor })),
+  { ssr: false, loading: () => <div className="h-96 animate-pulse bg-surface-tertiary rounded-xl" /> },
+);
+const OperationsStatus = dynamic(
+  () => import("@/components/dashboard/operations-status").then((m) => ({ default: m.OperationsStatus })),
+  { ssr: false, loading: () => <div className="h-80 animate-pulse bg-surface-tertiary rounded-xl" /> },
+);
+const CeoFinancialDashboard = dynamic(
+  () => import("@/components/dashboard/ceo-financial-dashboard").then((m) => ({ default: m.CeoFinancialDashboard })),
+  { ssr: false, loading: () => <div className="h-96 animate-pulse bg-surface-tertiary rounded-xl" /> },
+);
 import type { DashboardView, WidgetConfig } from "@/types/dashboard-config";
 import {
   LayoutDashboard, DollarSign, Briefcase, BarChart2, PieChart,

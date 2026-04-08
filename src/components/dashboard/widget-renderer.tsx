@@ -1,22 +1,64 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import type { WidgetConfig, WidgetSize } from "@/types/dashboard-config";
+import { cn } from "@/lib/utils";
+
+// Light widgets (no recharts) — load eagerly.
 import { StatsGrid } from "./stats-grid";
-import { RevenueChart } from "./revenue-chart";
-import { QuoteFunnel } from "./quote-funnel";
-import { JobsStatusDonut } from "./jobs-status-donut";
-import { PartnersByTradeChart } from "./partners-by-trade-chart";
-import { MarginChart } from "./margin-chart";
-import { PartnerPerformance } from "./partner-performance";
 import { PartnerMarginTop5, PartnerPayoutTop5 } from "./partner-financial-top5";
-import { FinanceFlow } from "./finance-flow";
 import { PipelineSummary } from "./pipeline-summary";
 import { PriorityTasks } from "./priority-tasks";
 import { ActivityFeed } from "./activity-feed";
 import { QuickActions } from "./quick-actions";
 import { FinancialSnapshot } from "./financial-snapshot";
-import { CustomMetricWidget, CustomChartWidget, CustomTableWidget } from "./custom-widgets";
-import { cn } from "@/lib/utils";
+
+// Heavy widgets (recharts / d3) — lazy-loaded. Each is code-split into its
+// own chunk and only downloaded when actually rendered. This removes
+// ~200-300 KB from the initial dashboard bundle.
+const chartSkeleton = () => (
+  <div className="h-64 w-full animate-pulse bg-surface-tertiary rounded-xl" />
+);
+const RevenueChart = dynamic(
+  () => import("./revenue-chart").then((m) => ({ default: m.RevenueChart })),
+  { ssr: false, loading: chartSkeleton },
+);
+const QuoteFunnel = dynamic(
+  () => import("./quote-funnel").then((m) => ({ default: m.QuoteFunnel })),
+  { ssr: false, loading: chartSkeleton },
+);
+const JobsStatusDonut = dynamic(
+  () => import("./jobs-status-donut").then((m) => ({ default: m.JobsStatusDonut })),
+  { ssr: false, loading: chartSkeleton },
+);
+const PartnersByTradeChart = dynamic(
+  () => import("./partners-by-trade-chart").then((m) => ({ default: m.PartnersByTradeChart })),
+  { ssr: false, loading: chartSkeleton },
+);
+const MarginChart = dynamic(
+  () => import("./margin-chart").then((m) => ({ default: m.MarginChart })),
+  { ssr: false, loading: chartSkeleton },
+);
+const PartnerPerformance = dynamic(
+  () => import("./partner-performance").then((m) => ({ default: m.PartnerPerformance })),
+  { ssr: false, loading: chartSkeleton },
+);
+const FinanceFlow = dynamic(
+  () => import("./finance-flow").then((m) => ({ default: m.FinanceFlow })),
+  { ssr: false, loading: chartSkeleton },
+);
+const CustomMetricWidget = dynamic(
+  () => import("./custom-widgets").then((m) => ({ default: m.CustomMetricWidget })),
+  { ssr: false, loading: chartSkeleton },
+);
+const CustomChartWidget = dynamic(
+  () => import("./custom-widgets").then((m) => ({ default: m.CustomChartWidget })),
+  { ssr: false, loading: chartSkeleton },
+);
+const CustomTableWidget = dynamic(
+  () => import("./custom-widgets").then((m) => ({ default: m.CustomTableWidget })),
+  { ssr: false, loading: chartSkeleton },
+);
 
 const SIZE_CLASS: Record<WidgetSize, string> = {
   one_third:  "col-span-1",
