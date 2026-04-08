@@ -5,6 +5,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Master OS — Operations System",
   description: "Master internal operations management system",
+  icons: {
+    icon: "https://wearemaster.com/favicon.png",
+  },
 };
 
 export default function RootLayout({
