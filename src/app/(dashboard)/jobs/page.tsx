@@ -1133,20 +1133,31 @@ function JobsPageContent() {
       render: (item) => {
         const line = formatJobScheduleListLabel(item);
         const detail = formatJobScheduleLine(item);
-        const isTomorrow = line === "Tomorrow";
-        const isToday = line === "Today";
+        const scheduleParts = jobScheduleYmd(item);
+        const scheduleYmd = scheduleParts
+          ? `${scheduleParts.y}-${String(scheduleParts.m).padStart(2, "0")}-${String(scheduleParts.d).padStart(2, "0")}`
+          : "";
+        const todayYmd = formatLocalYmd(new Date());
+        const tomorrowYmd = formatLocalYmd(addLocalCalendarDays(new Date(), 1));
+        const inTwoDaysYmd = formatLocalYmd(addLocalCalendarDays(new Date(), 2));
+        const isTomorrow = scheduleYmd === tomorrowYmd || line === "Tomorrow";
+        const isToday = scheduleYmd === todayYmd || line === "Today";
+        const isInTwoDays = scheduleYmd === inTwoDaysYmd;
+        const chipLabel = isToday ? "Today" : isTomorrow ? "Tomorrow" : isInTwoDays ? "In 2 days" : line;
         return line ? (
-          isTomorrow || isToday ? (
+          isTomorrow || isToday || isInTwoDays ? (
             <span
               className={cn(
                 "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
-                isTomorrow
-                  ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
-                  : "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300",
+                isToday
+                  ? "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
+                  : isTomorrow
+                    ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                    : "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
               )}
               title={detail ?? undefined}
             >
-              {line}
+              {chipLabel}
             </span>
           ) : (
             <span
