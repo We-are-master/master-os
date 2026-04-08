@@ -367,11 +367,15 @@ function RegistrationForm() {
         headers: { Accept: "application/json" },
       });
 
-      let json: { error?: string; ok?: boolean } = {};
+      let json: { error?: unknown; ok?: boolean } = {};
       try { json = await res.json(); } catch { /* non-JSON response — ignore */ }
 
       if (!res.ok) {
-        const apiErr = json.error?.trim();
+        const apiErr = typeof json.error === "string"
+          ? json.error.trim()
+          : json.error != null
+            ? String(json.error)
+            : "";
         // Never display raw WebKit/Supabase pattern errors to the user
         const safeMsg = apiErr && !/expected pattern/i.test(apiErr)
           ? apiErr
