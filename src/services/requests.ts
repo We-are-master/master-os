@@ -68,13 +68,45 @@ async function enrichRequestsWithAccountNames(requests: ServiceRequest[]): Promi
   }));
 }
 
+/**
+ * Service requests list — fast path uses `get_requests_list_bundle` RPC
+ * (migration 125). Falls back to legacy direct query on RPC failure.
+ */
 export async function listRequests(params: ListParams): Promise<ListResult<ServiceRequest>> {
+  const supabase = getSupabase();
+  const page     = params.page ?? 1;
+  const pageSize = params.pageSize ?? 10;
+
+  const statusArg = params.status && params.status !== "all" ? params.status : null;
+  const searchArg = params.search?.trim() || null;
+
+  const { data, error } = await supabase.rpc("get_requests_list_bundle", {
+    p_status: statusArg,
+    p_search: searchArg,
+    p_limit:  pageSize,
+    p_offset: (page - 1) * pageSize,
+  });
+
+  if (!error && data) {
+    const payload = data as { rows: ServiceRequest[]; total: number };
+    const total   = payload.total ?? 0;
+    const enriched = await enrichRequestsWithAccountNames(payload.rows ?? []);
+    return {
+      data:       enriched,
+      count:      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
+  // Legacy fallback
   const result = await queryList<ServiceRequest>("service_requests", params, {
     searchColumns: ["reference", "client_name", "client_email", "property_address", "service_type"],
     defaultSort: "created_at",
   });
-  const data = await enrichRequestsWithAccountNames(result.data);
-  return { ...result, data };
+  const enriched = await enrichRequestsWithAccountNames(result.data);
+  return { ...result, data: enriched };
 }
 
 export async function getRequest(id: string, options?: { enrich?: boolean }): Promise<ServiceRequest | null> {
