@@ -532,6 +532,8 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
           clientId: formData.client_id,
           clientEmail: formData.client_email ?? "",
           propertyAddress: formData.property_address ?? "",
+          serviceType: normalizeTypeOfWork(formData.service_type ?? ""),
+          description: formData.description ?? "",
         });
         dupMs = performance.now() - tDup;
         if (!(await confirmDespiteDuplicates(formatRequestDuplicateLines(dupReq)))) return;
@@ -1481,6 +1483,10 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             const dupJ = await findDuplicateJobs({
               clientId: data.client_id,
               propertyAddress: data.property_address,
+              title: `${convertToJobOpen.service_type} — ${data.client_name}`,
+              scheduled_date: data.scheduled_date ?? null,
+              scheduled_start_at: data.scheduled_start_at ?? null,
+              scheduled_end_at: data.scheduled_end_at ?? null,
             });
             if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJ)))) return;
 
