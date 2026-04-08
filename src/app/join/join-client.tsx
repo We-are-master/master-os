@@ -518,7 +518,7 @@ function Step1({ companyName, setCompanyName, selectedTrades, setSelectedTrades,
         <input className={inputCls} placeholder="1234567890" value={utr} onChange={(e) => setUtr(e.target.value)} />
       </Field>
       <Field label="Website (optional)">
-        <input className={inputCls} type="url" placeholder="https://yoursite.co.uk" value={website} onChange={(e) => setWebsite(e.target.value)} />
+        <input className={inputCls} type="text" placeholder="https://yoursite.co.uk" value={website} onChange={(e) => setWebsite(e.target.value)} />
       </Field>
     </>
   );
