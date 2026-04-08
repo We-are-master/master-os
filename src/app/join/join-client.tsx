@@ -113,6 +113,7 @@ function OnboardingPhase({ onComplete }: { onComplete: () => void }) {
       <div className="relative z-10 flex justify-end pt-12 pr-6">
         {!isLast ? (
           <button
+            type="button"
             onClick={skip}
             className="px-4 py-2 rounded-full text-sm font-semibold text-white/75 hover:text-white transition-colors"
             style={{ background: "rgba(255,255,255,0.12)" }}
@@ -172,6 +173,7 @@ function OnboardingPhase({ onComplete }: { onComplete: () => void }) {
 
         {/* CTA button */}
         <button
+          type="button"
           onClick={next}
           className="w-full flex items-center justify-center gap-2.5 py-[18px] rounded-[18px] font-bold text-white text-[17px] mb-5"
           style={{
@@ -407,6 +409,7 @@ function RegistrationForm() {
         <div className="flex gap-3 mt-6">
           {step > 0 && (
             <button
+              type="button"
               onClick={handleBack}
               className="flex-1 py-3.5 rounded-xl border-2 border-slate-200 text-slate-700 font-semibold text-sm hover:bg-slate-50 transition-colors"
             >
@@ -415,6 +418,7 @@ function RegistrationForm() {
           )}
           {step < 2 ? (
             <button
+              type="button"
               onClick={handleNext}
               className="flex-1 py-3.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90"
               style={{ background: "linear-gradient(90deg,#FF6B2B,#E94A02)" }}
@@ -423,6 +427,7 @@ function RegistrationForm() {
             </button>
           ) : (
             <button
+              type="button"
               onClick={handleSubmit}
               disabled={loading}
               className="flex-1 py-3.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
@@ -461,11 +466,11 @@ function Step0({ fullName, setFullName, email, setEmail, password, setPassword, 
         <input className={inputCls} placeholder="John Smith" value={fullName} onChange={(e) => setFullName(e.target.value)} />
       </Field>
       <Field label="Email address" required>
-        <input className={inputCls} type="text" inputMode="email" placeholder="john@example.com" value={email} onChange={(e) => setEmail(e.target.value)} autoCapitalize="none" autoCorrect="off" />
+        <input className={inputCls} type="text" placeholder="john@example.com" value={email} onChange={(e) => setEmail(e.target.value)} autoCapitalize="none" autoCorrect="off" autoComplete="email" />
       </Field>
       <Field label="Password" required>
         <div className="relative">
-          <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Min. 8 chars, 1 uppercase, 1 number" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Min. 8 chars, 1 uppercase, 1 number" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
           <button type="button" onClick={() => setShowPassword((p: boolean) => !p)}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-medium">
             {showPassword ? "Hide" : "Show"}
@@ -473,7 +478,7 @@ function Step0({ fullName, setFullName, email, setEmail, password, setPassword, 
         </div>
       </Field>
       <Field label="Confirm password" required>
-        <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Repeat password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+        <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Repeat password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" />
       </Field>
     </>
   );
@@ -559,7 +564,7 @@ function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePh
               <p className="text-sm font-semibold text-slate-800 truncate">{profilePhoto.name}</p>
               <p className="text-xs text-slate-500">Profile / logo photo</p>
             </div>
-            <button onClick={onRemoveProfilePhoto} className="text-slate-400 hover:text-red-500 text-xs font-medium shrink-0">Remove</button>
+            <button type="button" onClick={onRemoveProfilePhoto} className="text-slate-400 hover:text-red-500 text-xs font-medium shrink-0">Remove</button>
           </div>
         ) : (
           <label className="flex items-center gap-3 cursor-pointer group rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 hover:border-orange-300 p-3.5 transition-colors">
@@ -596,7 +601,7 @@ function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePh
                     <p className="text-xs text-slate-500 truncate">{docs[key]!.name}</p>
                   </div>
                 </div>
-                <button onClick={() => onRemove(key)} className="text-slate-400 hover:text-red-500 text-xs font-medium shrink-0">Remove</button>
+                <button type="button" onClick={() => onRemove(key)} className="text-slate-400 hover:text-red-500 text-xs font-medium shrink-0">Remove</button>
               </div>
             ) : (
               <label className="flex items-center gap-3 cursor-pointer group">
