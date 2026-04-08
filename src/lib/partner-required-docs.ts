@@ -14,6 +14,8 @@ export interface PartnerDocLike {
   expires_at?: string;
   notes?: string;
   created_at: string;
+  /** When false, excluded from compliance score (reference / archive copy). Default true for legacy rows. */
+  counts_toward_compliance?: boolean | null;
 }
 
 const DOC_TYPES_NO_EXPIRY = new Set([
@@ -133,12 +135,36 @@ export const AGREEMENT_REQUIRED_DOCS: RequiredDocDef[] = [
   },
 ];
 
-/** Core mandatory IDs + UTR (if self-employed) + agreements — excludes trade certificates from the score. */
-export function buildMandatoryDocsForComplianceScore(partner: Partner | null): RequiredDocDef[] {
+/**
+ * Full mandatory checklist for the partner (Documents UI): core IDs, UTR when self-employed, agreements.
+ * Trade certificates are separate ({@link buildTradeCertificateRequirements}).
+ */
+export function buildMandatoryDocsChecklist(partner: Partner | null): RequiredDocDef[] {
   const core: RequiredDocDef[] = [...REQUIRED_PARTNER_DOCS];
   const withUtr =
     partner && inferPartnerLegal(partner) === "self_employed" ? [...core, UTR_REQUIRED_DOC] : [...core];
   return [...withUtr, ...AGREEMENT_REQUIRED_DOCS];
+}
+
+/**
+ * All requirement definitions that can be toggled in Settings (core + UTR + agreements).
+ * Trade certs are configured per partner trade, not here.
+ */
+export function getAllConfigurableComplianceRequirementDefs(): RequiredDocDef[] {
+  return [...REQUIRED_PARTNER_DOCS, UTR_REQUIRED_DOC, ...AGREEMENT_REQUIRED_DOCS];
+}
+
+/**
+ * Subset of {@link buildMandatoryDocsChecklist} that counts toward the numeric document score.
+ * @param companyExcludedDocIds — from `company_settings.compliance_score_excluded_doc_ids` (Settings → admin).
+ */
+export function buildMandatoryDocsForComplianceScore(
+  partner: Partner | null,
+  companyExcludedDocIds?: string[] | null,
+): RequiredDocDef[] {
+  const full = buildMandatoryDocsChecklist(partner);
+  const excluded = new Set(companyExcludedDocIds ?? []);
+  return full.filter((r) => !excluded.has(r.id));
 }
 
 export function pickRequiredDocMatch(docs: PartnerDocLike[], req: RequiredDocDef): PartnerDocLike | null {
@@ -146,11 +172,12 @@ export function pickRequiredDocMatch(docs: PartnerDocLike[], req: RequiredDocDef
 }
 
 export function pickRequiredDocMatches(docs: PartnerDocLike[], req: RequiredDocDef): PartnerDocLike[] {
-  const aliasMatch = docs.filter((d) => {
+  const eligible = docs.filter((d) => d.counts_toward_compliance !== false);
+  const aliasMatch = eligible.filter((d) => {
     const n = String(d.name ?? "").toLowerCase();
     return req.aliases.some((a) => n.includes(a));
   });
-  const byType = docs.filter((d) => d.doc_type === req.docType);
+  const byType = eligible.filter((d) => d.doc_type === req.docType);
   const byId = new Map<string, PartnerDocLike>();
   for (const doc of [...aliasMatch, ...byType]) byId.set(doc.id, doc);
   return [...byId.values()].sort(

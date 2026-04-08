@@ -40,7 +40,8 @@ export function jobExecutionWindowYmd(row: JobPeriodOverlapRow): { start: string
 
 const TERMINAL_JOB_STATUSES = new Set<string>(["completed", "cancelled", "deleted"]);
 
-function hasExecutionScheduleSignal(row: JobPeriodOverlapRow): boolean {
+/** True if the row has any schedule/finish/completion date fields (real execution window, not “open WIP”). */
+export function hasExecutionScheduleSignal(row: JobPeriodOverlapRow): boolean {
   return Boolean(
     ymdFromDbField(row.scheduled_date) ||
       ymdFromDbField(row.scheduled_start_at) ||

@@ -182,8 +182,10 @@ function scheduleFilterSubtitle(
   range: { from: string; to: string } | null
 ): string | null {
   if (!range || preset === "all") return null;
-  if (range.from === range.to) return `Scheduled ${formatMediumYmd(range.from)} · tabs & KPIs match this window`;
-  return `Scheduled ${formatMediumYmd(range.from)} – ${formatMediumYmd(range.to)} · tabs & KPIs match this window`;
+  if (range.from === range.to) {
+    return `Scheduled ${formatMediumYmd(range.from)} · Revenue & averages = all jobs below; tabs only filter the list`;
+  }
+  return `Scheduled ${formatMediumYmd(range.from)} – ${formatMediumYmd(range.to)} · Revenue & averages = all jobs below; tabs only filter the list`;
 }
 
 function jobBillableAmount(j: Job) {
@@ -492,36 +494,25 @@ function JobsPageContent() {
       }
       try {
         const rows = await fetchAllJobsFinancialKpiRows(scheduleRange);
-        const tabFiltered = rows.filter((r) =>
+        /** Same “All jobs” bucket as the first tab badge — not the currently selected tab. */
+        const allWindowRows = rows.filter((r) =>
           jobRowMatchesJobsManagementTab(
             {
               status: r.status,
               partner_id: r.partner_id,
               partner_ids: r.partner_ids,
             } as Job,
-            status,
+            "all",
           ),
         );
-        const revenueBasis =
-          status === "cancelled"
-            ? tabFiltered
-            : tabFiltered.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
+        const revenueBasis = allWindowRows.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
         const ticketSum = revenueBasis.reduce((s, r) => s + jobBillableRevenue(r), 0);
         setTotalRevenue(ticketSum);
         setAvgTicket(revenueBasis.length ? ticketSum / revenueBasis.length : 0);
 
-        let marginRows: typeof rows;
-        if (status === "deleted") {
-          marginRows = [];
-        } else if (status === "all") {
-          marginRows = rows.filter(
-            (r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted",
-          );
-        } else if (status === "completed" || status === "cancelled") {
-          marginRows = tabFiltered;
-        } else {
-          marginRows = tabFiltered.filter((r) => r.status !== "cancelled" && r.status !== "deleted");
-        }
+        const marginRows = allWindowRows.filter(
+          (r) => r.status !== "cancelled" && r.status !== "completed" && r.status !== "deleted",
+        );
         const margins = marginRows.map((r) => jobMarginPercent(r));
         const avgM = margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
         setAvgMarginPct(Math.round(avgM * 10) / 10);
@@ -531,7 +522,7 @@ function JobsPageContent() {
     } finally {
       setKpiFinancialLoading(false);
     }
-  }, [scheduleRange, status]);
+  }, [scheduleRange]);
   useEffect(() => {
     void loadDashboardStats();
   }, [loadDashboardStats]);
@@ -563,60 +554,8 @@ function JobsPageContent() {
 
   const unassignedTabCount = (tabCounts.unassigned ?? 0) + (tabCounts.auto_assigning ?? 0);
 
-  /** Pipeline stages shown in tabs (excl. Paid & Completed, Lost & Cancelled, Deleted). Must match tab badge sums. */
-  const activeJobsKpiCount = useMemo(
-    () =>
-      unassignedTabCount +
-      scheduledTabCount +
-      inProgressTabCount +
-      finalChecksTabCount +
-      (tabCounts.awaiting_payment ?? 0),
-    [
-      unassignedTabCount,
-      scheduledTabCount,
-      inProgressTabCount,
-      finalChecksTabCount,
-      tabCounts.awaiting_payment,
-    ],
-  );
-
-  /** Jobs count for KPI strip — matches selected tab + date range (same badges as tabs). */
-  const kpiJobsCount = useMemo(() => {
-    switch (status) {
-      case "all":
-        return activeJobsKpiCount;
-      case "unassigned":
-        return unassignedTabCount;
-      case "scheduled":
-        return scheduledTabCount;
-      case "in_progress":
-        return inProgressTabCount;
-      case "final_check":
-        return finalChecksTabCount;
-      case "awaiting_payment":
-        return tabCounts.awaiting_payment ?? 0;
-      case "completed":
-        return tabCounts.completed ?? 0;
-      case "cancelled":
-        return tabCounts.cancelled ?? 0;
-      case "deleted":
-        return tabCounts.deleted ?? 0;
-      default:
-        return tabCounts.all ?? 0;
-    }
-  }, [
-    status,
-    activeJobsKpiCount,
-    unassignedTabCount,
-    scheduledTabCount,
-    inProgressTabCount,
-    finalChecksTabCount,
-    tabCounts.awaiting_payment,
-    tabCounts.completed,
-    tabCounts.cancelled,
-    tabCounts.deleted,
-    tabCounts.all,
-  ]);
+  /** First KPI: same count as the “All Jobs” tab badge (entire window), not the selected tab. */
+  const kpiAllJobsCount = tabCounts.all ?? 0;
 
   const tabs = [
     { id: "all", label: "All Jobs", count: tabCounts.all ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.all },
@@ -1408,8 +1347,8 @@ function JobsPageContent() {
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
           <KpiCard
             className="min-h-[128px] h-full"
-            title={status === "all" ? "Active jobs" : "Jobs"}
-            value={kpiFinancialLoading ? "—" : kpiJobsCount}
+            title={scheduleRange ? "All jobs (window)" : "All jobs"}
+            value={kpiFinancialLoading ? "—" : kpiAllJobsCount}
             format="number"
             icon={Briefcase}
             accent="blue"

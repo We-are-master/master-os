@@ -21,7 +21,7 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, Download, List, LayoutGrid, Calendar, Map,
   FileText, BarChart3, Clock, ArrowRight,
-  Send, CheckCircle2, RotateCcw, RefreshCw, XCircle,
+  Send, CheckCircle2, CheckCheck, RotateCcw, RefreshCw, XCircle,
   Mail, Building2,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
   ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
@@ -1597,6 +1597,64 @@ function QuoteDetailDrawer({
     }
   };
 
+  /** Move to Awaiting customer and set PDF sent time — no email (e.g. WhatsApp / hand-delivered). */
+  const markSentDepositReady =
+    sendDepositPercentNum >= 0 &&
+    sendDepositPercentNum <= 100 &&
+    !Number.isNaN(sendDepositPercentNum);
+
+  const handleMarkAsSent = async () => {
+    if (!sendStep1Ready || !sendStep2Ready || !markSentDepositReady) {
+      toast.error(
+        "Complete the customer proposal above (scope or line items, at least one start date, and deposit).",
+      );
+      return;
+    }
+    const check = canAdvanceQuote(quote, "awaiting_customer", { skipCustomerEmailForAwaitingCustomer: true });
+    if (!check.ok) {
+      toast.error(check.message ?? "Complete the proposal before marking as sent.");
+      return;
+    }
+    setProposalSaving(true);
+    try {
+      const updated = await persistProposalToQuote();
+      const advance = canAdvanceQuote(updated, "awaiting_customer", { skipCustomerEmailForAwaitingCustomer: true });
+      if (!advance.ok) {
+        toast.error(advance.message ?? "Invalid proposal");
+        return;
+      }
+      if ((updated.margin_percent ?? 0) < 25 && (updated.margin_percent ?? 0) > 0) {
+        if (typeof window !== "undefined" && !window.confirm("Margin is below 25%. Mark as sent anyway?")) {
+          return;
+        }
+      }
+      const sentAt = new Date().toISOString();
+      const final = await updateQuote(updated.id, {
+        status: "awaiting_customer",
+        customer_pdf_sent_at: sentAt,
+      });
+      await logAudit({
+        entityType: "quote",
+        entityId: quote.id,
+        entityRef: quote.reference,
+        action: "status_changed",
+        fieldName: "status",
+        oldValue: quote.status,
+        newValue: "awaiting_customer",
+        userId: profile?.id,
+        userName: profile?.full_name,
+        metadata: { customer_pdf_sent_at: sentAt, mark_as_sent_no_email: true },
+      });
+      onQuoteUpdate?.(final);
+      setSendState("sent");
+      toast.success("Marked as sent — Awaiting customer (no email). Use Resend Quote if you email the PDF later.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update quote");
+    } finally {
+      setProposalSaving(false);
+    }
+  };
+
   return (
     <Drawer
       open={!!quote}
@@ -2237,8 +2295,9 @@ function QuoteDetailDrawer({
                     </>
                   ) : (
                     <>
-                      After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer, then use{" "}
-                      <strong className="text-text-secondary">Resend Quote</strong> below to send the PDF.
+                      After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to email the PDF, or{" "}
+                      <strong className="text-text-secondary">Mark as sent</strong> if you already shared it (no email). Then use{" "}
+                      <strong className="text-text-secondary">Resend Quote</strong> when you need to email the PDF.
                     </>
                   )}
                 </p>
@@ -2256,39 +2315,62 @@ function QuoteDetailDrawer({
                       {sendState === "sending" ? "Saving…" : "Resend Quote"}
                     </Button>
                   )}
-                  {overviewActions.map((action) => (
-                    <Button
-                      key={action.status}
-                      variant={action.primary ? "primary" : "outline"}
-                      size="sm"
-                      disabled={proposalSaving}
-                      icon={<action.icon className="h-3.5 w-3.5" />}
-                      onClick={async () => {
-                        if (action.status !== "awaiting_customer") {
-                          const result = await Promise.resolve(onStatusChange(quote, action.status));
-                          if (result === false) return;
-                          return;
-                        }
-                        if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
-                          toast.error("Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).");
-                          return;
-                        }
-                        setProposalSaving(true);
-                        try {
-                          const updated = await persistProposalToQuote();
-                          onQuoteUpdate?.(updated);
-                          const result = await Promise.resolve(onStatusChange(updated, "awaiting_customer"));
-                          if (result === false) return;
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "Failed to save proposal");
-                        } finally {
-                          setProposalSaving(false);
-                        }
-                      }}
-                    >
-                      {action.label}
-                    </Button>
-                  ))}
+                  {overviewActions.flatMap((action) => {
+                    const primaryBtn = (
+                      <Button
+                        key={action.status}
+                        variant={action.primary ? "primary" : "outline"}
+                        size="sm"
+                        disabled={proposalSaving}
+                        icon={<action.icon className="h-3.5 w-3.5" />}
+                        onClick={async () => {
+                          if (action.status !== "awaiting_customer") {
+                            const result = await Promise.resolve(onStatusChange(quote, action.status));
+                            if (result === false) return;
+                            return;
+                          }
+                          if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
+                            toast.error("Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).");
+                            return;
+                          }
+                          setProposalSaving(true);
+                          try {
+                            const updated = await persistProposalToQuote();
+                            onQuoteUpdate?.(updated);
+                            const result = await Promise.resolve(onStatusChange(updated, "awaiting_customer"));
+                            if (result === false) return;
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : "Failed to save proposal");
+                          } finally {
+                            setProposalSaving(false);
+                          }
+                        }}
+                      >
+                        {action.label}
+                      </Button>
+                    );
+                    if (
+                      action.status === "awaiting_customer" &&
+                      (quote.status === "draft" || quote.status === "in_survey" || quote.status === "bidding")
+                    ) {
+                      return [
+                        primaryBtn,
+                        <Button
+                          key={`${action.status}-mark-sent`}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={proposalSaving}
+                          icon={<CheckCheck className="h-3.5 w-3.5" />}
+                          title="Move to Awaiting customer and record PDF as sent — does not send email"
+                          onClick={() => void handleMarkAsSent()}
+                        >
+                          Mark as sent
+                        </Button>,
+                      ];
+                    }
+                    return [primaryBtn];
+                  })}
                 </div>
               </div>
             </div>
@@ -2724,8 +2806,8 @@ function quoteBasicsForPipeline(quote: Quote): { ok: boolean; message?: string }
   return { ok: true };
 }
 
-/** Scope/line total, dates, deposit and email must be on the quote before moving to Awaiting Customer. */
-function proposalFieldsReadyForQuote(quote: Quote): { ok: boolean; message?: string } {
+/** Scope, line total, dates, deposit — shared by email send and “mark sent (manual)”. */
+function proposalCoreReadyForCustomer(quote: Quote): { ok: boolean; message?: string } {
   const hasScope = !!bidPayloadTrimmedString(quote.scope as unknown);
   const hasValue = Number(quote.total_value) > 0;
   if (!hasScope && !hasValue) {
@@ -2742,6 +2824,13 @@ function proposalFieldsReadyForQuote(quote: Quote): { ok: boolean; message?: str
   if (Number.isNaN(depPct) || depPct < 0 || depPct > 100) {
     return { ok: false, message: "Set deposit percentage between 0% and 100% (0 if no deposit)." };
   }
+  return { ok: true };
+}
+
+/** Scope/line total, dates, deposit and email must be on the quote before moving to Awaiting Customer. */
+function proposalFieldsReadyForQuote(quote: Quote): { ok: boolean; message?: string } {
+  const core = proposalCoreReadyForCustomer(quote);
+  if (!core.ok) return core;
   const email = bidPayloadTrimmedString(quote.client_email as unknown);
   if (!email.includes("@")) {
     return { ok: false, message: "Set a valid customer email before sending to customer." };
@@ -2749,7 +2838,11 @@ function proposalFieldsReadyForQuote(quote: Quote): { ok: boolean; message?: str
   return { ok: true };
 }
 
-function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; message?: string } {
+function canAdvanceQuote(
+  quote: Quote,
+  nextStatus: string,
+  opts?: { skipCustomerEmailForAwaitingCustomer?: boolean },
+): { ok: boolean; message?: string } {
   if (quote.status === "draft" && (nextStatus === "in_survey" || nextStatus === "bidding")) {
     return quoteBasicsForPipeline(quote);
   }
@@ -2759,11 +2852,11 @@ function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; messa
     if (Number(quote.total_value) <= 0) {
       return { ok: false, message: "Set total value (sell price) before sending to customer — use Review & Send pricing or line items." };
     }
-    return proposalFieldsReadyForQuote(quote);
+    return opts?.skipCustomerEmailForAwaitingCustomer ? proposalCoreReadyForCustomer(quote) : proposalFieldsReadyForQuote(quote);
   }
   if (quote.status === "bidding" && nextStatus === "awaiting_customer") {
     if (Number(quote.total_value) <= 0) return { ok: false, message: "Set total value before sending to customer (Step 4: Margin & PDF)." };
-    return proposalFieldsReadyForQuote(quote);
+    return opts?.skipCustomerEmailForAwaitingCustomer ? proposalCoreReadyForCustomer(quote) : proposalFieldsReadyForQuote(quote);
   }
   return { ok: true };
 }
