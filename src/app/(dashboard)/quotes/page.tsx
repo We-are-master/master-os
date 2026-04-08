@@ -527,6 +527,8 @@ function QuotesPageContent() {
           clientEmail: formData.client_email ?? "",
           title: formData.title ?? "",
           propertyAddress: formData.property_address,
+          startDateOption1: formData.start_date_option_1,
+          startDateOption2: formData.start_date_option_2,
         });
         if (!(await confirmDespiteDuplicates(formatQuoteDuplicateLines(dupQ)))) return;
 
@@ -688,6 +690,10 @@ function QuotesPageContent() {
           findDuplicateJobs({
             clientId: formData.client_id,
             propertyAddress: formData.property_address,
+            title: formData.title,
+            scheduled_date,
+            scheduled_start_at,
+            scheduled_end_at,
           }),
           resolveImagesForJobFromQuote(quoteToConvert),
         ]);

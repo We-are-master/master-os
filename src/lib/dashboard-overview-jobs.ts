@@ -69,22 +69,39 @@ const SELECT_EXEC_FULL =
   `${SELECT_FULL}, scheduled_date, scheduled_finish_date, scheduled_start_at, scheduled_end_at, completed_date`;
 const SELECT_EXEC_LEGACY = SELECT_FULL;
 
+function jobCreatedAtInIsoBounds(
+  row: Pick<OverviewPipelineJobRow, "created_at">,
+  bounds: { fromIso: string; toIso: string },
+): boolean {
+  const ca = row.created_at;
+  if (!ca) return false;
+  const t = new Date(ca).getTime();
+  if (Number.isNaN(t)) return false;
+  const a = new Date(bounds.fromIso).getTime();
+  const b = new Date(bounds.toIso).getTime();
+  return t >= a && t <= b;
+}
+
 /**
- * Dashboard booked revenue: pipeline jobs whose **schedule start day** falls in the selected range
- * (same rule as Jobs Management “Schedule window”: {@link jobScheduleStartInYmdRange}).
+ * Dashboard booked revenue: pipeline jobs filtered by either:
+ * - **schedule_start** (default): schedule start day in range — same as Jobs Management “Schedule window”
+ *   ({@link jobScheduleStartInYmdRange})
+ * - **created_at**: job row created in the ISO range (sold / booked in period)
  * Soft-deleted rows excluded; statuses are {@link DASHBOARD_BOOKED_PIPELINE_STATUSES} (not completed).
  * When `bounds` is null, all matching pipeline jobs are included (no date filter).
  */
 export function fetchPipelineJobsForDashboard(
   supabase: ReturnType<typeof getSupabase>,
   bounds: { fromIso: string; toIso: string } | null,
+  opts?: { dateBasis?: "schedule_start" | "created_at" },
 ): Promise<OverviewPipelineJobRow[]> {
-  const cacheKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
+  const basis = opts?.dateBasis ?? "schedule_start";
+  const cacheKey = bounds ? `${bounds.fromIso}|${bounds.toIso}|${basis}` : `all|${basis}`;
   const cached = pipelineJobsInflight.get(cacheKey);
   if (cached && Date.now() - cached.at < PIPELINE_COALESCE_TTL_MS) {
     return cached.promise;
   }
-  const promise = _fetchPipelineJobsForDashboard(supabase, bounds);
+  const promise = _fetchPipelineJobsForDashboard(supabase, bounds, opts);
   pipelineJobsInflight.set(cacheKey, { promise, at: Date.now() });
   return promise;
 }
@@ -92,7 +109,9 @@ export function fetchPipelineJobsForDashboard(
 async function _fetchPipelineJobsForDashboard(
   supabase: ReturnType<typeof getSupabase>,
   bounds: { fromIso: string; toIso: string } | null,
+  opts?: { dateBasis?: "schedule_start" | "created_at" },
 ): Promise<OverviewPipelineJobRow[]> {
+  const dateBasis = opts?.dateBasis ?? "schedule_start";
   const statusList = [...DASHBOARD_BOOKED_PIPELINE_STATUSES];
   const fromDay = bounds?.fromIso.slice(0, 10) ?? null;
   const toDay = bounds?.toIso.slice(0, 10) ?? null;
@@ -137,6 +156,9 @@ async function _fetchPipelineJobsForDashboard(
 
   if (!bounds || fromDay == null || toDay == null) return rows;
 
+  if (dateBasis === "created_at") {
+    return rows.filter((r) => jobCreatedAtInIsoBounds(r, bounds));
+  }
   return rows.filter((r) => jobScheduleStartInYmdRange(r, fromDay, toDay));
 }
 

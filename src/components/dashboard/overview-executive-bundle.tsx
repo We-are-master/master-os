@@ -22,14 +22,16 @@ import {
   fetchPipelineJobsForDashboard,
   jobExecutionStartYmd,
   defaultMonthlySalesGoalGbp,
-  periodSalesGoalGbp,
   resolveMonthlySalesGoalFromCompany,
   type OverviewPipelineJobRow,
 } from "@/lib/dashboard-overview-jobs";
 import {
   getDashboardSalesGoalMonthlyOverrideGbp,
 } from "@/lib/dashboard-sales-goal-preference";
-import { dashboardBoundsToInclusiveLocalYmd } from "@/lib/dashboard-date-range";
+import {
+  dashboardBoundsToInclusiveLocalYmd,
+  getLocalCalendarMonthDashboardBounds,
+} from "@/lib/dashboard-date-range";
 import {
   localCalendarMonthYmdBounds,
   sumInvoiceOpenBalanceOutstanding,
@@ -114,6 +116,8 @@ export function OverviewExecutiveBundle() {
     outstandingAr: 0,
   });
   const [monthlySalesGoal, setMonthlySalesGoal] = useState(() => defaultMonthlySalesGoalGbp());
+  /** Calendar month label for Revenue / Sales (always current month, not dashboard range). */
+  const [revenueSoldMonthLabel, setRevenueSoldMonthLabel] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -126,9 +130,12 @@ export function OverviewExecutiveBundle() {
         const fromIso = bounds?.fromIso ?? "2000-01-01T00:00:00.000Z";
         const toBound = bounds?.toIso ?? toIso;
 
+        const soldInMonthBounds = getLocalCalendarMonthDashboardBounds(clock);
+        setRevenueSoldMonthLabel(localCalendarMonthYmdBounds(clock).monthLabel);
+
         const [companySettings, pipelineRows, tiersList, customerCashTotal, invoicesRes] = await Promise.all([
           getCompanySettings(),
-          fetchPipelineJobsForDashboard(supabase, bounds),
+          fetchPipelineJobsForDashboard(supabase, soldInMonthBounds, { dateBasis: "created_at" }),
           listCommissionTiers().catch(() => [] as CommissionTier[]),
           customerPaymentsTotalInRange(supabase, fromIso, toBound),
           supabase
@@ -646,10 +653,8 @@ export function OverviewExecutiveBundle() {
   );
   const { current, next, fillPct } = tierProgress(billingForTier, tiers);
 
-  const periodGoal = periodSalesGoalGbp(bounds, monthlySalesGoal);
-  const salesGoalFillPct =
-    periodGoal != null && periodGoal > 0 ? Math.min(100, (revenue / periodGoal) * 100) : 0;
-  const allTimeFillPct =
+  /** Revenue KPI is always current calendar month booked; goal compares to monthly baseline. */
+  const monthVsBaselinePct =
     monthlySalesGoal > 0 ? Math.min(100, (revenue / monthlySalesGoal) * 100) : 0;
 
   const topWeeksByRevenue = useMemo(
@@ -686,7 +691,9 @@ export function OverviewExecutiveBundle() {
             {
               label: "Revenue",
               value: revenue,
-              sub: bounds ? "Booked value · schedule start in selected range" : "Booked value · all pipeline jobs (no date filter)",
+              sub: loading
+                ? "—"
+                : `Booked value · jobs created in ${revenueSoldMonthLabel || "this month"} · ignores dashboard range`,
               accent: "text-emerald-600",
             },
             { label: "Costs", value: partnerDirect, sub: "Direct cost on those jobs", accent: "text-amber-600" },
@@ -775,40 +782,28 @@ export function OverviewExecutiveBundle() {
             <div className="min-w-0">
               <p className="text-xs font-semibold text-text-primary">Sales goal</p>
               <p className="text-[10px] text-text-tertiary truncate">
-                Baseline {formatCurrency(monthlySalesGoal)}
-                {bounds && periodGoal != null ? ` · target ${formatCurrency(periodGoal)}` : ""}
+                Baseline {formatCurrency(monthlySalesGoal)} · same month as Revenue above
               </p>
             </div>
           </div>
           {!loading && (
             <span className="text-xs font-bold tabular-nums text-text-primary">
-              {bounds && periodGoal != null && periodGoal > 0
-                ? `${Math.round(salesGoalFillPct)}%`
-                : monthlySalesGoal > 0
-                  ? `${Math.round(allTimeFillPct)}%`
-                  : "—"}
+              {monthlySalesGoal > 0 ? `${Math.round(monthVsBaselinePct)}%` : "—"}
             </span>
           )}
         </div>
         <div className="px-4 pb-2.5 pt-2">
           {loading ? (
             <div className="h-2 animate-pulse rounded-full bg-surface-hover" />
-          ) : !bounds ? (
+          ) : monthlySalesGoal > 0 ? (
             <div className="h-2 rounded-full overflow-hidden bg-surface-hover ring-1 ring-inset ring-border-light/50">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
-                style={{ width: `${allTimeFillPct}%` }}
-              />
-            </div>
-          ) : periodGoal != null && periodGoal > 0 ? (
-            <div className="h-2 rounded-full overflow-hidden bg-surface-hover ring-1 ring-inset ring-border-light/50">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
-                style={{ width: `${salesGoalFillPct}%` }}
+                style={{ width: `${monthVsBaselinePct}%` }}
               />
             </div>
           ) : (
-            <p className="text-[10px] text-text-tertiary">No period goal for this range.</p>
+            <p className="text-[10px] text-text-tertiary">Set a monthly sales goal in Settings.</p>
           )}
         </div>
       </Card>
@@ -927,7 +922,9 @@ export function OverviewExecutiveBundle() {
           <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
               <CardTitle className="text-sm font-semibold">Top 5 — partners</CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">Gross margin · schedule start in period</p>
+              <p className="text-[10px] text-text-tertiary mt-0.5">
+                Gross margin · jobs created in {revenueSoldMonthLabel || "this month"}
+              </p>
             </div>
             <Users className="h-3.5 w-3.5 text-text-tertiary" />
           </CardHeader>
@@ -959,8 +956,8 @@ export function OverviewExecutiveBundle() {
               <div className="min-w-0">
                 <CardTitle className="text-sm font-semibold">Top 5 — account owners</CardTitle>
                 <p className="text-[10px] text-text-tertiary mt-0.5">
-                  By <strong className="text-text-secondary">account_owner_id</strong> · booked revenue · schedule start in period ·{" "}
-                  {bounds ? rangeLabel : "All time"}
+                  By <strong className="text-text-secondary">account_owner_id</strong> · booked revenue · jobs created in{" "}
+                  {revenueSoldMonthLabel || "this month"}
                 </p>
               </div>
             </div>
@@ -1019,7 +1016,9 @@ export function OverviewExecutiveBundle() {
           <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
               <CardTitle className="text-sm font-semibold">Top 5 — weeks</CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">Highest booked revenue by schedule-start week</p>
+              <p className="text-[10px] text-text-tertiary mt-0.5">
+                Booked revenue from jobs created in {revenueSoldMonthLabel || "this month"} · by execution-start week
+              </p>
             </div>
             <CalendarDays className="h-3.5 w-3.5 text-text-tertiary" />
           </CardHeader>
@@ -1086,7 +1085,9 @@ export function OverviewExecutiveBundle() {
                 k: "rev",
                 label: "Revenue",
                 main: loading ? "—" : formatCurrency(revenue),
-                sub: bounds ? "Booked · schedule start in range" : "Booked · all pipeline",
+                sub: loading
+                  ? "—"
+                  : `Booked · created in ${revenueSoldMonthLabel || "this month"}`,
                 accent: "text-emerald-700 dark:text-emerald-400",
               },
               {
