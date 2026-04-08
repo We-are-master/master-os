@@ -33,7 +33,7 @@ export async function middleware(request: NextRequest) {
   const isApiRoute = pathname.startsWith("/api");
   const isLoginPage = pathname.startsWith("/login");
   /** Public pages: no Supabase session (partner portal validates ?token= / ?code= client-side + API). */
-  const allowsAnonymous = isLoginPage || pathname.startsWith("/partner-upload");
+  const allowsAnonymous = isLoginPage || pathname.startsWith("/partner-upload") || pathname.startsWith("/join");
 
   // API routes: do not redirect; let the route return 401 if unauthenticated
   if (isApiRoute) {
