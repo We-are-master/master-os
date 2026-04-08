@@ -88,6 +88,9 @@ export function getSupabase() {
   return createClient();
 }
 
+/** Cache which tables have a `deleted_at` column to avoid repeated probe queries. */
+const deletedAtColumnCache = new Map<string, boolean>();
+
 export async function softDeleteById(
   table: string,
   id: string,
@@ -240,10 +243,13 @@ export async function getStatusCounts(
   }
 
   /** Matches `getAggregates`: some tables (e.g. `partners`) have no `deleted_at` column. */
-  let useDeletedFilter = true;
-  const deletedProbe = await supabase.from(table).select("*", { count: "exact", head: true }).is("deleted_at", null);
-  if (deletedProbe.error) {
-    useDeletedFilter = false;
+  let useDeletedFilter: boolean;
+  if (deletedAtColumnCache.has(table)) {
+    useDeletedFilter = deletedAtColumnCache.get(table)!;
+  } else {
+    const deletedProbe = await supabase.from(table).select("*", { count: "exact", head: true }).is("deleted_at", null);
+    useDeletedFilter = !deletedProbe.error;
+    deletedAtColumnCache.set(table, useDeletedFilter);
   }
 
   let totalQuery = supabase.from(table).select("*", { count: "exact", head: true });
@@ -293,12 +299,17 @@ export async function getAggregates(
   const supabase = getSupabase();
   const pageSize = 2000;
 
-  let useDeletedFilter = true;
-  let countRes = await supabase.from(table).select("*", { count: "exact", head: true }).is("deleted_at", null);
-  if (countRes.error) {
-    useDeletedFilter = false;
-    countRes = await supabase.from(table).select("*", { count: "exact", head: true });
+  let useDeletedFilter: boolean;
+  if (deletedAtColumnCache.has(table)) {
+    useDeletedFilter = deletedAtColumnCache.get(table)!;
+  } else {
+    const probe = await supabase.from(table).select("*", { count: "exact", head: true }).is("deleted_at", null);
+    useDeletedFilter = !probe.error;
+    deletedAtColumnCache.set(table, useDeletedFilter);
   }
+  let countRes = useDeletedFilter
+    ? await supabase.from(table).select("*", { count: "exact", head: true }).is("deleted_at", null)
+    : await supabase.from(table).select("*", { count: "exact", head: true });
   if (countRes.error) throw countRes.error;
   const totalCount = countRes.count ?? 0;
 
