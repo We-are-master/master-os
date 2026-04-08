@@ -13,6 +13,7 @@ import type {
   CustomTableColumn,
 } from "@/types/dashboard-config";
 import { TABLE_META, COLOUR_MAP } from "@/types/dashboard-config";
+import { DASHBOARD_ICON_NAMES } from "@/lib/dashboard-icons";
 
 const uuidv4 = () => crypto.randomUUID();
 
@@ -49,7 +50,7 @@ const LIMITS: { value: 5 | 10 | 20; label: string }[] = [
   { value: 10, label: "10 rows" },
   { value: 20, label: "20 rows" },
 ];
-const ICONS = ["Hash", "DollarSign", "Briefcase", "FileText", "Users", "TrendingUp", "TrendingDown", "Percent", "BarChart2", "Activity", "Clock", "CheckCircle2", "AlertTriangle", "Star"];
+const ICONS = DASHBOARD_ICON_NAMES;
 
 type CustomType = "custom_metric" | "custom_chart" | "custom_table";
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, useMemo, createContext, useContext } from "react";
 import { getSupabase } from "@/services/base";
 import type { Profile } from "@/types/database";
 
@@ -67,5 +67,11 @@ export function useProfileLoader(): ProfileState {
     load();
   }, [load]);
 
-  return { profile, loading, refresh };
+  // Stable object reference — without useMemo, every render of the layout
+  // creates a fresh object, triggering every ProfileContext.Provider consumer
+  // to re-render unnecessarily (and re-runs the entire dashboard tree).
+  return useMemo(
+    () => ({ profile, loading, refresh }),
+    [profile, loading, refresh],
+  );
 }
