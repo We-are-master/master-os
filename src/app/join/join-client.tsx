@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const APP_STORE_URL = "https://apps.apple.com/br/app/master-services/id6747205225";
@@ -224,6 +224,38 @@ function normalizeEmailInput(s: string): string {
   return s.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
 }
 
+/**
+ * iOS Safari throws "The string did not match the expected pattern." when FormData.append
+ * receives a File whose `name` contains characters WebKit considers invalid for
+ * Content-Disposition (HEIC capture without extension, special chars, accents, etc.).
+ *
+ * Workaround: re-wrap the File as a Blob with a clean ASCII filename.
+ */
+function sanitizeFileForUpload(file: File, fallbackBaseName: string): File {
+  const rawName = (file.name || "").trim();
+  const dot     = rawName.lastIndexOf(".");
+  const rawExt  = dot > 0 ? rawName.slice(dot + 1).toLowerCase() : "";
+
+  // Map common iOS types to safe extensions
+  const typeExt = (() => {
+    const t = (file.type || "").toLowerCase();
+    if (t.includes("jpeg") || t.includes("jpg")) return "jpg";
+    if (t.includes("png"))                       return "png";
+    if (t.includes("webp"))                      return "webp";
+    if (t.includes("heic") || t.includes("heif")) return "heic";
+    if (t.includes("pdf"))                       return "pdf";
+    return "";
+  })();
+
+  const safeExt = (rawExt && /^[a-z0-9]{2,5}$/.test(rawExt)) ? rawExt : (typeExt || "bin");
+  const safeName = `${fallbackBaseName}.${safeExt}`;
+  const safeType = file.type || "application/octet-stream";
+
+  // Re-create as a fresh File from the underlying blob bytes — this strips any
+  // problematic metadata that WebKit refuses to serialize into the multipart body.
+  return new File([file], safeName, { type: safeType, lastModified: Date.now() });
+}
+
 export function JoinClient() {
   const [phase, setPhase] = useState<"onboarding" | "form">("onboarding");
 
@@ -309,29 +341,53 @@ function RegistrationForm() {
     setError(null);
     setLoading(true);
 
-    const form = new FormData();
-    form.append("fullName",         fullName.trim());
-    form.append("email", normalizeEmailInput(email).toLowerCase());
-    form.append("password",         password);
-    form.append("companyName",      companyName.trim());
-    form.append("trades",           selectedTrades.join(","));
-    form.append("servicesProvided", services.trim());
-    form.append("utr",              utr.trim());
-    form.append("website",          website.trim());
-
-    if (profilePhoto) form.append("profile_photo", profilePhoto);
-
-    (Object.keys(docs) as DocKey[]).forEach((key) => {
-      if (docs[key]) form.append(key, docs[key]!);
-    });
-
     try {
-      const res  = await fetch("/api/join/register", { method: "POST", body: form });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Registration failed.");
+      const form = new FormData();
+      form.append("fullName",         fullName.trim());
+      form.append("email",            normalizeEmailInput(email).toLowerCase());
+      form.append("password",         password);
+      form.append("companyName",      companyName.trim());
+      form.append("trades",           selectedTrades.join(","));
+      form.append("servicesProvided", services.trim());
+      form.append("utr",              utr.trim());
+      form.append("website",          website.trim());
+
+      if (profilePhoto) {
+        form.append("profile_photo", sanitizeFileForUpload(profilePhoto, "profile_photo"));
+      }
+
+      (Object.keys(docs) as DocKey[]).forEach((key) => {
+        const f = docs[key];
+        if (f) form.append(key, sanitizeFileForUpload(f, key));
+      });
+
+      const res  = await fetch("/api/join/register", {
+        method: "POST",
+        body: form,
+        headers: { Accept: "application/json" },
+      });
+
+      let json: { error?: string; ok?: boolean } = {};
+      try { json = await res.json(); } catch { /* non-JSON response — ignore */ }
+
+      if (!res.ok) {
+        const apiErr = json.error?.trim();
+        // Never display raw WebKit/Supabase pattern errors to the user
+        const safeMsg = apiErr && !/expected pattern/i.test(apiErr)
+          ? apiErr
+          : "We could not complete your registration. Please double-check your details and try again.";
+        throw new Error(safeMsg);
+      }
       setSuccess(true);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+      const raw = e instanceof Error ? e.message : "";
+      // Iff the WebKit pattern error leaks through (e.g. thrown by FormData itself),
+      // replace it with a friendly message.
+      const safe = raw && !/expected pattern/i.test(raw)
+        ? raw
+        : "We could not submit your application. Please check your photo/document files and try again.";
+      console.error("[join] submit error:", e);
+      setError(safe);
     } finally {
       setLoading(false);
     }
@@ -689,7 +745,19 @@ function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePh
   onProfilePhotoChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onRemoveProfilePhoto: () => void;
 }) {
-  const photoPreview = profilePhoto ? URL.createObjectURL(profilePhoto) : null;
+  const photoPreview = useMemo(() => {
+    if (!profilePhoto) return null;
+    try {
+      return URL.createObjectURL(profilePhoto);
+    } catch {
+      return null;
+    }
+  }, [profilePhoto]);
+
+  // Revoke the blob URL when the photo changes or component unmounts
+  useEffect(() => {
+    return () => { if (photoPreview) URL.revokeObjectURL(photoPreview); };
+  }, [photoPreview]);
 
   return (
     <>
