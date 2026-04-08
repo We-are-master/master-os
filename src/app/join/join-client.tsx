@@ -283,6 +283,112 @@ function extractFriendlyError(value: unknown, status?: number): string {
 }
 
 /**
+ * Compress an image File entirely on the client (canvas). Resizes so the longest
+ * edge fits in `maxDim` and re-encodes as JPEG at `quality`. Skips PDFs and any
+ * file the browser can't decode (e.g. HEIC on older Safari) — returns the
+ * original File in those cases so the upload still proceeds.
+ *
+ * Goal: keep every image well under 1 MB so the combined multipart body stays
+ * inside the 4.5 MB Vercel API limit.
+ */
+async function compressImage(
+  file: File,
+  opts: { maxDim?: number; quality?: number; targetMaxBytes?: number } = {},
+): Promise<File> {
+  const maxDim         = opts.maxDim         ?? 1600;
+  const baseQuality    = opts.quality        ?? 0.82;
+  const targetMaxBytes = opts.targetMaxBytes ?? 900_000; // ~0.9 MB
+
+  // Skip non-images and PDFs entirely
+  if (!file.type || !file.type.startsWith("image/") || file.type === "image/svg+xml") {
+    return file;
+  }
+
+  // If already small enough, no work needed
+  if (file.size <= targetMaxBytes) return file;
+
+  // Decode the image
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    // Fallback to <img> + object URL (older WebKit)
+    try {
+      const url = URL.createObjectURL(file);
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const i = new Image();
+        i.onload  = () => resolve(i);
+        i.onerror = () => reject(new Error("decode_failed"));
+        i.src = url;
+      });
+      // Draw via canvas path below
+      const canvas = document.createElement("canvas");
+      const ratio  = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+      canvas.width  = Math.round(img.naturalWidth  * ratio);
+      canvas.height = Math.round(img.naturalHeight * ratio);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { URL.revokeObjectURL(url); return file; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      const blob = await canvasToJpegBlob(canvas, baseQuality, targetMaxBytes);
+      if (!blob) return file;
+      return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
+        type: "image/jpeg",
+        lastModified: Date.now(),
+      });
+    } catch {
+      return file;
+    }
+  }
+
+  const ratio = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.round(bitmap.width  * ratio);
+  const h = Math.round(bitmap.height * ratio);
+
+  const canvas = document.createElement("canvas");
+  canvas.width  = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return file;
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close?.();
+
+  const blob = await canvasToJpegBlob(canvas, baseQuality, targetMaxBytes);
+  if (!blob) return file;
+
+  return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
+    type: "image/jpeg",
+    lastModified: Date.now(),
+  });
+}
+
+/** Encode canvas → JPEG, lowering quality progressively until it fits under maxBytes. */
+async function canvasToJpegBlob(
+  canvas: HTMLCanvasElement,
+  startQuality: number,
+  maxBytes: number,
+): Promise<Blob | null> {
+  const qualities = [startQuality, 0.7, 0.6, 0.5, 0.4];
+  for (const q of qualities) {
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), "image/jpeg", q),
+    );
+    if (!blob) continue;
+    if (blob.size <= maxBytes) return blob;
+  }
+  // Last attempt: aggressive downscale
+  const lastCanvas = document.createElement("canvas");
+  lastCanvas.width  = Math.round(canvas.width  * 0.7);
+  lastCanvas.height = Math.round(canvas.height * 0.7);
+  const ctx = lastCanvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(canvas, 0, 0, lastCanvas.width, lastCanvas.height);
+  return new Promise<Blob | null>((resolve) =>
+    lastCanvas.toBlob((b) => resolve(b), "image/jpeg", 0.5),
+  );
+}
+
+/**
  * iOS Safari throws "The string did not match the expected pattern." when FormData.append
  * receives a File whose `name` contains characters WebKit considers invalid for
  * Content-Disposition (HEIC capture without extension, special chars, accents, etc.).
@@ -400,6 +506,16 @@ function RegistrationForm() {
     setLoading(true);
 
     try {
+      // Compress all images on the client first — keeps the multipart body
+      // well under Vercel's 4.5 MB API limit even with 5 attached files.
+      const [compressedProfile, ...compressedDocs] = await Promise.all([
+        profilePhoto ? compressImage(profilePhoto) : Promise.resolve(null),
+        ...DOC_FIELDS.map(({ key }) => {
+          const f = docs[key];
+          return f ? compressImage(f) : Promise.resolve(null);
+        }),
+      ]);
+
       const form = new FormData();
       form.append("fullName",         fullName.trim());
       form.append("email",            normalizeEmailInput(email).toLowerCase());
@@ -410,12 +526,12 @@ function RegistrationForm() {
       form.append("utr",              utr.trim());
       form.append("website",          website.trim());
 
-      if (profilePhoto) {
-        form.append("profile_photo", sanitizeFileForUpload(profilePhoto, "profile_photo"));
+      if (compressedProfile) {
+        form.append("profile_photo", sanitizeFileForUpload(compressedProfile, "profile_photo"));
       }
 
-      (Object.keys(docs) as DocKey[]).forEach((key) => {
-        const f = docs[key];
+      DOC_FIELDS.forEach(({ key }, idx) => {
+        const f = compressedDocs[idx];
         if (f) form.append(key, sanitizeFileForUpload(f, key));
       });
 
