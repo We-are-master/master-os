@@ -28,7 +28,6 @@ import {
 } from "@/lib/dashboard-overview-jobs";
 import {
   getDashboardSalesGoalMonthlyOverrideGbp,
-  getDashboardSalesGoalTierNumberPreference,
 } from "@/lib/dashboard-sales-goal-preference";
 import { dashboardBoundsToInclusiveLocalYmd } from "@/lib/dashboard-date-range";
 import {
@@ -148,7 +147,7 @@ export function OverviewExecutiveBundle() {
           resolveMonthlySalesGoalFromCompany(
             companySettings,
             tiersList,
-            getDashboardSalesGoalTierNumberPreference(),
+            null,
             getDashboardSalesGoalMonthlyOverrideGbp(),
           ),
         );
@@ -610,7 +609,7 @@ export function OverviewExecutiveBundle() {
           resolveMonthlySalesGoalFromCompany(
             s,
             t,
-            getDashboardSalesGoalTierNumberPreference(),
+            null,
             getDashboardSalesGoalMonthlyOverrideGbp(),
           ),
         );
