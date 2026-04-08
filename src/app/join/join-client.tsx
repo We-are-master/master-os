@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const APP_STORE_URL = "https://apps.apple.com/br/app/master-services/id6747205225";
@@ -248,13 +248,17 @@ function RegistrationForm() {
 
   function validateStep(s: number): string | null {
     if (s === 0) {
-      if (!fullName.trim())                                          return "Please enter your full name.";
-      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!email.trim() || !emailRe.test(email.trim()))             return "Please enter a valid email address.";
-      if (password.length < 8)                                      return "Password must be at least 8 characters.";
-      if (!/[A-Z]/.test(password))                                  return "Password must contain at least one uppercase letter.";
-      if (!/[0-9]/.test(password))                                  return "Password must contain at least one number.";
-      if (password !== confirmPassword)                              return "Passwords do not match.";
+      if (!fullName.trim()) return "Please enter your full name.";
+      // Permissive email check — avoid rejecting valid addresses; server validates again.
+      const emailTrim = email.trim();
+      if (!emailTrim || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
+        return "Please enter a valid email address.";
+      }
+      if (password.length < 8) return "Password must be at least 8 characters.";
+      if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter.";
+      if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter.";
+      if (!/[0-9]/.test(password)) return "Password must contain at least one number.";
+      if (password !== confirmPassword) return "Passwords do not match.";
     }
     if (s === 1) {
       if (selectedTrades.length === 0) return "Please select at least one service type.";
@@ -312,8 +316,8 @@ function RegistrationForm() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Registration failed.");
       setSuccess(true);
-    } catch (e: any) {
-      setError(e.message ?? "Something went wrong. Please try again.");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -366,8 +370,14 @@ function RegistrationForm() {
         ))}
       </div>
 
-      {/* Form card */}
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-7">
+      {/* Form card — noValidate: Safari iOS otherwise shows native "pattern" bubbles on fields */}
+      <form
+        className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-7"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+        }}
+      >
         {error && (
           <div className="mb-5 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
             {error}
@@ -437,7 +447,7 @@ function RegistrationForm() {
             </button>
           )}
         </div>
-      </div>
+      </form>
 
     </div>
   );
@@ -458,7 +468,29 @@ function Field({ label, required, children }: { label: string; required?: boolea
 
 const inputCls = "w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent transition";
 
-function Step0({ fullName, setFullName, email, setEmail, password, setPassword, confirmPassword, setConfirmPassword, showPassword, setShowPassword }: any) {
+function Step0({
+  fullName,
+  setFullName,
+  email,
+  setEmail,
+  password,
+  setPassword,
+  confirmPassword,
+  setConfirmPassword,
+  showPassword,
+  setShowPassword,
+}: {
+  fullName: string;
+  setFullName: (v: string) => void;
+  email: string;
+  setEmail: (v: string) => void;
+  password: string;
+  setPassword: (v: string) => void;
+  confirmPassword: string;
+  setConfirmPassword: (v: string) => void;
+  showPassword: boolean;
+  setShowPassword: Dispatch<SetStateAction<boolean>>;
+}) {
   return (
     <>
       <h2 className="text-lg font-bold text-slate-800 mb-5">Create your account</h2>
@@ -466,25 +498,79 @@ function Step0({ fullName, setFullName, email, setEmail, password, setPassword, 
         <input className={inputCls} placeholder="John Smith" value={fullName} onChange={(e) => setFullName(e.target.value)} />
       </Field>
       <Field label="Email address" required>
-        <input className={inputCls} type="text" placeholder="john@example.com" value={email} onChange={(e) => setEmail(e.target.value)} autoCapitalize="none" autoCorrect="off" autoComplete="email" />
+        <input
+          className={inputCls}
+          type="text"
+          inputMode="email"
+          enterKeyHint="next"
+          placeholder="john@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          autoComplete="email"
+        />
       </Field>
       <Field label="Password" required>
         <div className="relative">
-          <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Min. 8 chars, 1 uppercase, 1 number" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-          <button type="button" onClick={() => setShowPassword((p: boolean) => !p)}
+          <input
+            className={inputCls}
+            type={showPassword ? "text" : "password"}
+            placeholder="8+ chars: lower, upper, number"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          <button type="button" onClick={() => setShowPassword((p) => !p)}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-medium">
             {showPassword ? "Hide" : "Show"}
           </button>
         </div>
       </Field>
       <Field label="Confirm password" required>
-        <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Repeat password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" />
+        <input
+          className={inputCls}
+          type={showPassword ? "text" : "password"}
+          placeholder="Repeat password"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          autoComplete="new-password"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+        />
       </Field>
     </>
   );
 }
 
-function Step1({ companyName, setCompanyName, selectedTrades, setSelectedTrades, services, setServices, utr, setUtr, website, setWebsite }: any) {
+function Step1({
+  companyName,
+  setCompanyName,
+  selectedTrades,
+  setSelectedTrades,
+  services,
+  setServices,
+  utr,
+  setUtr,
+  website,
+  setWebsite,
+}: {
+  companyName: string;
+  setCompanyName: (v: string) => void;
+  selectedTrades: string[];
+  setSelectedTrades: Dispatch<SetStateAction<string[]>>;
+  services: string;
+  setServices: (v: string) => void;
+  utr: string;
+  setUtr: (v: string) => void;
+  website: string;
+  setWebsite: (v: string) => void;
+}) {
   function toggleTrade(trade: string) {
     setSelectedTrades((prev: string[]) =>
       prev.includes(trade) ? prev.filter((t: string) => t !== trade) : [...prev, trade]
@@ -526,7 +612,16 @@ function Step1({ companyName, setCompanyName, selectedTrades, setSelectedTrades,
         <input className={inputCls} placeholder="1234567890" value={utr} onChange={(e) => setUtr(e.target.value)} />
       </Field>
       <Field label="Website (optional)">
-        <input className={inputCls} type="text" placeholder="https://yoursite.co.uk" value={website} onChange={(e) => setWebsite(e.target.value)} />
+        <input
+          className={inputCls}
+          type="text"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder="https://yoursite.co.uk"
+          value={website}
+          onChange={(e) => setWebsite(e.target.value)}
+        />
       </Field>
     </>
   );
@@ -572,7 +667,7 @@ function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePh
               ref={profilePhotoRef}
               type="file"
               className="hidden"
-              accept="image/*"
+              accept="image/jpeg,image/jpg,image/png,image/webp,image/heic,image/heif"
               onChange={onProfilePhotoChange}
             />
             <div className="w-10 h-10 rounded-lg bg-slate-200 group-hover:bg-orange-100 flex items-center justify-center transition-colors shrink-0">
@@ -607,8 +702,9 @@ function Step2({ docs, fileRefs, onFileChange, onRemove, profilePhoto, profilePh
               <label className="flex items-center gap-3 cursor-pointer group">
                 <input
                   ref={(el) => { fileRefs.current[key] = el ?? undefined; }}
-                  type="file" className="hidden"
-                  accept="image/*,application/pdf"
+                  type="file"
+                  className="hidden"
+                  accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf"
                   onChange={(e) => onFileChange(key, e)}
                 />
                 <div className="w-8 h-8 rounded-lg bg-slate-200 group-hover:bg-orange-100 flex items-center justify-center transition-colors shrink-0">
@@ -642,7 +738,7 @@ function SuccessScreen() {
         </div>
         <h2 className="text-2xl font-black text-slate-800 mb-2">Application submitted!</h2>
         <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-          Your documents are under review. Once approved, you'll be able to start accepting jobs.
+          Your documents are under review. Once approved, you will be able to start accepting jobs.
           Download the app and sign in to track your status.
         </p>
         <a

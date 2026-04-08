@@ -55,8 +55,11 @@ export async function POST(req: NextRequest) {
   if (!email || !password || !fullName) {
     return NextResponse.json({ error: "Name, email and password are required." }, { status: 400 });
   }
-  if (password.length < 6) {
-    return NextResponse.json({ error: "Password must be at least 6 characters." }, { status: 400 });
+  if (password.length < 8) {
+    return NextResponse.json(
+      { error: "Password must be at least 8 characters with uppercase, lowercase, and a number." },
+      { status: 400 },
+    );
   }
 
   // Validate all documents are present
@@ -95,12 +98,17 @@ export async function POST(req: NextRequest) {
     }
     if (
       low.includes("pattern") ||
+      low.includes("expected pattern") ||
       low.includes("weak") ||
       low.includes("password should") ||
+      low.includes("strength") ||
       code === "weak_password"
     ) {
       return NextResponse.json(
-        { error: "Password is too weak. Please use at least 8 characters including uppercase, lowercase and a number." },
+        {
+          error:
+            "Password was rejected. Use at least 8 characters with uppercase, lowercase, and a number (avoid common words).",
+        },
         { status: 422 },
       );
     }
