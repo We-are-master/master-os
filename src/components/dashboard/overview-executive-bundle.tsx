@@ -35,7 +35,6 @@ import {
   localCalendarMonthYmdBounds,
   sumInvoiceOpenBalanceOutstanding,
 } from "@/lib/overview-dashboard-kpis";
-import { ensureSourceAccountForClient } from "@/services/accounts";
 
 /** Customer cash in from job ledger (deposit + final), matches Financial summary registrations. */
 async function customerPaymentsTotalInRange(
@@ -242,10 +241,6 @@ export function OverviewExecutiveBundle() {
         let ownersOut: { ownerProfileId: string | null; displayName: string; revenue: number }[] = [];
 
         if (clientIds.length > 0) {
-          for (const cid of clientIds) {
-            await ensureSourceAccountForClient(supabase, cid);
-          }
-
           const { data: clientsAfter } = await supabase
             .from("clients")
             .select("id, source_account_id")

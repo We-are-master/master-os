@@ -25,6 +25,13 @@ export const DASHBOARD_BOOKED_PIPELINE_STATUSES = [
 
 const CHUNK = 800;
 
+/**
+ * In-flight request coalescing: multiple widgets requesting the same pipeline data within 5 s
+ * share a single fetch. Prevents 4+ duplicate full-table scans on dashboard load.
+ */
+const pipelineJobsInflight = new Map<string, { promise: Promise<OverviewPipelineJobRow[]>; at: number }>();
+const PIPELINE_COALESCE_TTL_MS = 5_000;
+
 /** Jobs aligned with Jobs Management: not deleted, not cancelled/lost, optional created_at window. */
 export type OverviewPipelineJobRow = {
   id: string;
@@ -68,7 +75,21 @@ const SELECT_EXEC_LEGACY = SELECT_FULL;
  * Soft-deleted rows excluded; statuses are {@link DASHBOARD_BOOKED_PIPELINE_STATUSES} (not completed).
  * When `bounds` is null, all matching pipeline jobs are included (no date filter).
  */
-export async function fetchPipelineJobsForDashboard(
+export function fetchPipelineJobsForDashboard(
+  supabase: ReturnType<typeof getSupabase>,
+  bounds: { fromIso: string; toIso: string } | null,
+): Promise<OverviewPipelineJobRow[]> {
+  const cacheKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
+  const cached = pipelineJobsInflight.get(cacheKey);
+  if (cached && Date.now() - cached.at < PIPELINE_COALESCE_TTL_MS) {
+    return cached.promise;
+  }
+  const promise = _fetchPipelineJobsForDashboard(supabase, bounds);
+  pipelineJobsInflight.set(cacheKey, { promise, at: Date.now() });
+  return promise;
+}
+
+async function _fetchPipelineJobsForDashboard(
   supabase: ReturnType<typeof getSupabase>,
   bounds: { fromIso: string; toIso: string } | null,
 ): Promise<OverviewPipelineJobRow[]> {
