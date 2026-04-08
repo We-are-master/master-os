@@ -246,10 +246,13 @@ function RegistrationForm() {
 
   function validateStep(s: number): string | null {
     if (s === 0) {
-      if (!fullName.trim())                              return "Please enter your full name.";
-      if (!email.trim() || !email.includes("@"))        return "Please enter a valid email address.";
-      if (password.length < 6)                          return "Password must be at least 6 characters.";
-      if (password !== confirmPassword)                  return "Passwords do not match.";
+      if (!fullName.trim())                                          return "Please enter your full name.";
+      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email.trim() || !emailRe.test(email.trim()))             return "Please enter a valid email address.";
+      if (password.length < 8)                                      return "Password must be at least 8 characters.";
+      if (!/[A-Z]/.test(password))                                  return "Password must contain at least one uppercase letter.";
+      if (!/[0-9]/.test(password))                                  return "Password must contain at least one number.";
+      if (password !== confirmPassword)                              return "Passwords do not match.";
     }
     if (s === 1) {
       if (selectedTrades.length === 0) return "Please select at least one service type.";
@@ -462,7 +465,7 @@ function Step0({ fullName, setFullName, email, setEmail, password, setPassword, 
       </Field>
       <Field label="Password" required>
         <div className="relative">
-          <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Min. 6 characters" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input className={inputCls} type={showPassword ? "text" : "password"} placeholder="Min. 8 chars, 1 uppercase, 1 number" value={password} onChange={(e) => setPassword(e.target.value)} />
           <button type="button" onClick={() => setShowPassword((p: boolean) => !p)}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-medium">
             {showPassword ? "Hide" : "Show"}

@@ -83,11 +83,31 @@ export async function POST(req: NextRequest) {
   });
 
   if (authError) {
-    const msg = authError.message ?? "";
-    if (msg.toLowerCase().includes("already") || msg.toLowerCase().includes("registered")) {
+    const msg  = authError.message ?? "";
+    const code = (authError as { code?: string }).code ?? "";
+    const low  = msg.toLowerCase();
+
+    if (low.includes("already") || low.includes("registered") || code === "email_exists") {
       return NextResponse.json(
         { error: "An account with this email already exists." },
         { status: 409 },
+      );
+    }
+    if (
+      low.includes("pattern") ||
+      low.includes("weak") ||
+      low.includes("password should") ||
+      code === "weak_password"
+    ) {
+      return NextResponse.json(
+        { error: "Password is too weak. Please use at least 8 characters including uppercase, lowercase and a number." },
+        { status: 422 },
+      );
+    }
+    if (low.includes("invalid") && low.includes("email")) {
+      return NextResponse.json(
+        { error: "Please enter a valid email address." },
+        { status: 422 },
       );
     }
     return NextResponse.json({ error: `Account creation failed: ${msg}` }, { status: 500 });
