@@ -685,6 +685,10 @@ function JobsPageContent() {
       const dupJobs = await findDuplicateJobs({
         clientId: formData.client_id,
         propertyAddress: formData.property_address ?? "",
+        title: formData.title ?? "",
+        scheduled_date: formData.scheduled_date ?? null,
+        scheduled_start_at: formData.scheduled_start_at ?? null,
+        scheduled_end_at: formData.scheduled_end_at ?? null,
       });
       if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJobs)))) return;
 
@@ -1671,7 +1675,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     partner_ids: [] as string[],
     client_price: "",
     partner_cost: "",
-    materials_cost: "",
+    materials_cost: "0",
     scheduled_date: "",
     arrival_from: "09:00",
     arrival_window_mins: "180",
@@ -1694,6 +1698,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const sitePhotosInputId = useId();
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
+  /** When fixed-price partner cost still matches the last auto-filled value, keep syncing to ~40% margin as inputs change. */
+  const lastAutoPartnerCost = useRef<string | null>(null);
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
   const isHousekeepJob = isHousekeepWorkLabel(selectedCatalogService?.name) || isHousekeepWorkLabel(form.title);
   const targetWorkType =
@@ -1870,6 +1876,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       images: uploadedImageUrls.length ? uploadedImageUrls : undefined,
     });
     setSitePhotoFiles([]);
+    lastAutoPartnerCost.current = null;
     setForm({
       title: "",
       catalog_service_id: "",
@@ -1877,7 +1884,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       partner_ids: [],
       client_price: "",
       partner_cost: "",
-      materials_cost: "",
+      materials_cost: "0",
       scheduled_date: "",
       arrival_from: "09:00",
       arrival_window_mins: "180",
@@ -1918,6 +1925,24 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       targetMarginPercent: SUGGESTED_PARTNER_MARGIN_HINT_PCT,
     });
   }, [form.job_type, form.client_price, form.materials_cost, accessSurchargePreview]);
+
+  useEffect(() => {
+    if (form.job_type === "hourly") {
+      lastAutoPartnerCost.current = null;
+      return;
+    }
+    if (suggestedPartnerAt40 == null) return;
+    const next = String(suggestedPartnerAt40);
+    setForm((prev) => {
+      const cur = prev.partner_cost.trim();
+      const empty = cur === "";
+      const unchangedFromAuto =
+        lastAutoPartnerCost.current != null && cur === lastAutoPartnerCost.current;
+      if (!empty && !unchangedFromAuto) return prev;
+      lastAutoPartnerCost.current = next;
+      return { ...prev, partner_cost: next };
+    });
+  }, [form.job_type, suggestedPartnerAt40]);
 
   return (
     <Modal open={open} onClose={onClose} title="New Job" subtitle="Create a new job" size="lg">
@@ -2242,21 +2267,10 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label>
               <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
-              {suggestedPartnerAt40 != null && (
-                <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
-                  ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin hint:{" "}
-                  <span className="font-semibold text-text-secondary tabular-nums">{formatCurrency(suggestedPartnerAt40)}</span>
-                  {accessSurchargePreview > 0 ? " (client price + access add-ons − materials)" : " (client price − materials)"}
-                  .{" "}
-                  <button
-                    type="button"
-                    className="text-primary hover:underline font-medium"
-                    onClick={() => update("partner_cost", String(suggestedPartnerAt40))}
-                  >
-                    Apply
-                  </button>
-                </p>
-              )}
+              <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin
+                {accessSurchargePreview > 0 ? " (client price + access add-ons − materials)" : " (client price − materials)"}; edit if needed.
+              </p>
             </div>
             <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
           </div>
