@@ -34,16 +34,33 @@ export default function TeamPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: profs, error: pErr } = await getSupabase()
-        .from("profiles")
-        .select("id, full_name, email, role, is_active, created_at, updated_at")
-        .order("full_name", { ascending: true });
+      const supabase = getSupabase();
+
+      // Pull profiles + the IDs of any external_partner accounts in parallel.
+      // External partners are stored in public.users (mobile app profiles).
+      // Migration 126 also sets their profiles.is_active = false, but we
+      // additionally filter on the join key here as a defense in depth so
+      // legacy duplicates and any future drift never leak into the team list.
+      const [{ data: profs, error: pErr }, { data: extUsers }] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, full_name, email, role, is_active, created_at, updated_at")
+          .order("full_name", { ascending: true }),
+        supabase
+          .from("users")
+          .select("id")
+          .eq("user_type", "external_partner"),
+      ]);
+
       if (pErr) {
         setAppUsers([]);
         toast.error(pErr.message || "Could not load app users");
-      } else {
-        setAppUsers((profs ?? []) as Profile[]);
+        return;
       }
+
+      const externalIds = new Set((extUsers ?? []).map((u: { id: string }) => u.id));
+      const filtered = (profs ?? []).filter((p: { id: string }) => !externalIds.has(p.id));
+      setAppUsers(filtered as Profile[]);
     } catch {
       toast.error("Failed to load team data");
       setAppUsers([]);
