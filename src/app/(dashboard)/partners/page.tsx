@@ -4996,7 +4996,8 @@ function PartnerDetailDrawer({
                   icon={<MessageSquare className="h-3.5 w-3.5" />}
                   onClick={() => {
                     const text = `Please upload your documents here: ${portalLinkResult.shortUrl}`;
-                    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+                    const waBase = whatsAppHrefFromPhone(partner?.phone) ?? "https://wa.me/";
+                    window.open(`${waBase}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
                   }}
                 >
                   WhatsApp
