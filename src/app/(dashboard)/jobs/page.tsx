@@ -111,6 +111,7 @@ function parseRestoredJobStatus(raw: string | null | undefined): Job["status"] {
 const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
 
 type ScheduleDatePreset = "all" | "today" | "tomorrow" | "week" | "month" | "custom";
+type JobsSortMode = "schedule_nearest" | "schedule_farthest" | "booking_recent" | "booking_oldest";
 
 const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v1";
 const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = ["all", "today", "tomorrow", "week", "month", "custom"];
@@ -272,6 +273,7 @@ function JobsPageContent() {
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterPartner, setFilterPartner] = useState<"all" | "with" | "without">("all");
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
+  const [filterSort, setFilterSort] = useState<JobsSortMode>("schedule_nearest");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover">(null);
   const [bulkRunning, setBulkRunning] = useState(false);
@@ -310,6 +312,34 @@ function JobsPageContent() {
       return true;
     });
   }, [data, filterPartner, filterScheduled]);
+
+  /** Default sorting for Jobs Management: nearest schedule first (today -> tomorrow -> future). */
+  const sortedData = useMemo(() => {
+    const today = formatLocalYmd(new Date());
+    const clone = [...filteredData];
+    const ymdKey = (parts: { y: number; m: number; d: number } | null): string | null =>
+      parts ? `${parts.y}-${String(parts.m).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}` : null;
+    const scheduleMeta = (j: Job) => {
+      const day = ymdKey(jobScheduleYmd(j));
+      if (!day) return { bucket: 3 as const, day: "9999-99-99" };
+      if (day < today) return { bucket: 0 as const, day };
+      if (day === today) return { bucket: 1 as const, day };
+      return { bucket: 2 as const, day };
+    };
+    const createdAt = (j: Job) => new Date(j.created_at ?? 0).getTime();
+    clone.sort((a, b) => {
+      if (filterSort === "booking_recent") return createdAt(b) - createdAt(a);
+      if (filterSort === "booking_oldest") return createdAt(a) - createdAt(b);
+      const sa = scheduleMeta(a);
+      const sb = scheduleMeta(b);
+      if (sa.bucket !== sb.bucket) return sa.bucket - sb.bucket;
+      if (filterSort === "schedule_farthest") return sb.day.localeCompare(sa.day);
+      const dayCmp = sa.day.localeCompare(sb.day);
+      if (dayCmp !== 0) return dayCmp;
+      return createdAt(b) - createdAt(a);
+    });
+    return clone;
+  }, [filteredData, filterSort]);
 
   const [customerPaidByJobId, setCustomerPaidByJobId] = useState<Record<string, number>>({});
   const [customerPaidSumsReady, setCustomerPaidSumsReady] = useState(true);
@@ -359,7 +389,7 @@ function JobsPageContent() {
           id,
           title: "In progress",
           color: "bg-blue-500",
-          items: filteredData.filter((j) => jobRowMatchesJobsManagementTab(j, "in_progress")),
+          items: sortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "in_progress")),
         };
       }
       if (id === "scheduled") {
@@ -367,7 +397,7 @@ function JobsPageContent() {
           id,
           title: "Scheduled",
           color: "bg-emerald-500",
-          items: filteredData.filter((j) => jobRowMatchesJobsManagementTab(j, "scheduled")),
+          items: sortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "scheduled")),
         };
       }
       if (id === "final_check") {
@@ -375,7 +405,7 @@ function JobsPageContent() {
           id,
           title: "Final checks",
           color: "bg-violet-500",
-          items: filteredData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
+          items: sortedData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
         };
       }
       return {
@@ -391,14 +421,14 @@ function JobsPageContent() {
                     : id === "unassigned"
                       ? "bg-red-500"
                       : "bg-blue-500",
-        items: filteredData.filter((j) =>
+        items: sortedData.filter((j) =>
           id === "unassigned"
             ? jobRowMatchesJobsManagementTab(j, "unassigned")
             : j.status === id,
         ),
       };
     });
-  }, [filteredData]);
+  }, [sortedData]);
 
   const jobIdFromUrl = searchParams.get("jobId");
   useEffect(() => { if (jobIdFromUrl) router.replace(`/jobs/${jobIdFromUrl}`); }, [jobIdFromUrl, router]);
@@ -1236,7 +1266,7 @@ function JobsPageContent() {
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="relative flex items-center gap-2" ref={filterRef}>
               <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-              {(filterPartner !== "all" || filterScheduled !== "all") && <span className="text-[10px] font-medium text-primary">Active</span>}
+              {(filterPartner !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest") && <span className="text-[10px] font-medium text-primary">Active</span>}
               {filterOpen && (
                 <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
                   <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
@@ -1247,7 +1277,14 @@ function JobsPageContent() {
                   <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
                     <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
                   </select>
-                  <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); }}>Clear filters</Button>
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Sort</p>
+                  <select value={filterSort} onChange={(e) => setFilterSort(e.target.value as JobsSortMode)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                    <option value="schedule_nearest">Nearest schedule (default)</option>
+                    <option value="schedule_farthest">Farthest schedule</option>
+                    <option value="booking_recent">Most recent booking</option>
+                    <option value="booking_oldest">Oldest booking</option>
+                  </select>
+                  <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); }}>Clear filters</Button>
                 </div>
               )}
             </div>
@@ -1371,7 +1408,7 @@ function JobsPageContent() {
           {viewMode === "list" && (
             <DataTable
               columns={columns}
-              data={data}
+              data={sortedData}
               loading={loading}
               getRowId={(item) => item.id}
               onRowClick={(job) => router.push(`/jobs/${job.id}`)}
