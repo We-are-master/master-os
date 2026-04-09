@@ -5,7 +5,7 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-const ALLOWED_INVITER_ROLES = new Set(["admin", "manager"]);
+const ALLOWED_INVITER_ROLES = new Set(["admin", "manager", "operator"]);
 
 /**
  * POST /api/admin/account/invite-portal-user

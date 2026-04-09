@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 
 export function PortalLoginClient() {
-  const router = useRouter();
   const params = useSearchParams();
   const initialError = params.get("error");
 
@@ -87,9 +86,12 @@ export function PortalLoginClient() {
         setVerifying(false);
         return;
       }
-      // Success — cookie is set. Redirect to /portal.
-      router.push("/portal");
-      router.refresh();
+      // Success — the auth cookie is set on the response. Use a full
+      // browser navigation (NOT router.push) so the next request goes
+      // through the middleware with the freshly-set cookie. router.push
+      // would race the cookie propagation and cause an immediate redirect
+      // back to /portal/login.
+      window.location.assign("/portal");
     } catch (err) {
       console.error("[portal/login] verify error:", err);
       setOtpError("We could not verify your code. Please try again.");
