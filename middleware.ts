@@ -36,7 +36,9 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/join") ||
     pathname.startsWith("/p/") ||
     pathname.startsWith("/payment-success") ||
-    pathname.startsWith("/quote/");
+    pathname.startsWith("/quote/") ||
+    pathname.startsWith("/portal/login") ||
+    pathname.startsWith("/portal/auth/");
 
   // ─── Detect session cookie without instantiating Supabase client ──────────
   // Supabase sets cookies named `sb-<project-ref>-auth-token*`. We only need to
@@ -45,11 +47,11 @@ export async function middleware(request: NextRequest) {
     .getAll()
     .some((c) => c.name.startsWith("sb-") && c.name.includes("auth-token"));
 
-  // Anonymous user hitting a protected page → redirect to /login immediately,
-  // no Supabase client needed.
+  // Anonymous user hitting a protected page → redirect to the right login.
+  // Portal pages get sent to /portal/login; everything else to /login.
   if (!hasSessionCookie && !allowsAnonymous) {
     const url = request.nextUrl.clone();
-    url.pathname = "/login";
+    url.pathname = pathname.startsWith("/portal") ? "/portal/login" : "/login";
     const redirect = NextResponse.redirect(url);
     addSecurityHeaders(redirect, pathname);
     return redirect;
