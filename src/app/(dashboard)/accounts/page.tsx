@@ -811,8 +811,14 @@ function AccountDetailDrawer({
             { id: "clients", label: "Clients", count: clientsTotal || undefined },
             { id: "jobs", label: "Jobs", count: jobs.length || undefined },
             { id: "finance", label: "Finance", count: invoices.length || undefined },
+            { id: "portal", label: "Portal users" },
           ]}
         />
+
+        {/* ── Portal users tab ─────────────────────────────────────── */}
+        {tab === "portal" && account && (
+          <PortalUsersTabSection accountId={account.id} accountName={account.company_name} />
+        )}
 
         {/* ── Clients tab ─────────────────────────────────────────── */}
         {tab === "clients" && (
@@ -1311,6 +1317,155 @@ function DetailRow({
       <div className="min-w-0 flex-1">
         <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">{label}</p>
         <div className="text-sm text-text-primary mt-1">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Portal users tab content ──────────────────────────────────────────────
+function PortalUsersTabSection({ accountId, accountName }: { accountId: string; accountName: string }) {
+  type PortalUserRow = {
+    id:                string;
+    email:             string;
+    full_name:         string | null;
+    is_active:         boolean;
+    created_at:        string;
+    last_signed_in_at: string | null;
+  };
+
+  const [users, setUsers]         = useState<PortalUserRow[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName,  setInviteName]  = useState("");
+  const [error, setError]         = useState<string | null>(null);
+
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const supabase = getSupabase();
+      const { data } = await supabase
+        .from("account_portal_users")
+        .select("id, email, full_name, is_active, created_at, last_signed_in_at")
+        .eq("account_id", accountId)
+        .order("created_at", { ascending: false });
+      setUsers((data ?? []) as PortalUserRow[]);
+    } catch (err) {
+      console.error("[PortalUsersTab] load failed:", err);
+      setUsers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId]);
+
+  useEffect(() => { void loadUsers(); }, [loadUsers]);
+
+  async function handleInvite(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!inviteEmail.trim() || !inviteName.trim()) {
+      setError("Email and name are required.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/account/invite-portal-user", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          accountId,
+          email:     inviteEmail.trim().toLowerCase(),
+          full_name: inviteName.trim(),
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof json.error === "string" ? json.error : "Could not send the invite.");
+        setSubmitting(false);
+        return;
+      }
+      toast.success(`Invite sent to ${inviteEmail.trim()}.`);
+      setInviteEmail("");
+      setInviteName("");
+      // Give the trigger a moment to insert the row
+      setTimeout(() => void loadUsers(), 500);
+    } catch (err) {
+      console.error("[PortalUsersTab] invite failed:", err);
+      setError("Could not send the invite. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-surface-secondary p-4">
+        <h4 className="text-sm font-bold text-text-primary mb-1">Invite a portal user</h4>
+        <p className="text-xs text-text-tertiary mb-3">
+          Portal users for <strong>{accountName}</strong> can sign in to /portal to open
+          requests, view quotes, jobs and invoices. We&rsquo;ll send a magic-link invite via email.
+        </p>
+        {error && (
+          <div className="mb-3 rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-xs text-red-400">
+            {error}
+          </div>
+        )}
+        <form onSubmit={handleInvite} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input
+            type="text"
+            placeholder="Full name"
+            className="px-3 py-2 rounded-lg border border-border bg-card text-sm"
+            value={inviteName}
+            onChange={(e) => setInviteName(e.target.value)}
+            disabled={submitting}
+          />
+          <input
+            type="text"
+            placeholder="Email address"
+            className="px-3 py-2 rounded-lg border border-border bg-card text-sm"
+            value={inviteEmail}
+            onChange={(e) => setInviteEmail(e.target.value)}
+            disabled={submitting}
+            autoCapitalize="none"
+          />
+          <button
+            type="submit"
+            disabled={submitting}
+            className="px-4 py-2 rounded-lg bg-orange-600 text-white text-sm font-bold hover:bg-orange-700 disabled:opacity-60"
+          >
+            {submitting ? "Sending..." : "Send invite"}
+          </button>
+        </form>
+      </div>
+
+      <div>
+        <h4 className="text-sm font-bold text-text-primary mb-2">Existing portal users</h4>
+        {loading ? (
+          <div className="text-xs text-text-tertiary py-4">Loading...</div>
+        ) : users.length === 0 ? (
+          <div className="text-xs text-text-tertiary py-4">No portal users yet.</div>
+        ) : (
+          <div className="rounded-lg border border-border overflow-hidden">
+            {users.map((u) => (
+              <div key={u.id} className="px-4 py-3 border-b border-border last:border-b-0 flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-text-primary truncate">{u.full_name || u.email}</p>
+                  <p className="text-xs text-text-tertiary truncate">{u.email}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={`text-xs font-semibold ${u.is_active ? "text-emerald-600" : "text-slate-400"}`}>
+                    {u.is_active ? "Active" : "Disabled"}
+                  </p>
+                  <p className="text-[10px] text-text-tertiary mt-0.5">
+                    {u.last_signed_in_at
+                      ? `Last signed in ${new Date(u.last_signed_in_at).toLocaleDateString()}`
+                      : "Never signed in"}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
