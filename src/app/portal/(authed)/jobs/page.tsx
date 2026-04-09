@@ -34,8 +34,8 @@ const STATUS_COLOR: Record<string, string> = {
   final_check:        "bg-purple-50 text-purple-700",
   awaiting_payment:   "bg-rose-50 text-rose-700",
   completed:          "bg-emerald-50 text-emerald-700",
-  cancelled:          "bg-slate-100 text-slate-600",
-  on_hold:            "bg-slate-100 text-slate-600",
+  cancelled:          "bg-surface-tertiary text-text-secondary",
+  on_hold:            "bg-surface-tertiary text-text-secondary",
   need_attention:     "bg-rose-50 text-rose-700",
 };
 
@@ -51,55 +51,55 @@ export default async function PortalJobsPage() {
   return (
     <div className="space-y-6 max-w-6xl">
       <div>
-        <h1 className="text-2xl font-black text-slate-800">Jobs</h1>
-        <p className="text-sm text-slate-500 mt-1">
+        <h1 className="text-2xl font-black text-text-primary">Jobs</h1>
+        <p className="text-sm text-text-secondary mt-1">
           Track the work in progress across your account.
         </p>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div className="bg-card rounded-2xl border border-border overflow-hidden">
         {jobs.length === 0 ? (
           <div className="text-center py-16 px-6">
-            <div className="w-12 h-12 mx-auto rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
-              <Briefcase className="w-6 h-6 text-slate-400" />
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-surface-tertiary flex items-center justify-center mb-4">
+              <Briefcase className="w-6 h-6 text-text-tertiary" />
             </div>
-            <h2 className="text-base font-bold text-slate-800 mb-1">No jobs yet</h2>
-            <p className="text-sm text-slate-500">
+            <h2 className="text-base font-bold text-text-primary mb-1">No jobs yet</h2>
+            <p className="text-sm text-text-secondary">
               Once a quote is accepted, the resulting job will show here.
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-border-light">
             {jobs.map((j) => {
               const scheduled = j.scheduled_start_at || j.scheduled_date;
               return (
                 <Link
                   key={j.id}
                   href={`/portal/jobs/${j.id}`}
-                  className="px-5 py-4 flex items-center justify-between gap-4 hover:bg-slate-50 transition-colors"
+                  className="px-5 py-4 flex items-center justify-between gap-4 hover:bg-surface-secondary transition-colors"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-mono text-slate-400">{j.reference}</span>
+                      <span className="text-xs font-mono text-text-tertiary">{j.reference}</span>
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                        STATUS_COLOR[j.status] ?? "bg-slate-100 text-slate-600"
+                        STATUS_COLOR[j.status] ?? "bg-surface-tertiary text-text-secondary"
                       }`}>
                         {STATUS_LABEL[j.status] ?? j.status.replace(/_/g, " ")}
                       </span>
                     </div>
-                    <p className="text-sm font-semibold text-slate-800 truncate">{j.title}</p>
+                    <p className="text-sm font-semibold text-text-primary truncate">{j.title}</p>
                     {j.property_address && (
-                      <p className="text-xs text-slate-500 truncate mt-0.5">{j.property_address}</p>
+                      <p className="text-xs text-text-secondary truncate mt-0.5">{j.property_address}</p>
                     )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right">
-                      <p className="text-xs text-slate-500">{fmtDate(scheduled)}</p>
+                      <p className="text-xs text-text-secondary">{fmtDate(scheduled)}</p>
                       {j.partner_name && (
-                        <p className="text-xs text-slate-400 mt-0.5">{j.partner_name}</p>
+                        <p className="text-xs text-text-tertiary mt-0.5">{j.partner_name}</p>
                       )}
                     </div>
-                    <ChevronRight className="w-4 h-4 text-slate-300" />
+                    <ChevronRight className="w-4 h-4 text-text-tertiary" />
                   </div>
                 </Link>
               );

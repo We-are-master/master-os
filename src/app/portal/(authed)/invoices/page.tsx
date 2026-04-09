@@ -38,18 +38,18 @@ export default async function PortalInvoicesPage() {
   return (
     <div className="space-y-6 max-w-6xl">
       <div>
-        <h1 className="text-2xl font-black text-slate-800">Invoices</h1>
-        <p className="text-sm text-slate-500 mt-1">
+        <h1 className="text-2xl font-black text-text-primary">Invoices</h1>
+        <p className="text-sm text-text-secondary mt-1">
           View your invoices and pay outstanding balances.
         </p>
       </div>
 
       {/* Outstanding tile */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center justify-between">
+      <div className="bg-card rounded-2xl border border-border p-5 flex items-center justify-between">
         <div>
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Outstanding</p>
-          <p className="text-3xl font-black text-slate-800 tabular-nums mt-1">{formatCurrency(outstandingTotal)}</p>
-          <p className="text-xs text-slate-400 mt-0.5">{outstanding.length} invoice{outstanding.length === 1 ? "" : "s"}</p>
+          <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Outstanding</p>
+          <p className="text-3xl font-black text-text-primary tabular-nums mt-1">{formatCurrency(outstandingTotal)}</p>
+          <p className="text-xs text-text-tertiary mt-0.5">{outstanding.length} invoice{outstanding.length === 1 ? "" : "s"}</p>
         </div>
         <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center">
           <Receipt className="w-6 h-6" />
@@ -57,24 +57,24 @@ export default async function PortalInvoicesPage() {
       </div>
 
       {/* Outstanding list */}
-      <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <header className="px-5 py-3 border-b border-slate-100">
-          <h2 className="text-sm font-bold text-slate-800">Outstanding</h2>
+      <section className="bg-card rounded-2xl border border-border overflow-hidden">
+        <header className="px-5 py-3 border-b border-border-light">
+          <h2 className="text-sm font-bold text-text-primary">Outstanding</h2>
         </header>
         {outstanding.length === 0 ? (
-          <p className="text-sm text-slate-500 px-5 py-8 text-center">No outstanding invoices.</p>
+          <p className="text-sm text-text-secondary px-5 py-8 text-center">No outstanding invoices.</p>
         ) : (
           <InvoiceTable invoices={outstanding} showPay />
         )}
       </section>
 
       {/* Paid list */}
-      <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <header className="px-5 py-3 border-b border-slate-100">
-          <h2 className="text-sm font-bold text-slate-800">Paid</h2>
+      <section className="bg-card rounded-2xl border border-border overflow-hidden">
+        <header className="px-5 py-3 border-b border-border-light">
+          <h2 className="text-sm font-bold text-text-primary">Paid</h2>
         </header>
         {paid.length === 0 ? (
-          <p className="text-sm text-slate-500 px-5 py-8 text-center">No paid invoices yet.</p>
+          <p className="text-sm text-text-secondary px-5 py-8 text-center">No paid invoices yet.</p>
         ) : (
           <InvoiceTable invoices={paid} showPay={false} />
         )}
@@ -89,33 +89,33 @@ interface InvoiceTableProps {
 }
 function InvoiceTable({ invoices, showPay }: InvoiceTableProps) {
   return (
-    <div className="divide-y divide-slate-100">
+    <div className="divide-y divide-border-light">
       {invoices.map((inv) => {
         const balance = Math.max(0, Number(inv.amount ?? 0) - Number(inv.amount_paid ?? 0));
         return (
           <div key={inv.id} className="px-5 py-4 flex items-center justify-between gap-4">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-mono text-slate-400">{inv.reference}</span>
+                <span className="text-xs font-mono text-text-tertiary">{inv.reference}</span>
                 <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                  STATUS_COLOR[inv.status] ?? "bg-slate-100 text-slate-600"
+                  STATUS_COLOR[inv.status] ?? "bg-surface-tertiary text-text-secondary"
                 }`}>
                   {STATUS_LABEL[inv.status] ?? inv.status}
                 </span>
                 {inv.invoice_kind && inv.invoice_kind !== "standard" && (
-                  <span className="text-xs text-slate-400 capitalize">{inv.invoice_kind}</span>
+                  <span className="text-xs text-text-tertiary capitalize">{inv.invoice_kind}</span>
                 )}
               </div>
-              <p className="text-sm font-semibold text-slate-800 truncate">
+              <p className="text-sm font-semibold text-text-primary truncate">
                 {inv.client_name ?? "—"}
-                {inv.job_reference && <span className="text-slate-400 font-normal"> &middot; {inv.job_reference}</span>}
+                {inv.job_reference && <span className="text-text-tertiary font-normal"> &middot; {inv.job_reference}</span>}
               </p>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs text-text-secondary mt-0.5">
                 {showPay ? `Due ${fmtDate(inv.due_date)}` : `Paid ${fmtDate(inv.paid_date)}`}
               </p>
             </div>
             <div className="text-right shrink-0">
-              <p className="text-sm font-bold text-slate-800 tabular-nums">{formatCurrency(Number(inv.amount ?? 0))}</p>
+              <p className="text-sm font-bold text-text-primary tabular-nums">{formatCurrency(Number(inv.amount ?? 0))}</p>
               {showPay && balance < Number(inv.amount ?? 0) && (
                 <p className="text-xs text-amber-700 mt-0.5">
                   Balance: {formatCurrency(balance)}

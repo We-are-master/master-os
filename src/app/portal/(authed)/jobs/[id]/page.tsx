@@ -68,33 +68,33 @@ export default async function PortalJobDetailPage({ params }: PageProps) {
     <div className="space-y-6 max-w-4xl">
       <Link
         href="/portal/jobs"
-        className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-800"
+        className="inline-flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary"
       >
         <ArrowLeft className="w-4 h-4" />
         Back to jobs
       </Link>
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="px-6 py-5 border-b border-slate-100">
+      <div className="bg-card rounded-2xl border border-border overflow-hidden">
+        <div className="px-6 py-5 border-b border-border-light">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-mono text-slate-400">{job.reference}</span>
+            <span className="text-xs font-mono text-text-tertiary">{job.reference}</span>
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-              STATUS_COLOR[job.status] ?? "bg-slate-100 text-slate-600"
+              STATUS_COLOR[job.status] ?? "bg-surface-tertiary text-text-secondary"
             }`}>
               {STATUS_LABEL[job.status] ?? job.status.replace(/_/g, " ")}
             </span>
           </div>
-          <h1 className="text-2xl font-black text-slate-800">{job.title}</h1>
+          <h1 className="text-2xl font-black text-text-primary">{job.title}</h1>
         </div>
 
         {/* Progress bar */}
         {job.status !== "cancelled" && (
-          <div className="px-6 py-5 border-b border-slate-100">
+          <div className="px-6 py-5 border-b border-border-light">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Progress</p>
-              <p className="text-xs text-slate-500">Phase {phase} of {total}</p>
+              <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Progress</p>
+              <p className="text-xs text-text-secondary">Phase {phase} of {total}</p>
             </div>
-            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div className="h-2 rounded-full bg-surface-tertiary overflow-hidden">
               <div
                 className="h-full bg-gradient-to-r from-orange-400 to-orange-600 transition-all duration-300"
                 style={{ width: `${pct}%` }}
@@ -131,9 +131,9 @@ export default async function PortalJobDetailPage({ params }: PageProps) {
         </div>
 
         {job.scope && (
-          <div className="px-6 py-5 border-t border-slate-100">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Scope of work</p>
-            <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{job.scope}</p>
+          <div className="px-6 py-5 border-t border-border-light">
+            <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Scope of work</p>
+            <p className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">{job.scope}</p>
           </div>
         )}
       </div>
@@ -145,11 +145,11 @@ interface DetailRowProps { icon: React.ReactNode; label: string; value: string; 
 function DetailRow({ icon, label, value, wide }: DetailRowProps) {
   return (
     <div className={wide ? "sm:col-span-2" : ""}>
-      <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
-        <span className="text-slate-300">{icon}</span>
+      <div className="flex items-center gap-2 text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1">
+        <span className="text-text-tertiary">{icon}</span>
         {label}
       </div>
-      <p className="text-sm font-semibold text-slate-800">{value}</p>
+      <p className="text-sm font-semibold text-text-primary">{value}</p>
     </div>
   );
 }

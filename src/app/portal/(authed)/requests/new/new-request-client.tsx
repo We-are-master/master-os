@@ -84,15 +84,15 @@ export function NewRequestClient() {
     <div className="max-w-2xl">
       <Link
         href="/portal/requests"
-        className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-800 mb-4"
+        className="inline-flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary mb-4"
       >
         <ArrowLeft className="w-4 h-4" />
         Back to requests
       </Link>
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 lg:p-8">
-        <h1 className="text-2xl font-black text-slate-800 mb-1">New service request</h1>
-        <p className="text-sm text-slate-500 mb-6">
+      <div className="bg-card rounded-2xl border border-border p-6 lg:p-8">
+        <h1 className="text-2xl font-black text-text-primary mb-1">New service request</h1>
+        <p className="text-sm text-text-secondary mb-6">
           Tell us what you need and our team will respond with a quote.
         </p>
 
@@ -104,11 +104,11 @@ export function NewRequestClient() {
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+            <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
               Service type <span className="text-red-500">*</span>
             </label>
             <select
-              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
+              className="w-full px-4 py-3 rounded-xl border border-border bg-surface-secondary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
               value={serviceType}
               onChange={(e) => setServiceType(e.target.value)}
               disabled={submitting}
@@ -121,11 +121,11 @@ export function NewRequestClient() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+            <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
               Description <span className="text-red-500">*</span>
             </label>
             <textarea
-              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent resize-none"
+              className="w-full px-4 py-3 rounded-xl border border-border bg-surface-secondary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent resize-none"
               rows={5}
               placeholder="Tell us what needs doing — the more detail you give, the faster we can quote."
               value={description}
@@ -135,12 +135,12 @@ export function NewRequestClient() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+            <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
               Property address <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
-              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
+              className="w-full px-4 py-3 rounded-xl border border-border bg-surface-secondary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
               placeholder="123 Example Street, London, SW1A 1AA"
               value={propertyAddress}
               onChange={(e) => setPropertyAddress(e.target.value)}
@@ -149,12 +149,12 @@ export function NewRequestClient() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-              Desired date <span className="text-slate-400 font-normal normal-case">(optional)</span>
+            <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
+              Desired date <span className="text-text-tertiary font-normal normal-case">(optional)</span>
             </label>
             <input
               type="date"
-              className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
+              className="w-full px-4 py-3 rounded-xl border border-border bg-surface-secondary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
               value={desiredDate}
               onChange={(e) => setDesiredDate(e.target.value)}
               disabled={submitting}
@@ -162,8 +162,8 @@ export function NewRequestClient() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-              Photos <span className="text-slate-400 font-normal normal-case">(optional, up to {MAX_IMAGES})</span>
+            <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
+              Photos <span className="text-text-tertiary font-normal normal-case">(optional, up to {MAX_IMAGES})</span>
             </label>
 
             {images.length > 0 && (
@@ -171,7 +171,7 @@ export function NewRequestClient() {
                 {images.map((file, idx) => {
                   const url = URL.createObjectURL(file);
                   return (
-                    <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border border-slate-200">
+                    <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border border-border">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={url} alt={`upload-${idx}`} className="w-full h-full object-cover" />
                       <button
@@ -188,9 +188,9 @@ export function NewRequestClient() {
             )}
 
             {images.length < MAX_IMAGES && (
-              <label className="flex items-center justify-center gap-2 px-4 py-6 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 hover:border-orange-300 hover:bg-orange-50/30 cursor-pointer transition-colors">
-                <ImagePlus className="w-5 h-5 text-slate-400" />
-                <span className="text-sm font-semibold text-slate-600">
+              <label className="flex items-center justify-center gap-2 px-4 py-6 rounded-xl border-2 border-dashed border-border bg-surface-secondary hover:border-orange-300 hover:bg-orange-50/30 cursor-pointer transition-colors">
+                <ImagePlus className="w-5 h-5 text-text-tertiary" />
+                <span className="text-sm font-semibold text-text-secondary">
                   {images.length === 0 ? "Add photos" : "Add more"}
                 </span>
                 <input
@@ -209,7 +209,7 @@ export function NewRequestClient() {
           <div className="flex items-center justify-end gap-3 pt-4">
             <Link
               href="/portal/requests"
-              className="px-5 py-2.5 rounded-xl border-2 border-slate-200 text-slate-700 font-semibold text-sm hover:bg-slate-50 transition-colors"
+              className="px-5 py-2.5 rounded-xl border-2 border-border text-text-primary font-semibold text-sm hover:bg-surface-secondary transition-colors"
             >
               Cancel
             </Link>

@@ -79,11 +79,11 @@ export function QuoteActionsClient({ quoteId, reference }: QuoteActionsClientPro
 
       {showReject ? (
         <div className="space-y-3">
-          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">
-            Reason <span className="text-slate-400 normal-case font-normal">(optional)</span>
+          <label className="block text-xs font-semibold text-text-secondary uppercase tracking-wide">
+            Reason <span className="text-text-tertiary normal-case font-normal">(optional)</span>
           </label>
           <textarea
-            className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent resize-none"
+            className="w-full px-4 py-3 rounded-xl border border-border bg-surface-secondary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent resize-none"
             rows={3}
             placeholder={`Tell us why you're declining quote ${reference} (optional)`}
             value={reason}
@@ -94,7 +94,7 @@ export function QuoteActionsClient({ quoteId, reference }: QuoteActionsClientPro
             <button
               type="button"
               onClick={() => { setShowReject(false); setReason(""); }}
-              className="px-5 py-2.5 rounded-xl text-slate-600 font-semibold text-sm hover:bg-slate-50"
+              className="px-5 py-2.5 rounded-xl text-text-secondary font-semibold text-sm hover:bg-surface-secondary"
               disabled={submitting !== null}
             >
               Cancel
@@ -115,7 +115,7 @@ export function QuoteActionsClient({ quoteId, reference }: QuoteActionsClientPro
             type="button"
             onClick={() => setShowReject(true)}
             disabled={submitting !== null}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 border-slate-200 text-slate-700 font-semibold text-sm hover:bg-slate-50 transition-colors disabled:opacity-60"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 border-border text-text-primary font-semibold text-sm hover:bg-surface-secondary transition-colors disabled:opacity-60"
           >
             <X className="w-4 h-4" />
             Decline

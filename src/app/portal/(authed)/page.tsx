@@ -54,8 +54,8 @@ export default async function PortalDashboardPage() {
   return (
     <div className="space-y-8 max-w-6xl">
       <div>
-        <h1 className="text-2xl font-black text-slate-800">{greeting}, {firstName}</h1>
-        <p className="text-sm text-slate-500 mt-1">
+        <h1 className="text-2xl font-black text-text-primary">{greeting}, {firstName}</h1>
+        <p className="text-sm text-text-secondary mt-1">
           Here&rsquo;s what&rsquo;s happening with your account today.
         </p>
       </div>
@@ -98,16 +98,16 @@ export default async function PortalDashboardPage() {
       </div>
 
       {/* Recent activity */}
-      <section className="bg-white rounded-2xl border border-slate-200 p-6">
+      <section className="bg-card rounded-2xl border border-border p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-bold text-slate-800">Recent activity</h2>
+          <h2 className="text-base font-bold text-text-primary">Recent activity</h2>
           <Link href="/portal/requests" className="text-xs font-semibold text-orange-600 hover:text-orange-700 flex items-center gap-1">
             New request <ArrowRight className="w-3 h-3" />
           </Link>
         </div>
         {kpis.recentActivity.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-sm text-slate-400">No recent activity yet.</p>
+            <p className="text-sm text-text-tertiary">No recent activity yet.</p>
             <Link
               href="/portal/requests/new"
               className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-600 text-white text-sm font-semibold hover:bg-orange-700 transition-colors"
@@ -116,7 +116,7 @@ export default async function PortalDashboardPage() {
             </Link>
           </div>
         ) : (
-          <ul className="divide-y divide-slate-100">
+          <ul className="divide-y divide-border-light">
             {kpis.recentActivity.map((item) => (
               <li key={`${item.type}-${item.id}`} className="py-3 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3 min-w-0">
@@ -130,13 +130,13 @@ export default async function PortalDashboardPage() {
                                                <Briefcase className="w-4 h-4" />}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-800 truncate">{item.title}</p>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-sm font-semibold text-text-primary truncate">{item.title}</p>
+                    <p className="text-xs text-text-secondary">
                       {item.reference} &middot; {statusLabel(item.status)}
                     </p>
                   </div>
                 </div>
-                <span className="text-xs text-slate-400 shrink-0">{timeAgo(item.created_at)}</span>
+                <span className="text-xs text-text-tertiary shrink-0">{timeAgo(item.created_at)}</span>
               </li>
             ))}
           </ul>
@@ -156,16 +156,16 @@ interface KpiCardProps {
 
 function KpiCard({ label, value, sublabel, icon, color }: KpiCardProps) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5 hover:border-slate-300 hover:shadow-sm transition-all">
+    <div className="bg-card rounded-2xl border border-border p-5 hover:border-border hover:shadow-sm transition-all">
       <div className="flex items-start justify-between mb-3">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
+        <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">{label}</span>
         <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${color}`}>
           {icon}
         </div>
       </div>
-      <p className="text-2xl font-black text-slate-800 tabular-nums">{value}</p>
+      <p className="text-2xl font-black text-text-primary tabular-nums">{value}</p>
       {sublabel && (
-        <p className="text-xs text-slate-400 mt-1">{sublabel}</p>
+        <p className="text-xs text-text-tertiary mt-1">{sublabel}</p>
       )}
     </div>
   );
