@@ -234,7 +234,7 @@ export async function POST(req: NextRequest) {
       console.error("Resend error:", emailError);
       marks.push(["total", nowMs() - startedAt]);
       return withServerTiming(
-        { pdfGenerated: true, emailSent: false, error: emailError.message },
+        { pdfGenerated: true, emailSent: false, error: "Email delivery failed" },
         500,
         marks,
       );
@@ -271,7 +271,7 @@ export async function POST(req: NextRequest) {
     console.error("Quote PDF/send error:", err);
     const marks: Array<[string, number]> = [["total", nowMs() - startedAt]];
     return withServerTiming(
-      { error: err instanceof Error ? err.message : "Internal error" },
+      { error: "Failed to generate or send quote PDF" },
       500,
       marks,
     );
@@ -378,7 +378,7 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     console.error("PDF generation error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Internal error" },
+      { error: "Failed to generate PDF" },
       { status: 500 },
     );
   }

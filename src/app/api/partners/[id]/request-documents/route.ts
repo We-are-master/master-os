@@ -51,12 +51,35 @@ export async function POST(
   }
 }
 
+/** Internal staff roles allowed to send partner document requests. */
+const REQUEST_DOCS_ALLOWED_ROLES = new Set(["admin", "manager", "operator"]);
+
 async function handlePost(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
+
+  // ─── ROLE GATE ──────────────────────────────────────────────────────────
+  // Until 2026-04 this route only required *any* authenticated user — an
+  // external_partner session could request documents for any other partner.
+  // Now restricted to internal staff.
+  const { createClient: createServerSupabase } = await import("@/lib/supabase/server");
+  const serverSupabase = await createServerSupabase();
+  const { data: profile } = await serverSupabase
+    .from("profiles")
+    .select("role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+
+  const role = (profile as { role?: string } | null)?.role ?? "";
+  if (!REQUEST_DOCS_ALLOWED_ROLES.has(role)) {
+    return NextResponse.json(
+      { error: "Forbidden", message: "Staff role required" },
+      { status: 403 },
+    );
+  }
 
   const { id: partnerId } = await ctx.params;
   if (!partnerId || !isValidUUID(partnerId)) {

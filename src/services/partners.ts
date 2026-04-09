@@ -1,5 +1,6 @@
 import { getSupabase, type ListParams, type ListResult } from "./base";
 import type { Partner } from "@/types/database";
+import { sanitizePostgrestValue, safePostgrestEnumValue } from "@/lib/supabase/sanitize";
 
 export interface PartnerListParams extends ListParams {
   trade?: string;
@@ -81,13 +82,20 @@ async function listPartnersLegacy(
     }
   }
   if (params.trade && params.trade !== "all") {
-    // Match against either legacy `trade` or `trades` array (when available).
-    query = query.or(`trade.eq.${params.trade},trades.cs.{${params.trade}}`);
+    // Reject any trade value containing PostgREST metacharacters — those would
+    // break out of the .or() filter and inject extra clauses (filter bypass).
+    const safeTrade = safePostgrestEnumValue(params.trade);
+    if (safeTrade) {
+      query = query.or(`trade.eq.${safeTrade},trades.cs.{${safeTrade}}`);
+    }
   }
   if (params.search) {
-    query = query.or(
-      `company_name.ilike.%${params.search}%,contact_name.ilike.%${params.search}%,email.ilike.%${params.search}%`
-    );
+    const safeSearch = sanitizePostgrestValue(params.search);
+    if (safeSearch) {
+      query = query.or(
+        `company_name.ilike.%${safeSearch}%,contact_name.ilike.%${safeSearch}%,email.ilike.%${safeSearch}%`
+      );
+    }
   }
 
   query = query.order(params.sortBy ?? "joined_at", { ascending: false });
@@ -104,11 +112,17 @@ async function listPartnersLegacy(
         fallback = fallback.eq("status", params.status);
       }
     }
-    fallback = fallback.eq("trade", params.trade);
+    const safeTradeFallback = safePostgrestEnumValue(params.trade);
+    if (safeTradeFallback) {
+      fallback = fallback.eq("trade", safeTradeFallback);
+    }
     if (params.search) {
-      fallback = fallback.or(
-        `company_name.ilike.%${params.search}%,contact_name.ilike.%${params.search}%,email.ilike.%${params.search}%`
-      );
+      const safeSearchFallback = sanitizePostgrestValue(params.search);
+      if (safeSearchFallback) {
+        fallback = fallback.or(
+          `company_name.ilike.%${safeSearchFallback}%,contact_name.ilike.%${safeSearchFallback}%,email.ilike.%${safeSearchFallback}%`
+        );
+      }
     }
     fallback = fallback.order(params.sortBy ?? "joined_at", { ascending: false }).range(from, to);
     const fallbackRes = await fallback;

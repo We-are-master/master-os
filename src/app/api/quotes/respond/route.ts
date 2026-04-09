@@ -7,6 +7,7 @@ import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-pa
 import { applyJobDbCompat, prepareJobRowForInsert } from "@/lib/job-schema-compat";
 import { capJobImagesArray, coerceJobImagesArray } from "@/lib/job-images";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 function getServiceSupabase() {
   return createClient(
@@ -34,6 +35,18 @@ function withServerTiming(body: unknown, status: number, marks: Array<[string, n
  * Body: { token: string, action: "accept" | "reject", rejectionReason?: string }
  */
 export async function POST(req: NextRequest) {
+  // Per-IP rate limit defeats brute force against quote response tokens.
+  // Tokens are signed JWTs so brute force is already infeasible, but the
+  // limit also stops misbehaving clients from spamming the endpoint.
+  const ip = getClientIp(req);
+  const rl = checkRateLimit(`quote-respond:${ip}`, 10, 10 * 60 * 1000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again shortly." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
+  }
+
   const startedAt = performance.now();
   const marks: Array<[string, number]> = [];
   try {

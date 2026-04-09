@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getZonedWallClock, hasLocalTimeReachedSchedule, isInTimeWindow } from "@/lib/wall-clock-tz";
 import { fetchOpsSnapshot, snapshotToPromptBlock } from "@/lib/master-brain-metrics";
 import { buildDailyBriefHtml, insightsTextToHtml } from "@/lib/daily-brief-email";
 import { isOpenAIConfigured, MASTER_BRAIN_SYSTEM_PROMPT, openaiChat } from "@/lib/openai-client";
+
+/**
+ * Constant-time secret comparison. Defeats timing-attack discovery of the
+ * cron secret by attackers measuring the difference between "first byte
+ * matches" and "first byte differs" in a naive `===` comparison.
+ */
+function secretsMatch(provided: string | null | undefined, expected: string | null | undefined): boolean {
+  if (!provided || !expected) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 const WINDOW_MIN = 20;
 
@@ -41,8 +55,9 @@ export async function GET(req: NextRequest) {
   const bearer = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
   // Accept the secret only via the Authorization header — never via query string,
   // as query params are logged by proxies and appear in Referer headers.
+  // Constant-time comparison defeats timing-attack discovery of the secret.
   const expected = process.env.CRON_SECRET?.trim();
-  if (!expected || bearer !== expected) {
+  if (!secretsMatch(bearer, expected)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

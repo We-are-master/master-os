@@ -5,6 +5,35 @@ import { normalizeUkAccountNumberInput, normalizeUkSortCodeInput, validatePartne
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Strict allowlist of partner columns this endpoint may write.
+ * Keep in sync with the field extraction in PATCH below — any column not
+ * in this set is silently dropped, even if `partners` schema gains new
+ * fields. Defends against mass assignment if the route ever evolves.
+ */
+const PARTNER_PROFILE_WRITABLE_FIELDS = new Set<string>([
+  "contact_name",
+  "company_name",
+  "phone",
+  "partner_address",
+  "vat_number",
+  "crn",
+  "utr",
+  "vat_registered",
+  "bank_sort_code",
+  "bank_account_number",
+  "bank_account_holder",
+  "bank_name",
+]);
+
+function pickAllowedFields(patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (PARTNER_PROFILE_WRITABLE_FIELDS.has(k)) out[k] = v;
+  }
+  return out;
+}
+
 export async function PATCH(req: NextRequest) {
   let body: Record<string, unknown>;
   try {
@@ -86,10 +115,19 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "nothing_to_update" }, { status: 400 });
   }
 
+  // Defense in depth: drop any field not in the writable allowlist before
+  // sending to Postgres. The fields are already explicitly built above,
+  // but this guards against future drift.
+  const safePatch = pickAllowedFields(patch);
+  if (Object.keys(safePatch).length === 0) {
+    return NextResponse.json({ error: "nothing_to_update" }, { status: 400 });
+  }
+
   const supabase = createServiceClient();
-  const { error } = await supabase.from("partners").update(patch).eq("id", session.partnerId);
+  const { error } = await supabase.from("partners").update(safePatch).eq("id", session.partnerId);
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("[partner-upload/profile] update failed:", error);
+    return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });
