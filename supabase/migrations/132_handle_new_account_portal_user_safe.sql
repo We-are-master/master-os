@@ -130,3 +130,55 @@ CREATE TRIGGER on_auth_user_created_account_portal
 
 COMMENT ON FUNCTION public.handle_new_account_portal_user() IS
   'Auto-creates public.account_portal_users row when an auth user is created with user_type=account_portal. Hardened: trigger errors are swallowed so they never abort the parent auth signup.';
+
+-- =============================================================================
+-- ROOT CAUSE FIX: harden handle_new_app_user (migration 124) too
+-- =============================================================================
+-- The OTHER trigger that runs on every auth signup is handle_new_app_user
+-- from migration 124. It inserts into public.users with no gate on
+-- user_type, so when a portal user is invited it ALSO tries to write a
+-- row there with user_type='account_portal'. If public.users has a CHECK
+-- constraint on user_type (or any column doesn't accept 'account_portal'),
+-- the parent auth signup aborts with 'Database error saving new user'.
+--
+-- Fix: gate the insert on user_type='external_partner' (the only value
+-- public.users is meant to hold) AND wrap the INSERT in EXCEPTION so it
+-- can never abort the parent signup.
+CREATE OR REPLACE FUNCTION public.handle_new_app_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_type text;
+BEGIN
+  v_user_type := coalesce(NEW.raw_user_meta_data->>'user_type', '');
+
+  -- Only external_partner signups get a public.users row.
+  -- Internal staff → public.profiles (handle_new_user)
+  -- Account portal → public.account_portal_users (handle_new_account_portal_user)
+  IF v_user_type <> 'external_partner' THEN
+    RETURN NEW;
+  END IF;
+
+  BEGIN
+    INSERT INTO public.users (id, email, full_name, user_type, "userActive")
+    VALUES (
+      NEW.id,
+      COALESCE(NEW.email, ''),
+      COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(COALESCE(NEW.email,''), '@', 1), 'User'),
+      'external_partner',
+      false
+    )
+    ON CONFLICT (id) DO NOTHING;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'handle_new_app_user insert failed: %', SQLERRM;
+  END;
+
+  RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION public.handle_new_app_user() IS
+  'Auto-creates public.users row ONLY for external_partner signups. Hardened to never abort the parent auth signup.';
