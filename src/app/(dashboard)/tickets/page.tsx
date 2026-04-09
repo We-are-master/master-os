@@ -343,27 +343,58 @@ function TicketDrawer({
   const [saving, setSaving]     = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
+  // Optimistic messages for instant WhatsApp-style UX
+  const [optimistic, setOptimistic] = useState<TicketMessage[]>([]);
+  const allMessages = [
+    ...messages,
+    ...optimistic.filter((o) => !messages.some((m) => m.id === o.id)),
+  ];
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [allMessages.length]);
+
+  // Clear optimistic once server data catches up
+  useEffect(() => {
+    if (optimistic.length > 0) {
+      const serverIds = new Set(messages.map((m) => m.id));
+      setOptimistic((prev) => prev.filter((o) => !serverIds.has(o.id)));
+    }
+  }, [messages, optimistic.length]);
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     if (!reply.trim()) return;
+    const text = reply.trim();
+    const tempId = `optimistic-${Date.now()}`;
+
+    // Show immediately
+    setOptimistic((prev) => [...prev, {
+      id: tempId,
+      sender_type: "staff",
+      sender_name: currentUserName,
+      body: text,
+      created_at: new Date().toISOString(),
+    }]);
+    setReply("");
+
     setSending(true);
     try {
       const res = await fetch(`/api/admin/tickets/${ticket.id}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: reply.trim() }),
+        body: JSON.stringify({ body: text }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
+        setOptimistic((prev) => prev.filter((m) => m.id !== tempId));
+        setReply(text);
         toast.error(typeof json.error === "string" ? json.error : "Failed to send reply");
         return;
       }
-      setReply("");
-      toast.success("Reply sent");
-      await onRefresh();
+      // Background refresh to sync real data
+      void onRefresh();
     } catch {
+      setOptimistic((prev) => prev.filter((m) => m.id !== tempId));
+      setReply(text);
       toast.error("Failed to send reply");
     } finally {
       setSending(false);
@@ -503,10 +534,10 @@ function TicketDrawer({
           <div className="flex items-center justify-center py-12 text-text-tertiary">
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
-        ) : messages.length === 0 ? (
+        ) : allMessages.length === 0 ? (
           <p className="text-sm text-text-tertiary text-center py-8">No messages.</p>
         ) : (
-          messages.map((msg) => {
+          allMessages.map((msg) => {
             const isStaff = msg.sender_type === "staff";
             return (
               <div key={msg.id} className={`flex ${isStaff ? "justify-end" : "justify-start"}`}>
