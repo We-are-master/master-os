@@ -17,7 +17,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, Building, DollarSign, Briefcase, TrendingUp, Mail, User, Calendar,
+  Plus, Building, DollarSign, Briefcase, TrendingUp, Mail, User, Calendar,
   Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
@@ -36,13 +36,13 @@ import {
 } from "@/services/accounts";
 import { uploadAccountLogo, removeAccountLogoFromStorage } from "@/services/account-logo-storage";
 import { uploadAccountContract, removeAccountContractFromStorage } from "@/services/account-contract-storage";
-import { getSupabase } from "@/services/base";
+import { getSupabase, getStatusCounts } from "@/services/base";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { findDuplicateAccountHints, formatAccountDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { listActiveAssignableUsers, type AssignableUser } from "@/services/profiles";
-import { jobStatusBadgeVariant } from "@/lib/job-status-ui";
+import { jobStatusBadgeVariant, type JobsManagementTabAccent } from "@/lib/job-status-ui";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
@@ -139,8 +139,14 @@ export default function AccountsPage() {
     setPage,
     search,
     setSearch,
+    status,
+    setStatus,
     refresh,
-  } = useSupabaseList<Account>({ fetcher: listAccounts, realtimeTable: "accounts" });
+  } = useSupabaseList<Account>({
+    fetcher: listAccounts,
+    realtimeTable: "accounts",
+    initialStatus: "active",
+  });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -155,20 +161,24 @@ export default function AccountsPage() {
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [totalJobs, setTotalJobs] = useState(0);
   const [totalAccounts, setTotalAccounts] = useState(0);
+  const [accountStatusCounts, setAccountStatusCounts] = useState<Record<string, number>>({});
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   const loadKpis = useCallback(async () => {
     try {
-      const { data: rows, error } = await getSupabase()
-        .from("accounts")
-        .select("total_revenue, active_jobs");
+      const supabase = getSupabase();
+      const [{ data: rows, error }, counts] = await Promise.all([
+        supabase.from("accounts").select("total_revenue, active_jobs").is("deleted_at", null),
+        getStatusCounts("accounts", ["active", "onboarding", "inactive"], "status"),
+      ]);
       if (error) throw error;
       const rows_ = rows ?? [];
       setTotalAccounts(rows_.length);
       setTotalRevenue(rows_.reduce((sum, r) => sum + (Number(r.total_revenue) || 0), 0));
       setTotalJobs(rows_.reduce((sum, r) => sum + (Number(r.active_jobs) || 0), 0));
+      setAccountStatusCounts(counts);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load KPIs");
     }
@@ -188,6 +198,37 @@ export default function AccountsPage() {
   }, [createOpen]);
 
   const avgDeal = totalAccounts > 0 ? Math.round(totalRevenue / totalAccounts) : 0;
+
+  const accountListTabs = useMemo(
+    () =>
+      [
+        {
+          id: "all",
+          label: "All",
+          count: accountStatusCounts.all ?? 0,
+          accent: "neutral" as JobsManagementTabAccent,
+        },
+        {
+          id: "onboarding",
+          label: "Onboarding",
+          count: accountStatusCounts.onboarding ?? 0,
+          accent: "amber" as JobsManagementTabAccent,
+        },
+        {
+          id: "active",
+          label: "Active",
+          count: accountStatusCounts.active ?? 0,
+          accent: "green" as JobsManagementTabAccent,
+        },
+        {
+          id: "inactive",
+          label: "Inactive",
+          count: accountStatusCounts.inactive ?? 0,
+          accent: "slate" as JobsManagementTabAccent,
+        },
+      ] as const,
+    [accountStatusCounts],
+  );
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -257,6 +298,7 @@ export default function AccountsPage() {
       toast.success(`${selectedIds.size} accounts updated to ${newStatus}`);
       setSelectedIds(new Set());
       refresh();
+      void loadKpis();
     } catch {
       toast.error("Failed to update accounts");
     }
@@ -296,7 +338,7 @@ export default function AccountsPage() {
       key: "status",
       label: "Status",
       render: (item) => {
-        const config = statusConfig[item.status];
+        const config = statusConfig[item.status] ?? statusConfig.inactive;
         return <Badge variant={config.variant} dot>{config.label}</Badge>;
       },
     },
@@ -337,7 +379,6 @@ export default function AccountsPage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Accounts" subtitle="Manage corporate client accounts and billing.">
-          <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Account</Button>
         </PageHeader>
 
@@ -349,10 +390,17 @@ export default function AccountsPage() {
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex items-center justify-end mb-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
+            <div className="min-w-0 flex-1 pb-1 -mb-1 overflow-x-auto">
+              <Tabs
+                tabs={accountListTabs.map(({ id, label, count, accent }) => ({ id, label, count, accent }))}
+                activeTab={status}
+                onChange={setStatus}
+              />
+            </div>
             <SearchInput
               placeholder="Search accounts..."
-              className="w-56"
+              className="w-full min-w-[10rem] sm:w-56 shrink-0"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
