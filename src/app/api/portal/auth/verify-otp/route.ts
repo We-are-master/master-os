@@ -70,6 +70,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Verify the user has a portal row. If not (e.g. an internal staff member
+    // accidentally landed here), sign them straight back out so they can't
+    // hold a /portal session that's actually a staff cookie.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data: portalRow } = await supabase
+        .from("account_portal_users")
+        .select("id")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!portalRow) {
+        await supabase.auth.signOut();
+        return NextResponse.json(
+          {
+            error:
+              "This email is not registered as a portal user. If you're a Master team member, sign in at /login instead.",
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[portal/verify-otp] unexpected error:", err);

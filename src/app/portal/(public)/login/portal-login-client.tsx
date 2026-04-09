@@ -24,6 +24,10 @@ export function PortalLoginClient() {
       setError("That sign-in link has expired. Enter your email below to get a new one.");
     } else if (initialError === "invalid_link") {
       setError("That sign-in link is invalid. Enter your email below to get a new one.");
+    } else if (initialError === "not_portal_user") {
+      setError(
+        "This email is not registered as a portal user. If you're a Master team member, sign in at /login instead.",
+      );
     }
   }, [initialError]);
 

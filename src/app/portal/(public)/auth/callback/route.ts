@@ -35,6 +35,23 @@ export async function GET(req: NextRequest) {
       console.error("[portal/auth/callback] exchangeCodeForSession failed:", error);
       return NextResponse.redirect(new URL(`/portal/login?error=link_expired`, req.url));
     }
+
+    // Verify the authenticated user has a portal row. If not (e.g. an
+    // internal staff member clicked the link), sign them straight back
+    // out so they can't hold a /portal session that's actually a staff
+    // cookie, and bounce them to /portal/login with a clear error.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data: portalRow } = await supabase
+        .from("account_portal_users")
+        .select("id")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!portalRow) {
+        await supabase.auth.signOut();
+        return NextResponse.redirect(new URL(`/portal/login?error=not_portal_user`, req.url));
+      }
+    }
   } catch (err) {
     console.error("[portal/auth/callback] unexpected error:", err);
     return NextResponse.redirect(new URL(`/portal/login?error=link_expired`, req.url));
