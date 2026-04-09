@@ -89,6 +89,42 @@ export function TicketChatClient({ ticketId, messages, isOpen, currentUserId }: 
                   }`}
                 >
                   {msg.body}
+                  {/* Attachments */}
+                  {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
+                    <div className="mt-2 space-y-2">
+                      {(msg.attachments as Array<{ url?: string; name?: string; type?: string }>).map((att, idx) => {
+                        if (!att?.url) return null;
+                        const isImage = (att.type ?? "").startsWith("image/");
+                        if (isImage) {
+                          return (
+                            <a key={idx} href={att.url} target="_blank" rel="noopener noreferrer" className="block">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={att.url}
+                                alt={att.name ?? "attachment"}
+                                className="max-w-full max-h-48 rounded-lg border border-white/20"
+                              />
+                            </a>
+                          );
+                        }
+                        return (
+                          <a
+                            key={idx}
+                            href={att.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium ${
+                              isMe
+                                ? "bg-white/20 text-white hover:bg-white/30"
+                                : "bg-surface-hover text-text-primary hover:bg-surface-secondary"
+                            } transition-colors`}
+                          >
+                            📎 {att.name ?? "File"}
+                          </a>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
                 <div className={`flex items-center gap-2 mt-1 text-[10px] text-text-tertiary ${isMe ? "justify-end" : ""}`}>
                   <span>{msg.sender_name ?? (isMe ? "You" : "Master team")}</span>

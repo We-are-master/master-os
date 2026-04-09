@@ -37,13 +37,13 @@ export async function POST(
   // Ownership check
   const { data: ticket } = await supabase
     .from("tickets")
-    .select("id, reference, subject, account_id, assigned_to")
+    .select("id, reference, subject, status, account_id, assigned_to")
     .eq("id", ticketId)
     .maybeSingle();
   if (!ticket || (ticket as { account_id: string }).account_id !== accountId) {
     return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
   }
-  const t = ticket as { id: string; reference: string; subject: string; assigned_to: string | null };
+  const t = ticket as { id: string; reference: string; subject: string; status: string; assigned_to: string | null };
 
   let body: { body?: unknown };
   try {
@@ -70,35 +70,26 @@ export async function POST(
     return NextResponse.json({ error: "Could not send your message." }, { status: 500 });
   }
 
-  // Update ticket timestamp + reopen if resolved
-  await supabase.from("tickets").update({
+  // Update ticket timestamp + reopen if resolved. Fire-and-forget.
+  const ticketStatus = t.status;
+  void supabase.from("tickets").update({
     updated_at: new Date().toISOString(),
-    ...(t.assigned_to ? {} : {}),
-    // If ticket was resolved and portal user replies, reopen it
-    ...((await supabase.from("tickets").select("status").eq("id", ticketId).maybeSingle())
-      .data as { status: string } | null)?.status === "resolved"
-      ? { status: "open" }
-      : {},
+    ...(ticketStatus === "resolved" ? { status: "open" } : {}),
   }).eq("id", ticketId);
 
-  // Resolve account name
-  const { data: account } = await supabase
-    .from("accounts")
-    .select("company_name")
-    .eq("id", accountId)
-    .maybeSingle();
-  const accountName = (account as { company_name?: string } | null)?.company_name ?? "Account";
+  // Return immediately — don't block the user waiting for emails.
+  const response = NextResponse.json({ ok: true });
 
-  // Email notification to hello@wearemaster.com + assigned staff
-  try {
-    const resendKey = process.env.RESEND_API_KEY?.trim();
-    if (resendKey) {
+  // Email notification (fire-and-forget)
+  void (async () => {
+    try {
+      const resendKey = process.env.RESEND_API_KEY?.trim();
+      if (!resendKey) return;
       const resend = new Resend(resendKey);
       const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "Master Group <hello@wearemaster.com>";
       const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "https://app.getfixfy.com";
       const recipients = ["hello@wearemaster.com"];
 
-      // Also notify assigned staff member by email if set
       if (t.assigned_to) {
         const { data: staff } = await supabase
           .from("profiles")
@@ -109,6 +100,13 @@ export async function POST(
         if (staffEmail && !recipients.includes(staffEmail)) recipients.push(staffEmail);
       }
 
+      const { data: account } = await supabase
+        .from("accounts")
+        .select("company_name")
+        .eq("id", accountId)
+        .maybeSingle();
+      const accountName = (account as { company_name?: string } | null)?.company_name ?? "Account";
+
       const { subject: emailSubject, html } = buildTicketReplyInternalEmail({
         ticketRef:   t.reference,
         subject:     t.subject,
@@ -118,10 +116,10 @@ export async function POST(
         dashboardUrl: `${appUrl}/tickets/${ticketId}`,
       });
       await resend.emails.send({ from: fromEmail, to: recipients, subject: emailSubject, html });
+    } catch (err) {
+      console.error("[portal/tickets/messages] email notification failed:", err);
     }
-  } catch (err) {
-    console.error("[portal/tickets/messages] email notification failed:", err);
-  }
+  })();
 
-  return NextResponse.json({ ok: true });
+  return response;
 }

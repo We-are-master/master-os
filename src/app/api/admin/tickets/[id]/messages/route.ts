@@ -73,20 +73,26 @@ export async function POST(
     return NextResponse.json({ error: "Could not send your reply." }, { status: 500 });
   }
 
-  // Update ticket timestamp + move to awaiting_customer if open/in_progress
+  // Update ticket timestamp + move to awaiting_customer if open/in_progress.
+  // Fire-and-forget — don't block the response on this.
   const newStatus = (t.status === "open" || t.status === "in_progress")
     ? "awaiting_customer"
     : t.status;
-  await supabase.from("tickets").update({
+  void supabase.from("tickets").update({
     updated_at: new Date().toISOString(),
     status: newStatus,
     assigned_to: auth.user.id,
   }).eq("id", ticketId);
 
-  // Email notification to all portal users of this account
-  try {
-    const resendKey = process.env.RESEND_API_KEY?.trim();
-    if (resendKey) {
+  // Return immediately — the user sees the reply in the chat.
+  // Email notification runs fire-and-forget below.
+  const response = NextResponse.json({ ok: true });
+
+  // Email notification to portal users (fire-and-forget, non-blocking)
+  void (async () => {
+    try {
+      const resendKey = process.env.RESEND_API_KEY?.trim();
+      if (!resendKey) return;
       const resend = new Resend(resendKey);
       const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "Master Group <hello@wearemaster.com>";
       const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "https://app.getfixfy.com";
@@ -98,22 +104,23 @@ export async function POST(
         .eq("is_active", true);
 
       const users = (portalUsers ?? []) as Array<{ email: string; full_name: string | null }>;
-      for (const u of users) {
-        if (!u.email?.includes("@")) continue;
-        const { subject: emailSubject, html } = buildTicketReplyPortalEmail({
-          recipientName: u.full_name ?? u.email,
-          ticketRef:     t.reference,
-          subject:       t.subject,
-          senderName,
-          body:          message,
-          portalUrl:     `${appUrl}/portal/tickets/${ticketId}`,
-        });
-        await resend.emails.send({ from: fromEmail, to: [u.email], subject: emailSubject, html });
-      }
-    }
-  } catch (err) {
-    console.error("[admin/tickets/messages] email notification failed:", err);
-  }
+      // Send to all portal users in one API call (multiple recipients)
+      const emails = users.map((u) => u.email).filter((e) => e?.includes("@"));
+      if (emails.length === 0) return;
 
-  return NextResponse.json({ ok: true });
+      const { subject: emailSubject, html } = buildTicketReplyPortalEmail({
+        recipientName: users[0]?.full_name ?? emails[0]!,
+        ticketRef:     t.reference,
+        subject:       t.subject,
+        senderName,
+        body:          message,
+        portalUrl:     `${appUrl}/portal/tickets/${ticketId}`,
+      });
+      await resend.emails.send({ from: fromEmail, to: emails, subject: emailSubject, html });
+    } catch (err) {
+      console.error("[admin/tickets/messages] email notification failed:", err);
+    }
+  })();
+
+  return response;
 }

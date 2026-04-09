@@ -137,32 +137,31 @@ export async function POST(req: NextRequest) {
   }
   const ticketId = (ticketRow as { id: string }).id;
 
-  // Upload attachments to ticket-attachments bucket
+  // Upload all attachments in parallel (not sequential)
   const attachmentUrls: Array<{ url: string; name: string; type: string }> = [];
-  for (let i = 0; i < attachmentFiles.length; i++) {
-    const file = attachmentFiles[i]!;
-    try {
-      const ext = (() => {
-        const t = (file.type || "").toLowerCase();
-        if (t.includes("jpeg") || t.includes("jpg")) return "jpg";
-        if (t.includes("png"))  return "png";
-        if (t.includes("webp")) return "webp";
-        if (t.includes("pdf"))  return "pdf";
-        return "bin";
-      })();
-      const path = `${ticketId}/${i + 1}.${ext}`;
-      const buf  = Buffer.from(await file.arrayBuffer());
-      const { error: uploadErr } = await supabase.storage
-        .from("ticket-attachments")
-        .upload(path, buf, { contentType: file.type || "application/octet-stream", upsert: true });
-      if (!uploadErr) {
+  if (attachmentFiles.length > 0) {
+    const results = await Promise.allSettled(
+      attachmentFiles.map(async (file, i) => {
+        const ext = (() => {
+          const t = (file.type || "").toLowerCase();
+          if (t.includes("jpeg") || t.includes("jpg")) return "jpg";
+          if (t.includes("png"))  return "png";
+          if (t.includes("webp")) return "webp";
+          if (t.includes("pdf"))  return "pdf";
+          return "bin";
+        })();
+        const path = `${ticketId}/${i + 1}.${ext}`;
+        const buf  = Buffer.from(await file.arrayBuffer());
+        const { error: uploadErr } = await supabase.storage
+          .from("ticket-attachments")
+          .upload(path, buf, { contentType: file.type || "application/octet-stream", upsert: true });
+        if (uploadErr) throw uploadErr;
         const { data: urlData } = supabase.storage.from("ticket-attachments").getPublicUrl(path);
-        if (urlData?.publicUrl) {
-          attachmentUrls.push({ url: urlData.publicUrl, name: file.name, type: file.type });
-        }
-      }
-    } catch (err) {
-      console.error(`[portal/tickets] attachment upload ${i} error:`, err);
+        return { url: urlData?.publicUrl ?? "", name: file.name, type: file.type };
+      }),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value.url) attachmentUrls.push(r.value);
     }
   }
 
@@ -176,10 +175,14 @@ export async function POST(req: NextRequest) {
     attachments: attachmentUrls.length > 0 ? attachmentUrls : [],
   });
 
-  // Email to hello@wearemaster.com
-  try {
-    const resendKey = process.env.RESEND_API_KEY?.trim();
-    if (resendKey) {
+  // Return immediately — don't block the user waiting for the email.
+  const response = NextResponse.json({ ok: true, ticketId, reference });
+
+  // Email to hello@wearemaster.com (fire-and-forget)
+  void (async () => {
+    try {
+      const resendKey = process.env.RESEND_API_KEY?.trim();
+      if (!resendKey) return;
       const resend = new Resend(resendKey);
       const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "Master Group <hello@wearemaster.com>";
       const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "https://app.getfixfy.com";
@@ -199,10 +202,10 @@ export async function POST(req: NextRequest) {
         subject: emailSubject,
         html,
       });
+    } catch (err) {
+      console.error("[portal/tickets] email notification failed:", err);
     }
-  } catch (err) {
-    console.error("[portal/tickets] email notification failed:", err);
-  }
+  })();
 
-  return NextResponse.json({ ok: true, ticketId, reference });
+  return response;
 }
