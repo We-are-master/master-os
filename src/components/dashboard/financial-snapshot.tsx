@@ -27,9 +27,25 @@ export function FinancialSnapshot() {
     async function load() {
       const supabase = getSupabase();
       try {
+        // 13-month floor when no user range is set — bounds the unbounded
+        // full-table scan that previously dominated dashboard load time.
+        const defaultFloorIso = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
+        const fromIso = bounds?.fromIso ?? defaultFloorIso;
+        const toIso   = bounds?.toIso   ?? new Date().toISOString();
+
         const [invRes, sbRes] = await Promise.all([
-          supabase.from("invoices").select("amount, status, paid_date, created_at"),
-          supabase.from("self_bills").select("net_payout, status, created_at"),
+          supabase
+            .from("invoices")
+            .select("amount, status, paid_date, created_at")
+            .gte("created_at", fromIso)
+            .lte("created_at", toIso)
+            .limit(5000),
+          supabase
+            .from("self_bills")
+            .select("net_payout, status, created_at")
+            .gte("created_at", fromIso)
+            .lte("created_at", toIso)
+            .limit(5000),
         ]);
         const invoices = (invRes.data ?? []) as {
           amount: number;

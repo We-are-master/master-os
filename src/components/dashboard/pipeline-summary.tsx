@@ -66,14 +66,20 @@ export function PipelineSummary() {
         }
 
         const jobSel = "client_price, extras_amount, status, created_at, completed_date";
+        // Default 13-month floor to bound the query when no user range is set.
+        const defaultFloorIso = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
+
         let jobsActiveQ = supabase
           .from("jobs")
           .select(jobSel)
           .is("deleted_at", null)
           .neq("status", "completed")
-          .neq("status", "cancelled");
+          .neq("status", "cancelled")
+          .limit(2000);
         if (fromIso && toIso) {
           jobsActiveQ = jobsActiveQ.gte("created_at", fromIso).lte("created_at", toIso);
+        } else {
+          jobsActiveQ = jobsActiveQ.gte("created_at", defaultFloorIso);
         }
 
         let jobsDoneQ = supabase
@@ -81,9 +87,12 @@ export function PipelineSummary() {
           .select(jobSel)
           .is("deleted_at", null)
           .eq("status", "completed")
-          .not("completed_date", "is", null);
+          .not("completed_date", "is", null)
+          .limit(2000);
         if (fromDay && toDay) {
           jobsDoneQ = jobsDoneQ.gte("completed_date", fromDay).lte("completed_date", toDay);
+        } else {
+          jobsDoneQ = jobsDoneQ.gte("completed_date", defaultFloorIso.slice(0, 10));
         }
 
         const [reqRes, quotesPdfRes, quotesFbRes, jobsActiveRes, jobsDoneRes] = await Promise.all([

@@ -89,11 +89,20 @@ export function OperationsStatus() {
     const supabase = getSupabase();
     if (!silent) setLoading(true);
     try {
+      // The widget date windows are: this_week / this_month / last_30_days /
+      // all_time / monthly_12. The longest legitimate window is 12 months,
+      // so capping at 13 months keeps "all time" honest for any operating
+      // business while preventing the unbounded full-table scan that was
+      // dominating dashboard load time.
+      const cutoffIso = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
       const [jobsRes, partnersRes] = await Promise.all([
         supabase
           .from("jobs")
           .select("id, reference, title, client_name, status, partner_id, partner_name, scheduled_date, scheduled_start_at, updated_at, created_at, timer_last_started_at, start_report_submitted, customer_review_rating, service_type, squad_name")
-          .is("deleted_at", null),
+          .is("deleted_at", null)
+          .gte("created_at", cutoffIso)
+          .order("created_at", { ascending: false })
+          .limit(2000),
         supabase
           .from("partners")
           .select("*", { count: "exact", head: true })

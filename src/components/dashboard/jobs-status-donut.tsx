@@ -74,20 +74,49 @@ export function JobsStatusDonut() {
       setLoading(true);
       try {
         const b = dateCtx?.bounds ?? null;
-        let q = supabase.from("jobs").select("status");
-        if (b) q = q.gte("created_at", b.fromIso).lte("created_at", b.toIso);
-        const { data: jobs } = await q;
-        const counts: Record<string, number> = {};
-        for (const j of jobs ?? []) {
-          const s = (j as { status: string }).status;
-          if (!JOBS_DONUT_ACTIVE_STATUSES.has(s)) continue;
-          counts[s] = (counts[s] ?? 0) + 1;
+        // Use the get_status_counts RPC instead of pulling every job row.
+        // The RPC does the GROUP BY server-side and returns one row per
+        // requested status — KB transferred instead of MB.
+        const { data: counts, error } = await supabase.rpc("get_status_counts", {
+          p_table_name:    "jobs",
+          p_statuses:      Array.from(JOBS_DONUT_ACTIVE_STATUSES),
+          p_status_column: "status",
+          p_date_column:   b ? "created_at" : null,
+          p_date_from:     b?.fromIso ?? null,
+          p_date_to:       b?.toIso ?? null,
+        });
+
+        if (error || !counts) {
+          // Fallback: legacy client-side aggregation if RPC missing
+          let q = supabase.from("jobs").select("status");
+          if (b) q = q.gte("created_at", b.fromIso).lte("created_at", b.toIso);
+          const { data: jobs } = await q;
+          const map: Record<string, number> = {};
+          for (const j of jobs ?? []) {
+            const s = (j as { status: string }).status;
+            if (!JOBS_DONUT_ACTIVE_STATUSES.has(s)) continue;
+            map[s] = (map[s] ?? 0) + 1;
+          }
+          const chartData = Object.entries(map)
+            .map(([status, count]) => ({
+              name: STATUS_LABELS[status] ?? status.replace(/_/g, " "),
+              value: count,
+              color: STATUS_COLORS[status] ?? "#94a3b8",
+            }))
+            .sort((a, b) => b.value - a.value);
+          setData(chartData);
+          setTotal(chartData.reduce((s, d) => s + d.value, 0));
+          return;
         }
-        const chartData = Object.entries(counts)
-          .map(([status, count]) => ({
-            name: STATUS_LABELS[status] ?? status.replace(/_/g, " "),
-            value: count,
-            color: STATUS_COLORS[status] ?? "#94a3b8",
+
+        // RPC fast path: counts is an array of {status, count, total}
+        const rows = counts as Array<{ status: string; count: number }>;
+        const chartData = rows
+          .filter((r) => Number(r.count) > 0)
+          .map((r) => ({
+            name:  STATUS_LABELS[r.status] ?? r.status.replace(/_/g, " "),
+            value: Number(r.count),
+            color: STATUS_COLORS[r.status] ?? "#94a3b8",
           }))
           .sort((a, b) => b.value - a.value);
         setData(chartData);

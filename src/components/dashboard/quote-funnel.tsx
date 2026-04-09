@@ -70,9 +70,18 @@ export function QuoteFunnel() {
           ? supabase.from("quotes").select("id", { count: "exact" }).eq("status", "converted_to_job")
           : supabase.from("jobs").select("id", { count: "exact" }).not("quote_id", "is", null);
 
+        // Cap unbounded fetch at last 13 months when no date filter is active.
+        // The status breakdown widget only shows aggregate counts; older data
+        // wouldn't be visualised even without the cap.
+        const defaultFloorIso = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
+
         let jobsFromQuotesStatusesQ = legacy
           ? supabase.from("jobs").select("status").eq("id", "00000000-0000-0000-0000-000000000001")
-          : supabase.from("jobs").select("status").not("quote_id", "is", null);
+          : supabase
+              .from("jobs")
+              .select("status")
+              .not("quote_id", "is", null)
+              .limit(2000);
 
         if (fromIso && toIso) {
           reqQ = reqQ.gte("created_at", fromIso).lte("created_at", toIso);
@@ -85,6 +94,9 @@ export function QuoteFunnel() {
             jobsFromQuotesQ = jobsFromQuotesQ.gte("created_at", fromIso).lte("created_at", toIso);
             jobsFromQuotesStatusesQ = jobsFromQuotesStatusesQ.gte("created_at", fromIso).lte("created_at", toIso);
           }
+        } else if (!legacy) {
+          // No user-selected bounds → apply default 13-month floor
+          jobsFromQuotesStatusesQ = jobsFromQuotesStatusesQ.gte("created_at", defaultFloorIso);
         }
 
         const [

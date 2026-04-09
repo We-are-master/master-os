@@ -262,6 +262,8 @@ function DashboardInner() {
     const supabase = getSupabase();
     try {
       const base = () => supabase.from("jobs").select("*", { count: "exact", head: true }).is("deleted_at", null);
+      // 13-month floor for the unbounded "without invoice" diff query.
+      const defaultFloorIso = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
 
       const [
         commissionPending,
@@ -283,8 +285,22 @@ function DashboardInner() {
         isLegacyJobSchema() ? Promise.resolve({ count: 0 }) : base().is("quote_id", null),
         base().lt("margin_percent", 20).gt("margin_percent", 0),
         base().neq("finance_status", "paid").not("status", "in", '("completed","scheduled")'),
-        supabase.from("invoices").select("job_reference").is("deleted_at", null),
-        supabase.from("jobs").select("reference, status").is("deleted_at", null).neq("status", "completed"),
+        // Cap the unbounded job_reference fetch — these two used to scan
+        // every invoice and every non-completed job to compute "without
+        // invoice" client-side. Now bounded to 13 months, max 5000 rows.
+        supabase
+          .from("invoices")
+          .select("job_reference")
+          .is("deleted_at", null)
+          .gte("created_at", defaultFloorIso)
+          .limit(5000),
+        supabase
+          .from("jobs")
+          .select("reference, status")
+          .is("deleted_at", null)
+          .neq("status", "completed")
+          .gte("created_at", defaultFloorIso)
+          .limit(5000),
       ]);
 
       const invoiceRefs = new Set(
