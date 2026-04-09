@@ -33,6 +33,7 @@ import {
   Wrench,
   History,
   ContactRound,
+  MessageSquare,
   type LucideIcon,
 } from "lucide-react";
 
@@ -57,6 +58,7 @@ const iconMap: Record<string, LucideIcon> = {
   wrench: Wrench,
   history: History,
   contact: ContactRound,
+  "message-square": MessageSquare,
 };
 
 /** Logos (SVG inline para herdar currentColor) para Clients, Partners, Accounts */
