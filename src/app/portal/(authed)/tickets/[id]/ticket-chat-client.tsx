@@ -1,0 +1,162 @@
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Send } from "lucide-react";
+
+interface Message {
+  id:          string;
+  sender_type: string;
+  sender_name: string | null;
+  body:        string;
+  attachments: unknown[];
+  created_at:  string;
+}
+
+interface TicketChatClientProps {
+  ticketId:      string;
+  messages:      Message[];
+  isOpen:        boolean;
+  currentUserId: string;
+}
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) + " " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+export function TicketChatClient({ ticketId, messages, isOpen, currentUserId }: TicketChatClientProps) {
+  const router  = useRouter();
+  const endRef  = useRef<HTMLDivElement>(null);
+  const [reply, setReply]       = useState("");
+  const [sending, setSending]   = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  async function handleSend(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reply.trim()) return;
+    setError(null);
+    setSending(true);
+    try {
+      const res = await fetch(`/api/portal/tickets/${ticketId}/messages`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ body: reply.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof json.error === "string" ? json.error : "Could not send your message.");
+        setSending(false);
+        return;
+      }
+      setReply("");
+      router.refresh();
+    } catch (err) {
+      console.error("[ticket-chat] send error:", err);
+      setError("Could not send your message. Please try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div>
+      {/* Messages thread */}
+      <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
+        {messages.length === 0 && (
+          <p className="text-sm text-text-tertiary text-center py-8">No messages yet.</p>
+        )}
+        {messages.map((msg) => {
+          const isMe = msg.sender_type === "portal_user";
+          return (
+            <div key={msg.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[80%] ${isMe ? "order-2" : ""}`}>
+                <div
+                  className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
+                    isMe
+                      ? "bg-orange-600 text-white rounded-br-md"
+                      : "bg-surface-tertiary text-text-primary rounded-bl-md"
+                  }`}
+                >
+                  {msg.body}
+                </div>
+                <div className={`flex items-center gap-2 mt-1 text-[10px] text-text-tertiary ${isMe ? "justify-end" : ""}`}>
+                  <span>{msg.sender_name ?? (isMe ? "You" : "Master team")}</span>
+                  <span>{fmtTime(msg.created_at)}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={endRef} />
+      </div>
+
+      {/* Reply form or closed banner */}
+      {isOpen ? (
+        <div className="px-6 py-4 border-t border-border-light">
+          {error && (
+            <div className="mb-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-400 rounded-xl px-4 py-2.5 text-sm">
+              {error}
+            </div>
+          )}
+          <form onSubmit={handleSend} className="flex items-end gap-3">
+            <textarea
+              className="flex-1 px-4 py-3 rounded-xl border border-border bg-surface-secondary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent resize-none"
+              rows={2}
+              placeholder="Type your reply..."
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              disabled={sending}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleSend(e); }
+              }}
+            />
+            <button
+              type="submit"
+              disabled={sending || !reply.trim()}
+              className="p-3 rounded-xl bg-orange-600 text-white hover:bg-orange-700 transition-colors disabled:opacity-50 shrink-0"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        </div>
+      ) : (
+        <div className="px-6 py-4 border-t border-border-light bg-surface-secondary text-center">
+          <p className="text-sm text-text-secondary">
+            This ticket has been resolved. Reply to reopen it.
+          </p>
+          <form
+            onSubmit={handleSend}
+            className="mt-3 flex items-end gap-3"
+          >
+            <textarea
+              className="flex-1 px-4 py-3 rounded-xl border border-border bg-card text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent resize-none"
+              rows={2}
+              placeholder="Type to reopen..."
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              disabled={sending}
+            />
+            <button
+              type="submit"
+              disabled={sending || !reply.trim()}
+              className="p-3 rounded-xl bg-orange-600 text-white hover:bg-orange-700 transition-colors disabled:opacity-50 shrink-0"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
