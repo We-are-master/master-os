@@ -1,4 +1,5 @@
 import { getServerSupabase } from "@/lib/supabase/server-cached";
+import { fetchAccountInvoices } from "./portal-invoices";
 
 export interface PortalDashboardKpis {
   openRequests:        number;
@@ -40,25 +41,24 @@ export async function fetchPortalDashboardKpis(accountId: string): Promise<Porta
 
   const clientIds = ((clientRows ?? []) as Array<{ id: string }>).map((c) => c.id);
 
-  // If the account has no client rows yet, every query below would return
-  // empty — short-circuit instead of firing them.
+  // Always fetch invoices via the dedicated portal-invoices fetcher so the
+  // dashboard tile uses the SAME source-of-truth as /portal/invoices —
+  // covering both source_account_id linkage AND job_reference fallback.
+  const invoicesPromise = fetchAccountInvoices(accountId);
+
+  // If the account has no client rows yet, every client-scoped query below
+  // would return empty — short-circuit instead of firing them.
   if (clientIds.length === 0) {
-    const { count: invCount, data: invRows } = await supabase
-      .from("invoices")
-      .select("amount, status", { count: "exact" })
-      .eq("source_account_id", accountId)
-      .is("deleted_at", null)
-      .in("status", ["pending", "partially_paid", "overdue"])
-      .limit(500);
-    const total = ((invRows ?? []) as Array<{ amount: number }>).reduce(
-      (s, r) => s + Number(r.amount ?? 0),
+    const invoices = await invoicesPromise;
+    const outstandingTotalEarly = invoices.outstanding.reduce(
+      (s, i) => s + Number(i.amount ?? 0),
       0,
     );
     return {
       openRequests:        0,
       pendingQuotes:       0,
       jobsInProgress:      0,
-      outstandingInvoices: { count: invCount ?? 0, total },
+      outstandingInvoices: { count: invoices.outstanding.length, total: outstandingTotalEarly },
       recentActivity:      [],
     };
   }
@@ -67,7 +67,7 @@ export async function fetchPortalDashboardKpis(accountId: string): Promise<Porta
     openReqRes,
     pendingQuotesRes,
     jobsInProgRes,
-    outstandingInvRes,
+    invoices,
     recentReqRes,
     recentQuoteRes,
     recentJobRes,
@@ -100,13 +100,7 @@ export async function fetchPortalDashboardKpis(accountId: string): Promise<Porta
         "awaiting_payment",
       ]),
 
-    supabase
-      .from("invoices")
-      .select("amount, status", { count: "exact" })
-      .eq("source_account_id", accountId)
-      .is("deleted_at", null)
-      .in("status", ["pending", "partially_paid", "overdue"])
-      .limit(500),
+    invoicesPromise,
 
     supabase
       .from("service_requests")
@@ -133,9 +127,11 @@ export async function fetchPortalDashboardKpis(accountId: string): Promise<Porta
       .limit(3),
   ]);
 
-  const outstandingTotal = (
-    (outstandingInvRes.data ?? []) as Array<{ amount: number }>
-  ).reduce((s, r) => s + Number(r.amount ?? 0), 0);
+  const outstandingTotal = invoices.outstanding.reduce(
+    (s, i) => s + Number(i.amount ?? 0),
+    0,
+  );
+  const outstandingCount = invoices.outstanding.length;
 
   const recentActivity: PortalDashboardKpis["recentActivity"] = [];
 
@@ -185,7 +181,7 @@ export async function fetchPortalDashboardKpis(accountId: string): Promise<Porta
     openRequests:        openReqRes.count ?? 0,
     pendingQuotes:       pendingQuotesRes.count ?? 0,
     jobsInProgress:      jobsInProgRes.count ?? 0,
-    outstandingInvoices: { count: outstandingInvRes.count ?? 0, total: outstandingTotal },
+    outstandingInvoices: { count: outstandingCount, total: outstandingTotal },
     recentActivity:      recentActivity.slice(0, 5),
   };
 }
