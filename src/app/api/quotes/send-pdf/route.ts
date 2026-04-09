@@ -8,6 +8,7 @@ import { createQuoteResponseToken } from "@/lib/quote-response-token";
 import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
+import { buildNewQuoteEmail } from "@/lib/portal-email-templates";
 
 function nowMs() {
   return performance.now();
@@ -234,7 +235,7 @@ export async function POST(req: NextRequest) {
       console.error("Resend error:", emailError);
       marks.push(["total", nowMs() - startedAt]);
       return withServerTiming(
-        { pdfGenerated: true, emailSent: false, error: emailError.message },
+        { pdfGenerated: true, emailSent: false, error: "Email delivery failed" },
         500,
         marks,
       );
@@ -258,6 +259,20 @@ export async function POST(req: NextRequest) {
       new_value: "awaiting_customer",
       metadata: { email_to: emailTo, resend_id: emailResult?.id },
     }).then(({ error }) => { if (error) console.error("audit_logs insert (send-pdf)", error); });
+
+    // ─── Portal user notification (fire-and-forget) ─────────────────────────
+    // Look up portal users for the account that owns this quote and send them
+    // a separate notification email pointing at /portal/quotes/[id]. Additive
+    // — the existing customer email above still goes out unchanged.
+    void notifyPortalUsersForQuote(supabase, resend, fromEmail, {
+      quoteId,
+      quoteRef:    quote.reference,
+      quoteTitle:  quote.title ?? "Quote",
+      clientId:    (quote as { client_id?: string | null }).client_id ?? null,
+    }).catch((err) => {
+      console.error("[send-pdf] portal notification failed:", err);
+    });
+
     marks.push(["db_updates", nowMs() - tWrite]);
     marks.push(["total", nowMs() - startedAt]);
 
@@ -271,7 +286,7 @@ export async function POST(req: NextRequest) {
     console.error("Quote PDF/send error:", err);
     const marks: Array<[string, number]> = [["total", nowMs() - startedAt]];
     return withServerTiming(
-      { error: err instanceof Error ? err.message : "Internal error" },
+      { error: "Failed to generate or send quote PDF" },
       500,
       marks,
     );
@@ -378,9 +393,74 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     console.error("PDF generation error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Internal error" },
+      { error: "Failed to generate PDF" },
       { status: 500 },
     );
   }
 }
 
+/**
+ * Look up portal users for the account that owns this quote (via the
+ * clients.source_account_id chain) and send them a notification email
+ * pointing at /portal/quotes/[id]. Fire-and-forget — failure must not
+ * block the customer-facing send-pdf flow.
+ */
+async function notifyPortalUsersForQuote(
+  supabase: ReturnType<typeof createServiceClient>,
+  resend:   Resend,
+  fromEmail: string,
+  args: {
+    quoteId:    string;
+    quoteRef:   string;
+    quoteTitle: string;
+    clientId:   string | null;
+  },
+): Promise<void> {
+  if (!args.clientId) return;
+
+  // Resolve the client → account → portal users chain
+  const { data: client } = await supabase
+    .from("clients")
+    .select("source_account_id")
+    .eq("id", args.clientId)
+    .maybeSingle();
+  const accountId = (client as { source_account_id?: string | null } | null)?.source_account_id;
+  if (!accountId) return;
+
+  const { data: account } = await supabase
+    .from("accounts")
+    .select("company_name")
+    .eq("id", accountId)
+    .maybeSingle();
+  const accountName = (account as { company_name?: string } | null)?.company_name ?? "your account";
+
+  const { data: portalUsers } = await supabase
+    .from("account_portal_users")
+    .select("id, email, is_active")
+    .eq("account_id", accountId)
+    .eq("is_active", true);
+
+  const recipients = ((portalUsers ?? []) as Array<{ email: string }>)
+    .map((u) => u.email)
+    .filter((e): e is string => typeof e === "string" && e.includes("@"));
+  if (recipients.length === 0) return;
+
+  const appUrl =
+    process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") ||
+    "https://app.getfixfy.com";
+  const portalUrl = `${appUrl}/portal/quotes/${args.quoteId}`;
+
+  const { subject, html } = buildNewQuoteEmail({
+    accountName,
+    quoteRef:   args.quoteRef,
+    quoteTitle: args.quoteTitle,
+    portalUrl,
+  });
+
+  await resend.emails.send({
+    from:    fromEmail,
+    to:      recipients,
+    subject,
+    html,
+  });
+}

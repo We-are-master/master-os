@@ -1,10 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolvePartnerDocExpiresAt } from "@/lib/partner-required-docs";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 const BUCKET = "partner-documents";
+
+/** Allowed file types for partner registration uploads. */
+const ALLOWED_DOC_MIME = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "application/pdf",
+]);
+const MAX_DOC_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+
+function safeExtForMime(mime: string): string {
+  switch (mime.toLowerCase()) {
+    case "image/jpeg":
+    case "image/jpg":  return "jpg";
+    case "image/png":  return "png";
+    case "image/webp": return "webp";
+    case "image/heic": return "heic";
+    case "image/heif": return "heif";
+    case "application/pdf": return "pdf";
+    default: return "bin";
+  }
+}
 
 // Maps form field name → partner_documents metadata
 const DOC_DEFS = [
@@ -20,7 +46,9 @@ async function uploadToStorage(
   docId: string,
   file: File,
 ): Promise<{ path: string; fileName: string }> {
-  const ext  = file.name.split(".").pop()?.toLowerCase() ?? "bin";
+  // Derive extension from MIME type, NOT from the user-supplied filename.
+  // This kills any path traversal risk in the filename ("../../etc").
+  const ext  = safeExtForMime(file.type ?? "");
   const path = `${partnerId}/${docId}/document.${ext}`;
   const buf  = Buffer.from(await file.arrayBuffer());
 
@@ -29,10 +57,22 @@ async function uploadToStorage(
     .upload(path, buf, { contentType: file.type, upsert: true });
 
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
-  return { path, fileName: file.name };
+  return { path, fileName: `document.${ext}` };
 }
 
 export async function POST(req: NextRequest) {
+  // ─── RATE LIMIT ───────────────────────────────────────────────────────
+  // Public endpoint that creates auth users + storage uploads. Cap to 5
+  // attempts per IP per 10 minutes to defeat trivial abuse.
+  const ip = getClientIp(req);
+  const rl = checkRateLimit(`join:${ip}`, 5, 10 * 60 * 1000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "Too many registration attempts. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
+  }
+
   let form: FormData;
   try {
     form = await req.formData();
@@ -75,9 +115,47 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Validate document MIME types and sizes — defeat malicious uploads
+  // (executable disguised as image, oversized files designed to fill storage).
+  const oversized: string[] = [];
+  const wrongType: string[] = [];
+  for (const { key, name } of DOC_DEFS) {
+    const f = form.get(key);
+    if (!(f instanceof File)) continue;
+    if (f.size > MAX_DOC_SIZE_BYTES) oversized.push(name);
+    if (f.type && !ALLOWED_DOC_MIME.has(f.type.toLowerCase())) wrongType.push(name);
+  }
+  if (oversized.length > 0) {
+    return NextResponse.json(
+      { error: `These documents are too large (max 10 MB): ${oversized.join(", ")}.` },
+      { status: 413 },
+    );
+  }
+  if (wrongType.length > 0) {
+    return NextResponse.json(
+      { error: `These documents have unsupported file types: ${wrongType.join(", ")}. Use JPG, PNG, WebP, HEIC, or PDF.` },
+      { status: 400 },
+    );
+  }
+
+  // Validate optional profile photo too
+  if (profilePhotoFile) {
+    if (profilePhotoFile.size > MAX_DOC_SIZE_BYTES) {
+      return NextResponse.json({ error: "Profile photo is too large (max 10 MB)." }, { status: 413 });
+    }
+    if (profilePhotoFile.type && !ALLOWED_DOC_MIME.has(profilePhotoFile.type.toLowerCase())) {
+      return NextResponse.json({ error: "Profile photo file type not supported." }, { status: 400 });
+    }
+  }
+
   const supabase = createServiceClient();
 
-  // 1. Create auth user (auto-confirm so they can log in immediately)
+  // 1. Create auth user. We auto-confirm because the partner needs to log
+  // into the mobile app once their documents are reviewed and approved by
+  // the OS team — sending a verification email here would be a dead-end
+  // (Supabase's admin API doesn't trigger one automatically anyway).
+  // Defense for this public endpoint comes from the IP rate limit above
+  // and the MIME/size validation below, not email verification.
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email,
     password,

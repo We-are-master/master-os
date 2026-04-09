@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 /** Generate a password reset link for the partner; they receive email from Supabase (or you can send the link manually). */
 export async function POST(req: NextRequest) {
+  // Rate limit per IP — defense against admin-token-stuffing brute force.
+  const ip = getClientIp(req);
+  const rl = checkRateLimit(`reset-pw:${ip}`, 3, 10 * 60 * 1000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "Too many reset attempts. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
+  }
+
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
@@ -28,7 +39,10 @@ export async function POST(req: NextRequest) {
       type: "recovery",
       email: user.user.email,
     });
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    if (error) {
+      console.error("[reset-password] generateLink failed:", error);
+      return NextResponse.json({ error: "Failed to generate reset link" }, { status: 400 });
+    }
 
     const resetLink = (linkData as { properties?: { action_link?: string } } | null)?.properties?.action_link ?? null;
 
@@ -38,8 +52,9 @@ export async function POST(req: NextRequest) {
       reset_link: resetLink ?? undefined,
     });
   } catch (e) {
+    console.error("[reset-password] unexpected error:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Failed to generate reset link" },
+      { error: "Failed to generate reset link" },
       { status: 500 }
     );
   }

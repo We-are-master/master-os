@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolvePartnerUploadToken } from "@/lib/partner-upload-resolver";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -39,6 +40,25 @@ function safeFileName(name: string): string {
 }
 
 /**
+ * Derive a safe storage path extension purely from MIME type. Used so the
+ * filename portion of the storage path can never contain `..` or other
+ * path-traversal sequences from user input.
+ */
+function safeExtForMime(mime: string): string {
+  switch (mime.toLowerCase()) {
+    case "application/pdf": return "pdf";
+    case "image/jpeg":
+    case "image/jpg":  return "jpg";
+    case "image/png":  return "png";
+    case "image/webp": return "webp";
+    case "image/gif":  return "gif";
+    case "application/msword": return "doc";
+    case "application/vnd.openxmlformats-officedocument.wordprocessingml.document": return "docx";
+    default: return "bin";
+  }
+}
+
+/**
  * POST /api/partner-upload/file
  * Public, no auth — protected only by the signed token + the request row state.
  *
@@ -52,6 +72,17 @@ function safeFileName(name: string): string {
  * already validated the token and the active request row above.
  */
 export async function POST(req: NextRequest) {
+  // Rate limit per IP — defeats churning through leaked tokens. The
+  // existing per-link `use_count` cap (30) still applies on top of this.
+  const ip = getClientIp(req);
+  const rl = checkRateLimit(`partner-upload:${ip}`, 30, 10 * 60 * 1000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "Too many uploads. Please try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
+  }
+
   let form: FormData;
   try {
     form = await req.formData();
@@ -141,8 +172,12 @@ export async function POST(req: NextRequest) {
   }
   const docId = (docRow as { id: string }).id;
 
-  const safeName = safeFileName(file.name);
-  const path = `${r.partner_id}/${docId}/${safeName}`;
+  // Storage path uses ONLY values we control (partner_id, docId, mime-derived
+  // ext). The user-supplied filename never reaches the path — defeats any
+  // path traversal attempt via `../../etc`. The original name is still kept
+  // in `partner_documents.file_name` for display purposes only.
+  const safeExt = safeExtForMime(mime);
+  const path = `${r.partner_id}/${docId}/document.${safeExt}`;
 
   const arrayBuffer = await file.arrayBuffer();
   const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, arrayBuffer, {

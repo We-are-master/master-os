@@ -33,6 +33,7 @@ import {
   Wrench,
   History,
   ContactRound,
+  MessageSquare,
   type LucideIcon,
 } from "lucide-react";
 
@@ -57,6 +58,7 @@ const iconMap: Record<string, LucideIcon> = {
   wrench: Wrench,
   history: History,
   contact: ContactRound,
+  "message-square": MessageSquare,
 };
 
 /** Logos (SVG inline para herdar currentColor) para Clients, Partners, Accounts */
@@ -205,11 +207,39 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+/**
+ * Merge new items from the canonical NAVIGATION into the admin-filtered
+ * list. When a nav group in NAVIGATION has items that don't exist in the
+ * filtered version (e.g. "Tickets" was added after the admin saved their
+ * nav config), append them so new features are visible without requiring
+ * admins to re-save the config.
+ */
+function mergeNewNavItems(
+  filtered: typeof NAVIGATION,
+  canonical: typeof NAVIGATION,
+): typeof NAVIGATION {
+  const filteredHrefs = new Set(filtered.flatMap((g) => g.items.map((i) => i.href)));
+  const result = filtered.map((g) => ({ ...g, items: [...g.items] }));
+  for (const cGroup of canonical) {
+    const match = result.find((g) => g.label === cGroup.label);
+    for (const item of cGroup.items) {
+      if (filteredHrefs.has(item.href)) continue;
+      if (match) {
+        match.items.push(item);
+      } else {
+        result.push({ label: cGroup.label, items: [item] });
+      }
+      filteredHrefs.add(item.href);
+    }
+  }
+  return result;
+}
+
 export function Sidebar() {
   const { collapsed, toggle } = useSidebar();
   const adminConfig = useAdminConfigOptional();
   const navGroups = adminConfig?.filteredNavigation?.length
-    ? adminConfig.filteredNavigation
+    ? mergeNewNavItems(adminConfig.filteredNavigation, NAVIGATION)
     : NAVIGATION;
 
   return (

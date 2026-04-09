@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
+import { sanitizePostgrestValue } from "@/lib/supabase/sanitize";
 import { getJobStatusCountsByChunkedSelect, getJobStatusCountsWithScheduleOverlap } from "./job-period-overlap-queries";
 
 export type SortDirection = "asc" | "desc";
@@ -146,10 +147,17 @@ export async function queryList<T>(
   }
 
   if (params.search && options?.searchColumns?.length) {
-    const orConditions = options.searchColumns
-      .map((col) => `${col}.ilike.%${params.search}%`)
-      .join(",");
-    query = query.or(orConditions);
+    // Sanitize the search value before interpolating into the .or() filter
+    // string. PostgREST parses commas/parens/colons as filter metacharacters,
+    // so an unsanitized value could break out of the ilike clause and inject
+    // additional filters (filter bypass).
+    const safeSearch = sanitizePostgrestValue(params.search);
+    if (safeSearch) {
+      const orConditions = options.searchColumns
+        .map((col) => `${col}.ilike.%${safeSearch}%`)
+        .join(",");
+      query = query.or(orConditions);
+    }
   }
 
   if (params.scheduleRange) {
