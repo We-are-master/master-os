@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ImagePlus, X } from "lucide-react";
+import { compressImage, sanitizeFileForUpload } from "@/lib/upload-helpers";
 
 const TICKET_TYPES = [
   { value: "general",     label: "General" },
@@ -29,8 +30,24 @@ export function NewTicketClient({ jobs }: NewTicketClientProps) {
   const [priority,   setPriority]   = useState("medium");
   const [body,       setBody]       = useState("");
   const [jobId,      setJobId]      = useState("");
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error,      setError]      = useState<string | null>(null);
+
+  const MAX_ATTACHMENTS = 5;
+
+  function handleAddFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    const remaining = MAX_ATTACHMENTS - attachments.length;
+    setAttachments((prev) => [...prev, ...files.slice(0, remaining)]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function removeAttachment(idx: number) {
+    setAttachments((prev) => prev.filter((_, i) => i !== idx));
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -40,16 +57,25 @@ export function NewTicketClient({ jobs }: NewTicketClientProps) {
 
     setSubmitting(true);
     try {
+      // Compress images client-side before upload
+      const compressed = await Promise.all(
+        attachments.map((f) => compressImage(f)),
+      );
+
+      const form = new FormData();
+      form.append("subject",  subject.trim());
+      form.append("type",     type);
+      form.append("priority", priority);
+      form.append("body",     body.trim());
+      if (jobId) form.append("job_id", jobId);
+      compressed.forEach((file, idx) => {
+        form.append("attachments", sanitizeFileForUpload(file, `attachment_${idx + 1}`));
+      });
+
       const res = await fetch("/api/portal/tickets", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          subject: subject.trim(),
-          type,
-          priority,
-          body: body.trim(),
-          job_id: jobId || null,
-        }),
+        method: "POST",
+        body:   form,
+        headers: { Accept: "application/json" },
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -174,6 +200,51 @@ export function NewTicketClient({ jobs }: NewTicketClientProps) {
               maxLength={5000}
               disabled={submitting}
             />
+          </div>
+
+          {/* Attachments */}
+          <div>
+            <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
+              Attachments <span className="text-text-tertiary font-normal normal-case">(optional, up to {MAX_ATTACHMENTS})</span>
+            </label>
+
+            {attachments.length > 0 && (
+              <div className="space-y-2 mb-3">
+                {attachments.map((file, idx) => (
+                  <div key={idx} className="flex items-center gap-3 rounded-xl border border-border bg-surface-secondary px-4 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-text-primary truncate">{file.name}</p>
+                      <p className="text-xs text-text-tertiary">{(file.size / 1024).toFixed(0)} KB</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(idx)}
+                      className="p-1 rounded-lg hover:bg-surface-hover text-text-tertiary hover:text-red-500 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {attachments.length < MAX_ATTACHMENTS && (
+              <label className="flex items-center justify-center gap-2 px-4 py-5 rounded-xl border-2 border-dashed border-border bg-surface-secondary hover:border-orange-300 hover:bg-orange-50/10 cursor-pointer transition-colors">
+                <ImagePlus className="w-5 h-5 text-text-tertiary" />
+                <span className="text-sm font-semibold text-text-secondary">
+                  {attachments.length === 0 ? "Add files" : "Add more"}
+                </span>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  accept="image/*,application/pdf"
+                  multiple
+                  onChange={handleAddFiles}
+                  disabled={submitting}
+                />
+              </label>
+            )}
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-4">

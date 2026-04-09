@@ -31,18 +31,39 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = (await req.json()) as Record<string, unknown>;
-  } catch {
-    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
-  }
+  // Accept both FormData (with attachments) and JSON (backward compat)
+  let subject = "";
+  let type    = "general";
+  let priority = "medium";
+  let message  = "";
+  let jobId: string | null = null;
+  let attachmentFiles: File[] = [];
 
-  const subject  = typeof body.subject  === "string" ? body.subject.trim()  : "";
-  const type     = typeof body.type     === "string" ? body.type.trim()     : "general";
-  const priority = typeof body.priority === "string" ? body.priority.trim() : "medium";
-  const message  = typeof body.body     === "string" ? body.body.trim()     : "";
-  const jobId    = typeof body.job_id   === "string" ? body.job_id.trim()   : null;
+  const contentType = req.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const form = await req.formData();
+    subject  = String(form.get("subject")  ?? "").trim();
+    type     = String(form.get("type")     ?? "general").trim();
+    priority = String(form.get("priority") ?? "medium").trim();
+    message  = String(form.get("body")     ?? "").trim();
+    const rawJobId = String(form.get("job_id") ?? "").trim();
+    jobId    = rawJobId || null;
+    attachmentFiles = form.getAll("attachments")
+      .filter((f): f is File => f instanceof File && f.size > 0)
+      .slice(0, 5);
+  } else {
+    let body: Record<string, unknown>;
+    try {
+      body = (await req.json()) as Record<string, unknown>;
+    } catch {
+      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    }
+    subject  = typeof body.subject  === "string" ? body.subject.trim()  : "";
+    type     = typeof body.type     === "string" ? body.type.trim()     : "general";
+    priority = typeof body.priority === "string" ? body.priority.trim() : "medium";
+    message  = typeof body.body     === "string" ? body.body.trim()     : "";
+    jobId    = typeof body.job_id   === "string" ? body.job_id.trim()   : null;
+  }
 
   if (!subject || subject.length > 200) {
     return NextResponse.json({ error: "Subject is required (max 200 characters)." }, { status: 400 });
@@ -116,13 +137,43 @@ export async function POST(req: NextRequest) {
   }
   const ticketId = (ticketRow as { id: string }).id;
 
-  // Create first message
+  // Upload attachments to ticket-attachments bucket
+  const attachmentUrls: Array<{ url: string; name: string; type: string }> = [];
+  for (let i = 0; i < attachmentFiles.length; i++) {
+    const file = attachmentFiles[i]!;
+    try {
+      const ext = (() => {
+        const t = (file.type || "").toLowerCase();
+        if (t.includes("jpeg") || t.includes("jpg")) return "jpg";
+        if (t.includes("png"))  return "png";
+        if (t.includes("webp")) return "webp";
+        if (t.includes("pdf"))  return "pdf";
+        return "bin";
+      })();
+      const path = `${ticketId}/${i + 1}.${ext}`;
+      const buf  = Buffer.from(await file.arrayBuffer());
+      const { error: uploadErr } = await supabase.storage
+        .from("ticket-attachments")
+        .upload(path, buf, { contentType: file.type || "application/octet-stream", upsert: true });
+      if (!uploadErr) {
+        const { data: urlData } = supabase.storage.from("ticket-attachments").getPublicUrl(path);
+        if (urlData?.publicUrl) {
+          attachmentUrls.push({ url: urlData.publicUrl, name: file.name, type: file.type });
+        }
+      }
+    } catch (err) {
+      console.error(`[portal/tickets] attachment upload ${i} error:`, err);
+    }
+  }
+
+  // Create first message (with attachments if any)
   await supabase.from("ticket_messages").insert({
     ticket_id:   ticketId,
     sender_id:   portalUser.id,
     sender_type: "portal_user",
     sender_name: portalUser.full_name ?? portalUser.email,
     body:        message,
+    attachments: attachmentUrls.length > 0 ? attachmentUrls : [],
   });
 
   // Email to hello@wearemaster.com
