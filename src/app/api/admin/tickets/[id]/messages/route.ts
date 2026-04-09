@@ -19,10 +19,24 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireAuth();
-  if (auth instanceof NextResponse) return auth;
+  // Auth + body parse + ticket lookup ALL in parallel
+  const { id: ticketId } = await ctx.params;
+  const supabase = createServiceClient();
 
-  const serverSupabase = await createServerSupabase();
+  const [authResult, serverSupabase, bodyResult, ticketResult] = await Promise.all([
+    requireAuth(),
+    createServerSupabase(),
+    req.json().catch(() => null) as Promise<{ body?: unknown } | null>,
+    supabase
+      .from("tickets")
+      .select("id, reference, subject, account_id, status")
+      .eq("id", ticketId)
+      .maybeSingle(),
+  ]);
+
+  if (authResult instanceof NextResponse) return authResult;
+  const auth = authResult;
+
   const { data: profile } = await serverSupabase
     .from("profiles")
     .select("role, full_name, email")
@@ -33,31 +47,16 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { id: ticketId } = await ctx.params;
-  let body: { body?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
-  }
-
-  const message = typeof body.body === "string" ? body.body.trim() : "";
-  if (!message || message.length > 5000) {
-    return NextResponse.json({ error: "Message is required (max 5000 characters)." }, { status: 400 });
-  }
-
-  const supabase = createServiceClient();
-
-  // Load ticket for metadata
-  const { data: ticket } = await supabase
-    .from("tickets")
-    .select("id, reference, subject, account_id, status")
-    .eq("id", ticketId)
-    .maybeSingle();
+  const ticket = ticketResult.data;
   if (!ticket) {
     return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
   }
   const t = ticket as { id: string; reference: string; subject: string; account_id: string; status: string };
+
+  const message = typeof bodyResult?.body === "string" ? bodyResult.body.trim() : "";
+  if (!message || message.length > 5000) {
+    return NextResponse.json({ error: "Message is required (max 5000 characters)." }, { status: 400 });
+  }
 
   // Insert message
   const senderName = p?.full_name ?? p?.email ?? "Master team";

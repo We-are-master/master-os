@@ -18,9 +18,22 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requirePortalUser();
-  if (auth instanceof NextResponse) return auth;
-  const { accountId, portalUser } = auth;
+  // Parse body + auth + ticket lookup ALL in parallel to minimize round-trips.
+  const { id: ticketId } = await ctx.params;
+  const supabase = createServiceClient();
+
+  const [authResult, bodyResult, ticketResult] = await Promise.all([
+    requirePortalUser(),
+    req.json().catch(() => null) as Promise<{ body?: unknown } | null>,
+    supabase
+      .from("tickets")
+      .select("id, reference, subject, status, account_id, assigned_to")
+      .eq("id", ticketId)
+      .maybeSingle(),
+  ]);
+
+  if (authResult instanceof NextResponse) return authResult;
+  const { accountId, portalUser } = authResult;
 
   const ip = getClientIp(req);
   const rl = checkRateLimit(`portal-ticket-msg:${portalUser.id}:${ip}`, 20, 10 * 60 * 1000);
@@ -31,28 +44,13 @@ export async function POST(
     );
   }
 
-  const { id: ticketId } = await ctx.params;
-  const supabase = createServiceClient();
-
-  // Ownership check
-  const { data: ticket } = await supabase
-    .from("tickets")
-    .select("id, reference, subject, status, account_id, assigned_to")
-    .eq("id", ticketId)
-    .maybeSingle();
+  const ticket = ticketResult.data;
   if (!ticket || (ticket as { account_id: string }).account_id !== accountId) {
     return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
   }
   const t = ticket as { id: string; reference: string; subject: string; status: string; assigned_to: string | null };
 
-  let body: { body?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
-  }
-
-  const message = typeof body.body === "string" ? body.body.trim() : "";
+  const message = typeof bodyResult?.body === "string" ? bodyResult.body.trim() : "";
   if (!message || message.length > 5000) {
     return NextResponse.json({ error: "Message is required (max 5000 characters)." }, { status: 400 });
   }
