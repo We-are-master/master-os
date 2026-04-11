@@ -38,31 +38,69 @@ export function TicketChatClient({ ticketId, messages, isOpen, currentUserId }: 
   const [sending, setSending]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
 
+  // Optimistic messages — shown instantly before the server confirms.
+  // Merged with server-provided messages, de-duped once the server data
+  // refreshes and includes the new message.
+  const [optimistic, setOptimistic] = useState<Message[]>([]);
+  const allMessages = [
+    ...messages,
+    ...optimistic.filter((o) => !messages.some((m) => m.id === o.id)),
+  ];
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [allMessages.length]);
+
+  // Clear optimistic messages once server data catches up
+  useEffect(() => {
+    if (optimistic.length > 0) {
+      const serverIds = new Set(messages.map((m) => m.id));
+      setOptimistic((prev) => prev.filter((o) => !serverIds.has(o.id)));
+    }
+  }, [messages, optimistic.length]);
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     if (!reply.trim()) return;
     setError(null);
+    const text = reply.trim();
+    const tempId = `optimistic-${Date.now()}`;
+
+    // Optimistic: show the message immediately in the chat
+    const optimisticMsg: Message = {
+      id:          tempId,
+      sender_type: "portal_user",
+      sender_name: "You",
+      body:        text,
+      attachments: [],
+      created_at:  new Date().toISOString(),
+    };
+    setOptimistic((prev) => [...prev, optimisticMsg]);
+    setReply("");
+
     setSending(true);
     try {
       const res = await fetch(`/api/portal/tickets/${ticketId}/messages`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ body: reply.trim() }),
+        body:    JSON.stringify({ body: text }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
+        // Remove the optimistic message on failure
+        setOptimistic((prev) => prev.filter((m) => m.id !== tempId));
+        setReply(text); // restore the text so the user can retry
         setError(typeof json.error === "string" ? json.error : "Could not send your message.");
         setSending(false);
         return;
       }
-      setReply("");
+      // Background refresh to get the real message from the server
+      // (which replaces the optimistic one via the de-dup logic above)
       router.refresh();
     } catch (err) {
       console.error("[ticket-chat] send error:", err);
+      setOptimistic((prev) => prev.filter((m) => m.id !== tempId));
+      setReply(text);
       setError("Could not send your message. Please try again.");
     } finally {
       setSending(false);
@@ -73,10 +111,10 @@ export function TicketChatClient({ ticketId, messages, isOpen, currentUserId }: 
     <div>
       {/* Messages thread */}
       <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
-        {messages.length === 0 && (
+        {allMessages.length === 0 && (
           <p className="text-sm text-text-tertiary text-center py-8">No messages yet.</p>
         )}
-        {messages.map((msg) => {
+        {allMessages.map((msg) => {
           const isMe = msg.sender_type === "portal_user";
           return (
             <div key={msg.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>

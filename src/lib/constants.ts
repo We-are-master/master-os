@@ -46,6 +46,7 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Clients", href: "/clients", icon: "user-circle" },
       { label: "Partners", href: "/partners", icon: "users" },
       { label: "Accounts", href: "/accounts", icon: "building" },
+      { label: "Outreach", href: "/outreach", icon: "mail-plus" },
     ],
   },
   {
