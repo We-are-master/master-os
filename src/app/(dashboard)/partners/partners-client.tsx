@@ -2,6 +2,7 @@
 
 import type { ListResult } from "@/services/base";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -322,6 +323,13 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const { profile } = useProfile();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const isAdmin = profile?.role === "admin";
+  const router = useRouter();
+
+  const handleBulkOutreach = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds).join(",");
+    router.push(`/outreach?partnerIds=${encodeURIComponent(ids)}`);
+  }, [selectedIds, router]);
 
   const loadTeam = useCallback(() => {
     setTeamLoading(true);
@@ -945,6 +953,8 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 <div className="h-4 w-px bg-border" />
                 <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
                 <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
+                <div className="h-4 w-px bg-border" />
+                <BulkActionBtn label="Enviar e-mail" onClick={handleBulkOutreach} variant="default" />
               </>
             }
           />

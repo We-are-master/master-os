@@ -34,6 +34,7 @@ import {
   History,
   ContactRound,
   MessageSquare,
+  MailPlus,
   type LucideIcon,
 } from "lucide-react";
 
@@ -59,6 +60,7 @@ const iconMap: Record<string, LucideIcon> = {
   history: History,
   contact: ContactRound,
   "message-square": MessageSquare,
+  "mail-plus": MailPlus,
 };
 
 /** Logos (SVG inline para herdar currentColor) para Clients, Partners, Accounts */
