@@ -15,22 +15,27 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
+import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeft,
   Building2,
+  Calendar,
   Check,
   CheckCircle2,
   ChevronDown,
+  ClipboardCheck,
   Search,
   Copy,
+  CreditCard,
   FileText,
+  HardHat,
   Upload,
   ShieldCheck,
   Plus,
   ImagePlus,
   ExternalLink,
   AlertTriangle,
-  CreditCard,
+  PauseCircle,
   RefreshCw,
   Timer,
   X,
@@ -249,17 +254,19 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
   );
 }
 
-const JOB_FLOW_STEPS: { label: string; statuses: Job["status"][] }[] = [
-  { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"] },
-  { label: "On site", statuses: ["in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "on_hold"] },
-  { label: "Final check", statuses: ["final_check", "need_attention"] },
-  { label: "Awaiting payment", statuses: ["awaiting_payment"] },
-  { label: "Completed", statuses: ["completed"] },
+/** Six-stage pipeline shown on job detail (matches ops mental model). */
+const JOB_FLOW_STEPS: readonly { label: string; statuses: readonly Job["status"][]; icon: LucideIcon }[] = [
+  { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"], icon: Calendar },
+  { label: "On site", statuses: ["in_progress_phase1", "in_progress_phase2", "in_progress_phase3"], icon: HardHat },
+  { label: "On hold", statuses: ["on_hold"], icon: PauseCircle },
+  { label: "Final checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
+  { label: "Awaiting payment", statuses: ["awaiting_payment"], icon: CreditCard },
+  { label: "Completed", statuses: ["completed"], icon: CheckCircle2 },
 ];
 
 function jobFlowActiveStepIndex(status: Job["status"]): number {
-  if (status === "cancelled") return -1;
-  const i = JOB_FLOW_STEPS.findIndex((s) => s.statuses.includes(status));
+  if (status === "cancelled" || status === "deleted") return -1;
+  const i = JOB_FLOW_STEPS.findIndex((s) => (s.statuses as readonly string[]).includes(status));
   return i >= 0 ? i : 0;
 }
 
@@ -2716,115 +2723,121 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           </div>
         </div>
 
-        {job.status !== "cancelled" ? (
+        {job.status !== "cancelled" && job.status !== "deleted" ? (
           <section
-            className="rounded-xl border border-border-light bg-card overflow-hidden shadow-[0_2px_14px_-6px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_16px_-6px_rgba(0,0,0,0.4)]"
+            className="rounded-2xl border border-border-light bg-gradient-to-br from-card via-card to-emerald-500/[0.04] dark:to-emerald-950/20 overflow-hidden shadow-[0_2px_16px_-6px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-6px_rgba(0,0,0,0.45)]"
             aria-label="Work time and job progress"
           >
-            <div className="px-3 py-2 sm:px-3.5 sm:py-2">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-0">
-                <div className="min-w-0 flex-1 flex flex-col gap-1.5 sm:pr-3">
-                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0 min-w-0">
-                      <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary shrink-0">
-                        Job progress
+            <div className="px-3 py-2.5 sm:px-4 sm:py-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
+                <div className="min-w-0 flex-1 flex flex-col gap-2 lg:pr-4">
+                  <div className="flex flex-wrap items-end justify-between gap-2">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Job pipeline
                       </p>
-                      <span className="text-[10px] text-text-secondary tabular-nums whitespace-nowrap">
-                        Step {Math.min(flowStep + 1, JOB_FLOW_STEPS.length)}/{JOB_FLOW_STEPS.length}
-                      </span>
-                      <span className="text-[10px] tabular-nums text-text-tertiary whitespace-nowrap">
-                        {Math.round(((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%
-                      </span>
+                      <p className="text-sm font-semibold text-text-primary mt-0.5">
+                        {JOB_FLOW_STEPS[flowStep]?.label ?? "Progress"}
+                        <span className="ml-2 text-xs font-normal text-text-secondary tabular-nums">
+                          Step {Math.min(flowStep + 1, JOB_FLOW_STEPS.length)} of {JOB_FLOW_STEPS.length}
+                        </span>
+                      </p>
                     </div>
+                    <span className="text-xs font-medium tabular-nums text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                      {Math.round(((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}% complete
+                    </span>
                   </div>
 
-                  <div className="relative h-0.5 rounded-full bg-surface-tertiary/60 dark:bg-surface-tertiary/40 overflow-hidden">
+                  <div className="relative h-1.5 rounded-full bg-surface-tertiary/70 dark:bg-surface-tertiary/50 overflow-hidden ring-1 ring-black/[0.04] dark:ring-white/[0.06]">
                     <div
-                      className="absolute inset-y-0 left-0 rounded-full bg-emerald-500 transition-[width] duration-300 ease-out"
+                      className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 dark:from-emerald-400 dark:to-teal-400 transition-[width] duration-500 ease-out shadow-sm"
                       style={{ width: `${Math.min(100, ((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%` }}
                     />
                   </div>
 
-                  <div className="overflow-x-auto overscroll-x-contain -mx-0.5 px-0.5 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-0.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/60">
-                    <ol className="flex min-w-max items-center gap-0 pr-1">
-                      {JOB_FLOW_STEPS.map((step, idx) => {
-                        const done = flowStep > idx;
-                        const current = flowStep === idx;
-                        return (
-                          <li key={step.label} className="flex items-center shrink-0">
-                            {idx > 0 ? (
+                  <ol
+                    className="flex gap-0 overflow-x-auto overscroll-x-contain pb-0.5 -mx-1 px-1 snap-x snap-mandatory [scrollbar-width:thin] sm:mx-0 sm:px-0 sm:overflow-visible sm:grid sm:grid-cols-6 sm:gap-2"
+                    role="list"
+                  >
+                    {JOB_FLOW_STEPS.map((step, idx) => {
+                      const done = flowStep > idx;
+                      const current = flowStep === idx;
+                      const Icon = step.icon;
+                      return (
+                        <li
+                          key={step.label}
+                          className={cn(
+                            "snap-center shrink-0 flex flex-col items-center text-center min-w-[5.25rem] sm:min-w-0 rounded-xl px-1.5 py-2 sm:py-2.5 transition-all duration-200",
+                            current &&
+                              "bg-emerald-500/[0.12] dark:bg-emerald-500/15 ring-2 ring-emerald-500/25 shadow-[0_0_0_1px_rgba(16,185,129,0.08)] scale-[1.02]",
+                            done && !current && "opacity-95",
+                            !done && !current && "opacity-70",
+                          )}
+                          aria-current={current ? "step" : undefined}
+                        >
+                          <div className="relative flex flex-col items-center gap-1.5 w-full">
+                            {done ? (
+                              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md shadow-emerald-500/25">
+                                <Check className="h-4 w-4" strokeWidth={2.5} aria-hidden />
+                              </span>
+                            ) : (
                               <span
                                 className={cn(
-                                  "w-2 sm:w-3 h-px shrink-0 mx-0.5 self-center mt-[0.5625rem]",
-                                  done ? "bg-emerald-400/55" : "bg-border-subtle/60",
+                                  "flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors",
+                                  current
+                                    ? "border-emerald-500 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200 shadow-[0_0_12px_-2px_rgba(16,185,129,0.35)]"
+                                    : "border-border/80 bg-card/80 text-text-tertiary dark:bg-surface-secondary/80",
                                 )}
-                                aria-hidden
-                              />
-                            ) : null}
+                              >
+                                <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+                              </span>
+                            )}
                             <span
                               className={cn(
-                                "flex flex-col items-center gap-0.5 rounded-md px-1 py-0.5 min-w-[3.25rem] max-w-[4.75rem] text-center transition-colors touch-manipulation",
-                                current && "bg-emerald-500/[0.07] ring-1 ring-emerald-500/18",
-                                done && !current && "text-emerald-700 dark:text-emerald-400",
-                                !done && !current && "text-text-tertiary/85",
+                                "text-[9px] sm:text-[10px] font-semibold leading-snug max-w-[5.5rem] sm:max-w-none text-balance",
+                                current && "text-text-primary",
+                                done && !current && "text-emerald-800 dark:text-emerald-300/90",
+                                !done && !current && "text-text-tertiary",
                               )}
                             >
-                              {done ? (
-                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/12">
-                                  <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" aria-hidden />
-                                </span>
-                              ) : (
-                                <span
-                                  className={cn(
-                                    "flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold tabular-nums",
-                                    current
-                                      ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 ring-1 ring-emerald-500/22"
-                                      : "bg-surface-tertiary/80 text-text-tertiary",
-                                  )}
-                                >
-                                  {idx + 1}
-                                </span>
-                              )}
-                              <span className="text-[8px] sm:text-[9px] font-medium leading-none px-0.5 line-clamp-1">
-                                {step.label}
-                              </span>
+                              {step.label}
                             </span>
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
                 </div>
 
-                <div className="flex flex-row sm:flex-col items-center justify-between gap-2 sm:justify-center shrink-0 rounded-lg sm:rounded-none sm:border-l border-border-light bg-surface-hover/40 dark:bg-surface-secondary/30 sm:bg-transparent dark:sm:bg-transparent px-2.5 py-1.5 sm:py-1 sm:pl-3 sm:pr-2 sm:min-w-[6.75rem]">
-                  <div className="flex items-center gap-2 min-w-0 sm:flex-col sm:items-center sm:gap-0.5 sm:text-center">
+                <div className="flex flex-row lg:flex-col items-center justify-between gap-3 lg:justify-center shrink-0 rounded-xl lg:rounded-none border border-border/60 lg:border-0 lg:border-l border-border-light bg-card/70 dark:bg-card/40 lg:bg-transparent px-3 py-2 lg:py-1 lg:pl-4 lg:pr-1 lg:min-w-[7rem]">
+                  <div className="flex items-center gap-2.5 min-w-0 lg:flex-col lg:items-center lg:gap-1 lg:text-center">
                     <div
                       className={cn(
-                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md",
+                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent",
                         progressTimerActiveVisual
-                          ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
-                          : "bg-surface-tertiary/60 text-text-secondary",
+                          ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/20 dark:text-emerald-400"
+                          : "bg-surface-tertiary/50 text-text-secondary dark:bg-surface-tertiary/40",
                       )}
                       aria-hidden
                     >
-                      <Timer className="h-3.5 w-3.5" strokeWidth={2} />
+                      <Timer className="h-4 w-4" strokeWidth={2} />
                     </div>
-                    <div className="min-w-0 sm:w-full">
-                      <p className="text-[8px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
+                    <div className="min-w-0 lg:w-full">
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
                         Work time
                       </p>
-                      <p className="text-[10px] text-text-secondary truncate sm:whitespace-normal sm:line-clamp-2 leading-tight mt-0.5 max-w-[10rem] sm:max-w-none">
+                      <p className="text-[11px] text-text-secondary leading-snug mt-0.5 line-clamp-2">
                         {progressTimerSubline}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     {progressTimerPausedBadge ? (
                       <Badge variant="warning" size="sm" className="text-[9px] px-1.5 py-0 h-5">
                         Paused
                       </Badge>
                     ) : null}
-                    <span className="text-base sm:text-lg font-semibold tabular-nums tracking-tight text-text-primary">
+                    <span className="text-lg font-bold tabular-nums tracking-tight text-text-primary">
                       {timeSpentLabel}
                     </span>
                   </div>
