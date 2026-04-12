@@ -75,7 +75,7 @@ import {
   canSendReportAndRequestFinalPayment,
   getJobStatusActions,
   isJobInProgressStatus,
-  isJobOnSiteWorkStatus,
+  jobStatusAfterResumeFromOnHold,
   normalizeTotalPhases,
   reportPhaseIndices,
   reportPhaseLabel,
@@ -1641,9 +1641,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return;
     }
     const prevRaw = (job.on_hold_previous_status ?? "in_progress_phase1").trim();
-    const prev = (
-      isJobOnSiteWorkStatus(prevRaw as Job["status"]) ? prevRaw : "in_progress_phase1"
-    ) as Job["status"];
+    const prev = jobStatusAfterResumeFromOnHold(prevRaw as Job["status"]);
     const timerBasis = { ...job, status: "on_hold" as Job["status"] };
     const patch: Partial<Job> = {
       status: prev,
