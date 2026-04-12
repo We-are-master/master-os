@@ -12,18 +12,35 @@ export type JobOverdueInput = {
   scheduled_finish_date?: string | null;
 };
 
-const EXCLUDED_FROM_OVERDUE = new Set<string>(["completed", "cancelled", "deleted", "on_hold"]);
+const NEVER_OVERDUE_BADGE = new Set<string>([
+  "completed",
+  "cancelled",
+  "deleted",
+  "on_hold",
+  "final_check",
+  "need_attention",
+  "awaiting_payment",
+]);
+
+/** Schedule-day overdue only for pipeline before final check / payment. */
+const OVERDUE_BY_SCHEDULE_DAY_STATUSES = new Set<string>([
+  "unassigned",
+  "auto_assigning",
+  "scheduled",
+  "late",
+]);
 
 /**
- * True when the job is behind schedule in the local calendar and not completed / cancelled / archived.
+ * Overdue badge only for Jobs Management buckets **Unassigned**, **Scheduled** (incl. `late`), and
+ * **In progress** on-site phases. No badge on final check, awaiting payment, on hold, completed, etc.
  *
- * **On-site in progress** (`in_progress_phase*`): overdue only when {@link jobFinishYmd} exists and is
- * strictly before today — i.e. the expected finish date has passed (arrival day alone does not count).
- * Other active statuses still use the visit / schedule day ({@link jobScheduleYmd}).
+ * **In progress (`in_progress_phase*`):** {@link jobFinishYmd} must exist and be strictly before today.
+ * **Unassigned / scheduled / late:** strictly before today on {@link jobScheduleYmd} (needs a schedule).
  */
 export function isJobOverdue(job: JobOverdueInput, today: Date = new Date()): boolean {
   if (job.deleted_at) return false;
-  if (EXCLUDED_FROM_OVERDUE.has(String(job.status))) return false;
+  const st = String(job.status);
+  if (NEVER_OVERDUE_BADGE.has(st)) return false;
   const todayStr = formatLocalYmd(today);
 
   if (isJobOnSiteWorkStatus(job.status as JobStatus)) {
@@ -32,6 +49,8 @@ export function isJobOverdue(job: JobOverdueInput, today: Date = new Date()): bo
     const finishStr = `${finish.y}-${String(finish.m).padStart(2, "0")}-${String(finish.d).padStart(2, "0")}`;
     return finishStr < todayStr;
   }
+
+  if (!OVERDUE_BY_SCHEDULE_DAY_STATUSES.has(st)) return false;
 
   const sched = jobScheduleYmd(job);
   if (!sched) return false;
