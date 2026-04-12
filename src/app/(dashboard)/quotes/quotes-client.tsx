@@ -93,9 +93,6 @@ import { resolveImagesForJobFromQuote } from "@/lib/job-images";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
-/** Staging `sort_order` so we can insert new line items before deleting old ones (avoids empty quotes if insert fails). */
-const QUOTE_LINE_SORT_STAGING_BASE = 500_000;
-
 function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
   const payload = { metric, ms: Math.round(ms), ts: Date.now(), ...(meta ?? {}) };
@@ -478,7 +475,11 @@ function getStageGuidance(status: string): {
         detail: "When ready, use the pipeline actions to move to Awaiting Customer. You can also start Bidding if you want partner figures.",
       };
     case "bidding":
-      return { headline: "", detail: "" };
+      return {
+        headline: "Bids or your own figures",
+        detail:
+          "Based on market conditions, our AI selects the best quote based on price, availability and region. You can still manually choose any other bid at any time.",
+      };
     case "awaiting_customer":
       return {
         headline: "Waiting on the customer",
@@ -524,7 +525,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     setPage, search, setSearch, status, setStatus, refresh, refreshSilent,
   } = useSupabaseList<Quote>({
     fetcher: listQuotesForPage,
-    realtimeTable: "quotes",
+    /** No realtime auto-refresh — avoids fetch loops; use header Refresh or row actions to reload. */
     initialStatus: "pipeline",
     initialData,
   });
@@ -625,24 +626,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     void refreshListBidAverages();
   }, [dataIdsKey, status, refreshListBidAverages]);
 
-  useEffect(() => {
-    if (status !== "bidding") return;
-    const supabase = getSupabase();
-    const channel = supabase
-      .channel("quotes_list_quote_bids")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "quote_bids" },
-        () => {
-          void refreshListBidAverages();
-        },
-      )
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [status, refreshListBidAverages]);
-
   const quoteKanbanColumns = useMemo(() => {
     const ids = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"];
     return ids.map((id) => ({
@@ -672,7 +655,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     kpiRefreshTimerRef.current = setTimeout(() => {
       void loadCounts();
     }, delayMs);
-  }, [refresh, loadCounts]);
+  }, [refreshSilent, loadCounts]);
 
   const kpiDateBounds = useMemo(() => {
     const now = new Date();
@@ -1048,6 +1031,15 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     [refreshWithKpis, profile?.id, profile?.full_name]
   );
 
+  /** Stable callback so quote drawer effects do not re-run every parent render (was causing bid/quote fetch loops). */
+  const handleQuoteDrawerUpdate = useCallback(
+    (updated: Quote) => {
+      setSelectedQuote(updated);
+      refresh();
+    },
+    [refresh],
+  );
+
   const handleExport = useCallback(() => {
     const csv = ["Reference,Title,Client,Status,Amount,Owner"]
       .concat(data.map((q) => `${q.reference},"${q.title}","${q.client_name}",${q.status},${q.total_value},${q.owner_name ?? ""}`))
@@ -1146,6 +1138,18 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           title="Quotes"
           subtitle="Work one stage at a time: Draft → Bidding → Awaiting customer → Accepted. Use Active pipeline to see open quotes only."
         >
+          <Button
+            variant="outline"
+            size="sm"
+            icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+            onClick={() => {
+              void loadCounts();
+              refresh();
+            }}
+            title="Reload quotes and tab counts from the server"
+          >
+            Refresh
+          </Button>
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>Export</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={handleNewQuoteClick}>New Quote</Button>
         </PageHeader>
@@ -1360,10 +1364,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         onConsumePendingInitialTab={consumeDrawerPendingTab}
         onClose={() => setSelectedQuote(null)}
         onStatusChange={handleStatusChange}
-        onQuoteUpdate={(q) => {
-          setSelectedQuote(q);
-          refresh();
-        }}
+        onQuoteUpdate={handleQuoteDrawerUpdate}
       />
       ) : null}
       {quoteToConvert ? (
@@ -1474,6 +1475,8 @@ function QuoteDetailDrawer({
   const autoPickBestBidRef = useRef(false);
   const quoteRef = useRef(quote);
   quoteRef.current = quote;
+  const onQuoteUpdateRef = useRef(onQuoteUpdate);
+  onQuoteUpdateRef.current = onQuoteUpdate;
   const [proposalSaving, setProposalSaving] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
@@ -1664,7 +1667,7 @@ function QuoteDetailDrawer({
               depositOverride: depPct,
               partnerCostOverride: best.bid_amount,
             });
-            onQuoteUpdate?.(updated);
+            onQuoteUpdateRef.current?.(updated);
             void loadLineItemsRef.current(quoteId, quoteRef.current);
           } catch (e) {
             toast.error(e instanceof Error ? e.message : "Failed to sync bid to quote");
@@ -1674,19 +1677,20 @@ function QuoteDetailDrawer({
         if (quoteRef.current.id === quoteId) setBidsLoading(false);
       }
     },
-    [onQuoteUpdate],
+    [],
   );
 
   useEffect(() => {
-    if (quote.quote_type === "partner") loadBids(quote.id);
+    if (quote.quote_type === "partner") void loadBids(quote.id);
   }, [quote.id, quote.quote_type, loadBids]);
 
   const handleRefreshBids = useCallback(async () => {
-    if (quote.quote_type !== "partner") return;
-    await loadBids(quote.id);
-    const fresh = await getQuote(quote.id);
-    if (fresh) onQuoteUpdate?.(fresh);
-  }, [quote.id, quote.quote_type, loadBids, onQuoteUpdate]);
+    const q = quoteRef.current;
+    if (q.quote_type !== "partner") return;
+    await loadBids(q.id);
+    const fresh = await getQuote(q.id);
+    if (fresh) onQuoteUpdateRef.current?.(fresh);
+  }, [loadBids]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -1897,42 +1901,18 @@ function QuoteDetailDrawer({
     const partnerTotal = opts?.partnerCostOverride ?? partnerTotalFromLines;
 
     const supabase = getSupabase();
+    await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
     const rows = lines.map((li, i) => ({
       quote_id: quote.id,
       description: i < 2 ? stripPartnerLineIndexSuffix(li.description) : li.description,
       quantity: Number(li.quantity) || 1,
       unit_price: Number(li.unitPrice) || 0,
       partner_unit_cost: Number(li.partnerUnitCost) || 0,
-      sort_order: QUOTE_LINE_SORT_STAGING_BASE + i,
+      sort_order: i,
       notes: bidPayloadTrimmedString(li.notes as unknown) || null,
     }));
     if (rows.length > 0) {
-      let oldLineItemsRemoved = false;
-      try {
-        await insertQuoteLineItemsResilient(supabase, rows);
-        const { error: delOldErr } = await supabase
-          .from("quote_line_items")
-          .delete()
-          .eq("quote_id", quote.id)
-          .lt("sort_order", QUOTE_LINE_SORT_STAGING_BASE);
-        if (delOldErr) throw delOldErr;
-        oldLineItemsRemoved = true;
-        for (let i = 0; i < rows.length; i++) {
-          const { error: sortErr } = await supabase
-            .from("quote_line_items")
-            .update({ sort_order: i })
-            .eq("quote_id", quote.id)
-            .eq("sort_order", QUOTE_LINE_SORT_STAGING_BASE + i);
-          if (sortErr) throw sortErr;
-        }
-      } catch (e) {
-        if (!oldLineItemsRemoved) {
-          await supabase.from("quote_line_items").delete().eq("quote_id", quote.id).gte("sort_order", QUOTE_LINE_SORT_STAGING_BASE);
-        }
-        throw e;
-      }
-    } else {
-      await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
+      await insertQuoteLineItemsResilient(supabase, rows);
     }
 
     const lineTot = lines.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
