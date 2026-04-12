@@ -2107,6 +2107,104 @@ function PartnerDocumentDetailModal({
   );
 }
 
+function ContractsTab({ partnerId }: { partnerId: string }) {
+  const [signatures, setSignatures] = useState<
+    { id: string; contract_type: string; signer_full_name: string; signer_email: string; signed_at: string; signature_image_url: string; signature_pdf_url: string | null; device_info: string | null; signer_ip: string | null; contract_version_id: string }[]
+  >([]);
+  const [versions, setVersions] = useState<
+    { id: string; contract_type: string; version: string; title: string }[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const supabase = getSupabase();
+    Promise.all([
+      supabase
+        .from("partner_contract_signatures")
+        .select("id, contract_type, signer_full_name, signer_email, signed_at, signature_image_url, signature_pdf_url, device_info, signer_ip, contract_version_id")
+        .eq("partner_id", partnerId)
+        .order("signed_at", { ascending: false }),
+      supabase
+        .from("contract_versions")
+        .select("id, contract_type, version, title")
+        .eq("is_active", true),
+    ]).then(([sigRes, verRes]) => {
+      if (cancelled) return;
+      setSignatures((sigRes.data ?? []) as typeof signatures);
+      setVersions((verRes.data ?? []) as typeof versions);
+      setLoading(false);
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [partnerId]);
+
+  if (loading) {
+    return <div className="p-6 text-sm text-text-tertiary">Carregando contratos...</div>;
+  }
+
+  const signedMap = new Map(signatures.map((s) => [s.contract_type, s]));
+
+  return (
+    <div className="p-6 space-y-4">
+      <div className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">
+        Contratos do Partner
+      </div>
+
+      {versions.length === 0 && (
+        <p className="text-sm text-text-tertiary">Nenhuma versão de contrato ativa no sistema.</p>
+      )}
+
+      {versions.map((v) => {
+        const sig = signedMap.get(v.contract_type);
+        return (
+          <div
+            key={v.id}
+            className="rounded-xl border border-border-light p-4 space-y-2"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-text-primary">{v.title}</div>
+                <div className="text-[11px] text-text-tertiary">Versão {v.version}</div>
+              </div>
+              {sig ? (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-medium rounded-md bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200/50 dark:bg-emerald-950/30 dark:text-emerald-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  Assinado
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-medium rounded-md bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200/50 dark:bg-amber-950/30 dark:text-amber-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  Pendente
+                </span>
+              )}
+            </div>
+
+            {sig && (
+              <div className="text-xs text-text-secondary space-y-1 pt-1 border-t border-border-light">
+                <div><strong>Assinado por:</strong> {sig.signer_full_name} ({sig.signer_email})</div>
+                <div><strong>Data:</strong> {new Date(sig.signed_at).toLocaleString("pt-BR")}</div>
+                {sig.device_info && <div><strong>Dispositivo:</strong> {sig.device_info}</div>}
+                {sig.signer_ip && <div><strong>IP:</strong> {sig.signer_ip}</div>}
+                {sig.signature_image_url && (
+                  <div className="pt-2">
+                    <div className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1">Assinatura</div>
+                    <div className="rounded-lg border border-border-light bg-white p-2 inline-block">
+                      <img src={sig.signature_image_url} alt="Assinatura" className="h-12 object-contain" />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PartnerDetailDrawer({
   partner,
   teamMember,
@@ -3015,6 +3113,7 @@ function PartnerDetailDrawer({
       label: "Compliance",
       count: complianceAttentionCount > 0 ? complianceAttentionCount : undefined,
     },
+    { id: "contracts" as const, label: "Contracts" },
     { id: "actions" as const, label: "Privacy & Permissions" },
     { id: "notes", label: "Notes", count: notes.length },
     ...(partner.auth_user_id ? [{ id: "location" as const, label: "Location" }] : []),
@@ -4179,6 +4278,11 @@ function PartnerDetailDrawer({
               />
             ) : <p className="text-sm text-text-tertiary">No recent location</p>}
           </div>
+        )}
+
+        {/* ========== CONTRACTS ========== */}
+        {tab === "contracts" && (
+          <ContractsTab partnerId={partner.id} />
         )}
 
         {/* ========== PRIVACY & PERMISSIONS ========== */}
