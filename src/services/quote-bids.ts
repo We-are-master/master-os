@@ -13,6 +13,39 @@ export interface QuoteBid {
   updated_at: string;
 }
 
+/**
+ * Mean `bid_amount` per quote for bids still in play (`submitted`).
+ * Used on list views; pair with Realtime on `quote_bids` for live updates.
+ */
+export async function getSubmittedBidAveragesByQuoteIds(
+  quoteIds: string[],
+): Promise<Record<string, number>> {
+  const ids = quoteIds.filter(Boolean);
+  if (ids.length === 0) return {};
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("quote_bids")
+    .select("quote_id, bid_amount")
+    .in("quote_id", ids)
+    .eq("status", "submitted");
+  if (error) throw error;
+  const sums = new Map<string, { sum: number; n: number }>();
+  for (const row of data ?? []) {
+    const rec = row as { quote_id: string; bid_amount: number };
+    const qid = String(rec.quote_id);
+    const amt = Number(rec.bid_amount) || 0;
+    const cur = sums.get(qid) ?? { sum: 0, n: 0 };
+    cur.sum += amt;
+    cur.n += 1;
+    sums.set(qid, cur);
+  }
+  const out: Record<string, number> = {};
+  for (const [qid, { sum, n }] of sums) {
+    if (n > 0) out[qid] = sum / n;
+  }
+  return out;
+}
+
 export async function getBidsByQuoteId(quoteId: string): Promise<QuoteBid[]> {
   const supabase = getSupabase();
   const { data, error } = await supabase

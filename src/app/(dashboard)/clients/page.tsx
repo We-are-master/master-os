@@ -15,6 +15,12 @@ import { Modal } from "@/components/ui/modal";
 import { Input, SearchInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
+import {
+  UkAddressReviewFields,
+  addressPartsToFormState,
+  formStateToAddressParts,
+  type UkAddressFormState,
+} from "@/components/ui/uk-address-review-fields";
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
 import {
@@ -529,7 +535,11 @@ function AddressesTab({ client }: { client: Client }) {
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [newForm, setNewForm] = useState({ label: "", address: "", city: "", postcode: "" });
+  const [newForm, setNewForm] = useState({ label: "", flat: "", address: "", city: "", postcode: "" });
+  const [newAddressLookupPending, setNewAddressLookupPending] = useState<{
+    parts: AddressParts;
+    form: UkAddressFormState;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -543,19 +553,22 @@ function AddressesTab({ client }: { client: Client }) {
   useEffect(() => { void load(); }, [load]);
 
   const handleAdd = async () => {
-    if (!newForm.address.trim()) { toast.error("Address is required"); return; }
+    const street = newForm.address.trim();
+    if (!street) { toast.error("Street address is required"); return; }
+    const line1 = [newForm.flat.trim(), street].filter(Boolean).join(", ");
     setSaving(true);
     try {
       await createClientAddress({
         client_id: client.id,
         label: newForm.label.trim() || undefined,
-        address: newForm.address.trim(),
+        address: line1,
         city: newForm.city.trim() || undefined,
         postcode: newForm.postcode.trim() || undefined,
         country: "gb",
         is_default: addresses.length === 0,
       });
-      setNewForm({ label: "", address: "", city: "", postcode: "" });
+      setNewForm({ label: "", flat: "", address: "", city: "", postcode: "" });
+      setNewAddressLookupPending(null);
       setAdding(false);
       toast.success("Address saved");
       await load();
@@ -673,33 +686,66 @@ function AddressesTab({ client }: { client: Client }) {
             label=""
             placeholder="Start typing address or postcode..."
             value={newForm.address}
-            onChange={(v) => setNewForm((p) => ({ ...p, address: v }))}
-            onSelect={(parts) =>
+            onChange={(v) => {
+              setNewAddressLookupPending(null);
+              setNewForm((p) => ({ ...p, address: v }));
+            }}
+            onSelect={(parts) => {
+              setNewAddressLookupPending({ parts, form: addressPartsToFormState(parts) });
               setNewForm((p) => ({
                 ...p,
+                flat: "",
                 address: parts.address || parts.full_address,
-                city: parts.city || p.city,
-                postcode: parts.postcode || p.postcode,
-              }))
-            }
+                city: parts.city || "",
+                postcode: parts.postcode || "",
+              }));
+            }}
           />
-          <div className="grid grid-cols-2 gap-2">
-            <Input
-              placeholder="City"
-              value={newForm.city}
-              onChange={(e) => setNewForm((p) => ({ ...p, city: e.target.value }))}
+          {newAddressLookupPending ? (
+            <UkAddressReviewFields
+              value={newAddressLookupPending.form}
+              onChange={(form) => {
+                setNewAddressLookupPending((prev) => (prev ? { ...prev, form } : null));
+                setNewForm((p) => ({
+                  ...p,
+                  flat: form.flat,
+                  address: form.street,
+                  city: form.city,
+                  postcode: form.postcode,
+                }));
+              }}
+              disabled={saving}
             />
-            <Input
-              placeholder="Postcode"
-              value={newForm.postcode}
-              onChange={(e) => setNewForm((p) => ({ ...p, postcode: e.target.value }))}
-            />
-          </div>
+          ) : (
+            <>
+              <Input
+                placeholder="Flat / unit (optional)"
+                value={newForm.flat}
+                onChange={(e) => setNewForm((p) => ({ ...p, flat: e.target.value }))}
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  placeholder="Town / city"
+                  value={newForm.city}
+                  onChange={(e) => setNewForm((p) => ({ ...p, city: e.target.value }))}
+                />
+                <Input
+                  placeholder="Postcode"
+                  value={newForm.postcode}
+                  onChange={(e) => setNewForm((p) => ({ ...p, postcode: e.target.value }))}
+                />
+              </div>
+            </>
+          )}
           <div className="flex justify-end gap-2 pt-1">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => { setAdding(false); setNewForm({ label: "", address: "", city: "", postcode: "" }); }}
+              onClick={() => {
+                setAdding(false);
+                setNewForm({ label: "", flat: "", address: "", city: "", postcode: "" });
+                setNewAddressLookupPending(null);
+              }}
             >
               Cancel
             </Button>
@@ -1237,7 +1283,7 @@ function CreateClientForm({
 }) {
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const [form, setForm] = useState({
-    full_name: "", email: "", phone: "", address: "", city: "", postcode: "",
+    full_name: "", email: "", phone: "", address_flat: "", address: "", city: "", postcode: "",
     source_account_id: "",
     client_type: "residential" as ClientType, source: "direct" as ClientSource, notes: "",
   });
@@ -1249,7 +1295,10 @@ function CreateClientForm({
     payment_terms: "Net 30",
   });
   const [creatingSource, setCreatingSource] = useState(false);
-  const [propertyAddressParts, setPropertyAddressParts] = useState<AddressParts | null>(null);
+  const [propertyAddressPending, setPropertyAddressPending] = useState<{
+    parts: AddressParts;
+    form: UkAddressFormState;
+  } | null>(null);
   const [propertyAddressRaw, setPropertyAddressRaw] = useState("");
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
 
@@ -1291,12 +1340,19 @@ function CreateClientForm({
       return;
     }
     const typedProperty = propertyAddressRaw.trim();
-    const property_address_parts =
-      propertyAddressParts ??
-      (typedProperty
+    const property_address_parts = propertyAddressPending
+      ? formStateToAddressParts(propertyAddressPending.form, propertyAddressPending.parts.full_address)
+      : typedProperty
         ? { full_address: typedProperty, address: typedProperty, city: "", postcode: "", country: "gb" }
-        : undefined);
-    await onSubmit({ ...form, source_account_id: sourceAccountId, property_address_parts });
+        : undefined;
+    const mergedMainLine = [form.address_flat.trim(), form.address.trim()].filter(Boolean).join(", ") || form.address.trim();
+    const { address_flat: _af, ...formRest } = form;
+    await onSubmit({
+      ...formRest,
+      address: mergedMainLine || form.address,
+      source_account_id: sourceAccountId,
+      property_address_parts,
+    });
   };
 
   return (
@@ -1405,10 +1461,24 @@ function CreateClientForm({
         value={form.address}
         onChange={(v) => update("address", v)}
         onSelect={(parts) => {
-          setForm((p) => ({ ...p, address: parts.address || parts.full_address, city: parts.city || p.city, postcode: parts.postcode || p.postcode }));
+          setForm((p) => ({
+            ...p,
+            address_flat: "",
+            address: parts.address || parts.full_address,
+            city: parts.city || "",
+            postcode: parts.postcode || "",
+          }));
         }}
         placeholder="Start typing address or postcode..."
       />
+      <div>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Flat / unit (optional)</label>
+        <Input
+          value={form.address_flat}
+          onChange={(e) => update("address_flat", e.target.value)}
+          placeholder="e.g. Flat 4"
+        />
+      </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">City</label>
@@ -1435,17 +1505,25 @@ function CreateClientForm({
             value={propertyAddressRaw}
             onChange={(v) => {
               setPropertyAddressRaw(v);
-              setPropertyAddressParts(null);
+              setPropertyAddressPending(null);
             }}
             onSelect={(parts) => {
-              setPropertyAddressParts(parts);
+              setPropertyAddressPending({ parts, form: addressPartsToFormState(parts) });
               setPropertyAddressRaw(parts.full_address);
             }}
             placeholder="Type address or postcode..."
           />
-          {propertyAddressParts && (
-            <p className="text-[10px] text-primary mt-1">This address will be saved as a property linked to the client.</p>
-          )}
+          {propertyAddressPending ? (
+            <>
+              <UkAddressReviewFields
+                value={propertyAddressPending.form}
+                onChange={(nextForm) => setPropertyAddressPending((prev) => (prev ? { ...prev, form: nextForm } : null))}
+              />
+              <p className="text-[10px] text-primary mt-1">This address will be saved as a property linked to the client.</p>
+            </>
+          ) : propertyAddressRaw.trim() ? (
+            <p className="text-[10px] text-text-tertiary mt-1">Pick a suggestion above for split lines, or leave as typed (saved as one line).</p>
+          ) : null}
         </div>
       </div>
       <Select

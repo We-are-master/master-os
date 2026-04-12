@@ -3,6 +3,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
+import {
+  UkAddressReviewFields,
+  addressPartsToFormState,
+  formStateToAddressParts,
+  type UkAddressFormState,
+} from "@/components/ui/uk-address-review-fields";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { UserPlus, MapPin, Loader2, ChevronDown } from "lucide-react";
@@ -98,6 +104,8 @@ export function ClientAddressPicker({
   const [addressLoading, setAddressLoading] = useState(false);
   const [addingNewAddress, setAddingNewAddress] = useState(false);
   const [newAddressRaw, setNewAddressRaw] = useState("");
+  /** After Mapbox pick: user confirms flat / street / city / PC before `createClientAddress`. */
+  const [newAddressPending, setNewAddressPending] = useState<{ parts: AddressParts; form: UkAddressFormState } | null>(null);
   const [createClientOpen, setCreateClientOpen] = useState(false);
   const [createClientForm, setCreateClientForm] = useState({ full_name: "", email: "", phone: "", source_account_id: "" });
   const [newSourceForm, setNewSourceForm] = useState({
@@ -107,7 +115,7 @@ export function ClientAddressPicker({
     industry: "Residential Services",
     payment_terms: "Net 30",
   });
-  const [createClientAddressParts, setCreateClientAddressParts] = useState<AddressParts | null>(null);
+  const [createAddressPending, setCreateAddressPending] = useState<{ parts: AddressParts; form: UkAddressFormState } | null>(null);
   const [createClientAddressRaw, setCreateClientAddressRaw] = useState("");
   const [sourceAccounts, setSourceAccounts] = useState<ClientSourceAccount[]>([]);
   const [creating, setCreating] = useState(false);
@@ -408,13 +416,14 @@ export function ClientAddressPicker({
         tags: [],
       });
       let addressToSelect: ClientAddress | null = null;
-      if (createClientAddressParts) {
+      if (createAddressPending) {
+        const merged = formStateToAddressParts(createAddressPending.form, createAddressPending.parts.full_address);
         const addr = await createClientAddress({
           client_id: client.id,
-          address: createClientAddressParts.address || createClientAddressParts.full_address,
-          city: createClientAddressParts.city,
-          postcode: createClientAddressParts.postcode,
-          country: createClientAddressParts.country || "gb",
+          address: merged.address || merged.full_address,
+          city: merged.city,
+          postcode: merged.postcode,
+          country: merged.country || "gb",
           is_default: true,
         });
         addressToSelect = addr;
@@ -439,7 +448,7 @@ export function ClientAddressPicker({
         industry: "Residential Services",
         payment_terms: "Net 30",
       });
-      setCreateClientAddressParts(null);
+      setCreateAddressPending(null);
       setCreateClientAddressRaw("");
       selectClient(client);
       if (addressToSelect) {
@@ -455,7 +464,7 @@ export function ClientAddressPicker({
     } finally {
       setCreating(false);
     }
-  }, [createClientForm, createClientAddressParts, newSourceForm, selectClient, selectAddress, confirmDespiteDuplicates]);
+  }, [createClientForm, createAddressPending, newSourceForm, selectClient, selectAddress, confirmDespiteDuplicates]);
 
   const clearClient = useCallback(() => {
     selectedClientRef.current = null;
@@ -463,6 +472,7 @@ export function ClientAddressPicker({
     setClientSearch("");
     setAddresses([]);
     setAddingNewAddress(false);
+    setNewAddressPending(null);
     onChange({
       client_id: undefined,
       client_address_id: undefined,
@@ -552,6 +562,16 @@ export function ClientAddressPicker({
                   </div>
                 ) : (
                   <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClientDropdownOpen(false);
+                        setCreateClientOpen(true);
+                      }}
+                      className="sticky top-0 z-[1] w-full text-left px-3 py-2.5 hover:bg-primary/10 text-primary text-sm font-medium flex items-center gap-2 border-b border-border bg-card"
+                    >
+                      <UserPlus className="h-4 w-4 shrink-0" /> Create new client
+                    </button>
                     {clientResults.map((c) => {
                       const addrLine = [c.address?.trim(), c.city?.trim(), c.postcode?.trim()]
                         .filter(Boolean)
@@ -571,13 +591,6 @@ export function ClientAddressPicker({
                         </button>
                       );
                     })}
-                    <button
-                      type="button"
-                      onClick={() => { setClientDropdownOpen(false); setCreateClientOpen(true); }}
-                      className="w-full text-left px-3 py-2.5 hover:bg-primary/10 text-primary text-sm font-medium flex items-center gap-2 border-t border-border"
-                    >
-                      <UserPlus className="h-4 w-4" /> Create new client
-                    </button>
                   </>
                 )}
               </div>
@@ -658,19 +671,59 @@ export function ClientAddressPicker({
               {addingNewAddress ? (
                 <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
                   <p className="text-xs font-medium text-text-secondary mb-2">New address</p>
-                  <AddressAutocomplete
-                    value={newAddressRaw}
-                    onChange={(val) => {
-                      setNewAddressRaw(val);
-                      if (val.trim()) emit({ client_address_id: undefined, property_address: val.trim() });
-                      else emit({ client_address_id: undefined, property_address: "" });
-                    }}
-                    onSelect={(parts) => {
-                      setNewAddressRaw(parts.full_address);
-                      handleNewAddressSelect(parts);
-                    }}
-                    placeholder="Type address or postcode..."
-                  />
+              <AddressAutocomplete
+                value={newAddressRaw}
+                onChange={(val) => {
+                  setNewAddressRaw(val);
+                  setNewAddressPending(null);
+                  if (val.trim()) emit({ client_address_id: undefined, property_address: val.trim() });
+                  else emit({ client_address_id: undefined, property_address: "" });
+                }}
+                onSelect={(parts) => {
+                  setNewAddressRaw(parts.full_address);
+                  setNewAddressPending({ parts, form: addressPartsToFormState(parts) });
+                }}
+                placeholder="Type address or postcode..."
+              />
+                  {newAddressPending ? (
+                    <>
+                      <UkAddressReviewFields
+                        value={newAddressPending.form}
+                        onChange={(form) => setNewAddressPending((p) => (p ? { ...p, form } : null))}
+                        disabled={creating}
+                      />
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={creating || !newAddressPending.form.street.trim()}
+                          onClick={() => {
+                            const merged = formStateToAddressParts(
+                              newAddressPending.form,
+                              newAddressPending.parts.full_address,
+                            );
+                            setNewAddressPending(null);
+                            void handleNewAddressSelect(merged);
+                          }}
+                        >
+                          Save address
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={creating}
+                          onClick={() => {
+                            setNewAddressPending(null);
+                            setNewAddressRaw("");
+                            emit({ client_address_id: undefined, property_address: "" });
+                          }}
+                        >
+                          Clear
+                        </Button>
+                      </div>
+                    </>
+                  ) : null}
                   {creating && (
                     <div className="flex items-center gap-2 mt-2 text-sm text-text-tertiary">
                       <Loader2 className="h-4 w-4 animate-spin" /> Saving...
@@ -681,7 +734,11 @@ export function ClientAddressPicker({
                     variant="ghost"
                     size="sm"
                     className="mt-2"
-                    onClick={() => { setAddingNewAddress(false); setNewAddressRaw(""); }}
+                    onClick={() => {
+                      setAddingNewAddress(false);
+                      setNewAddressRaw("");
+                      setNewAddressPending(null);
+                    }}
                   >
                     Cancel
                   </Button>
@@ -720,7 +777,7 @@ export function ClientAddressPicker({
             industry: "Residential Services",
             payment_terms: "Net 30",
           });
-          setCreateClientAddressParts(null);
+          setCreateAddressPending(null);
           setCreateClientAddressRaw("");
         }}
         title="New client"
@@ -845,16 +902,27 @@ export function ClientAddressPicker({
                 value={createClientAddressRaw}
                 onChange={(v) => {
                   setCreateClientAddressRaw(v);
-                  setCreateClientAddressParts(null);
+                  setCreateAddressPending(null);
                 }}
                 onSelect={(parts) => {
-                  setCreateClientAddressParts(parts);
+                  setCreateAddressPending({ parts, form: addressPartsToFormState(parts) });
                   setCreateClientAddressRaw(parts.full_address);
                 }}
                 placeholder="Type address or postcode..."
               />
-              {(createClientAddressParts || createClientAddressRaw.trim()) && (
-                <p className="text-[10px] text-primary mt-1">Address will be saved when you create the client.</p>
+              {createAddressPending ? (
+                <UkAddressReviewFields
+                  value={createAddressPending.form}
+                  onChange={(form) => setCreateAddressPending((p) => (p ? { ...p, form } : null))}
+                  disabled={creating}
+                />
+              ) : null}
+              {(createAddressPending || createClientAddressRaw.trim()) && (
+                <p className="text-[10px] text-primary mt-1">
+                  {createAddressPending
+                    ? "Adjust lines above if needed, then create the client to save this address."
+                    : "Typed text will be saved as one line when you create the client (no postcode split)."}
+                </p>
               )}
             </div>
           </div>

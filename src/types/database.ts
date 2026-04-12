@@ -177,6 +177,8 @@ export interface Quote {
   /** When true, emailing the customer includes site photos from the linked service request (if any). */
   email_attach_request_photos?: boolean | null;
   property_address?: string;
+  /** Outward / full postcode when stored on the quote (list subtitle). */
+  postcode?: string | null;
   partner_id?: string;
   partner_name?: string;
   partner_cost: number;
