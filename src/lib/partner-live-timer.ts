@@ -85,7 +85,7 @@ export function statusChangePartnerTimerPatch(
   /** Resume after office pause (scheduled) — do not apply fresh start patch if work already ended once. */
   if (
     newStatus === "in_progress_phase1" &&
-    (job.status === "scheduled" || job.status === "late") &&
+    (job.status === "scheduled" || job.status === "late" || job.status === "on_hold") &&
     job.partner_timer_ended_at
   ) {
     return {
@@ -104,6 +104,7 @@ export function statusChangePartnerTimerPatch(
       newStatus === "awaiting_payment" ||
       newStatus === "completed" ||
       (newStatus === "scheduled" && wasOnSite) ||
+      newStatus === "on_hold" ||
       newStatus === "cancelled")
   ) {
     Object.assign(patch, officePartnerTimerEndPatch());

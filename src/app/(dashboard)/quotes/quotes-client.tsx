@@ -93,6 +93,9 @@ import { resolveImagesForJobFromQuote } from "@/lib/job-images";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
+/** Staging `sort_order` so we can insert new line items before deleting old ones (avoids empty quotes if insert fails). */
+const QUOTE_LINE_SORT_STAGING_BASE = 500_000;
+
 function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
   const payload = { metric, ms: Math.round(ms), ts: Date.now(), ...(meta ?? {}) };
@@ -475,11 +478,7 @@ function getStageGuidance(status: string): {
         detail: "When ready, use the pipeline actions to move to Awaiting Customer. You can also start Bidding if you want partner figures.",
       };
     case "bidding":
-      return {
-        headline: "Bids or your own figures",
-        detail:
-          "Based on market conditions, our AI selects the best quote based on price, availability and region. You can still manually choose any other bid at any time.",
-      };
+      return { headline: "", detail: "" };
     case "awaiting_customer":
       return {
         headline: "Waiting on the customer",
@@ -1898,18 +1897,42 @@ function QuoteDetailDrawer({
     const partnerTotal = opts?.partnerCostOverride ?? partnerTotalFromLines;
 
     const supabase = getSupabase();
-    await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
     const rows = lines.map((li, i) => ({
       quote_id: quote.id,
       description: i < 2 ? stripPartnerLineIndexSuffix(li.description) : li.description,
       quantity: Number(li.quantity) || 1,
       unit_price: Number(li.unitPrice) || 0,
       partner_unit_cost: Number(li.partnerUnitCost) || 0,
-      sort_order: i,
+      sort_order: QUOTE_LINE_SORT_STAGING_BASE + i,
       notes: bidPayloadTrimmedString(li.notes as unknown) || null,
     }));
     if (rows.length > 0) {
-      await insertQuoteLineItemsResilient(supabase, rows);
+      let oldLineItemsRemoved = false;
+      try {
+        await insertQuoteLineItemsResilient(supabase, rows);
+        const { error: delOldErr } = await supabase
+          .from("quote_line_items")
+          .delete()
+          .eq("quote_id", quote.id)
+          .lt("sort_order", QUOTE_LINE_SORT_STAGING_BASE);
+        if (delOldErr) throw delOldErr;
+        oldLineItemsRemoved = true;
+        for (let i = 0; i < rows.length; i++) {
+          const { error: sortErr } = await supabase
+            .from("quote_line_items")
+            .update({ sort_order: i })
+            .eq("quote_id", quote.id)
+            .eq("sort_order", QUOTE_LINE_SORT_STAGING_BASE + i);
+          if (sortErr) throw sortErr;
+        }
+      } catch (e) {
+        if (!oldLineItemsRemoved) {
+          await supabase.from("quote_line_items").delete().eq("quote_id", quote.id).gte("sort_order", QUOTE_LINE_SORT_STAGING_BASE);
+        }
+        throw e;
+      }
+    } else {
+      await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
     }
 
     const lineTot = lines.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
