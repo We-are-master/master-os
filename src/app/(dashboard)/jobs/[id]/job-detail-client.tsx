@@ -4,9 +4,12 @@ import type { JobDetailBundle } from "@/services/jobs";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { formatDistanceStrict } from "date-fns/formatDistanceStrict";
+import { parseISO } from "date-fns/parseISO";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
@@ -72,6 +75,7 @@ import {
   canSendReportAndRequestFinalPayment,
   getJobStatusActions,
   isJobInProgressStatus,
+  isJobOnSiteWorkStatus,
   normalizeTotalPhases,
   reportPhaseIndices,
   reportPhaseLabel,
@@ -135,6 +139,7 @@ import {
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
+import { jobReportLinkHref } from "@/lib/job-report-link";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
 import {
   JobMoneyDrawer,
@@ -145,6 +150,12 @@ import {
 import { executeJobMoneyAction } from "@/services/job-money-actions";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
+import {
+  buildSchedulePatchForResume,
+  localHmFromIsoTimestamp,
+  onHoldSnapshotArrivalYmd,
+  validateResumeArrivalDate,
+} from "@/lib/job-on-hold";
 
 const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned, dot: true },
@@ -154,6 +165,7 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   in_progress_phase1: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1, dot: true },
   in_progress_phase2: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2, dot: true },
   in_progress_phase3: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3, dot: true },
+  on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
   final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
   need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
@@ -240,7 +252,7 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
 
 const JOB_FLOW_STEPS: { label: string; statuses: Job["status"][] }[] = [
   { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"] },
-  { label: "On site", statuses: ["in_progress_phase1", "in_progress_phase2", "in_progress_phase3"] },
+  { label: "On site", statuses: ["in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "on_hold"] },
   { label: "Final check", statuses: ["final_check", "need_attention"] },
   { label: "Awaiting payment", statuses: ["awaiting_payment"] },
   { label: "Completed", statuses: ["completed"] },
@@ -309,6 +321,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingOwner, setSavingOwner] = useState(false);
   const [partnerModalOpen, setPartnerModalOpen] = useState(false);
   const [cancelJobOpen, setCancelJobOpen] = useState(false);
+  const [putOnHoldOpen, setPutOnHoldOpen] = useState(false);
+  const [putOnHoldReason, setPutOnHoldReason] = useState("");
+  const [putOnHoldSaving, setPutOnHoldSaving] = useState(false);
+  const [resumeJobOpen, setResumeJobOpen] = useState(false);
+  const [resumeArrivalDate, setResumeArrivalDate] = useState("");
+  const [resumeArrivalTime, setResumeArrivalTime] = useState("");
+  const [resumeSaving, setResumeSaving] = useState(false);
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
   const [validatingComplete, setValidatingComplete] = useState(false);
   const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
@@ -369,6 +388,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingScope, setSavingScope] = useState(false);
   const [additionalNotesDraft, setAdditionalNotesDraft] = useState("");
   const [savingAdditionalNotes, setSavingAdditionalNotes] = useState(false);
+  const [reportLinkDraft, setReportLinkDraft] = useState("");
+  const [savingReportLink, setSavingReportLink] = useState(false);
   const [sitePhotoUploading, setSitePhotoUploading] = useState(false);
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
@@ -889,6 +910,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setAdditionalNotesDraft(job.additional_notes ?? "");
   }, [job?.id, job?.additional_notes]);
 
+  useEffect(() => {
+    if (!job) return;
+    setReportLinkDraft(job.report_link ?? "");
+  }, [job?.id, job?.report_link]);
+
   const handleJobUpdate = useCallback(async (
     jobId: string,
     updates: Partial<Job>,
@@ -1017,9 +1043,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         partner_cost: totals.partnerTotal,
         title: titleOut,
         customer_final_payment,
-        ...(service.default_description?.trim()
-          ? { scope: service.default_description.trim() }
-          : {}),
       };
       setSavingJobTypeEdit(true);
       try {
@@ -1546,6 +1569,137 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return null;
     }
   }, [profile?.id, profile?.full_name, customerPayments, partnerPayments]);
+
+  const confirmPutOnHold = useCallback(async () => {
+    if (!job) return;
+    const reason = putOnHoldReason.trim();
+    if (!reason) {
+      toast.error("Add a short reason for on hold.");
+      return;
+    }
+    setPutOnHoldSaving(true);
+    try {
+      const extraPatch: Partial<Job> = {
+        on_hold_previous_status: job.status,
+        on_hold_at: new Date().toISOString(),
+        on_hold_reason: reason,
+        on_hold_snapshot_scheduled_date: job.scheduled_date ?? null,
+        on_hold_snapshot_scheduled_start_at: job.scheduled_start_at ?? null,
+        on_hold_snapshot_scheduled_end_at: job.scheduled_end_at ?? null,
+        on_hold_snapshot_scheduled_finish_date: job.scheduled_finish_date ?? null,
+      };
+      const updated = await handleStatusChange(job, "on_hold", { extraPatch });
+      if (updated) {
+        setPutOnHoldOpen(false);
+        setPutOnHoldReason("");
+        try {
+          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        } catch {
+          /* non-blocking */
+        }
+      }
+    } finally {
+      setPutOnHoldSaving(false);
+    }
+  }, [job, putOnHoldReason, handleStatusChange]);
+
+  const openResumeJobModal = useCallback(() => {
+    if (!job || job.status !== "on_hold") return;
+    const ymd = onHoldSnapshotArrivalYmd(job) ?? job.scheduled_date?.trim().slice(0, 10) ?? "";
+    setResumeArrivalDate(ymd);
+    const hm =
+      localHmFromIsoTimestamp(job.on_hold_snapshot_scheduled_start_at ?? job.scheduled_start_at ?? null) ||
+      scheduleTime.trim();
+    setResumeArrivalTime(hm);
+    setResumeJobOpen(true);
+  }, [job, scheduleTime]);
+
+  const confirmResumeJob = useCallback(async () => {
+    if (!job || job.status !== "on_hold") return;
+    const snapYmd = onHoldSnapshotArrivalYmd(job);
+    const gate = validateResumeArrivalDate({ snapshotYmd: snapYmd, selectedYmd: resumeArrivalDate });
+    if (!gate.ok) {
+      toast.error(gate.message);
+      return;
+    }
+    if (!resumeArrivalTime.trim()) {
+      toast.error("Set an arrival time.");
+      return;
+    }
+    const schedule = buildSchedulePatchForResume({
+      arrivalDateYmd: resumeArrivalDate,
+      arrivalTimeHm: resumeArrivalTime,
+      snapshotStartAt: job.on_hold_snapshot_scheduled_start_at,
+      snapshotEndAt: job.on_hold_snapshot_scheduled_end_at,
+      snapshotFinishDate: job.on_hold_snapshot_scheduled_finish_date,
+      fallbackFinishDate: job.scheduled_finish_date,
+    });
+    const arrY = resumeArrivalDate.trim().slice(0, 10);
+    const finishY = (schedule.scheduled_finish_date ?? "").toString().slice(0, 10);
+    if (finishY && finishY < arrY) {
+      toast.error("Arrival date cannot be after the expected finish date.");
+      return;
+    }
+    const prevRaw = (job.on_hold_previous_status ?? "in_progress_phase1").trim();
+    const prev = (
+      isJobOnSiteWorkStatus(prevRaw as Job["status"]) ? prevRaw : "in_progress_phase1"
+    ) as Job["status"];
+    const timerBasis = { ...job, status: "on_hold" as Job["status"] };
+    const patch: Partial<Job> = {
+      status: prev,
+      ...schedule,
+      on_hold_previous_status: null,
+      on_hold_at: null,
+      on_hold_reason: null,
+      on_hold_snapshot_scheduled_date: null,
+      on_hold_snapshot_scheduled_start_at: null,
+      on_hold_snapshot_scheduled_end_at: null,
+      on_hold_snapshot_scheduled_finish_date: null,
+      ...statusChangePartnerTimerPatch(timerBasis, prev),
+      ...statusChangeOfficeTimerPatch(timerBasis, prev),
+    };
+    setResumeSaving(true);
+    try {
+      const updated = await handleJobUpdate(job.id, patch, { silent: true, notifyPartner: false });
+      if (updated) {
+        await logAudit({
+          entityType: "job",
+          entityId: job.id,
+          entityRef: job.reference,
+          action: "status_changed",
+          fieldName: "status",
+          oldValue: job.status,
+          newValue: prev,
+          userId: profile?.id,
+          userName: profile?.full_name,
+        });
+        setResumeJobOpen(false);
+        toast.success("Job resumed");
+        try {
+          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        } catch {
+          /* non-blocking */
+        }
+        if (updated.partner_id) {
+          notifyAssignedPartnerAboutJob({
+            partnerId: updated.partner_id,
+            job: updated,
+            kind: "job_status_changed",
+            statusLabel: statusConfig[prev]?.label ?? prev,
+          });
+        }
+      }
+    } finally {
+      setResumeSaving(false);
+    }
+  }, [
+    job,
+    resumeArrivalDate,
+    resumeArrivalTime,
+    handleJobUpdate,
+    profile?.id,
+    profile?.full_name,
+  ]);
 
   const handleScheduleChange = useCallback(
     (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string) => {
@@ -2430,6 +2584,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold text-text-primary">{job.reference}</h1>
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
+              <JobOverdueBadge job={job} size="md" />
             </div>
             <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
             {job.status === "cancelled" && job.partner_cancelled_at ? (
@@ -2479,43 +2634,62 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ) : null}
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end sm:justify-start">
-            {statusActions.map((action, idx) => (
-              <Button
-                key={`${action.special ?? action.status}-${idx}`}
-                variant={action.destructive ? "danger" : action.primary ? "primary" : "outline"}
-                size="sm"
-                icon={<action.icon className="h-3.5 w-3.5" />}
-                disabled={action.special === "send_report_invoice" ? !sendReportFinalCheck.ok : false}
-                title={action.special === "send_report_invoice" ? sendReportFinalCheck.message : undefined}
-                onClick={() => {
-                  if (action.status === "cancelled") {
-                    setCancelPresetId(OFFICE_JOB_CANCELLATION_REASONS[0].id);
-                    setCancelDetail("");
-                    setCancelJobOpen(true);
-                    return;
-                  }
-                  if (action.special === "send_report_invoice") {
-                    setApprovalMode("review_approve");
-                    setOwnerApprovalChecked(true);
-                    setForceApprovalChecked(false);
-                    setForceApprovalReason("");
-                    setValidateCompleteOpen(true);
-                    return;
-                  }
-                  if (job.status === "need_attention" && action.status === "completed") {
-                    setApprovalMode("validate_complete");
-                    setOwnerApprovalChecked(false);
-                    setForceApprovalChecked(false);
-                    setForceApprovalReason("");
-                    setValidateCompleteOpen(true);
-                    return;
-                  }
-                  void handleStatusChange(job, action.status as Job["status"]);
-                }}
-              >
-                {action.label}
-              </Button>
-            ))}
+            {statusActions.map((action, idx) => {
+              const completeGreenClass =
+                "border-emerald-600/45 bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm dark:border-emerald-700/55 dark:bg-emerald-600 dark:hover:bg-emerald-500";
+              const holdDarkRedClass =
+                "border-red-950/40 bg-red-950/[0.08] text-red-950 hover:bg-red-950/12 dark:border-red-900/55 dark:bg-red-950/45 dark:text-red-50 dark:hover:bg-red-950/55";
+              const variant =
+                action.destructive ? "danger" : action.primary && action.tone !== "success" ? "primary" : "outline";
+              const toneClass = action.tone === "success" ? completeGreenClass : action.tone === "hold" ? holdDarkRedClass : undefined;
+              return (
+                <Button
+                  key={`${action.special ?? action.status}-${idx}`}
+                  variant={variant}
+                  className={cn(toneClass)}
+                  size="sm"
+                  icon={<action.icon className="h-3.5 w-3.5" />}
+                  disabled={action.special === "send_report_invoice" ? !sendReportFinalCheck.ok : false}
+                  title={action.special === "send_report_invoice" ? sendReportFinalCheck.message : undefined}
+                  onClick={() => {
+                    if (action.status === "cancelled") {
+                      setCancelPresetId(OFFICE_JOB_CANCELLATION_REASONS[0].id);
+                      setCancelDetail("");
+                      setCancelJobOpen(true);
+                      return;
+                    }
+                    if (action.special === "put_on_hold") {
+                      setPutOnHoldReason("");
+                      setPutOnHoldOpen(true);
+                      return;
+                    }
+                    if (action.special === "resume_job") {
+                      openResumeJobModal();
+                      return;
+                    }
+                    if (action.special === "send_report_invoice") {
+                      setApprovalMode("review_approve");
+                      setOwnerApprovalChecked(true);
+                      setForceApprovalChecked(false);
+                      setForceApprovalReason("");
+                      setValidateCompleteOpen(true);
+                      return;
+                    }
+                    if (job.status === "need_attention" && action.status === "completed") {
+                      setApprovalMode("validate_complete");
+                      setOwnerApprovalChecked(false);
+                      setForceApprovalChecked(false);
+                      setForceApprovalReason("");
+                      setValidateCompleteOpen(true);
+                      return;
+                    }
+                    void handleStatusChange(job, action.status as Job["status"]);
+                  }}
+                >
+                  {action.label}
+                </Button>
+              );
+            })}
           </div>
         </div>
 
@@ -2545,9 +2719,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         {officeTimerDisplaySeconds != null
                           ? job.timer_is_running
                             ? "Timer running"
-                            : job.status === "scheduled" && (Number(job.timer_elapsed_seconds ?? 0) > 0)
-                              ? "Paused — resume with Start Job"
-                              : "Time recorded"
+                            : job.status === "on_hold"
+                              ? "On hold — use Resume job when ready"
+                              : job.status === "scheduled" && (Number(job.timer_elapsed_seconds ?? 0) > 0)
+                                ? "Paused — resume with Start Job"
+                                : "Time recorded"
                           : job.partner_timer_ended_at
                             ? "On-site ended"
                             : "Live timer"}
@@ -2556,6 +2732,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     {(job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null) ||
+                    job.status === "on_hold" ||
                     (officeTimerDisplaySeconds != null &&
                       !job.timer_is_running &&
                       job.status === "scheduled" &&
@@ -2649,7 +2826,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               (isJobInProgressStatus(job.status) || job.status === "awaiting_payment") ? (
                 <p className="text-[10px] leading-snug text-text-tertiary pt-1">
                   <strong className="font-medium text-text-secondary">Start Job</strong> begins the timer;{" "}
-                  <strong className="font-medium text-text-secondary">Pause Job</strong> freezes it;{" "}
+                  <strong className="font-medium text-text-secondary">On Hold</strong> pauses on site (saved schedule);{" "}
                   <strong className="font-medium text-text-secondary">Complete Job</strong> records the total;{" "}
                   <strong className="font-medium text-text-secondary">Reopen</strong> then Start Job continues from that total.
                 </p>
@@ -3032,6 +3209,51 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 >
                   Save additional notes
                 </Button>
+              </div>
+
+              <div className="space-y-2 pt-3 border-t border-border-light">
+                <p className="text-xs font-medium text-text-secondary">Report link (optional)</p>
+                <p className="text-[11px] text-text-tertiary">External URL — Google Drive, Notion, shared doc. Not shown to the client.</p>
+                <Input
+                  type="url"
+                  value={reportLinkDraft}
+                  onChange={(e) => setReportLinkDraft(e.target.value)}
+                  placeholder="https://…"
+                  className="h-10"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    loading={savingReportLink}
+                    onClick={async () => {
+                      if (!job) return;
+                      setSavingReportLink(true);
+                      try {
+                        await handleJobUpdate(job.id, { report_link: reportLinkDraft.trim() || null });
+                      } finally {
+                        setSavingReportLink(false);
+                      }
+                    }}
+                  >
+                    Save report link
+                  </Button>
+                  {(() => {
+                    const href = jobReportLinkHref(reportLinkDraft || job.report_link);
+                    return href ? (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                      >
+                        Open link
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    ) : null;
+                  })()}
+                </div>
               </div>
             </div>
 
@@ -4420,6 +4642,105 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </Button>
             <Button type="button" loading={validatingComplete} disabled={!canSubmitApproval} onClick={() => void handleValidateAndComplete()}>
               {approvalMode === "review_approve" ? "Review & approve" : "Approve and continue"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={putOnHoldOpen}
+        onClose={() => {
+          if (!putOnHoldSaving) {
+            setPutOnHoldOpen(false);
+            setPutOnHoldReason("");
+          }
+        }}
+        title="Put job on hold"
+        subtitle={job.reference}
+        size="md"
+      >
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-text-secondary">
+            The job leaves the on-site step until you resume. Current schedule is saved for the resume flow; add a reason for your team and the audit trail.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason *</label>
+            <textarea
+              value={putOnHoldReason}
+              onChange={(e) => setPutOnHoldReason(e.target.value)}
+              rows={3}
+              placeholder="Why is this job on hold?"
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[72px]"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2 justify-end pt-1">
+            <Button variant="ghost" size="sm" disabled={putOnHoldSaving} onClick={() => { setPutOnHoldOpen(false); setPutOnHoldReason(""); }}>
+              Back
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-red-950/40 bg-red-950/[0.08] text-red-950 hover:bg-red-950/12 dark:border-red-900/55 dark:bg-red-950/45 dark:text-red-50 dark:hover:bg-red-950/55"
+              loading={putOnHoldSaving}
+              onClick={() => void confirmPutOnHold()}
+            >
+              Put on hold
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={resumeJobOpen}
+        onClose={() => {
+          if (!resumeSaving) setResumeJobOpen(false);
+        }}
+        title="Resume job"
+        subtitle={job.reference}
+        size="md"
+      >
+        <div className="p-4 space-y-4">
+          {job.on_hold_at ? (
+            <div className="rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2 space-y-1 text-xs text-text-secondary">
+              <p>
+                <span className="font-semibold text-text-primary">Time on hold:</span>{" "}
+                {(() => {
+                  try {
+                    const t = parseISO(job.on_hold_at!);
+                    return Number.isNaN(t.getTime()) ? "—" : formatDistanceStrict(t, new Date(), { addSuffix: false });
+                  } catch {
+                    return "—";
+                  }
+                })()}
+              </p>
+              {job.on_hold_reason?.trim() ? (
+                <p>
+                  <span className="font-semibold text-text-primary">Reason:</span> {job.on_hold_reason.trim()}
+                </p>
+              ) : (
+                <p className="text-text-tertiary italic">No reason recorded.</p>
+              )}
+            </div>
+          ) : null}
+          <p className="text-sm text-text-secondary">
+            Confirm arrival for the partner. If the saved arrival date is no longer in the future, you must pick a later date before resuming.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date *</label>
+              <Input type="date" value={resumeArrivalDate} onChange={(e) => setResumeArrivalDate(e.target.value)} className="h-10" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival time *</label>
+              <TimeSelect value={resumeArrivalTime} onChange={(v) => setResumeArrivalTime(v)} />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 justify-end pt-1">
+            <Button variant="ghost" size="sm" disabled={resumeSaving} onClick={() => setResumeJobOpen(false)}>
+              Back
+            </Button>
+            <Button variant="primary" size="sm" loading={resumeSaving} onClick={() => void confirmResumeJob()}>
+              Resume job
             </Button>
           </div>
         </div>

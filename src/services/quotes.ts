@@ -1,6 +1,10 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import type { Quote, QuoteLineItem } from "@/types/database";
-import { isSupabaseMissingColumnError, parsePostgrestUnknownColumnName } from "@/lib/supabase-schema-compat";
+import {
+  isSupabaseMissingColumnError,
+  parsePostgrestUnknownColumnName,
+  postgrestFullErrorText,
+} from "@/lib/supabase-schema-compat";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 
 /** Real `quotes` columns only — stray keys (e.g. from UI state spread) must not reach PostgREST. */
@@ -54,6 +58,39 @@ function pickQuotePayload(input: Record<string, unknown>): Record<string, unknow
     if (v !== undefined && QUOTE_WRITABLE_KEYS.has(k)) out[k] = v;
   }
   return out;
+}
+
+const LEGACY_OPTIONAL_QUOTE_KEYS = ["deposit_percent", "deposit_required"] as const;
+
+/**
+ * Returns a new payload with one unknown column removed, or strips legacy deposit fields when
+ * PostgREST still errors (e.g. message references `quotes` but parser missed the column name).
+ */
+function tryRelaxQuoteWritePayload(
+  payload: Record<string, unknown>,
+  error: unknown,
+  ref: string | null,
+): Record<string, unknown> | null {
+  const col = parsePostgrestUnknownColumnName(error);
+  if (col && col in payload && col !== "reference") {
+    const { [col]: _, ...rest } = payload;
+    const next = { ...rest } as Record<string, unknown>;
+    if (ref != null) next.reference = ref;
+    return next;
+  }
+  const txt = postgrestFullErrorText(error);
+  if (!txt.includes("quotes") && !txt.includes("'quotes'")) return null;
+  const next = { ...payload } as Record<string, unknown>;
+  let changed = false;
+  for (const k of LEGACY_OPTIONAL_QUOTE_KEYS) {
+    if (k in next) {
+      delete next[k];
+      changed = true;
+    }
+  }
+  if (!changed) return null;
+  if (ref != null) next.reference = ref;
+  return next;
 }
 
 async function enrichQuotesWithAccountNames(quotes: Quote[]): Promise<Quote[]> {
@@ -124,24 +161,30 @@ export async function createQuote(
   input: Omit<Quote, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Quote> {
   const supabase = getSupabase();
-  const { data: ref } = await supabase.rpc("next_quote_ref");
+  const { data: ref, error: refErr } = await supabase.rpc("next_quote_ref");
+  if (refErr) throw refErr;
   const row = pickQuotePayload({ ...input } as Record<string, unknown>);
   let insertPayload: Record<string, unknown> = { ...row, reference: ref };
-  let { data, error } = await supabase.from("quotes").insert(insertPayload).select().single();
-  for (let attempt = 0; attempt < 24 && error; attempt++) {
-    const col = parsePostgrestUnknownColumnName(error);
-    if (isSupabaseMissingColumnError(error) && col && col in insertPayload && col !== "reference") {
-      const { [col]: _, ...rest } = insertPayload;
-      insertPayload = { ...rest, reference: ref };
-      const retry = await supabase.from("quotes").insert(insertPayload).select().single();
-      data = retry.data;
-      error = retry.error;
-      continue;
+
+  for (let attempt = 0; attempt < 32; attempt++) {
+    const { data, error } = await supabase.from("quotes").insert(insertPayload).select("id").single();
+    if (!error && data?.id) {
+      const full = await getQuote(String(data.id));
+      if (!full) throw new Error("Quote was created but could not be loaded");
+      return full;
     }
-    break;
+    if (!error) throw new Error("Quote insert returned no id");
+
+    if (isSupabaseMissingColumnError(error)) {
+      const relaxed = tryRelaxQuoteWritePayload(insertPayload, error, String(ref));
+      if (relaxed) {
+        insertPayload = relaxed;
+        continue;
+      }
+    }
+    throw error;
   }
-  if (error) throw error;
-  return data as Quote;
+  throw new Error("Quote insert exhausted schema retries");
 }
 
 export async function updateQuote(
@@ -151,21 +194,25 @@ export async function updateQuote(
   const supabase = getSupabase();
   const row = pickQuotePayload({ ...input } as Record<string, unknown>);
   let payload: Record<string, unknown> = { ...row, updated_at: new Date().toISOString() };
-  let { data, error } = await supabase.from("quotes").update(payload).eq("id", id).select().single();
-  for (let attempt = 0; attempt < 24 && error; attempt++) {
-    const col = parsePostgrestUnknownColumnName(error);
-    if (isSupabaseMissingColumnError(error) && col && col in payload) {
-      const { [col]: _, ...rest } = payload;
-      payload = { ...rest, updated_at: new Date().toISOString() };
-      const retry = await supabase.from("quotes").update(payload).eq("id", id).select().single();
-      data = retry.data;
-      error = retry.error;
-      continue;
+
+  for (let attempt = 0; attempt < 32; attempt++) {
+    const { error } = await supabase.from("quotes").update(payload).eq("id", id);
+    if (!error) {
+      const full = await getQuote(id);
+      if (!full) throw new Error("Quote not found after update");
+      return full;
     }
-    break;
+
+    if (isSupabaseMissingColumnError(error)) {
+      const relaxed = tryRelaxQuoteWritePayload(payload, error, null);
+      if (relaxed) {
+        payload = { ...relaxed, updated_at: new Date().toISOString() };
+        continue;
+      }
+    }
+    throw new Error(postgrestFullErrorText(error) || "Quote update failed");
   }
-  if (error) throw new Error(error.message);
-  return data as Quote;
+  throw new Error("Quote update exhausted schema retries");
 }
 
 export async function listQuoteLineItems(quoteId: string): Promise<QuoteLineItem[]> {

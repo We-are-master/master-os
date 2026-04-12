@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { formatCurrency, formatDate, formatRelativeTime, isUuid } from "@/lib/utils";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
+import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { toast } from "sonner";
@@ -457,9 +458,12 @@ function JobHistoryCard({ job }: {
           <p className="text-sm font-medium text-text-primary">{job.reference}</p>
           <p className="text-[11px] text-text-tertiary truncate">{job.title}</p>
         </div>
-        <div className="text-right shrink-0 mr-1">
+        <div className="text-right shrink-0 mr-1 flex flex-col items-end gap-1">
           <p className="text-sm font-semibold text-text-primary">{formatCurrency(job.client_price)}</p>
-          <Badge variant={statusVariant} size="sm">{job.status.replace(/_/g, " ")}</Badge>
+          <div className="flex flex-wrap justify-end gap-1">
+            <Badge variant={statusVariant} size="sm">{job.status.replace(/_/g, " ")}</Badge>
+            <JobOverdueBadge job={job} />
+          </div>
         </div>
         {expanded ? (
           <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" />

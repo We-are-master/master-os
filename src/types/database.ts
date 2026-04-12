@@ -35,6 +35,8 @@ export type JobStatus =
   | "final_check"
   | "awaiting_payment"
   | "need_attention"
+  /** Office pause while on site; schedule snapshots + previous status stored for resume. */
+  | "on_hold"
   | "completed"
   | "cancelled"
   /** Soft-deleted trash (Deleted tab); excluded from KPIs and active lists. */
@@ -291,6 +293,8 @@ export interface Job {
   scope?: string;
   /** Office-only notes (e.g. access, client quirks); separate from scope and from system lines in internal_notes. */
   additional_notes?: string | null;
+  /** Optional external URL (Drive, Notion, etc.) — office reference; opens in new tab. */
+  report_link?: string | null;
   internal_notes?: string;
   /** Site reference photos (client request / quote / office); JSON array of public storage URLs (quote-invite-images). */
   images?: string[] | null;
@@ -335,6 +339,14 @@ export interface Job {
   deleted_at?: string | null;
   /** Status before moving to `deleted` (used by Recover). */
   deleted_previous_status?: string | null;
+  /** When status is `on_hold`, workflow step before hold (restored on resume). */
+  on_hold_previous_status?: string | null;
+  on_hold_at?: string | null;
+  on_hold_reason?: string | null;
+  on_hold_snapshot_scheduled_date?: string | null;
+  on_hold_snapshot_scheduled_start_at?: string | null;
+  on_hold_snapshot_scheduled_end_at?: string | null;
+  on_hold_snapshot_scheduled_finish_date?: string | null;
   created_at: string;
   updated_at: string;
 }
