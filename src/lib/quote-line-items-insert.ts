@@ -1,5 +1,6 @@
 import { getErrorMessage } from "@/lib/utils";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { isSupabaseMissingColumnError, parsePostgrestUnknownColumnName } from "@/lib/supabase-schema-compat";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type QuoteLineItemInsertRow = {
@@ -14,20 +15,13 @@ export type QuoteLineItemInsertRow = {
 
 function isUnknownColumnSchemaError(err: unknown): boolean {
   if (isPostgrestWriteRetryableError(err)) return true;
-  const msg = getErrorMessage(err, "");
-  return msg.includes("PGRST204") || msg.includes("schema cache") || /Could not find the .+ column/i.test(msg);
+  return isSupabaseMissingColumnError(err);
 }
 
-function stripNotes(payload: Record<string, unknown>[]) {
+function stripColumnFromRows(payload: Record<string, unknown>[], col: string): Record<string, unknown>[] {
   return payload.map((p) => {
-    const { notes: _n, ...rest } = p;
-    return rest;
-  });
-}
-
-function stripPartnerUnitCost(payload: Record<string, unknown>[]) {
-  return payload.map((p) => {
-    const { partner_unit_cost: _c, ...rest } = p;
+    if (!(col in p)) return p;
+    const { [col]: _, ...rest } = p;
     return rest;
   });
 }
@@ -44,26 +38,30 @@ export async function insertQuoteLineItemsResilient(
 
   let payload: Record<string, unknown>[] = rows.map((r) => ({ ...r }));
 
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < 16; attempt++) {
     const ins = await supabase.from("quote_line_items").insert(payload);
     if (!ins.error) return;
 
     const err = ins.error;
     if (!isUnknownColumnSchemaError(err)) throw err;
 
+    const col = parsePostgrestUnknownColumnName(err);
     const msg = getErrorMessage(err, "");
-    let stripped = false;
-
+    if (col && payload[0] && col in payload[0]) {
+      payload = stripColumnFromRows(payload, col);
+      continue;
+    }
+    // Back-compat if message shape differs from parsePostgrestUnknownColumnName
     if (msg.includes("'notes'") && payload[0] && "notes" in payload[0]) {
-      payload = stripNotes(payload);
-      stripped = true;
+      payload = stripColumnFromRows(payload, "notes");
+      continue;
     }
     if (msg.includes("'partner_unit_cost'") && payload[0] && "partner_unit_cost" in payload[0]) {
-      payload = stripPartnerUnitCost(payload);
-      stripped = true;
+      payload = stripColumnFromRows(payload, "partner_unit_cost");
+      continue;
     }
 
-    if (!stripped) throw err;
+    throw err;
   }
 
   throw new Error("Could not insert quote line items: exhausted schema fallbacks");

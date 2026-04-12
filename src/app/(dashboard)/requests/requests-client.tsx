@@ -69,7 +69,6 @@ import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar
 import {
   DEFAULT_FINANCE_PERIOD_MODE,
   getFinancePeriodClosedBounds,
-  getMonthBoundsForDate,
   type FinancePeriodMode,
 } from "@/lib/finance-period";
 
@@ -142,8 +141,9 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [periodRangeFrom, setPeriodRangeFrom] = useState("");
   const [periodRangeTo, setPeriodRangeTo] = useState("");
-  const [dateFrom, setDateFrom] = useState(() => getMonthBoundsForDate(new Date()).from);
-  const [dateTo, setDateTo] = useState(() => getMonthBoundsForDate(new Date()).to);
+  /** Empty until `periodMode` sync runs — must match default "all" (no range) on first paint. */
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
     const bounds = getFinancePeriodClosedBounds(

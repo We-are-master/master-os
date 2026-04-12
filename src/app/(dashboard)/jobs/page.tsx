@@ -1091,21 +1091,6 @@ function JobsPageContent() {
       ),
     },
     {
-      key: "partner_name",
-      label: "Partner",
-      minWidth: "120px",
-      cellClassName: "whitespace-nowrap",
-      render: (item) =>
-        item.partner_name ? (
-          <div className="flex items-center gap-2 min-w-0">
-            <Avatar name={item.partner_name} size="xs" />
-            <span className="text-sm text-text-secondary truncate max-w-[7rem] sm:max-w-[9rem]">{item.partner_name}</span>
-          </div>
-        ) : (
-          <span className="text-xs text-text-tertiary italic">Unassigned</span>
-        ),
-    },
-    {
       key: "schedule",
       label: "Schedule",
       minWidth: "200px",
@@ -1151,20 +1136,36 @@ function JobsPageContent() {
     },
     {
       key: "type_of_work",
-      label: "TOW",
-      minWidth: "120px",
-      cellClassName: "min-w-[6rem] max-w-[11rem]",
+      label: "TOW / Partner",
+      minWidth: "132px",
+      cellClassName: "min-w-[7rem] max-w-[12rem]",
       headerClassName: "whitespace-nowrap",
       render: (item) => {
         const raw = (item as { service_type?: string | null }).service_type?.trim();
         const fromTitle = normalizeTypeOfWork(item.title) || item.title?.trim();
         const tow = raw ? normalizeTypeOfWork(raw) || raw : fromTitle;
-        return tow ? (
-          <span className="text-sm text-text-secondary truncate block max-w-[10rem]" title={tow}>
-            {tow}
-          </span>
-        ) : (
-          <span className="text-xs text-text-tertiary">—</span>
+        const partner = item.partner_name?.trim();
+        const towTitle = tow || "—";
+        return (
+          <div className="min-w-0">
+            {tow ? (
+              <span className="text-sm text-text-secondary truncate block" title={tow}>
+                {tow}
+              </span>
+            ) : (
+              <span className="text-xs text-text-tertiary">—</span>
+            )}
+            {partner ? (
+              <div className="mt-0.5 flex items-center gap-1.5 min-w-0" title={partner}>
+                <Avatar name={partner} size="xs" className="shrink-0" />
+                <span className="text-[11px] text-text-tertiary truncate">{partner}</span>
+              </div>
+            ) : (
+              <span className="text-[11px] text-text-tertiary italic mt-0.5 block" title={towTitle}>
+                Unassigned
+              </span>
+            )}
+          </div>
         );
       },
     },
