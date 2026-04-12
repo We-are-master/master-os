@@ -74,7 +74,6 @@ import {
   canMarkReportUploaded,
   canSendReportAndRequestFinalPayment,
   getJobStatusActions,
-  isJobInProgressStatus,
   jobStatusAfterResumeFromOnHold,
   normalizeTotalPhases,
   reportPhaseIndices,
@@ -2526,6 +2525,32 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     : partnerLiveActiveMs != null
       ? formatPartnerLiveTimer(partnerLiveActiveMs)
       : formatOfficeTimer(Number(job.timer_elapsed_seconds ?? 0) || 0);
+  const progressTimerActiveVisual =
+    job.timer_is_running ||
+    (partnerLiveActiveMs != null && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null);
+  const progressTimerPausedBadge =
+    (job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null) ||
+    job.status === "on_hold" ||
+    (officeTimerDisplaySeconds != null &&
+      !job.timer_is_running &&
+      job.status === "scheduled" &&
+      Number(job.timer_elapsed_seconds ?? 0) > 0);
+  const progressTimerSubline =
+    officeTimerDisplaySeconds != null
+      ? job.timer_is_running
+        ? "Running"
+        : job.status === "on_hold"
+          ? "On hold"
+          : job.status === "scheduled" && Number(job.timer_elapsed_seconds ?? 0) > 0
+            ? "Paused"
+            : "Saved"
+      : partnerLiveActiveMs != null
+        ? job.partner_timer_ended_at
+          ? "Ended"
+          : "Live"
+        : Number(job.timer_elapsed_seconds ?? 0) > 0
+          ? "Recorded"
+          : "Not started";
   const attestationDisplayName = profile?.full_name?.trim() || job.owner_name?.trim() || "Victor";
   const ownerAttestationText = `I, ${attestationDisplayName}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
@@ -2693,142 +2718,118 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
         {job.status !== "cancelled" ? (
           <section
-            className="rounded-xl bg-card overflow-hidden shadow-[0_4px_24px_-8px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_28px_-6px_rgba(0,0,0,0.45)]"
+            className="rounded-xl border border-border-light bg-card overflow-hidden shadow-[0_2px_14px_-6px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_16px_-6px_rgba(0,0,0,0.4)]"
             aria-label="Work time and job progress"
           >
-            <div className="px-3 py-2.5 sm:px-4 sm:py-3 space-y-2.5">
-              {(officeTimerDisplaySeconds != null || partnerLiveActiveMs != null) && (
-                <div className="flex items-center justify-between gap-2 min-w-0">
-                  <div className="flex items-center gap-2 min-w-0">
+            <div className="px-3 py-2 sm:px-3.5 sm:py-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-0">
+                <div className="min-w-0 flex-1 flex flex-col gap-1.5 sm:pr-3">
+                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0 min-w-0">
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary shrink-0">
+                        Job progress
+                      </p>
+                      <span className="text-[10px] text-text-secondary tabular-nums whitespace-nowrap">
+                        Step {Math.min(flowStep + 1, JOB_FLOW_STEPS.length)}/{JOB_FLOW_STEPS.length}
+                      </span>
+                      <span className="text-[10px] tabular-nums text-text-tertiary whitespace-nowrap">
+                        {Math.round(((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="relative h-0.5 rounded-full bg-surface-tertiary/60 dark:bg-surface-tertiary/40 overflow-hidden">
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full bg-emerald-500 transition-[width] duration-300 ease-out"
+                      style={{ width: `${Math.min(100, ((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%` }}
+                    />
+                  </div>
+
+                  <div className="overflow-x-auto overscroll-x-contain -mx-0.5 px-0.5 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-0.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/60">
+                    <ol className="flex min-w-max items-center gap-0 pr-1">
+                      {JOB_FLOW_STEPS.map((step, idx) => {
+                        const done = flowStep > idx;
+                        const current = flowStep === idx;
+                        return (
+                          <li key={step.label} className="flex items-center shrink-0">
+                            {idx > 0 ? (
+                              <span
+                                className={cn(
+                                  "w-2 sm:w-3 h-px shrink-0 mx-0.5 self-center mt-[0.5625rem]",
+                                  done ? "bg-emerald-400/55" : "bg-border-subtle/60",
+                                )}
+                                aria-hidden
+                              />
+                            ) : null}
+                            <span
+                              className={cn(
+                                "flex flex-col items-center gap-0.5 rounded-md px-1 py-0.5 min-w-[3.25rem] max-w-[4.75rem] text-center transition-colors touch-manipulation",
+                                current && "bg-emerald-500/[0.07] ring-1 ring-emerald-500/18",
+                                done && !current && "text-emerald-700 dark:text-emerald-400",
+                                !done && !current && "text-text-tertiary/85",
+                              )}
+                            >
+                              {done ? (
+                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/12">
+                                  <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                                </span>
+                              ) : (
+                                <span
+                                  className={cn(
+                                    "flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold tabular-nums",
+                                    current
+                                      ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 ring-1 ring-emerald-500/22"
+                                      : "bg-surface-tertiary/80 text-text-tertiary",
+                                  )}
+                                >
+                                  {idx + 1}
+                                </span>
+                              )}
+                              <span className="text-[8px] sm:text-[9px] font-medium leading-none px-0.5 line-clamp-1">
+                                {step.label}
+                              </span>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+                </div>
+
+                <div className="flex flex-row sm:flex-col items-center justify-between gap-2 sm:justify-center shrink-0 rounded-lg sm:rounded-none sm:border-l border-border-light bg-surface-hover/40 dark:bg-surface-secondary/30 sm:bg-transparent dark:sm:bg-transparent px-2.5 py-1.5 sm:py-1 sm:pl-3 sm:pr-2 sm:min-w-[6.75rem]">
+                  <div className="flex items-center gap-2 min-w-0 sm:flex-col sm:items-center sm:gap-0.5 sm:text-center">
                     <div
                       className={cn(
-                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-                        job.timer_is_running || (partnerLiveActiveMs != null && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null)
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md",
+                        progressTimerActiveVisual
                           ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
-                          : "bg-surface-tertiary/70 text-text-secondary",
+                          : "bg-surface-tertiary/60 text-text-secondary",
                       )}
                       aria-hidden
                     >
-                      <Timer className="h-4 w-4" strokeWidth={2} />
+                      <Timer className="h-3.5 w-3.5" strokeWidth={2} />
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-[9px] font-medium uppercase tracking-wide text-text-tertiary">Work time</p>
-                      <p className="text-[11px] text-text-secondary truncate leading-tight">
-                        {officeTimerDisplaySeconds != null
-                          ? job.timer_is_running
-                            ? "Timer running"
-                            : job.status === "on_hold"
-                              ? "On hold — use Resume job when ready"
-                              : job.status === "scheduled" && (Number(job.timer_elapsed_seconds ?? 0) > 0)
-                                ? "Paused — resume with Start Job"
-                                : "Time recorded"
-                          : job.partner_timer_ended_at
-                            ? "On-site ended"
-                            : "Live timer"}
+                    <div className="min-w-0 sm:w-full">
+                      <p className="text-[8px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
+                        Work time
+                      </p>
+                      <p className="text-[10px] text-text-secondary truncate sm:whitespace-normal sm:line-clamp-2 leading-tight mt-0.5 max-w-[10rem] sm:max-w-none">
+                        {progressTimerSubline}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {(job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null) ||
-                    job.status === "on_hold" ||
-                    (officeTimerDisplaySeconds != null &&
-                      !job.timer_is_running &&
-                      job.status === "scheduled" &&
-                      (Number(job.timer_elapsed_seconds ?? 0) > 0)) ? (
-                      <Badge variant="warning" size="sm">
+                    {progressTimerPausedBadge ? (
+                      <Badge variant="warning" size="sm" className="text-[9px] px-1.5 py-0 h-5">
                         Paused
                       </Badge>
                     ) : null}
-                    <span className="text-lg sm:text-xl font-semibold tabular-nums tracking-tight text-text-primary">
-                      {officeTimerDisplaySeconds != null
-                        ? formatOfficeTimer(officeTimerDisplaySeconds)
-                        : formatPartnerLiveTimer(partnerLiveActiveMs!)}
+                    <span className="text-base sm:text-lg font-semibold tabular-nums tracking-tight text-text-primary">
+                      {timeSpentLabel}
                     </span>
                   </div>
-                </div>
-              )}
-
-              <div>
-                <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 mb-1.5">
-                  <div className="flex items-baseline gap-2">
-                    <p className="text-[9px] font-medium uppercase tracking-wide text-text-tertiary">Job progress</p>
-                    <span className="text-[10px] text-text-secondary tabular-nums">
-                      Step {Math.min(flowStep + 1, JOB_FLOW_STEPS.length)}/{JOB_FLOW_STEPS.length}
-                    </span>
-                  </div>
-                  <span className="text-[10px] tabular-nums text-text-tertiary">
-                    {Math.round(((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%
-                  </span>
-                </div>
-
-                <div className="relative h-1 rounded-full bg-surface-tertiary/60 dark:bg-surface-tertiary/40 mb-2 overflow-hidden">
-                  <div
-                    className="absolute inset-y-0 left-0 rounded-full bg-emerald-500 dark:bg-emerald-500 transition-[width] duration-300 ease-out"
-                    style={{ width: `${Math.min(100, ((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%` }}
-                  />
-                </div>
-
-                <div className="overflow-x-auto overscroll-x-contain -mx-0.5 px-0.5 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border-subtle/80">
-                  <ol className="flex min-w-max sm:min-w-0 sm:flex-wrap sm:justify-between items-stretch gap-0.5 sm:gap-0">
-                    {JOB_FLOW_STEPS.map((step, idx) => {
-                      const done = flowStep > idx;
-                      const current = flowStep === idx;
-                      return (
-                        <li key={step.label} className="flex items-center shrink-0">
-                          {idx > 0 ? (
-                            <span
-                              className={cn(
-                                "hidden sm:block w-2 md:w-5 lg:w-8 h-px shrink-0 mx-0.5 self-center mt-[0.875rem]",
-                                done ? "bg-emerald-400/60" : "bg-border-subtle/70",
-                              )}
-                              aria-hidden
-                            />
-                          ) : null}
-                          <span
-                            className={cn(
-                              "flex flex-col items-center gap-1 rounded-lg px-1.5 py-1 sm:px-2 min-w-[4.25rem] sm:min-w-0 max-w-[6.5rem] text-center transition-colors",
-                              current && "bg-emerald-500/[0.08] text-text-primary ring-1 ring-emerald-500/20",
-                              done && !current && "text-emerald-700 dark:text-emerald-400",
-                              !done && !current && "text-text-tertiary/90",
-                            )}
-                          >
-                            {done ? (
-                              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/12">
-                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
-                              </span>
-                            ) : (
-                              <span
-                                className={cn(
-                                  "flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums",
-                                  current
-                                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/25"
-                                    : "bg-surface-tertiary/80 text-text-tertiary",
-                                )}
-                              >
-                                {idx + 1}
-                              </span>
-                            )}
-                            <span className="text-[9px] sm:text-[10px] font-medium leading-tight px-0.5 line-clamp-2">
-                              {step.label}
-                            </span>
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ol>
                 </div>
               </div>
-
-              {officeTimerDisplaySeconds == null &&
-              partnerLiveActiveMs == null &&
-              (isJobInProgressStatus(job.status) || job.status === "awaiting_payment") ? (
-                <p className="text-[10px] leading-snug text-text-tertiary pt-1">
-                  <strong className="font-medium text-text-secondary">Start Job</strong> begins the timer;{" "}
-                  <strong className="font-medium text-text-secondary">On Hold</strong> pauses on site (saved schedule);{" "}
-                  <strong className="font-medium text-text-secondary">Complete Job</strong> records the total;{" "}
-                  <strong className="font-medium text-text-secondary">Reopen</strong> then Start Job continues from that total.
-                </p>
-              ) : null}
             </div>
           </section>
         ) : (
