@@ -1629,6 +1629,7 @@ function QuoteDetailDrawer({
   const loadBids = useCallback(
     async (quoteId: string) => {
       setBidsLoading(true);
+      let clearedBidsLoadingEarly = false;
       try {
         const list = await getBidsByQuoteId(quoteId);
         if (quoteRef.current.id !== quoteId) return;
@@ -1663,23 +1664,33 @@ function QuoteDetailDrawer({
           setDepositPercent(depPct);
           setProposalScalePercent(100);
           setSelectedReviewBidId(best.id);
-          try {
-            const updated = await persistProposalToQuoteRef.current({
-              lineItemsOverride: pre.lines,
-              scopeTextOverride: scopeMerged,
-              startDate1Override: d1,
-              startDate2Override: d2,
-              depositOverride: depPct,
-              partnerCostOverride: best.bid_amount,
-            });
-            onQuoteUpdateRef.current?.(updated);
-            void loadLineItemsRef.current(quoteId, quoteRef.current);
-          } catch (e) {
-            toast.error(e instanceof Error ? e.message : "Failed to sync bid to quote");
+          /** End “loading” before the heavy persist so the drawer paints immediately; DB sync runs right after. */
+          if (quoteRef.current.id === quoteId) {
+            setBidsLoading(false);
+            clearedBidsLoadingEarly = true;
           }
+          queueMicrotask(() => {
+            void (async () => {
+              if (quoteRef.current.id !== quoteId) return;
+              try {
+                const updated = await persistProposalToQuoteRef.current({
+                  lineItemsOverride: pre.lines,
+                  scopeTextOverride: scopeMerged,
+                  startDate1Override: d1,
+                  startDate2Override: d2,
+                  depositOverride: depPct,
+                  partnerCostOverride: best.bid_amount,
+                });
+                onQuoteUpdateRef.current?.(updated);
+                void loadLineItemsRef.current(quoteId, quoteRef.current);
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "Failed to sync bid to quote");
+              }
+            })();
+          });
         }
       } finally {
-        if (quoteRef.current.id === quoteId) setBidsLoading(false);
+        if (quoteRef.current.id === quoteId && !clearedBidsLoadingEarly) setBidsLoading(false);
       }
     },
     [],
