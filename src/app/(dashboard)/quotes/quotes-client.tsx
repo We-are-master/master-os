@@ -415,6 +415,9 @@ const STAGE_META: { id: string; label: string; short: string; icon: typeof Clipb
   { id: "accepted", label: "Accepted", short: "Won", icon: CheckCircle2 },
 ];
 
+/** List stage filter chips: Survey hidden (quotes can still be in survey inside Active pipeline / kanban). */
+const STAGE_FILTER_CHIPS = STAGE_META.filter((s) => s.id !== "in_survey");
+
 function QuoteStageColumn({ status }: { status: string }) {
   const stepMap: Record<string, number> = {
     draft: 0, in_survey: 1, bidding: 2, awaiting_customer: 3, accepted: 4, rejected: -1, converted_to_job: 5,
@@ -616,10 +619,15 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, []);
 
   useEffect(() => {
+    if (status !== "bidding") {
+      setAvgBidByQuoteId({});
+      return;
+    }
     void refreshListBidAverages();
-  }, [dataIdsKey, refreshListBidAverages]);
+  }, [dataIdsKey, status, refreshListBidAverages]);
 
   useEffect(() => {
+    if (status !== "bidding") return;
     const supabase = getSupabase();
     const channel = supabase
       .channel("quotes_list_quote_bids")
@@ -634,7 +642,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [refreshListBidAverages]);
+  }, [status, refreshListBidAverages]);
 
   const quoteKanbanColumns = useMemo(() => {
     const ids = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"];
@@ -1054,51 +1062,53 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
   const handleNewQuoteClick = () => setCreateOpen(true);
 
-  const columns: Column<Quote>[] = [
-    {
-      key: "reference", label: "Quote", width: "200px",
-      render: (item) => (
-        <div>
-          <p className="text-sm font-semibold text-text-primary">{item.reference}</p>
-          <p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{quoteListSubtitlePostcode(item)}</p>
-        </div>
-      ),
-    },
-    {
-      key: "client_name", label: "Client",
-      render: (item) => (
-        <div className="flex items-start gap-2 min-w-0">
-          <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" />
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
-            {item.source_account_name?.trim() ? (
-              <p className="text-[11px] text-text-tertiary truncate max-w-[200px]">{item.source_account_name}</p>
-            ) : null}
+  const columns: Column<Quote>[] = useMemo(() => {
+    const lead: Column<Quote>[] = [
+      {
+        key: "reference", label: "Quote", width: "200px",
+        render: (item) => (
+          <div>
+            <p className="text-sm font-semibold text-text-primary">{item.reference}</p>
+            <p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{quoteListSubtitlePostcode(item)}</p>
           </div>
-        </div>
-      ),
-    },
-    {
-      key: "service_type",
-      label: "Type of work",
-      render: (item) => {
-        const type = normalizeTypeOfWork(item.service_type) || normalizeTypeOfWork(item.title) || item.title || "—";
-        return <span className="text-sm text-text-secondary truncate block max-w-[180px]">{type}</span>;
+        ),
       },
-    },
-    {
-      key: "quote_type", label: "Type",
-      render: (item) => (
-        <Badge variant={item.quote_type === "partner" ? "warning" : "info"} size="sm">
-          {item.quote_type === "partner" ? "Partner" : "Manual"}
-        </Badge>
-      ),
-    },
-    {
-      key: "status", label: "Stage",
-      render: (item) => <QuoteStageColumn status={item.status} />,
-    },
-    {
+      {
+        key: "client_name", label: "Client",
+        render: (item) => (
+          <div className="flex items-start gap-2 min-w-0">
+            <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
+              {item.source_account_name?.trim() ? (
+                <p className="text-[11px] text-text-tertiary truncate max-w-[200px]">{item.source_account_name}</p>
+              ) : null}
+            </div>
+          </div>
+        ),
+      },
+      {
+        key: "service_type",
+        label: "Type of work",
+        render: (item) => {
+          const type = normalizeTypeOfWork(item.service_type) || normalizeTypeOfWork(item.title) || item.title || "—";
+          return <span className="text-sm text-text-secondary truncate block max-w-[180px]">{type}</span>;
+        },
+      },
+      {
+        key: "quote_type", label: "Type",
+        render: (item) => (
+          <Badge variant={item.quote_type === "partner" ? "warning" : "info"} size="sm">
+            {item.quote_type === "partner" ? "Partner" : "Manual"}
+          </Badge>
+        ),
+      },
+      {
+        key: "status", label: "Stage",
+        render: (item) => <QuoteStageColumn status={item.status} />,
+      },
+    ];
+    const avgBidColumn: Column<Quote> = {
       key: "avg_bid", label: "AVG Bid", align: "right" as const,
       render: (item) => {
         const avg = avgBidByQuoteId[item.id];
@@ -1108,31 +1118,34 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           <span className="text-sm text-text-tertiary">—</span>
         );
       },
-    },
-    {
-      key: "total_value", label: "Amount", align: "right" as const,
-      render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>,
-    },
-    {
-      key: "margin_percent", label: "Margin",
-      render: (item) => item.margin_percent ? (
-        <span className={`text-xs font-semibold ${item.margin_percent >= 30 ? "text-emerald-600" : item.margin_percent >= 20 ? "text-amber-600" : "text-red-500"}`}>
-          {item.margin_percent}%
-        </span>
-      ) : <span className="text-xs text-text-tertiary">—</span>,
-    },
-    {
-      key: "actions", label: "", width: "40px",
-      render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" />,
-    },
-  ];
+    };
+    const tail: Column<Quote>[] = [
+      {
+        key: "total_value", label: "Amount", align: "right" as const,
+        render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>,
+      },
+      {
+        key: "margin_percent", label: "Margin",
+        render: (item) => item.margin_percent ? (
+          <span className={`text-xs font-semibold ${item.margin_percent >= 30 ? "text-emerald-600" : item.margin_percent >= 20 ? "text-amber-600" : "text-red-500"}`}>
+            {item.margin_percent}%
+          </span>
+        ) : <span className="text-xs text-text-tertiary">—</span>,
+      },
+      {
+        key: "actions", label: "", width: "40px",
+        render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" />,
+      },
+    ];
+    return status === "bidding" ? [...lead, avgBidColumn, ...tail] : [...lead, ...tail];
+  }, [status, avgBidByQuoteId]);
 
   return (
     <PageTransition>
       <div className="space-y-5">
         <PageHeader
           title="Quotes"
-          subtitle="Work one stage at a time: Draft → Survey → Bidding → Awaiting customer → Accepted. Use Active pipeline to see open quotes only."
+          subtitle="Work one stage at a time: Draft → Bidding → Awaiting customer → Accepted. Use Active pipeline to see open quotes only."
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>Export</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={handleNewQuoteClick}>New Quote</Button>
@@ -1206,7 +1219,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                   {pipelineCount}
                 </span>
               </button>
-              {STAGE_META.map((s) => {
+              {STAGE_FILTER_CHIPS.map((s) => {
                 const c = statusCounts[s.id] ?? 0;
                 const active = status === s.id;
                 const Icon = s.icon;

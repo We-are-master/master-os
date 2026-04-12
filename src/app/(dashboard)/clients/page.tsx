@@ -1295,11 +1295,10 @@ function CreateClientForm({
     payment_terms: "Net 30",
   });
   const [creatingSource, setCreatingSource] = useState(false);
-  const [propertyAddressPending, setPropertyAddressPending] = useState<{
+  const [addressLookupPending, setAddressLookupPending] = useState<{
     parts: AddressParts;
     form: UkAddressFormState;
   } | null>(null);
-  const [propertyAddressRaw, setPropertyAddressRaw] = useState("");
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1339,13 +1338,24 @@ function CreateClientForm({
       toast.error("Resolve the linked account first (create it with the fields above or pick an existing one).");
       return;
     }
-    const typedProperty = propertyAddressRaw.trim();
-    const property_address_parts = propertyAddressPending
-      ? formStateToAddressParts(propertyAddressPending.form, propertyAddressPending.parts.full_address)
-      : typedProperty
-        ? { full_address: typedProperty, address: typedProperty, city: "", postcode: "", country: "gb" }
-        : undefined;
-    const mergedMainLine = [form.address_flat.trim(), form.address.trim()].filter(Boolean).join(", ") || form.address.trim();
+    const partsFromReview = addressLookupPending
+      ? formStateToAddressParts(addressLookupPending.form, addressLookupPending.parts.full_address)
+      : null;
+    const mergedMainLine = partsFromReview
+      ? partsFromReview.address
+      : [form.address_flat.trim(), form.address.trim()].filter(Boolean).join(", ") || form.address.trim();
+    const city = partsFromReview?.city ?? form.city.trim();
+    const pc = partsFromReview?.postcode ?? form.postcode.trim();
+    const hasAnyAddress = Boolean(mergedMainLine || city || pc);
+    const property_address_parts: AddressParts | undefined = hasAnyAddress
+      ? partsFromReview ?? {
+          full_address: [mergedMainLine, city, pc].filter(Boolean).join(", ") || mergedMainLine || pc || city,
+          address: mergedMainLine || city || pc,
+          city,
+          postcode: pc,
+          country: "gb",
+        }
+      : undefined;
     const { address_flat: _af, ...formRest } = form;
     await onSubmit({
       ...formRest,
@@ -1459,8 +1469,12 @@ function CreateClientForm({
       <AddressAutocomplete
         label="Address"
         value={form.address}
-        onChange={(v) => update("address", v)}
+        onChange={(v) => {
+          setAddressLookupPending(null);
+          update("address", v);
+        }}
         onSelect={(parts) => {
+          setAddressLookupPending({ parts, form: addressPartsToFormState(parts) });
           setForm((p) => ({
             ...p,
             address_flat: "",
@@ -1471,61 +1485,49 @@ function CreateClientForm({
         }}
         placeholder="Start typing address or postcode..."
       />
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Flat / unit (optional)</label>
-        <Input
-          value={form.address_flat}
-          onChange={(e) => update("address_flat", e.target.value)}
-          placeholder="e.g. Flat 4"
+      {addressLookupPending ? (
+        <UkAddressReviewFields
+          value={addressLookupPending.form}
+          onChange={(nextForm) => {
+            setAddressLookupPending((prev) => (prev ? { ...prev, form: nextForm } : null));
+            setForm((p) => ({
+              ...p,
+              address_flat: nextForm.flat,
+              address: nextForm.street,
+              city: nextForm.city,
+              postcode: nextForm.postcode,
+            }));
+          }}
+          disabled={creatingSource}
         />
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">City</label>
-          <Input value={form.city} onChange={(e) => update("city", e.target.value)} placeholder="London" />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Postcode</label>
-          <Input value={form.postcode} onChange={(e) => update("postcode", e.target.value)} placeholder="EC1A 1BB" />
-        </div>
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">Property address (optional)</label>
-        <p className="text-[10px] text-text-tertiary mb-2">Select an existing address or add a new one. For a new client there are no addresses yet.</p>
-        <select
-          disabled
-          className="w-full h-9 rounded-lg border border-border bg-surface-hover px-3 text-sm text-text-tertiary cursor-not-allowed"
-          title="No addresses yet for new client"
-        >
-          <option>— No addresses yet —</option>
-        </select>
-        <div className="mt-2">
-          <p className="text-[10px] font-medium text-text-secondary mb-1.5">Add new address</p>
-          <AddressAutocomplete
-            value={propertyAddressRaw}
-            onChange={(v) => {
-              setPropertyAddressRaw(v);
-              setPropertyAddressPending(null);
-            }}
-            onSelect={(parts) => {
-              setPropertyAddressPending({ parts, form: addressPartsToFormState(parts) });
-              setPropertyAddressRaw(parts.full_address);
-            }}
-            placeholder="Type address or postcode..."
-          />
-          {propertyAddressPending ? (
-            <>
-              <UkAddressReviewFields
-                value={propertyAddressPending.form}
-                onChange={(nextForm) => setPropertyAddressPending((prev) => (prev ? { ...prev, form: nextForm } : null))}
-              />
-              <p className="text-[10px] text-primary mt-1">This address will be saved as a property linked to the client.</p>
-            </>
-          ) : propertyAddressRaw.trim() ? (
-            <p className="text-[10px] text-text-tertiary mt-1">Pick a suggestion above for split lines, or leave as typed (saved as one line).</p>
-          ) : null}
-        </div>
-      </div>
+      ) : (
+        <>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Flat / unit (optional)</label>
+            <Input
+              value={form.address_flat}
+              onChange={(e) => update("address_flat", e.target.value)}
+              placeholder="e.g. Flat 4"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">City</label>
+              <Input value={form.city} onChange={(e) => update("city", e.target.value)} placeholder="London" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Postcode</label>
+              <Input value={form.postcode} onChange={(e) => update("postcode", e.target.value)} placeholder="EC1A 1BB" />
+            </div>
+          </div>
+          <p className="text-[10px] text-text-tertiary">
+            Pick a suggestion above to confirm split lines, or type the street and fill town / postcode here.
+          </p>
+        </>
+      )}
+      <p className="text-[10px] text-text-tertiary -mt-2">
+        One address only: it is stored on the client and, when you fill it, also becomes the default property for jobs and quotes.
+      </p>
       <Select
         label="Source"
         value={form.source}

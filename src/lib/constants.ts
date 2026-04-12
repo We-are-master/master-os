@@ -18,9 +18,13 @@ export type NavGroup = {
 export const NAVIGATION: NavGroup[] = [
   {
     label: "Overview",
+    items: [{ label: "Dashboard", href: "/", icon: "grid-2x2" }],
+  },
+  {
+    label: "Inbox",
     items: [
-      { label: "Dashboard", href: "/", icon: "grid-2x2" },
-      { label: "Activity", href: "/activity", icon: "history" },
+      { label: "Tickets", href: "/tickets", icon: "message-square" },
+      { label: "Outreach", href: "/outreach", icon: "mail-plus" },
     ],
   },
   {
@@ -30,14 +34,6 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Quotes", href: "/quotes", icon: "file-text" },
       { label: "Jobs", href: "/jobs", icon: "briefcase" },
       { label: "Schedule", href: "/schedule", icon: "calendar" },
-      { label: "Tickets", href: "/tickets", icon: "message-square" },
-    ],
-  },
-  {
-    label: "Pipeline",
-    items: [
-      { label: "Partners Pipeline", href: "/pipelines/partners", icon: "git-branch" },
-      { label: "Corporate Clients", href: "/pipelines/corporate", icon: "building-2" },
     ],
   },
   {
@@ -46,7 +42,6 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Clients", href: "/clients", icon: "user-circle" },
       { label: "Partners", href: "/partners", icon: "users" },
       { label: "Accounts", href: "/accounts", icon: "building" },
-      { label: "Outreach", href: "/outreach", icon: "mail-plus" },
     ],
   },
   {
