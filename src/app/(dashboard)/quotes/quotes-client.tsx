@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo, Suspense, useLayoutEffect } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Suspense, useLayoutEffect, Fragment } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -19,16 +19,17 @@ import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, Download, List, LayoutGrid, Calendar, Map,
+  Plus, Filter, Download, List, LayoutGrid, Calendar, Map as MapIcon,
   FileText, BarChart3, Clock, ArrowRight,
   Send, CheckCircle2, RotateCcw, RefreshCw, XCircle,
   Mail, Building2,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
-  ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown,
+  ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown, Brain,
   Wallet, Percent, PoundSterling, ImagePlus, X,
+  MailCheck,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, cn, normalizeCalendarDateToYmd, formatYmdUkDisplay } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Quote, Partner, Job } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -45,7 +46,12 @@ import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { listPartners } from "@/services/partners";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
-import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
+import {
+  getBidsByQuoteId,
+  getSubmittedBidAveragesByQuoteIds,
+  approveBid,
+  type QuoteBid,
+} from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { getStatusCounts, getSupabase, softDeleteById, type ListParams, type ListResult } from "@/services/base";
@@ -56,7 +62,7 @@ import { KanbanBoard } from "@/components/shared/kanban-board";
 import { normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 import { getErrorMessage, isUuid, isValidIsoDateTime, parseIsoDateOnly } from "@/lib/utils";
-import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
+import { insertQuoteLineItemsResilient } from "@/lib/quote-line-items-insert";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
@@ -74,6 +80,15 @@ import {
   depositAmountFromPercent,
   inferDepositPercentFromLegacy,
 } from "@/lib/quote-deposit";
+import { extractUkPostcode, normalizeUkPostcode } from "@/lib/uk-postcode";
+import {
+  buildNotesWithPricing,
+  defaultPartnerPricingForLineIndex,
+  parseProposalLineNotes,
+  proposalLineHintDisplay,
+  stringifyProposalLineNotes,
+  type PartnerLinePricingMode,
+} from "@/lib/quote-proposal-line-notes";
 import { resolveImagesForJobFromQuote } from "@/lib/job-images";
 
 const UI_PERF_EVENT = "master-ui-perf";
@@ -105,12 +120,39 @@ function proposalFirstLineLabel(q: Quote): string {
   return t;
 }
 
+/** Second line under quote reference: postcode only (column + parse from property address). */
+function quoteListSubtitlePostcode(q: Quote): string {
+  const col = bidPayloadTrimmedString(q.postcode as unknown);
+  if (col) {
+    const parsed = extractUkPostcode(col);
+    return normalizeUkPostcode(parsed ?? col);
+  }
+  const addr = bidPayloadTrimmedString(q.property_address as unknown);
+  if (addr) {
+    const fromAddr = extractUkPostcode(addr);
+    if (fromAddr) return fromAddr;
+  }
+  return "—";
+}
+
 /** Two starter rows: type of work + materials (partner app aligns with this shape). */
 function defaultProposalLineItems(q: Quote): ProposalLineRow[] {
   const first = proposalFirstLineLabel(q);
   return [
-    { description: first, quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" },
-    { description: "Materials", quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" },
+    {
+      description: first,
+      quantity: "1",
+      unitPrice: "0",
+      partnerUnitCost: "0",
+      notes: stringifyProposalLineNotes({ v: 1, partnerPricing: "fixed" }),
+    },
+    {
+      description: "Materials",
+      quantity: "1",
+      unitPrice: "0",
+      partnerUnitCost: "0",
+      notes: stringifyProposalLineNotes({ v: 1, partnerPricing: "unit" }),
+    },
   ];
 }
 
@@ -134,11 +176,28 @@ function linePartnerSubtotal(li: ProposalLineRow | undefined): number {
   return (Number(li.quantity) || 0) * (Number(li.partnerUnitCost) || 0);
 }
 
-function lineItemDescriptionForCustomer(li: ProposalLineRow): string {
-  const d = bidPayloadTrimmedString(li.description as unknown);
-  const n = bidPayloadTrimmedString(li.notes as unknown);
-  if (!n) return d;
-  return `${d} (Note: ${n})`;
+/** Partner scope titles sometimes arrive as "Labour (1)" / "Materials (1)" — strip trailing index. */
+function stripPartnerLineIndexSuffix(s: string): string {
+  return s.replace(/\s*\(\d+\)\s*$/, "").trim();
+}
+
+function lineItemDescriptionForCustomer(li: ProposalLineRow, lineIdx?: number): string {
+  let d = bidPayloadTrimmedString(li.description as unknown);
+  if (lineIdx !== undefined && lineIdx < 2) d = stripPartnerLineIndexSuffix(d);
+  const hint = proposalLineHintDisplay(parseProposalLineNotes(li.notes));
+  if (!hint) return d;
+  return `${d} (Note: ${hint})`;
+}
+
+function partnerFieldLabelsForLine(idx: number, pricing: PartnerLinePricingMode): { qty: string; partner: string; sell: string } {
+  if (idx === 0) {
+    return pricing === "hourly"
+      ? { qty: "Hours (qty)", partner: "Partner £/hr", sell: "Sell £/hr" }
+      : { qty: "Qty", partner: "Partner / unit", sell: "Sell / unit" };
+  }
+  return pricing === "bulk"
+    ? { qty: "Qty", partner: "Partner total (£)", sell: "Sell total (£)" }
+    : { qty: "Qty", partner: "Partner £/unit", sell: "Sell £/unit" };
 }
 
 function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
@@ -153,15 +212,66 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
 } {
   const payload = parseBidProposalFromNotes(bid.notes);
   const { labour: L, materials: M } = splitBidPartnerCosts(bid.bid_amount, payload);
-  const line0Desc = bidPayloadTrimmedString(payload?.labour_description) || proposalFirstLineLabel(q);
-  const line1Desc = bidPayloadTrimmedString(payload?.materials_description) || "Materials";
-  const u0 = customerUnitSellFromPartnerUnit(L);
-  const u1 = customerUnitSellFromPartnerUnit(M);
-  const lineTotSell = u0 + u1;
+  const line0Desc = stripPartnerLineIndexSuffix(
+    bidPayloadTrimmedString(payload?.labour_description) || proposalFirstLineLabel(q),
+  );
+  const line1Desc = stripPartnerLineIndexSuffix(
+    bidPayloadTrimmedString(payload?.materials_description) || "Materials",
+  );
+  const labourPricing: PartnerLinePricingMode = payload?.labour_pricing === "hourly" ? "hourly" : "fixed";
+  const materialsPricing: PartnerLinePricingMode = payload?.materials_pricing === "bulk" ? "bulk" : "unit";
+
+  let q0 = "1";
+  let partnerUnit0 = L;
+  let marginBasis0 = L;
+  if (labourPricing === "hourly") {
+    const hrs = Number(payload?.labour_hours);
+    const rate = Number(payload?.labour_rate);
+    if (hrs > 0 && rate > 0) {
+      const check = hrs * rate;
+      if (L <= 0.001 || Math.abs(check - L) <= Math.max(1, 0.02 * Math.max(L, check))) {
+        q0 = String(hrs);
+        partnerUnit0 = rate;
+        marginBasis0 = rate;
+      }
+    }
+  }
+  const u0 = customerUnitSellFromPartnerUnit(marginBasis0);
+
+  let q1 = "1";
+  let partnerUnit1 = M;
+  let marginBasis1 = M;
+  if (materialsPricing === "unit") {
+    const mq = Number(payload?.materials_quantity);
+    const mpu = Number(payload?.materials_partner_unit);
+    if (mq > 0 && mpu > 0) {
+      const check = mq * mpu;
+      if (M <= 0.001 || Math.abs(check - M) <= Math.max(0.01, 0.02 * Math.max(M, check))) {
+        q1 = String(mq);
+        partnerUnit1 = mpu;
+        marginBasis1 = mpu;
+      }
+    }
+  }
+  const u1 = customerUnitSellFromPartnerUnit(marginBasis1);
+
+  const lineTotSell = Number(q0) * u0 + Number(q1) * u1;
   return {
     lines: [
-      { description: line0Desc, quantity: "1", unitPrice: String(u0), partnerUnitCost: String(L), notes: "" },
-      { description: line1Desc, quantity: "1", unitPrice: String(u1), partnerUnitCost: String(M), notes: "" },
+      {
+        description: line0Desc,
+        quantity: q0,
+        unitPrice: String(u0),
+        partnerUnitCost: String(partnerUnit0),
+        notes: stringifyProposalLineNotes({ v: 1, partnerPricing: labourPricing }),
+      },
+      {
+        description: line1Desc,
+        quantity: q1,
+        unitPrice: String(u1),
+        partnerUnitCost: String(partnerUnit1),
+        notes: stringifyProposalLineNotes({ v: 1, partnerPricing: materialsPricing }),
+      },
     ],
     labourP: L,
     materialsP: M,
@@ -169,8 +279,10 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
       const s = bidPayloadTrimmedString(payload?.scope);
       return s || undefined;
     })(),
-    startDate1: bidPayloadTrimmedString(payload?.start_date_option_1).slice(0, 10) || undefined,
-    startDate2: bidPayloadTrimmedString(payload?.start_date_option_2).slice(0, 10) || undefined,
+    startDate1:
+      normalizeCalendarDateToYmd(bidPayloadTrimmedString(payload?.start_date_option_1 as unknown)) || undefined,
+    startDate2:
+      normalizeCalendarDateToYmd(bidPayloadTrimmedString(payload?.start_date_option_2 as unknown)) || undefined,
     depositPercent:
       payload?.deposit_required != null &&
       Number.isFinite(Number(payload.deposit_required)) &&
@@ -183,6 +295,79 @@ function computeCustomerProposalFromBid(bid: QuoteBid, q: Quote): {
           )
         : undefined,
   };
+}
+
+/** Auto-pick: lowest submitted price; tie → most recently updated bid. */
+function compareBidsForCheapest(a: QuoteBid, b: QuoteBid): number {
+  const pa = Number(a.bid_amount) || 0;
+  const pb = Number(b.bid_amount) || 0;
+  if (pa !== pb) return pa - pb;
+  return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+}
+
+type BidPriceRankLabel = "Lowest" | "Mid" | "Highest";
+
+/** Submitted + approved bids only (rejected excluded from price spread). */
+function bidsEligibleForPriceSpread(bids: QuoteBid[]): QuoteBid[] {
+  return bids.filter((b) => b.status === "submitted" || b.status === "approved");
+}
+
+/**
+ * Default collapsed view: up to 3 bids — lowest, median, highest by price.
+ * If the selected bid would fall outside that triple, the centre slot shows the selection instead.
+ */
+function computeBidSpotlight(bids: QuoteBid[], selectedId: string | null): { bid: QuoteBid; label: BidPriceRankLabel }[] {
+  const pool = [...bidsEligibleForPriceSpread(bids)].sort(compareBidsForCheapest);
+  const n = pool.length;
+  if (n === 0) return [];
+  if (n === 1) return [{ bid: pool[0], label: "Mid" }];
+  if (n === 2) {
+    return [
+      { bid: pool[0], label: "Lowest" },
+      { bid: pool[1], label: "Highest" },
+    ];
+  }
+  const L = pool[0];
+  const H = pool[n - 1];
+  const midIdx = Math.floor((n - 1) / 2);
+  let C = pool[midIdx];
+  const sel = selectedId ? pool.find((b) => b.id === selectedId) : undefined;
+  if (sel && sel.id !== L.id && sel.id !== C.id && sel.id !== H.id) {
+    C = sel;
+  }
+  const seen = new Set<string>();
+  const triple: QuoteBid[] = [];
+  for (const b of [L, C, H]) {
+    if (!seen.has(b.id)) {
+      seen.add(b.id);
+      triple.push(b);
+    }
+  }
+  if (triple.length < 3 && n > triple.length) {
+    for (const b of pool) {
+      if (triple.length >= 3) break;
+      if (!seen.has(b.id)) {
+        seen.add(b.id);
+        triple.push(b);
+      }
+    }
+  }
+  const sorted = [...triple].sort(compareBidsForCheapest);
+  return sorted.map((bid, i) => ({
+    bid,
+    label:
+      sorted.length === 1
+        ? "Mid"
+        : sorted.length === 2
+          ? i === 0
+            ? "Lowest"
+            : "Highest"
+          : i === 0
+            ? "Lowest"
+            : i === sorted.length - 1
+              ? "Highest"
+              : "Mid",
+  }));
 }
 
 const statusLabels: Record<string, string> = {
@@ -290,9 +475,7 @@ function getStageGuidance(status: string): {
       return {
         headline: "Bids or your own figures",
         detail:
-          "Approving a bid only locks partner cost — it does not accept with the customer. Set your sell price on Review & Send, complete the proposal, then Send to Customer. After the client accepts, convert to a job.",
-        goToTab: "overview",
-        goToLabel: "Review & Send",
+          "Based on market conditions, our AI selects the best quote based on price, availability and region. You can still manually choose any other bid at any time.",
       };
     case "awaiting_customer":
       return {
@@ -413,6 +596,45 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     if (filterQuoteType === "all") return data;
     return data.filter((q) => (q.quote_type ?? "internal") === filterQuoteType);
   }, [data, filterQuoteType]);
+
+  const [avgBidByQuoteId, setAvgBidByQuoteId] = useState<Record<string, number>>({});
+  const quotesListDataRef = useRef(data);
+  quotesListDataRef.current = data;
+  const dataIdsKey = useMemo(() => data.map((q) => q.id).sort().join(","), [data]);
+
+  const refreshListBidAverages = useCallback(async () => {
+    const ids = quotesListDataRef.current.map((q) => q.id);
+    if (ids.length === 0) {
+      setAvgBidByQuoteId({});
+      return;
+    }
+    try {
+      setAvgBidByQuoteId(await getSubmittedBidAveragesByQuoteIds(ids));
+    } catch {
+      /* table still usable */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshListBidAverages();
+  }, [dataIdsKey, refreshListBidAverages]);
+
+  useEffect(() => {
+    const supabase = getSupabase();
+    const channel = supabase
+      .channel("quotes_list_quote_bids")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "quote_bids" },
+        () => {
+          void refreshListBidAverages();
+        },
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [refreshListBidAverages]);
 
   const quoteKanbanColumns = useMemo(() => {
     const ids = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"];
@@ -574,25 +796,14 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           const supabase = getSupabase();
           const rows = manualLines.map((li, i) => ({
             quote_id: result.id,
-            description: li.description,
+            description: i < 2 ? stripPartnerLineIndexSuffix(li.description) : li.description,
             quantity: Number(li.quantity) || 1,
             unit_price: Number(li.unitPrice) || 0,
             partner_unit_cost: Number(li.partnerUnitCost) || 0,
             sort_order: i,
             notes: bidPayloadTrimmedString(li.notes as unknown) || null,
           }));
-          let ins = await supabase.from("quote_line_items").insert(rows);
-          if (ins.error && isPostgrestWriteRetryableError(ins.error)) {
-            const slim = rows.map((r) => ({
-              quote_id: r.quote_id,
-              description: r.description,
-              quantity: r.quantity,
-              unit_price: r.unit_price,
-              sort_order: r.sort_order,
-            }));
-            ins = await supabase.from("quote_line_items").insert(slim);
-          }
-          if (ins.error) throw ins.error;
+          await insertQuoteLineItemsResilient(supabase, rows);
         }
 
         await logAudit({
@@ -781,7 +992,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   );
 
   const handleStatusChange = useCallback(
-    async (quote: Quote, newStatus: string): Promise<boolean> => {
+    async (quote: Quote, newStatus: string, opts?: { successToast?: string }): Promise<boolean> => {
       if (newStatus === "create_job") {
         setQuoteToConvert(quote);
         return true;
@@ -792,7 +1003,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         return false;
       }
       if (newStatus === "awaiting_customer" && (quote.margin_percent ?? 0) < 25 && (quote.margin_percent ?? 0) > 0) {
-        if (typeof window !== "undefined" && !window.confirm("Margin is below 25%. Send quote to customer anyway?")) {
+        if (typeof window !== "undefined" && !window.confirm("Margin is below 25%. Move to Awaiting Customer anyway?")) {
           return false;
         }
       }
@@ -804,7 +1015,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         if (newStatus === "accepted") {
           setQuoteToConvert(updated);
         }
-        toast.success(`Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
+        toast.success(opts?.successToast ?? `Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
         refreshWithKpis();
         if (newStatus === "bidding" && quote.service_type) {
           fetch("/api/push/notify-partner", {
@@ -831,7 +1042,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   );
 
   const handleExport = useCallback(() => {
-    const csv = ["Reference,Title,Client,Status,Value,Owner"]
+    const csv = ["Reference,Title,Client,Status,Amount,Owner"]
       .concat(data.map((q) => `${q.reference},"${q.title}","${q.client_name}",${q.status},${q.total_value},${q.owner_name ?? ""}`))
       .join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -849,7 +1060,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       render: (item) => (
         <div>
           <p className="text-sm font-semibold text-text-primary">{item.reference}</p>
-          <p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{normalizeTypeOfWork(item.title) || item.title}</p>
+          <p className="text-[11px] text-text-tertiary truncate max-w-[180px]">{quoteListSubtitlePostcode(item)}</p>
         </div>
       ),
     },
@@ -888,7 +1099,18 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       render: (item) => <QuoteStageColumn status={item.status} />,
     },
     {
-      key: "total_value", label: "Value", align: "right" as const,
+      key: "avg_bid", label: "AVG Bid", align: "right" as const,
+      render: (item) => {
+        const avg = avgBidByQuoteId[item.id];
+        return typeof avg === "number" && Number.isFinite(avg) ? (
+          <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(avg)}</span>
+        ) : (
+          <span className="text-sm text-text-tertiary">—</span>
+        );
+      },
+    },
+    {
+      key: "total_value", label: "Amount", align: "right" as const,
       render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>,
     },
     {
@@ -1056,7 +1278,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             </p>
             <div className="flex items-center gap-2 sm:ml-auto">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
-                {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: Map }].map(({ id, icon: Icon }) => (
+                {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: MapIcon }].map(({ id, icon: Icon }) => (
                   <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}>
                     <Icon className="h-3.5 w-3.5" />
                   </button>
@@ -1102,8 +1324,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                   renderCard={(q) => (
                     <div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors">
                       <p className="text-sm font-semibold text-text-primary truncate">{q.reference}</p>
-                      <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(q.title) || q.title}</p>
-                      <p className="text-[11px] text-text-secondary mt-1">{q.client_name}</p>
+                      <p className="text-xs text-text-tertiary truncate">{quoteListSubtitlePostcode(q)}</p>
                       {q.source_account_name?.trim() ? (
                         <p className="text-[10px] text-text-tertiary truncate">{q.source_account_name}</p>
                       ) : null}
@@ -1121,6 +1342,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
       {selectedQuote ? (
       <QuoteDetailDrawer
+        key={selectedQuote.id}
         quote={selectedQuote}
         pendingInitialTab={drawerPendingTab}
         onConsumePendingInitialTab={consumeDrawerPendingTab}
@@ -1154,6 +1376,52 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   );
 }
 
+/** Single compact strip: selected partner cost or avg bid, submissions count, invited partners, quoted (partner quotes). */
+function PartnerBidMiniDash({
+  bidsLoading,
+  primaryLabel,
+  primaryValue,
+  bidsReceivedCount,
+  invitedPartnersCount,
+  quotedPartnersCount,
+}: {
+  bidsLoading: boolean;
+  primaryLabel: string;
+  primaryValue: number | null;
+  bidsReceivedCount: number;
+  invitedPartnersCount: number;
+  quotedPartnersCount: number;
+}) {
+  return (
+    <div
+      className="rounded-xl border border-border-light/70 bg-border-light/40 dark:bg-border p-px overflow-hidden shadow-sm"
+      role="region"
+      aria-label="Partner figures: cost or average bid, bids received, invited and quoted partners"
+    >
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-px">
+        <div className="bg-card dark:bg-surface-secondary/55 px-2 py-1.5 sm:px-2.5 sm:py-2 min-w-0">
+          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">{primaryLabel}</p>
+          <p className="mt-0.5 text-[15px] sm:text-lg font-bold tabular-nums text-text-primary leading-tight truncate">
+            {bidsLoading ? "…" : primaryValue != null ? formatCurrency(primaryValue) : "—"}
+          </p>
+        </div>
+        <div className="bg-card dark:bg-surface-secondary/55 px-2 py-1.5 sm:px-2.5 sm:py-2 min-w-0" title="Partner submissions on this quote">
+          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Bids received</p>
+          <p className="mt-0.5 text-[15px] sm:text-lg font-bold tabular-nums text-text-primary leading-tight">{bidsReceivedCount}</p>
+        </div>
+        <div className="bg-card dark:bg-surface-secondary/55 px-2 py-1.5 sm:px-2.5 sm:py-2 min-w-0">
+          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Invited</p>
+          <p className="mt-0.5 text-[15px] sm:text-lg font-bold tabular-nums text-text-primary leading-tight">{invitedPartnersCount}</p>
+        </div>
+        <div className="bg-card dark:bg-surface-secondary/55 px-2 py-1.5 sm:px-2.5 sm:py-2 min-w-0">
+          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Quoted</p>
+          <p className="mt-0.5 text-[15px] sm:text-lg font-bold tabular-nums text-primary leading-tight">{quotedPartnersCount}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ========== QUOTE DETAIL DRAWER ========== */
 function QuoteDetailDrawer({
   quote,
@@ -1167,7 +1435,7 @@ function QuoteDetailDrawer({
   pendingInitialTab?: "overview" | "bids" | null;
   onConsumePendingInitialTab?: () => void;
   onClose: () => void;
-  onStatusChange: (quote: Quote, status: string) => void | Promise<boolean>;
+  onStatusChange: (quote: Quote, status: string, opts?: { successToast?: string }) => void | Promise<boolean>;
   onQuoteUpdate?: (updated: Quote) => void;
 }) {
   const { profile } = useProfile();
@@ -1188,11 +1456,18 @@ function QuoteDetailDrawer({
   const [bidsLoading, setBidsLoading] = useState(false);
   /** Partner bid cards: collapsed preview shows total only; expand for breakdown, dates, scope, notes. */
   const [expandedBidIds, setExpandedBidIds] = useState<Set<string>>(new Set());
+  /** Bid driving Review & Send figures without formal approve (submitted) or the approved bid id. */
+  const [selectedReviewBidId, setSelectedReviewBidId] = useState<string | null>(null);
+  const [showAllBidsInTab, setShowAllBidsInTab] = useState(false);
+  const autoPickBestBidRef = useRef(false);
+  const quoteRef = useRef(quote);
+  quoteRef.current = quote;
   const [proposalSaving, setProposalSaving] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [ownerOpen, setOwnerOpen] = useState(false);
+  const [clientOnQuoteOpen, setClientOnQuoteOpen] = useState(false);
   /** 100 = baseline customer sell (40% margin on lines 1–2); range 0–1000 scales from that baseline. */
   const [proposalScalePercent, setProposalScalePercent] = useState(100);
   const [quoteClientPick, setQuoteClientPick] = useState<ClientAndAddressValue>({
@@ -1229,8 +1504,12 @@ function QuoteDetailDrawer({
       setSendState("idle");
       setProposalScalePercent(100);
       setOwnerOpen(false);
+      setClientOnQuoteOpen(false);
       setPricingOpen(false);
       setExpandedBidIds(new Set());
+      setSelectedReviewBidId(null);
+      setShowAllBidsInTab(false);
+      autoPickBestBidRef.current = false;
       setQuoteClientPick({
       client_id: quote.client_id,
       client_address_id: quote.client_address_id,
@@ -1249,8 +1528,8 @@ function QuoteDetailDrawer({
         ? String(Number(quote.deposit_percent))
         : String(inferDepositPercentFromLegacy(Number(quote.deposit_required ?? 0), Number(quote.total_value ?? 0))),
     );
-    setStartDate1(bidPayloadTrimmedString(quote.start_date_option_1 as unknown));
-    setStartDate2(bidPayloadTrimmedString(quote.start_date_option_2 as unknown));
+    setStartDate1(normalizeCalendarDateToYmd(bidPayloadTrimmedString(quote.start_date_option_1 as unknown)) || "");
+    setStartDate2(normalizeCalendarDateToYmd(bidPayloadTrimmedString(quote.start_date_option_2 as unknown)) || "");
     setCustomMessage(bidPayloadTrimmedString(quote.email_custom_message as unknown));
     setEmailAttachRequestPhotos(Boolean(quote.email_attach_request_photos));
   }, [quote]);
@@ -1268,8 +1547,11 @@ function QuoteDetailDrawer({
     const { data } = await supabase.from("quote_line_items").select("*").eq("quote_id", quoteId).order("sort_order");
     if (data && data.length > 0) {
       let rows: ProposalLineRow[] = data.map(
-        (li: { description: string; quantity: number; unit_price: number; partner_unit_cost?: number | null; notes?: string | null }) => ({
-          description: bidPayloadTrimmedString(li.description as unknown),
+        (li: { description: string; quantity: number; unit_price: number; partner_unit_cost?: number | null; notes?: string | null }, i: number) => ({
+          description:
+            i < 2
+              ? stripPartnerLineIndexSuffix(bidPayloadTrimmedString(li.description as unknown))
+              : bidPayloadTrimmedString(li.description as unknown),
           quantity: String(li.quantity ?? 1),
           unitPrice: String(li.unit_price ?? 0),
           partnerUnitCost: String(li.partner_unit_cost ?? 0),
@@ -1282,7 +1564,16 @@ function QuoteDetailDrawer({
         if (rows.length === 0) {
           rows = defaultProposalLineItems(q);
         } else {
-          rows = [...rows, { description: "Materials", quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" }];
+          rows = [
+            ...rows,
+            {
+              description: "Materials",
+              quantity: "1",
+              unitPrice: "0",
+              partnerUnitCost: "0",
+              notes: stringifyProposalLineNotes({ v: 1, partnerPricing: "unit" }),
+            },
+          ];
           if (!bidPayloadTrimmedString(rows[0].description as unknown)) rows[0] = { ...rows[0], description: firstLine };
         }
       }
@@ -1291,6 +1582,9 @@ function QuoteDetailDrawer({
       setLineItems(defaultProposalLineItems(q));
     }
   };
+
+  const loadLineItemsRef = useRef(loadLineItems);
+  loadLineItemsRef.current = loadLineItems;
 
   const loadPartners = useCallback(async () => {
     const res = await listPartners({ pageSize: 200, status: "all" });
@@ -1313,15 +1607,63 @@ function QuoteDetailDrawer({
     [partners],
   );
 
-  const loadBids = useCallback(async (quoteId: string) => {
-    setBidsLoading(true);
-    try {
-      const list = await getBidsByQuoteId(quoteId);
-      setBids(list);
-    } finally {
-      setBidsLoading(false);
-    }
-  }, []);
+  const loadBids = useCallback(
+    async (quoteId: string) => {
+      setBidsLoading(true);
+      try {
+        const list = await getBidsByQuoteId(quoteId);
+        if (quoteRef.current.id !== quoteId) return;
+        setBids(list);
+        const q = quoteRef.current;
+        const approved = list.find((b) => b.status === "approved");
+        const submitted = list.filter((b) => b.status === "submitted");
+
+        if (approved) {
+          setSelectedReviewBidId(approved.id);
+        } else if (submitted.length === 0) {
+          setSelectedReviewBidId(null);
+        } else if (!autoPickBestBidRef.current) {
+          const best = [...submitted].sort(compareBidsForCheapest)[0];
+          autoPickBestBidRef.current = true;
+          const pre = computeCustomerProposalFromBid(best, q);
+          const scopeMerged = pre.scopeText ?? bidPayloadTrimmedString(q.scope as unknown);
+          const d1 =
+            normalizeCalendarDateToYmd(pre.startDate1 ?? bidPayloadTrimmedString(q.start_date_option_1 as unknown)) || "";
+          const d2 =
+            normalizeCalendarDateToYmd(pre.startDate2 ?? bidPayloadTrimmedString(q.start_date_option_2 as unknown)) || "";
+          const depPct =
+            pre.depositPercent ??
+            (q.deposit_percent != null && Number.isFinite(Number(q.deposit_percent))
+              ? String(Number(q.deposit_percent))
+              : String(inferDepositPercentFromLegacy(Number(q.deposit_required ?? 0), Number(q.total_value ?? 0))));
+          setLineItems(pre.lines);
+          setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
+          setStartDate1(d1);
+          setStartDate2(d2);
+          setDepositPercent(depPct);
+          setProposalScalePercent(100);
+          setSelectedReviewBidId(best.id);
+          try {
+            const updated = await persistProposalToQuoteRef.current({
+              lineItemsOverride: pre.lines,
+              scopeTextOverride: scopeMerged,
+              startDate1Override: d1,
+              startDate2Override: d2,
+              depositOverride: depPct,
+              partnerCostOverride: best.bid_amount,
+            });
+            onQuoteUpdate?.(updated);
+            void loadLineItemsRef.current(quoteId, quoteRef.current);
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Failed to sync bid to quote");
+          }
+        }
+      } finally {
+        if (quoteRef.current.id === quoteId) setBidsLoading(false);
+      }
+    },
+    [onQuoteUpdate],
+  );
 
   useEffect(() => {
     if (quote.quote_type === "partner") loadBids(quote.id);
@@ -1346,12 +1688,6 @@ function QuoteDetailDrawer({
     return splitBidPartnerCosts(approvedBid.bid_amount, payload);
   }, [approvedBid]);
 
-  const avgBidPrice = useMemo(() => {
-    if (!bids.length) return null;
-    const sum = bids.reduce((s, b) => s + (Number(b.bid_amount) || 0), 0);
-    return sum / bids.length;
-  }, [bids]);
-
   const bidsReceivedCount =
     quote.quote_type !== "partner" ? 0 : bidsLoading ? Number(quote.partner_quotes_count) || 0 : bids.length;
   const invitedPartnersCount = quote.quote_type !== "partner" ? 0 : Math.max(0, Number(quote.partner_quotes_count) || 0);
@@ -1359,6 +1695,52 @@ function QuoteDetailDrawer({
     () => bids.filter((b) => b.status === "submitted" || b.status === "approved" || b.status === "rejected").length,
     [bids]
   );
+
+  const orderedBidsForTab = useMemo(() => {
+    const sel = selectedReviewBidId;
+    const selected = sel ? bids.find((b) => b.id === sel) : undefined;
+    const rest = bids.filter((b) => b.id !== sel);
+    rest.sort((a, b) => {
+      const pa = Number(a.bid_amount) || 0;
+      const pb = Number(b.bid_amount) || 0;
+      if (pa !== pb) return pa - pb;
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+    return selected ? [selected, ...rest] : rest;
+  }, [bids, selectedReviewBidId]);
+
+  const bidSpotlightEntries = useMemo(
+    () => computeBidSpotlight(bids, selectedReviewBidId),
+    [bids, selectedReviewBidId],
+  );
+  const bidsCollapsedVisible = useMemo(() => {
+    if (bidSpotlightEntries.length > 0) return bidSpotlightEntries.map((e) => e.bid);
+    if (bids.length <= 3) return bids;
+    return bids.slice(0, 3);
+  }, [bidSpotlightEntries, bids]);
+  const bidSpotlightLabelById = useMemo(() => {
+    const m = new Map<string, BidPriceRankLabel>();
+    for (const e of bidSpotlightEntries) m.set(e.bid.id, e.label);
+    return m;
+  }, [bidSpotlightEntries]);
+  const bidsVisibleInTab = useMemo(
+    () => (showAllBidsInTab ? orderedBidsForTab : bidsCollapsedVisible),
+    [showAllBidsInTab, orderedBidsForTab, bidsCollapsedVisible],
+  );
+  const bidsTabMoreCount = useMemo(() => {
+    if (showAllBidsInTab) return 0;
+    const shown = new Set(bidsCollapsedVisible.map((b) => b.id));
+    return bids.filter((b) => !shown.has(b.id)).length;
+  }, [showAllBidsInTab, bids, bidsCollapsedVisible]);
+
+  /** If selection falls outside the price preview (edge cases), expand the full list automatically. */
+  useEffect(() => {
+    if (showAllBidsInTab) return;
+    if (!selectedReviewBidId) return;
+    if (!bidsCollapsedVisible.some((b) => b.id === selectedReviewBidId)) {
+      setShowAllBidsInTab(true);
+    }
+  }, [selectedReviewBidId, showAllBidsInTab, bidsCollapsedVisible]);
 
   useEffect(() => {
     if (!approvedBidPartnerUnits) return;
@@ -1393,8 +1775,38 @@ function QuoteDetailDrawer({
   const proposalMarginLabourPct = marginPctOnSell(proposalLine0Sell, proposalLine0Partner);
   const proposalMarginMaterialsPct = marginPctOnSell(proposalLine1Sell, proposalLine1Partner);
   const proposalPartnerTotal = lineItems.reduce((s, li) => s + linePartnerSubtotal(li), 0);
-  const proposalMarginAbs = lineTotal - proposalPartnerTotal;
-  const proposalSummaryMarginPct = marginPctOnSell(lineTotal, proposalPartnerTotal);
+  /**
+   * Partner cost for summaries: line-item total when present; if lines are still £0 (e.g. DB race / stale rows)
+   * but a submitted/approved bid is selected, use its bid_amount so the top strip matches the selected bid.
+   */
+  const effectiveProposalPartnerTotal = useMemo(() => {
+    if (proposalPartnerTotal > 0.001) return proposalPartnerTotal;
+    if (!selectedReviewBidId) return proposalPartnerTotal;
+    const sel = bids.find((b) => b.id === selectedReviewBidId);
+    if (sel && (sel.status === "submitted" || sel.status === "approved")) {
+      const amt = Number(sel.bid_amount) || 0;
+      if (amt > 0) return amt;
+    }
+    return proposalPartnerTotal;
+  }, [proposalPartnerTotal, bids, selectedReviewBidId]);
+
+  /** First tile in PartnerBidMiniDash: same basis as effective partner cost, else average bid amount. */
+  const bidDashPrimary = useMemo(() => {
+    const selId = selectedReviewBidId;
+    if (selId) {
+      const sel = bids.find((b) => b.id === selId);
+      if (sel && (sel.status === "submitted" || sel.status === "approved")) {
+        const v = effectiveProposalPartnerTotal;
+        return { label: "Your cost", value: v > 0.001 ? v : null } as const;
+      }
+    }
+    if (!bids.length) return { label: "Avg price", value: null } as const;
+    const sum = bids.reduce((s, b) => s + (Number(b.bid_amount) || 0), 0);
+    return { label: "Avg price", value: sum / bids.length } as const;
+  }, [bids, selectedReviewBidId, effectiveProposalPartnerTotal]);
+
+  const proposalMarginAbs = lineTotal - effectiveProposalPartnerTotal;
+  const proposalSummaryMarginPct = marginPctOnSell(lineTotal, effectiveProposalPartnerTotal);
   const proposalDepositAmount = depositAmountFromPercent(lineTotal, Number(depositPercent));
   const partnerBasisLines01 = proposalLine0Partner + proposalLine1Partner;
   const canUseProposalMarginSlider = partnerBasisLines01 > 0;
@@ -1464,8 +1876,10 @@ function QuoteDetailDrawer({
   }): Promise<Quote> => {
     const lines = opts?.lineItemsOverride ?? lineItems;
     const st = opts?.scopeTextOverride !== undefined ? opts.scopeTextOverride : scopeText;
-    const d1 = opts?.startDate1Override !== undefined ? opts.startDate1Override : startDate1;
-    const d2 = opts?.startDate2Override !== undefined ? opts.startDate2Override : startDate2;
+    const d1Raw = opts?.startDate1Override !== undefined ? opts.startDate1Override : startDate1;
+    const d2Raw = opts?.startDate2Override !== undefined ? opts.startDate2Override : startDate2;
+    const d1 = normalizeCalendarDateToYmd(d1Raw) || "";
+    const d2 = normalizeCalendarDateToYmd(d2Raw) || "";
     const depPctStr = opts?.depositOverride !== undefined ? opts.depositOverride : depositPercent;
     const partnerTotalFromLines = lines.reduce((s, li) => s + linePartnerSubtotal(li), 0);
     const partnerTotal = opts?.partnerCostOverride ?? partnerTotalFromLines;
@@ -1474,7 +1888,7 @@ function QuoteDetailDrawer({
     await supabase.from("quote_line_items").delete().eq("quote_id", quote.id);
     const rows = lines.map((li, i) => ({
       quote_id: quote.id,
-      description: li.description,
+      description: i < 2 ? stripPartnerLineIndexSuffix(li.description) : li.description,
       quantity: Number(li.quantity) || 1,
       unit_price: Number(li.unitPrice) || 0,
       partner_unit_cost: Number(li.partnerUnitCost) || 0,
@@ -1482,18 +1896,7 @@ function QuoteDetailDrawer({
       notes: bidPayloadTrimmedString(li.notes as unknown) || null,
     }));
     if (rows.length > 0) {
-      let ins = await supabase.from("quote_line_items").insert(rows);
-      if (ins.error && isPostgrestWriteRetryableError(ins.error)) {
-        const slim = rows.map((r) => ({
-          quote_id: r.quote_id,
-          description: r.description,
-          quantity: r.quantity,
-          unit_price: r.unit_price,
-          sort_order: r.sort_order,
-        }));
-        ins = await supabase.from("quote_line_items").insert(slim);
-      }
-      if (ins.error) throw ins.error;
+      await insertQuoteLineItemsResilient(supabase, rows);
     }
 
     const lineTot = lines.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
@@ -1517,6 +1920,82 @@ function QuoteDetailDrawer({
       email_attach_request_photos: emailAttachRequestPhotos,
     });
   };
+
+  const persistProposalToQuoteRef = useRef(persistProposalToQuote);
+  persistProposalToQuoteRef.current = persistProposalToQuote;
+
+  const selectBidForReview = useCallback(
+    async (bid: QuoteBid, options?: { silent?: boolean }) => {
+      if (bid.status !== "submitted") return;
+      const pre = computeCustomerProposalFromBid(bid, quote);
+      const scopeMerged = pre.scopeText ?? scopeText;
+      const d1 = normalizeCalendarDateToYmd(pre.startDate1 ?? startDate1) || "";
+      const d2 = normalizeCalendarDateToYmd(pre.startDate2 ?? startDate2) || "";
+      const depPct = pre.depositPercent ?? depositPercent;
+      setLineItems(pre.lines);
+      setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
+      setStartDate1(d1);
+      setStartDate2(d2);
+      setDepositPercent(depPct);
+      setProposalScalePercent(100);
+      setSelectedReviewBidId(bid.id);
+      setProposalSaving(true);
+      try {
+        const updated = await persistProposalToQuoteRef.current({
+          lineItemsOverride: pre.lines,
+          scopeTextOverride: scopeMerged,
+          startDate1Override: d1,
+          startDate2Override: d2,
+          depositOverride: depPct,
+          partnerCostOverride: bid.bid_amount,
+        });
+        onQuoteUpdate?.(updated);
+        if (!options?.silent) {
+          toast.success(
+            "Review & Send updated from this bid — send to the customer when ready. Use Approve only if you want to lock this partner now.",
+          );
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to apply bid");
+      } finally {
+        setProposalSaving(false);
+      }
+    },
+    [quote, scopeText, startDate1, startDate2, depositPercent, onQuoteUpdate],
+  );
+
+  const clearBidSelection = useCallback(async () => {
+    setSelectedReviewBidId(null);
+    setProposalSaving(true);
+    try {
+      const q = quote;
+      setScopeText(bidPayloadTrimmedString(q.scope as unknown));
+      setDepositPercent(
+        q.deposit_percent != null && Number.isFinite(Number(q.deposit_percent))
+          ? String(Number(q.deposit_percent))
+          : String(inferDepositPercentFromLegacy(Number(q.deposit_required ?? 0), Number(q.total_value ?? 0))),
+      );
+      setStartDate1(normalizeCalendarDateToYmd(bidPayloadTrimmedString(q.start_date_option_1 as unknown)) || "");
+      setStartDate2(normalizeCalendarDateToYmd(bidPayloadTrimmedString(q.start_date_option_2 as unknown)) || "");
+      setProposalScalePercent(100);
+      await loadLineItems(q.id, q);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to clear bid selection");
+    } finally {
+      setProposalSaving(false);
+    }
+  }, [quote]);
+
+  useEffect(() => {
+    if (!selectedReviewBidId) return;
+    if (!bids.some((b) => b.id === selectedReviewBidId)) {
+      setSelectedReviewBidId(null);
+    }
+  }, [bids, selectedReviewBidId]);
+
+  useEffect(() => {
+    if (approvedBid) setSelectedReviewBidId(approvedBid.id);
+  }, [approvedBid?.id]);
 
   const saveProposalDraft = async () => {
     setProposalSaving(true);
@@ -1554,10 +2033,15 @@ function QuoteDetailDrawer({
     setSendState("sending");
     try {
       await persistProposalToQuote();
-      const items = lineItems.map((li) => {
+      const items = lineItems.map((li, idx) => {
         const qty = Number(li.quantity) || 1;
         const unit = Number(li.unitPrice) || 0;
-        return { description: lineItemDescriptionForCustomer(li), quantity: qty, unitPrice: unit, total: qty * unit };
+        return {
+          description: lineItemDescriptionForCustomer(li, idx),
+          quantity: qty,
+          unitPrice: unit,
+          total: qty * unit,
+        };
       });
       const res = await fetch("/api/quotes/send-pdf", {
         method: "POST",
@@ -1597,6 +2081,41 @@ function QuoteDetailDrawer({
     }
   };
 
+  const handleMarkAsSentExternally = async () => {
+    if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
+      toast.error("Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).");
+      return;
+    }
+    setProposalSaving(true);
+    let persisted: Quote;
+    try {
+      persisted = await persistProposalToQuote();
+      onQuoteUpdate?.(persisted);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save proposal");
+      setProposalSaving(false);
+      return;
+    }
+    try {
+      const ok = await Promise.resolve(
+        onStatusChange(persisted, "awaiting_customer", {
+          successToast: "Awaiting Customer — no email sent from the app (you marked it sent already).",
+        }),
+      );
+      if (ok === false) {
+        setProposalSaving(false);
+        return;
+      }
+      const stamped = await updateQuote(persisted.id, { customer_pdf_sent_at: new Date().toISOString() });
+      onQuoteUpdate?.(stamped);
+      setQuoteEmailedInSession(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to record sent time");
+    } finally {
+      setProposalSaving(false);
+    }
+  };
+
   return (
     <Drawer
       open={!!quote}
@@ -1607,75 +2126,74 @@ function QuoteDetailDrawer({
     >
       <div className="flex flex-col h-full">
         <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} className="px-6 pt-2" />
-        {guidance.headline && (
-          <div className="mx-6 mt-3 rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 to-transparent px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="flex gap-3 min-w-0">
-              <Sparkles className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+        {tab === "bids" && quote.quote_type === "partner" && quote.status === "bidding" && (
+          <div
+            className="mx-6 mt-3 rounded-xl px-2.5 py-2 sm:px-3 sm:py-2.5 bg-emerald-500/[0.07] dark:bg-emerald-500/[0.09]"
+            role="region"
+            aria-label="Proposal summary"
+          >
+            <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between min-[420px]:gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-text-primary">{guidance.headline}</p>
-                {guidance.detail ? <p className="text-xs text-text-tertiary mt-0.5">{guidance.detail}</p> : null}
+                <p className="text-[10px] font-semibold text-emerald-800/90 dark:text-emerald-400/95">Total Price</p>
+                <p className="mt-0.5 text-lg min-[420px]:text-xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400 leading-none">
+                  {formatCurrency(lineTotal)}
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-1.5 min-[420px]:grid-cols-3 min-[420px]:min-w-[280px] min-[420px]:max-w-[min(100%,420px)] min-[420px]:shrink-0">
+                <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
+                  <div className="flex items-center gap-1 text-text-tertiary">
+                    <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                    <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
+                  </div>
+                  <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">
+                    {formatCurrency(effectiveProposalPartnerTotal)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-emerald-500/25 bg-emerald-500/15 dark:border-emerald-500/30 dark:bg-emerald-500/12 px-2 py-1.5">
+                  <div className="flex items-center gap-1 text-emerald-800/85 dark:text-emerald-400/90">
+                    <PoundSterling className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
+                    <span className="text-[9px] font-medium uppercase tracking-wide">Gross margin</span>
+                  </div>
+                  <p
+                    className={cn(
+                      "mt-0.5 text-sm font-bold tabular-nums",
+                      proposalSummaryMarginPct >= 20
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : proposalSummaryMarginPct >= 0
+                          ? "text-amber-700 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400",
+                    )}
+                  >
+                    {formatCurrency(proposalMarginAbs)}
+                  </p>
+                </div>
+                <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
+                  <div className="flex items-center gap-1 text-text-tertiary">
+                    <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                    <span className="text-[9px] font-medium uppercase tracking-wide">% margin</span>
+                  </div>
+                  <p
+                    className={cn(
+                      "mt-0.5 text-sm font-bold tabular-nums",
+                      proposalSummaryMarginPct >= 20
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : proposalSummaryMarginPct >= 0
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400",
+                    )}
+                  >
+                    {proposalSummaryMarginPct}%
+                  </p>
+                </div>
               </div>
             </div>
-            {guidance.goToTab && guidance.goToLabel && tab !== guidance.goToTab && (
-              <Button size="sm" variant="outline" className="shrink-0" onClick={() => setTab(guidance.goToTab!)}>
-                {guidance.goToLabel}
-              </Button>
-            )}
           </div>
         )}
         <div className="flex-1 overflow-y-auto">
 
           {/* OVERVIEW TAB: Status + Details together */}
           {tab === "overview" && (
-            <div className="p-6 space-y-6">
-              <details
-                key={`owner-${quote.id}`}
-                className="group rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary open:shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:open:shadow-md dark:open:shadow-black/20"
-                open={ownerOpen}
-                onToggle={(e) => setOwnerOpen(e.currentTarget.open)}
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <UserRound className="h-4 w-4 shrink-0 text-text-tertiary" />
-                    <span className="text-xs font-semibold text-text-secondary">Owner</span>
-                    <span className="text-[10px] text-text-tertiary truncate">
-                      {quote.owner_name?.trim() || "Unassigned"}
-                    </span>
-                  </div>
-                  <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
-                </summary>
-                <div className="border-t border-border-light dark:border-border px-4 pb-4 pt-1">
-                  {isAdmin ? (
-                    <div className="pt-2">
-                      <JobOwnerSelect
-                        value={quote.owner_id}
-                        fallbackName={quote.owner_name}
-                        users={assignableUsers}
-                        disabled={savingOwner}
-                        onChange={async (ownerId) => {
-                          const owner = assignableUsers.find((u) => u.id === ownerId);
-                          setSavingOwner(true);
-                          try {
-                            const updated = await updateQuote(quote.id, {
-                              owner_id: ownerId,
-                              owner_name: owner?.full_name,
-                            });
-                            onQuoteUpdate?.(updated);
-                            toast.success("Owner updated");
-                          } catch {
-                            toast.error("Failed to update owner");
-                          } finally {
-                            setSavingOwner(false);
-                          }
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <p className="text-sm font-semibold text-text-primary pt-2">{quote.owner_name || "No owner"}</p>
-                  )}
-                </div>
-              </details>
-
+            <div className="p-4 sm:p-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-light bg-surface-hover/80 px-4 py-3">
                 <div>
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Current stage</p>
@@ -1728,25 +2246,147 @@ function QuoteDetailDrawer({
                   )}
                 </div>
               )}
-              <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-3">
-                <div className="min-w-0 p-4 rounded-xl bg-surface-hover border border-border-light/60">
-                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">Avg price</p>
-                  <p className="text-2xl font-bold text-text-primary mt-2 tabular-nums tracking-tight break-all sm:break-normal">
-                    {quote.quote_type !== "partner"
-                      ? "—"
-                      : bidsLoading
-                        ? "…"
-                        : avgBidPrice != null
-                          ? formatCurrency(avgBidPrice)
-                          : "—"}
-                  </p>
+              <details
+                key={`owner-${quote.id}`}
+                className="group rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary open:shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:open:shadow-md dark:open:shadow-black/20"
+                open={ownerOpen}
+                onToggle={(e) => setOwnerOpen(e.currentTarget.open)}
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <UserRound className="h-4 w-4 shrink-0 text-text-tertiary" />
+                    <span className="text-xs font-semibold text-text-secondary">Owner</span>
+                    <span className="text-[10px] text-text-tertiary truncate">
+                      {quote.owner_name?.trim() || "Unassigned"}
+                    </span>
+                  </div>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="border-t border-border-light dark:border-border px-4 pb-4 pt-1">
+                  {isAdmin ? (
+                    <div className="pt-2">
+                      <JobOwnerSelect
+                        value={quote.owner_id}
+                        fallbackName={quote.owner_name}
+                        users={assignableUsers}
+                        disabled={savingOwner}
+                        onChange={async (ownerId) => {
+                          const owner = assignableUsers.find((u) => u.id === ownerId);
+                          setSavingOwner(true);
+                          try {
+                            const updated = await updateQuote(quote.id, {
+                              owner_id: ownerId,
+                              owner_name: owner?.full_name,
+                            });
+                            onQuoteUpdate?.(updated);
+                            toast.success("Owner updated");
+                          } catch {
+                            toast.error("Failed to update owner");
+                          } finally {
+                            setSavingOwner(false);
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-sm font-semibold text-text-primary pt-2">{quote.owner_name || "No owner"}</p>
+                  )}
                 </div>
-                <div className="min-w-0 p-4 rounded-xl bg-surface-hover border border-border-light/60">
-                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">Bids received</p>
-                  <p className="text-2xl font-bold text-text-primary mt-2 tabular-nums tracking-tight">{bidsReceivedCount}</p>
-                  <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">Partner submissions in this quote</p>
-                </div>
+              </details>
+
+              <div
+                key={`client-on-quote-${quote.id}`}
+                className="rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:shadow-md dark:shadow-black/20"
+              >
+                <button
+                  type="button"
+                  className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left rounded-t-xl hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition-colors"
+                  aria-expanded={clientOnQuoteOpen}
+                  onClick={() => setClientOnQuoteOpen((o) => !o)}
+                >
+                  <Building2 className="h-4 w-4 shrink-0 text-blue-600" aria-hidden />
+                  <div className="min-w-0 flex-1 text-left">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client on this quote</p>
+                    <p className="mt-0.5 truncate text-sm font-semibold text-text-primary">
+                      {bidPayloadTrimmedString(quoteClientPick.client_name as unknown) ||
+                        bidPayloadTrimmedString(quote.client_name as unknown) ||
+                        "—"}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-text-secondary">
+                      {bidPayloadTrimmedString(quoteClientPick.property_address as unknown) ||
+                        bidPayloadTrimmedString(quote.property_address as unknown) ||
+                        "—"}
+                    </p>
+                  </div>
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 shrink-0 text-text-tertiary transition-transform duration-200",
+                      clientOnQuoteOpen && "rotate-180",
+                    )}
+                    aria-hidden
+                  />
+                </button>
+                {clientOnQuoteOpen ? (
+                  <div className="border-t border-border-light px-4 pb-4 pt-2 space-y-3 dark:border-border rounded-b-xl">
+                    <p className="text-[11px] text-text-tertiary leading-snug">
+                      Change the client or property if you need to send the proposal to someone else.
+                    </p>
+                    <ClientAddressPicker
+                      value={quoteClientPick}
+                      onChange={setQuoteClientPick}
+                      labelClient="Client"
+                      labelAddress="Property address"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={savingClient}
+                      icon={savingClient ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+                      onClick={async () => {
+                        if (!quoteClientPick.client_id || !quoteClientPick.property_address?.trim()) {
+                          toast.error("Select a client and property address");
+                          return;
+                        }
+                        setSavingClient(true);
+                        try {
+                          const updated = await updateQuote(quote.id, {
+                            client_id: quoteClientPick.client_id,
+                            client_address_id: quoteClientPick.client_address_id,
+                            client_name: quoteClientPick.client_name,
+                            client_email: quoteClientPick.client_email ?? "",
+                            property_address: quoteClientPick.property_address,
+                          });
+                          onQuoteUpdate?.(updated);
+                          setSendEmail(bidPayloadTrimmedString(updated.client_email as unknown));
+                          toast.success("Client updated on this quote");
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Failed to update client");
+                        } finally {
+                          setSavingClient(false);
+                        }
+                      }}
+                    >
+                      {savingClient ? "Saving…" : "Save client to quote"}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
+
+              {quote.quote_type === "partner" ? (
+                <PartnerBidMiniDash
+                  bidsLoading={bidsLoading}
+                  primaryLabel={bidDashPrimary.label}
+                  primaryValue={bidDashPrimary.value}
+                  bidsReceivedCount={bidsReceivedCount}
+                  invitedPartnersCount={invitedPartnersCount}
+                  quotedPartnersCount={quotedPartnersCount}
+                />
+              ) : (
+                <div className="rounded-lg border border-border-light/70 bg-surface-hover/50 px-2.5 py-1.5 text-[10px] text-text-tertiary leading-snug">
+                  Manual quote — no partner bid stats. Set sell and costs in Customer proposal below.
+                </div>
+              )}
 
               {/* Bid Summary — partner submission (read-only reference); pricing control is in Customer proposal */}
               <details
@@ -1777,8 +2417,12 @@ function QuoteDetailDrawer({
                     {(() => {
                       const p = parseBidProposalFromNotes(approvedBid.notes);
                       const { labour, materials } = splitBidPartnerCosts(approvedBid.bid_amount, p);
-                      const d1 = bidPayloadTrimmedString(p?.start_date_option_1 as unknown).slice(0, 10);
-                      const d2 = bidPayloadTrimmedString(p?.start_date_option_2 as unknown).slice(0, 10);
+                      const rawD1 = bidPayloadTrimmedString(p?.start_date_option_1 as unknown);
+                      const rawD2 = bidPayloadTrimmedString(p?.start_date_option_2 as unknown);
+                      const d1 =
+                        formatYmdUkDisplay(normalizeCalendarDateToYmd(rawD1)) || (rawD1 ? rawD1.slice(0, 12) : "");
+                      const d2 =
+                        formatYmdUkDisplay(normalizeCalendarDateToYmd(rawD2)) || (rawD2 ? rawD2.slice(0, 12) : "");
                       const labourDesc = p ? bidPayloadTrimmedString(p.labour_description as unknown) : "";
                       const matDesc = p ? bidPayloadTrimmedString(p.materials_description as unknown) : "";
                       const scopeBid = p ? bidPayloadTrimmedString(p.scope as unknown) : "";
@@ -1844,58 +2488,29 @@ function QuoteDetailDrawer({
                 </div>
               </details>
 
-              <div className="rounded-xl border border-border-light bg-surface-hover/40 p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Building2 className="h-4 w-4 text-blue-600 shrink-0" />
-                  <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client on this quote</label>
-                </div>
-                <div className="text-[11px] text-text-tertiary">Change the client or property if you need to send the proposal to someone else.</div>
-                <ClientAddressPicker
-                  value={quoteClientPick}
-                  onChange={setQuoteClientPick}
-                  labelClient="Client"
-                  labelAddress="Property address"
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={savingClient}
-                  icon={savingClient ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
-                  onClick={async () => {
-                    if (!quoteClientPick.client_id || !quoteClientPick.property_address?.trim()) {
-                      toast.error("Select a client and property address");
-                      return;
-                    }
-                    setSavingClient(true);
-                    try {
-                      const updated = await updateQuote(quote.id, {
-                        client_id: quoteClientPick.client_id,
-                        client_address_id: quoteClientPick.client_address_id,
-                        client_name: quoteClientPick.client_name,
-                        client_email: quoteClientPick.client_email ?? "",
-                        property_address: quoteClientPick.property_address,
-                      });
-                      onQuoteUpdate?.(updated);
-                      setSendEmail(bidPayloadTrimmedString(updated.client_email as unknown));
-                      toast.success("Client updated on this quote");
-                    } catch (e) {
-                      toast.error(e instanceof Error ? e.message : "Failed to update client");
-                    } finally {
-                      setSavingClient(false);
-                    }
-                  }}
-                >
-                  {savingClient ? "Saving…" : "Save client to quote"}
-                </Button>
-              </div>
-
               {convertedJob && (
                 <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200">
                   <div className="flex items-center gap-2 mb-2"><Briefcase className="h-4 w-4 text-emerald-600" /><label className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Converted to Job</label></div>
                   <a href={`/jobs?jobId=${convertedJob.id}`} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-card border border-border hover:border-primary/50 text-sm font-semibold text-primary">
                     <Briefcase className="h-4 w-4" /> {convertedJob.reference}
                   </a>
+                </div>
+              )}
+
+              {guidance.headline && (
+                <div className="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 to-transparent px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="flex gap-3 min-w-0">
+                    <Sparkles className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-text-primary">{guidance.headline}</p>
+                      {guidance.detail ? <p className="text-xs text-text-tertiary mt-0.5">{guidance.detail}</p> : null}
+                    </div>
+                  </div>
+                  {guidance.goToTab && guidance.goToLabel && tab !== guidance.goToTab && (
+                    <Button size="sm" variant="outline" className="shrink-0" onClick={() => setTab(guidance.goToTab!)}>
+                      {guidance.goToLabel}
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -1946,7 +2561,9 @@ function QuoteDetailDrawer({
                             <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
                             <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
                           </div>
-                          <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(proposalPartnerTotal)}</p>
+                          <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">
+                            {formatCurrency(effectiveProposalPartnerTotal)}
+                          </p>
                         </div>
                         <div className="rounded-md border border-emerald-500/25 bg-emerald-500/15 dark:border-emerald-500/30 dark:bg-emerald-500/12 px-2 py-1.5">
                           <div className="flex items-center gap-1 text-emerald-800/85 dark:text-emerald-400/90">
@@ -2045,17 +2662,76 @@ function QuoteDetailDrawer({
                       </div>
                     </div>
                     <div className="space-y-2">
-                      {lineItems.map((item, idx) => (
+                      {lineItems.map((item, idx) => {
+                        const parsedNotes = parseProposalLineNotes(item.notes);
+                        const partnerPricing =
+                          parsedNotes.meta?.partnerPricing ?? defaultPartnerPricingForLineIndex(idx);
+                        const fieldLabels = partnerFieldLabelsForLine(idx, partnerPricing);
+                        const hintValue = proposalLineHintDisplay(parsedNotes);
+                        const labourModes: PartnerLinePricingMode[] = ["hourly", "fixed"];
+                        const materialsModes: PartnerLinePricingMode[] = ["unit", "bulk"];
+                        const modeOptions = idx === 0 ? labourModes : idx === 1 ? materialsModes : [];
+                        const modeLabels: Record<PartnerLinePricingMode, string> = {
+                          hourly: "Hourly",
+                          fixed: "Fixed price",
+                          unit: "Unit",
+                          bulk: "Bulk",
+                        };
+                        return (
                         <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
                           <div className="flex-1 min-w-0">
-                            <Input placeholder={idx === 0 ? "Type of work / labour" : idx === 1 ? "Materials" : "Service / description"} value={item.description} onChange={(e) => updateLineItem(idx, "description", e.target.value)} className="text-xs mb-1.5" />
+                            <Input
+                              placeholder={idx === 0 ? "Type of work / labour" : idx === 1 ? "Materials" : "Service / description"}
+                              value={idx < 2 ? stripPartnerLineIndexSuffix(item.description) : item.description}
+                              onChange={(e) =>
+                                updateLineItem(
+                                  idx,
+                                  "description",
+                                  idx < 2 ? stripPartnerLineIndexSuffix(e.target.value) : e.target.value,
+                                )
+                              }
+                              className="text-xs mb-1.5"
+                            />
+                            {idx < 2 && modeOptions.length > 0 ? (
+                              <div className="mb-2">
+                                <span className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide block mb-1">Partner pricing</span>
+                                <div className="inline-flex rounded-lg border border-border-light bg-card p-0.5 gap-0.5">
+                                  {modeOptions.map((mode) => (
+                                    <button
+                                      key={mode}
+                                      type="button"
+                                      className={cn(
+                                        "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
+                                        partnerPricing === mode
+                                          ? "bg-primary text-white shadow-sm"
+                                          : "text-text-secondary hover:bg-surface-hover",
+                                      )}
+                                      onClick={() => {
+                                        setLineItems((prev) =>
+                                          prev.map((row, i) =>
+                                            i === idx
+                                              ? {
+                                                  ...row,
+                                                  notes: buildNotesWithPricing(idx, row.notes, { partnerPricing: mode }),
+                                                }
+                                              : row,
+                                          ),
+                                        );
+                                      }}
+                                    >
+                                      {modeLabels[mode]}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
                             <div className="flex gap-2 flex-wrap items-end">
                               <div className="w-20 shrink-0">
-                                <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Qty</span>
+                                <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">{fieldLabels.qty}</span>
                                 <Input type="number" placeholder="1" value={item.quantity} onChange={(e) => updateLineItem(idx, "quantity", e.target.value)} className="text-xs w-full" />
                             </div>
                               <div className="flex-1 min-w-[88px]">
-                                <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Partner / unit</span>
+                                <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">{fieldLabels.partner}</span>
                                 <Input
                                   type="number"
                                   placeholder="0"
@@ -2066,20 +2742,41 @@ function QuoteDetailDrawer({
                                 />
                               </div>
                               <div className="flex-1 min-w-[88px]">
-                                <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">Sell / unit</span>
+                                <span className="text-[9px] font-semibold text-text-tertiary uppercase block mb-0.5">{fieldLabels.sell}</span>
                                 <Input type="number" placeholder="0" value={item.unitPrice} onChange={(e) => updateLineItem(idx, "unitPrice", e.target.value)} className="text-xs w-full" />
                               </div>
                             </div>
-                            <label className="block mt-1.5">
-                              <span className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Line notes</span>
-                              <textarea
-                                value={item.notes ?? ""}
-                                onChange={(e) => updateLineItem(idx, "notes", e.target.value)}
-                                placeholder="e.g. materials included, hourly detail, exclusions…"
-                                rows={2}
-                                className="mt-0.5 w-full rounded-lg border border-border-light bg-card px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
-                              />
-                            </label>
+                            {idx < 2 ? (
+                              <label className="block mt-1.5">
+                                <span className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Line notes</span>
+                                <textarea
+                                  value={hintValue}
+                                  onChange={(e) => {
+                                    setLineItems((prev) =>
+                                      prev.map((row, i) =>
+                                        i === idx
+                                          ? { ...row, notes: buildNotesWithPricing(idx, row.notes, { hint: e.target.value }) }
+                                          : row,
+                                      ),
+                                    );
+                                  }}
+                                  placeholder="e.g. materials included, hourly detail, exclusions…"
+                                  rows={2}
+                                  className="mt-0.5 w-full rounded-lg border border-border-light bg-card px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
+                                />
+                              </label>
+                            ) : (
+                              <label className="block mt-1.5">
+                                <span className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Line notes</span>
+                                <textarea
+                                  value={item.notes ?? ""}
+                                  onChange={(e) => updateLineItem(idx, "notes", e.target.value)}
+                                  placeholder="e.g. materials included, hourly detail, exclusions…"
+                                  rows={2}
+                                  className="mt-0.5 w-full rounded-lg border border-border-light bg-card px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-none"
+                                />
+                              </label>
+                            )}
                           </div>
                           <div className="flex flex-col items-end gap-1 pt-1 shrink-0">
                             <span className="text-xs font-semibold text-text-primary tabular-nums">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
@@ -2088,7 +2785,8 @@ function QuoteDetailDrawer({
                             )}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -2237,12 +2935,19 @@ function QuoteDetailDrawer({
                     </>
                   ) : (
                     <>
-                      After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer, then use{" "}
-                      <strong className="text-text-secondary">Resend Quote</strong> below to send the PDF.
+                      After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer and email the PDF from here, or{" "}
+                      <strong className="text-text-secondary">Mark as sent</strong> if the client already received it by another channel (no app email). Then use{" "}
+                      <strong className="text-text-secondary">Resend Quote</strong> below only when you want to email the PDF from the app.
                     </>
                   )}
                 </p>
-                <div className="flex flex-wrap gap-2 items-center">
+                <div
+                  className={cn(
+                    "-mx-1 flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-visible px-1 py-1 scroll-smooth sm:gap-2",
+                    "[scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border",
+                    "[&_button]:shrink-0",
+                  )}
+                >
                   {quote.status === "awaiting_customer" && (
                     <Button
                       type="button"
@@ -2256,39 +2961,60 @@ function QuoteDetailDrawer({
                       {sendState === "sending" ? "Saving…" : "Resend Quote"}
                     </Button>
                   )}
-                  {overviewActions.map((action) => (
-                    <Button
-                      key={action.status}
-                      variant={action.primary ? "primary" : "outline"}
-                      size="sm"
-                      disabled={proposalSaving}
-                      icon={<action.icon className="h-3.5 w-3.5" />}
-                      onClick={async () => {
-                        if (action.status !== "awaiting_customer") {
-                          const result = await Promise.resolve(onStatusChange(quote, action.status));
-                          if (result === false) return;
-                          return;
-                        }
-                        if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
-                          toast.error("Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).");
-                          return;
-                        }
-                        setProposalSaving(true);
-                        try {
-                          const updated = await persistProposalToQuote();
-                          onQuoteUpdate?.(updated);
-                          const result = await Promise.resolve(onStatusChange(updated, "awaiting_customer"));
-                          if (result === false) return;
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "Failed to save proposal");
-                        } finally {
-                          setProposalSaving(false);
-                        }
-                      }}
-                    >
-                      {action.label}
-                    </Button>
-                  ))}
+                  {overviewActions.map((action) => {
+                    const sendToCustomerClick = async () => {
+                      if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
+                        toast.error("Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).");
+                        return;
+                      }
+                      setProposalSaving(true);
+                      try {
+                        const updated = await persistProposalToQuote();
+                        onQuoteUpdate?.(updated);
+                        const result = await Promise.resolve(onStatusChange(updated, "awaiting_customer"));
+                        if (result === false) return;
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : "Failed to save proposal");
+                      } finally {
+                        setProposalSaving(false);
+                      }
+                    };
+                    const showMarkAsSent =
+                      action.status === "awaiting_customer" && ["draft", "in_survey", "bidding"].includes(quote.status);
+                    return (
+                      <Fragment key={action.status}>
+                        <Button
+                          variant={action.primary ? "primary" : "outline"}
+                          size="sm"
+                          disabled={proposalSaving}
+                          icon={<action.icon className="h-3.5 w-3.5" />}
+                          onClick={async () => {
+                            if (action.status !== "awaiting_customer") {
+                              const result = await Promise.resolve(onStatusChange(quote, action.status));
+                              if (result === false) return;
+                              return;
+                            }
+                            await sendToCustomerClick();
+                          }}
+                        >
+                          {action.label}
+                        </Button>
+                        {showMarkAsSent ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={proposalSaving}
+                            icon={<MailCheck className="h-3.5 w-3.5" />}
+                            title="Save proposal, move to Awaiting Customer, and record that the PDF was already delivered (no email from this app)"
+                            onClick={() => void handleMarkAsSentExternally()}
+                          >
+                            Mark as sent
+                          </Button>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -2296,17 +3022,17 @@ function QuoteDetailDrawer({
 
           {/* BIDS TAB — Partner bids from app; approve to set quote partner */}
           {tab === "bids" && (
-            <div className="p-6 space-y-5">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-border-light bg-surface-hover px-3 py-2.5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Invited partners</p>
-                  <p className="mt-1 text-lg font-bold tabular-nums text-text-primary">{invitedPartnersCount}</p>
-                </div>
-                <div className="rounded-xl border border-border-light bg-surface-hover px-3 py-2.5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Quoted already</p>
-                  <p className="mt-1 text-lg font-bold tabular-nums text-primary">{quotedPartnersCount}</p>
-                </div>
-              </div>
+            <div className="p-4 sm:p-5 space-y-3">
+              {quote.quote_type === "partner" ? (
+                <PartnerBidMiniDash
+                  bidsLoading={bidsLoading}
+                  primaryLabel={bidDashPrimary.label}
+                  primaryValue={bidDashPrimary.value}
+                  bidsReceivedCount={bidsReceivedCount}
+                  invitedPartnersCount={invitedPartnersCount}
+                  quotedPartnersCount={quotedPartnersCount}
+                />
+              ) : null}
               <Button variant="outline" size="sm" icon={<Users className="h-3.5 w-3.5" />} onClick={() => setInvitePartnerOpen(true)} className="w-full">
                 Invite more partners
               </Button>
@@ -2326,9 +3052,20 @@ function QuoteDetailDrawer({
                   Start Bidding
                 </Button>
               )}
-              <div className="p-4 rounded-xl bg-surface-hover border border-border-light">
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-sm font-semibold text-text-primary">Partner bids (from app)</p>
+              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/5"
+                      title="AI-assisted selection"
+                    >
+                      <Brain
+                        className="h-3.5 w-3.5 text-primary motion-safe:animate-[pulse_2s_cubic-bezier(0.4,0,0.6,1)_infinite]"
+                        aria-hidden
+                      />
+                    </span>
+                    <p className="text-sm font-semibold text-text-primary leading-tight truncate">All Bids</p>
+                  </div>
                   {quote.quote_type === "partner" && (
                     <button
                       type="button"
@@ -2345,12 +3082,9 @@ function QuoteDetailDrawer({
                     </button>
                   )}
                 </div>
-                <p className="text-xs text-text-tertiary mt-0.5">
-                  Optionally <strong className="text-text-secondary">approve a bid</strong> to lock{" "}
-                  <strong className="text-text-secondary">partner cost</strong>. Until you send, the quote is{" "}
-                  <strong className="text-text-secondary">not</strong> accepted by the customer. On Review & Send, set{" "}
-                  <strong className="text-text-secondary">your price</strong>, then <strong className="text-text-secondary">Send to Customer</strong>—after they accept,{" "}
-                  <strong className="text-text-secondary">convert to a job</strong>.
+                <p className="text-[11px] text-text-tertiary mt-1.5 leading-snug">
+                  Our AI automatically selects the best bid for the customer proposal based on price, availability and region. It is pre-selected
+                  using the lowest price — feel free to change it manually.
                 </p>
               </div>
               {quote.status === "bidding" && bids.some((b) => b.status === "approved") && (
@@ -2381,19 +3115,23 @@ function QuoteDetailDrawer({
                   </Button>
                 </div>
               )}
-              {bidsLoading ? (
-                <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+              {bids.length === 0 && bidsLoading ? (
+                <div className="h-24 animate-pulse rounded-xl bg-surface-hover" aria-hidden />
               ) : bids.length === 0 ? (
                 <p className="text-sm text-text-tertiary">
                   No partner bids yet — that&apos;s fine. Set partner cost and sell price on Review & Send, then move to <strong className="text-text-secondary">Awaiting Customer</strong> and send the email.
                 </p>
               ) : (
-                <div className="space-y-3">
-                  {bids.map((bid) => {
+                <div className={cn("space-y-2", bidsLoading && "opacity-90")}>
+                  {bidsVisibleInTab.map((bid) => {
                     const bidPayload = parseBidProposalFromNotes(bid.notes);
                     const { labour, materials } = splitBidPartnerCosts(bid.bid_amount, bidPayload);
-                    const d1 = bidPayload ? bidPayloadTrimmedString(bidPayload.start_date_option_1 as unknown).slice(0, 10) : "";
-                    const d2 = bidPayload ? bidPayloadTrimmedString(bidPayload.start_date_option_2 as unknown).slice(0, 10) : "";
+                    const rawD1 = bidPayload ? bidPayloadTrimmedString(bidPayload.start_date_option_1 as unknown) : "";
+                    const rawD2 = bidPayload ? bidPayloadTrimmedString(bidPayload.start_date_option_2 as unknown) : "";
+                    const d1 =
+                      formatYmdUkDisplay(normalizeCalendarDateToYmd(rawD1)) || (rawD1 ? rawD1.slice(0, 12) : "");
+                    const d2 =
+                      formatYmdUkDisplay(normalizeCalendarDateToYmd(rawD2)) || (rawD2 ? rawD2.slice(0, 12) : "");
                     const labourDesc = bidPayload ? bidPayloadTrimmedString(bidPayload.labour_description as unknown) : "";
                     const matDesc = bidPayload ? bidPayloadTrimmedString(bidPayload.materials_description as unknown) : "";
                     const scopeFromBid = bidPayload ? bidPayloadTrimmedString(bidPayload.scope as unknown) : "";
@@ -2408,57 +3146,114 @@ function QuoteDetailDrawer({
                       !!(d1 || d2) ||
                       !!scopeFromBid;
                     const bidExpanded = expandedBidIds.has(bid.id);
+                    const isSelectedForReview = bid.id === selectedReviewBidId;
+                    const rowSelectable = bid.status === "submitted";
+                    const spotlightLabel = bidSpotlightLabelById.get(bid.id);
+                    const handleBidRowActivate = () => {
+                      if (!rowSelectable || proposalSaving) return;
+                      if (selectedReviewBidId === bid.id) void clearBidSelection();
+                      else void selectBidForReview(bid, { silent: true });
+                    };
                     return (
                     <div
                       key={bid.id}
-                      className="rounded-xl bg-surface-hover border border-border-light p-3 sm:p-4"
+                      className={cn(
+                        "rounded-lg border bg-surface-hover border-border-light px-1.5 py-1 transition-shadow",
+                        isSelectedForReview &&
+                          (bid.status === "submitted" || bid.status === "approved") &&
+                          "border-emerald-500/45 bg-emerald-500/[0.07] ring-2 ring-emerald-500/35 shadow-sm dark:bg-emerald-950/20 dark:border-emerald-500/30",
+                      )}
                     >
-                      <div className="flex gap-2 sm:gap-3">
-                        {hasExpandableDetails ? (
-                          <button
-                            type="button"
-                            aria-expanded={bidExpanded}
-                            aria-label={bidExpanded ? "Hide bid details" : "Show bid details"}
-                            onClick={() => {
-                              setExpandedBidIds((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(bid.id)) next.delete(bid.id);
-                                else next.add(bid.id);
-                                return next;
-                              });
-                            }}
-                            className="shrink-0 self-start rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary"
+                      <div className="flex items-center gap-1 min-[400px]:gap-1.5">
+                        {spotlightLabel ? (
+                          <span
+                            className={cn(
+                              "flex w-10 shrink-0 flex-col items-center justify-center rounded border px-0.5 py-0.5 text-center text-[7px] font-bold uppercase leading-tight tracking-wide min-[400px]:w-11 min-[400px]:py-1 min-[400px]:text-[8px]",
+                              spotlightLabel === "Lowest" &&
+                                "border-emerald-500/30 bg-emerald-500/12 text-emerald-900 dark:border-emerald-500/35 dark:bg-emerald-500/15 dark:text-emerald-300",
+                              spotlightLabel === "Mid" &&
+                                "border-amber-400/50 bg-amber-400/15 text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200",
+                              spotlightLabel === "Highest" &&
+                                "border-red-400/45 bg-red-500/12 text-red-900 dark:border-red-500/40 dark:bg-red-950/35 dark:text-red-300",
+                            )}
                           >
-                            <ChevronDown
-                              className={cn("h-5 w-5 transition-transform duration-200", bidExpanded && "rotate-180")}
-                            />
-                          </button>
+                            {spotlightLabel}
+                          </span>
                         ) : null}
-                        <div className="min-w-0 flex-1 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                          <div className="min-w-0 flex-1 space-y-2">
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <p className="text-base font-semibold text-text-primary truncate max-w-full">{bid.partner_name ?? bid.partner_id}</p>
-                              <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="shrink-0">
-                                {bid.status}
-                              </Badge>
-                            </div>
-                            <div>
-                              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total</p>
-                              <p className="text-2xl sm:text-[1.75rem] font-bold text-primary tabular-nums tracking-tight mt-0.5">{formatCurrency(bid.bid_amount)}</p>
-                            </div>
-                          </div>
-                          {bid.status === "submitted" && (
-                            <div className="flex shrink-0 w-full sm:w-auto sm:pt-0.5">
-                              <Button
-                                size="sm"
-                                variant="primary"
-                                className="w-full sm:min-w-[7.5rem]"
-                                onClick={async () => {
+                        <div className="flex w-6 shrink-0 justify-center self-center">
+                          {hasExpandableDetails ? (
+                            <button
+                              type="button"
+                              aria-expanded={bidExpanded}
+                              aria-label={bidExpanded ? "Hide bid details" : "Show bid details"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedBidIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(bid.id)) next.delete(bid.id);
+                                  else next.add(bid.id);
+                                  return next;
+                                });
+                              }}
+                              className="rounded-md border border-transparent p-0.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary"
+                            >
+                              <ChevronDown
+                                className={cn("h-3.5 w-3.5 transition-transform duration-200", bidExpanded && "rotate-180")}
+                              />
+                            </button>
+                          ) : (
+                            <span className="inline-block w-3.5" aria-hidden />
+                          )}
+                        </div>
+                        <div
+                          className={cn(
+                            "min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md py-0.5 outline-none",
+                            rowSelectable && !proposalSaving && "cursor-pointer hover:bg-black/[0.04] dark:hover:bg-white/[0.05]",
+                          )}
+                          role={rowSelectable ? "button" : undefined}
+                          tabIndex={rowSelectable ? 0 : undefined}
+                          aria-pressed={rowSelectable ? selectedReviewBidId === bid.id : undefined}
+                          onKeyDown={
+                            rowSelectable
+                              ? (e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    handleBidRowActivate();
+                                  }
+                                }
+                              : undefined
+                          }
+                          onClick={rowSelectable ? handleBidRowActivate : undefined}
+                        >
+                          <p className="min-w-0 max-w-[11rem] truncate text-xs font-semibold text-text-primary sm:max-w-[14rem]">
+                            {bid.partner_name ?? bid.partner_id}
+                          </p>
+                          <Badge variant={bid.status === "approved" ? "success" : bid.status === "rejected" ? "danger" : "default"} size="sm" className="shrink-0">
+                            {bid.status}
+                          </Badge>
+                          <span className="text-base font-bold tabular-nums text-primary shrink-0">{formatCurrency(bid.bid_amount)}</span>
+                          {(d1 || d2) ? (
+                            <span className="text-[9px] text-text-tertiary tabular-nums min-w-0 sm:text-[10px]">
+                              {d1 ? `Start ${d1}` : ""}
+                              {d1 && d2 ? " · " : ""}
+                              {d2 ? d1 ? `End ${d2}` : `Start ${d2}` : ""}
+                            </span>
+                          ) : null}
+                        </div>
+                        {bid.status === "submitted" ? (
+                          <div className="ml-auto shrink-0 self-center pl-1" data-bid-no-select onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              className="shrink-0"
+                              disabled={proposalSaving}
+                              onClick={() => {
+                                void (async () => {
                                   try {
                                     const pre = computeCustomerProposalFromBid(bid, quote);
                                     const scopeMerged = pre.scopeText ?? scopeText;
-                                    const d1 = pre.startDate1 ?? startDate1;
-                                    const d2 = pre.startDate2 ?? startDate2;
+                                    const d1b = normalizeCalendarDateToYmd(pre.startDate1 ?? startDate1) || "";
+                                    const d2b = normalizeCalendarDateToYmd(pre.startDate2 ?? startDate2) || "";
                                     const depPct = pre.depositPercent ?? depositPercent;
 
                                     await approveBid(bid.id, quote.id, bid.partner_id, bid.partner_name, bid.bid_amount);
@@ -2466,8 +3261,8 @@ function QuoteDetailDrawer({
                                     const updated = await persistProposalToQuote({
                                       lineItemsOverride: pre.lines,
                                       scopeTextOverride: scopeMerged,
-                                      startDate1Override: d1,
-                                      startDate2Override: d2,
+                                      startDate1Override: d1b,
+                                      startDate2Override: d2b,
                                       depositOverride: depPct,
                                       partnerCostOverride: bid.bid_amount,
                                     });
@@ -2476,70 +3271,71 @@ function QuoteDetailDrawer({
 
                                     setLineItems(pre.lines);
                                     setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
-                                    setStartDate1(d1);
-                                    setStartDate2(d2);
+                                    setStartDate1(d1b);
+                                    setStartDate2(d2b);
                                     setDepositPercent(depPct);
                                     setProposalScalePercent(100);
+                                    setSelectedReviewBidId(bid.id);
 
                                     onQuoteUpdate?.(updated);
                                     setTab("overview");
                                     toast.success(
                                       "Bid approved. Partner unit costs and customer sell (40% margin on sell) are pre-filled. Adjust on Review & Send if needed, then send to the customer.",
                                     );
-                                  } catch (e) {
-                                    toast.error(e instanceof Error ? e.message : "Failed to approve bid");
+                                  } catch (err) {
+                                    toast.error(err instanceof Error ? err.message : "Failed to approve bid");
                                   }
-                                }}
-                              >
-                                Approve
-                              </Button>
-                            </div>
-                          )}
-                        </div>
+                                })();
+                              }}
+                            >
+                              Approve
+                            </Button>
+                          </div>
+                        ) : null}
                       </div>
                       {bidExpanded && hasExpandableDetails ? (
-                        <div className="mt-3 pt-3 border-t border-border-light space-y-3 sm:pl-9">
+                        <div className="mt-2 border-t border-border-light pt-2 space-y-2 pl-9">
                           {hasStructuredBreakdown ? (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-border-light bg-card/50 dark:bg-surface-secondary/20 px-3 py-3">
+                            <div className="grid grid-cols-1 gap-2 rounded-lg border border-border-light bg-card/50 px-2.5 py-2 sm:grid-cols-2 dark:bg-surface-secondary/20">
                               <div className="min-w-0">
                                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Labour</p>
-                                <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(labour)}</p>
+                                <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(labour)}</p>
                                 {labourDesc ? (
-                                  <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{labourDesc}</p>
+                                  <p className="text-[11px] text-text-secondary mt-1 leading-snug line-clamp-3 whitespace-pre-wrap">{labourDesc}</p>
                                 ) : null}
                               </div>
                               <div className="min-w-0">
                                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Materials</p>
-                                <p className="text-lg font-bold tabular-nums text-text-primary mt-0.5">{formatCurrency(materials)}</p>
+                                <p className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(materials)}</p>
                                 {matDesc ? (
-                                  <p className="text-[12px] text-text-secondary mt-1.5 leading-snug line-clamp-4 whitespace-pre-wrap">{matDesc}</p>
+                                  <p className="text-[11px] text-text-secondary mt-1 leading-snug line-clamp-3 whitespace-pre-wrap">{matDesc}</p>
                                 ) : null}
                               </div>
                             </div>
                           ) : null}
                           {bidNoteSummary ? (
-                            <p className="text-[13px] text-text-secondary leading-relaxed break-words">{bidNoteSummary}</p>
+                            <p className="text-[12px] text-text-secondary leading-relaxed break-words">{bidNoteSummary}</p>
                           ) : notesPlain ? (
-                            <p className="text-[13px] text-text-secondary leading-relaxed whitespace-pre-wrap break-words max-h-[10rem] overflow-y-auto">{notesPlain}</p>
+                            <p className="text-[12px] text-text-secondary leading-relaxed whitespace-pre-wrap break-words max-h-[8rem] overflow-y-auto">{notesPlain}</p>
                           ) : null}
                           {(d1 || d2) ? (
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap gap-1.5">
                               {d1 ? (
-                                <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
-                                  Option 1: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d1}</strong>
+                                <span className="inline-flex items-center rounded-md border border-border-light bg-surface-hover px-2 py-0.5 text-[10px] text-text-secondary">
+                                  Opt 1: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d1}</strong>
                                 </span>
                               ) : null}
                               {d2 ? (
-                                <span className="inline-flex items-center rounded-lg border border-border-light bg-surface-hover px-2.5 py-1 text-[11px] text-text-secondary">
-                                  Option 2: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d2}</strong>
+                                <span className="inline-flex items-center rounded-md border border-border-light bg-surface-hover px-2 py-0.5 text-[10px] text-text-secondary">
+                                  Opt 2: <strong className="ml-1 font-semibold text-text-primary tabular-nums">{d2}</strong>
                                 </span>
                               ) : null}
                             </div>
                           ) : null}
                           {scopeFromBid ? (
-                            <div className="rounded-lg border border-dashed border-border-light bg-surface-hover/80 px-3 py-2.5">
+                            <div className="rounded-md border border-dashed border-border-light bg-surface-hover/80 px-2.5 py-2">
                               <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope</p>
-                              <p className="text-[12px] text-text-secondary mt-1 leading-snug whitespace-pre-wrap break-words max-h-[7.5rem] overflow-y-auto pr-1">{scopeFromBid}</p>
+                              <p className="text-[11px] text-text-secondary mt-0.5 leading-snug whitespace-pre-wrap break-words max-h-[6rem] overflow-y-auto">{scopeFromBid}</p>
                             </div>
                           ) : null}
                         </div>
@@ -2547,6 +3343,28 @@ function QuoteDetailDrawer({
                     </div>
                     );
                   })}
+                  {bidsTabMoreCount > 0 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-text-secondary hover:text-text-primary"
+                      onClick={() => setShowAllBidsInTab(true)}
+                    >
+                      See more ({bidsTabMoreCount} more bid{bidsTabMoreCount === 1 ? "" : "s"})
+                    </Button>
+                  ) : null}
+                  {showAllBidsInTab && orderedBidsForTab.length > bidsCollapsedVisible.length ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-text-secondary hover:text-text-primary"
+                      onClick={() => setShowAllBidsInTab(false)}
+                    >
+                      Show fewer
+                    </Button>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -4004,11 +4822,10 @@ function QuotesCardGridView({ quotes, loading, onSelectQuote }: { quotes: Quote[
       {quotes.map((q) => (
         <button key={q.id} type="button" onClick={() => onSelectQuote(q)} className="text-left rounded-xl border border-border bg-card p-4 hover:border-primary/40 transition-colors">
           <p className="text-sm font-semibold text-text-primary">{q.reference}</p>
-          <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(q.title) || q.title}</p>
+          <p className="text-xs text-text-tertiary truncate">{quoteListSubtitlePostcode(q)}</p>
           {q.request_id && (
             <p className="text-[10px] text-text-tertiary mt-1">From request · optional site photos in drawer</p>
           )}
-          <p className="text-[11px] text-text-secondary mt-1">{q.client_name}</p>
           {q.source_account_name?.trim() ? (
             <p className="text-[10px] text-text-tertiary truncate">{q.source_account_name}</p>
           ) : null}

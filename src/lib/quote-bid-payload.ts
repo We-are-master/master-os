@@ -1,12 +1,26 @@
 /**
  * Optional JSON the partner app can send in `quote_bids.notes` to pre-fill the customer proposal.
  * Plain text notes still work; JSON can be the whole string or prefixed with BID_JSON:
+ *
+ * **Pricing (optional, Master OS mirrors in proposal lines 1–2 `notes` JSON):**
+ * - `labour_pricing` `"hourly"` | `"fixed"` (default fixed). If hourly, set `labour_hours` + `labour_rate` (£/hr) so they × ≈ `labour_cost`.
+ * - `materials_pricing` `"unit"` | `"bulk"` (default unit). If unit, optional `materials_quantity` + `materials_partner_unit` (£/unit) so they × ≈ `materials_cost`.
  */
 export type PartnerBidProposalPayload = {
   labour_cost?: number;
   materials_cost?: number;
   labour_description?: string;
   materials_description?: string;
+  labour_pricing?: "hourly" | "fixed";
+  /** Partner hours when `labour_pricing` is hourly. */
+  labour_hours?: number;
+  /** Partner £/hr when `labour_pricing` is hourly. */
+  labour_rate?: number;
+  materials_pricing?: "unit" | "bulk";
+  /** Line count / units when materials are priced per unit. */
+  materials_quantity?: number;
+  /** Partner £/unit when materials are priced per unit. */
+  materials_partner_unit?: number;
   start_date_option_1?: string;
   start_date_option_2?: string;
   deposit_required?: number;
@@ -67,9 +81,17 @@ export function summarizeBidProposalNotes(notes: string | undefined | null): str
   if (!p) return null;
   const parts: string[] = [];
   if (p.labour_cost != null && Number.isFinite(Number(p.labour_cost)) && p.materials_cost != null && Number.isFinite(Number(p.materials_cost))) {
-    parts.push(`Labour £${Number(p.labour_cost).toFixed(2)} · Materials £${Number(p.materials_cost).toFixed(2)}`);
+    const lab = p.labour_pricing === "hourly" ? "Labour (hourly)" : "Labour";
+    const mat = p.materials_pricing === "bulk" ? "Materials (bulk)" : "Materials";
+    parts.push(`${lab} £${Number(p.labour_cost).toFixed(2)} · ${mat} £${Number(p.materials_cost).toFixed(2)}`);
   } else if (p.labour_cost != null && Number.isFinite(Number(p.labour_cost))) {
-    parts.push(`Labour £${Number(p.labour_cost).toFixed(2)}`);
+    const lab = p.labour_pricing === "hourly" ? "Labour (hourly)" : "Labour";
+    parts.push(`${lab} £${Number(p.labour_cost).toFixed(2)}`);
+  } else {
+    if (p.labour_pricing === "hourly") parts.push("Labour: hourly");
+    else if (p.labour_pricing === "fixed") parts.push("Labour: fixed");
+    if (p.materials_pricing === "bulk") parts.push("Materials: bulk");
+    else if (p.materials_pricing === "unit") parts.push("Materials: unit");
   }
   if (p.deposit_required != null && Number.isFinite(Number(p.deposit_required)) && Number(p.deposit_required) > 0) {
     parts.push(`Deposit £${Number(p.deposit_required).toFixed(2)}`);
