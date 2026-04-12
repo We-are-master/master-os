@@ -95,6 +95,14 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           icon: Play,
           primary: true,
         },
+        {
+          label: "On Hold",
+          status: "on_hold",
+          icon: Pause,
+          primary: false,
+          tone: "hold",
+          special: "put_on_hold",
+        },
         cancelAction,
       ];
     case "in_progress_phase1":
@@ -428,6 +436,17 @@ export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; me
 /** True while partner is doing on-site work (not final check / payment). */
 export function isJobOnSiteWorkStatus(status: Job["status"]): boolean {
   return status === "in_progress_phase1" || status === "in_progress_phase2" || status === "in_progress_phase3";
+}
+
+/** After on hold, restore the step the job was on (scheduled/late vs on-site phases). */
+export function jobStatusAfterResumeFromOnHold(
+  previous: Job["status"] | string | null | undefined,
+): Job["status"] {
+  const p = String(previous ?? "in_progress_phase1").trim() as Job["status"];
+  if (isJobOnSiteWorkStatus(p)) return p;
+  if (p === "scheduled" || p === "late") return p;
+  if (p === "final_check" || p === "need_attention") return p;
+  return "in_progress_phase1";
 }
 
 /** When ops validates the last report, move to final_check and stop the on-site timer in the same update. */

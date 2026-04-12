@@ -186,9 +186,13 @@ export function DataTable<T>({
                         <div className="h-4 w-4 bg-surface-tertiary rounded animate-shimmer" />
                       </td>
                     )}
-                    {columns.map((col) => (
+                    {columns.map((col, j) => (
                       <td key={col.key} className="px-3 sm:px-5 py-4">
-                        <div className="h-4 bg-surface-tertiary rounded animate-shimmer" style={{ width: `${60 + Math.random() * 30}%` }} />
+                        {/* Deterministic width: Math.random() breaks SSR/client hydration */}
+                        <div
+                          className="h-4 bg-surface-tertiary rounded animate-shimmer"
+                          style={{ width: `${56 + ((i * 17 + j * 13 + col.key.length * 3) % 34)}%` }}
+                        />
                       </td>
                     ))}
                   </tr>
