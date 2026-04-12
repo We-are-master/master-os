@@ -530,6 +530,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     initialData,
   });
 
+  /** Latest list rows for deep-link / effects — avoids re-running quoteId logic on every `data` reference change. */
+  const quotesListDataRef = useRef(data);
+  quotesListDataRef.current = data;
+
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { profile } = useProfile();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
@@ -568,7 +572,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     if (!qid || loading) return;
     let cancelled = false;
     (async () => {
-      let found = data.find((q) => q.id === qid) ?? null;
+      let found = quotesListDataRef.current.find((q) => q.id === qid) ?? null;
       if (!found) {
         try {
           found = await getQuote(qid);
@@ -585,7 +589,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, [searchParams, data, loading, router]);
+  }, [searchParams, loading, router]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -601,8 +605,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, [data, filterQuoteType]);
 
   const [avgBidByQuoteId, setAvgBidByQuoteId] = useState<Record<string, number>>({});
-  const quotesListDataRef = useRef(data);
-  quotesListDataRef.current = data;
   const dataIdsKey = useMemo(() => data.map((q) => q.id).sort().join(","), [data]);
 
   const refreshListBidAverages = useCallback(async () => {
@@ -1031,13 +1033,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     [refreshWithKpis, profile?.id, profile?.full_name]
   );
 
-  /** Stable callback so quote drawer effects do not re-run every parent render (was causing bid/quote fetch loops). */
+  /** Stable callback — use silent list refresh so drawer saves do not toggle table loading or amplify request storms. */
   const handleQuoteDrawerUpdate = useCallback(
     (updated: Quote) => {
       setSelectedQuote(updated);
-      refresh();
+      refreshSilent();
     },
-    [refresh],
+    [refreshSilent],
   );
 
   const handleExport = useCallback(() => {
@@ -1511,7 +1513,7 @@ function QuoteDetailDrawer({
       lastTabInitQuoteIdRef.current = quote.id;
       setTab(quote.quote_type === "partner" ? "bids" : "overview");
     }
-  }, [quote, pendingInitialTab, onConsumePendingInitialTab]);
+  }, [quote.id, quote.quote_type, pendingInitialTab, onConsumePendingInitialTab]);
 
   // Only when switching to another quote — not when the same quote is refreshed after send (keeps "Resend email" label).
   useEffect(() => {
@@ -1533,6 +1535,7 @@ function QuoteDetailDrawer({
       property_address: quote.property_address ?? "",
     });
       void loadLineItems(quote.id, quote);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset drawer shell only when switching quotes (`id`), not on every refreshed row object
   }, [quote.id]);
 
   useEffect(() => {
@@ -1547,7 +1550,8 @@ function QuoteDetailDrawer({
     setStartDate2(normalizeCalendarDateToYmd(bidPayloadTrimmedString(quote.start_date_option_2 as unknown)) || "");
     setCustomMessage(bidPayloadTrimmedString(quote.email_custom_message as unknown));
     setEmailAttachRequestPhotos(Boolean(quote.email_attach_request_photos));
-  }, [quote]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when server row version changes; omitting `quote` avoids wiping the editor on every silent list refresh (new object, same row)
+  }, [quote.id, quote.updated_at]);
 
   useEffect(() => {
     if (quote.status === "accepted" || quote.status === "converted_to_job") {
@@ -1638,8 +1642,9 @@ function QuoteDetailDrawer({
         } else if (submitted.length === 0) {
           setSelectedReviewBidId(null);
         } else if (!autoPickBestBidRef.current) {
-          const best = [...submitted].sort(compareBidsForCheapest)[0];
+          /** Claim synchronously before any await so concurrent loadBids (e.g. Strict Mode) cannot double-persist. */
           autoPickBestBidRef.current = true;
+          const best = [...submitted].sort(compareBidsForCheapest)[0];
           const pre = computeCustomerProposalFromBid(best, q);
           const scopeMerged = pre.scopeText ?? bidPayloadTrimmedString(q.scope as unknown);
           const d1 =
