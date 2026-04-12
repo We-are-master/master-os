@@ -270,12 +270,13 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   const supabase = getSupabase();
   let partnerId = job.partner_id.trim();
   /** `self_bills.partner_id` FK → `partners.id`; jobs can still hold a stale/invalid UUID. */
-  let { data: partnerRow, error: partnerLookupErr } = await supabase
+  const { data: partnerRowInit, error: partnerLookupErr } = await supabase
     .from("partners")
     .select("id")
     .eq("id", partnerId)
     .maybeSingle();
   if (partnerLookupErr) throw partnerLookupErr;
+  let partnerRow = partnerRowInit;
   if (!partnerRow?.id) {
     const partnerName = (job.partner_name ?? "").trim();
     if (partnerName) {

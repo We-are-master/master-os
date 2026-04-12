@@ -315,7 +315,7 @@ export async function getAggregates(
     useDeletedFilter = !probe.error;
     deletedAtColumnCache.set(table, useDeletedFilter);
   }
-  let countRes = useDeletedFilter
+  const countRes = useDeletedFilter
     ? await supabase.from(table).select("*", { count: "exact", head: true }).is("deleted_at", null)
     : await supabase.from(table).select("*", { count: "exact", head: true });
   if (countRes.error) throw countRes.error;
