@@ -226,17 +226,15 @@ function DashboardInner() {
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingView, setEditingView] = useState<DashboardView | null>(null);
-  const [ceoDashboard, setCeoDashboard] = useState(false);
+  /** User toggle; effective CEO mode also requires permission (see `ceoDashboard` below). */
+  const [ceoModeUser, setCeoModeUser] = useState(false);
   /** Bump to remount widgets and pull fresh data. */
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
   const dashboardRootRef = useRef<HTMLDivElement>(null);
   const [dashboardFullscreen, setDashboardFullscreen] = useState(false);
 
   const canSeeCeoDashboard = useMemo(() => isCeoDashboardAllowedUser(profile), [profile]);
-
-  useEffect(() => {
-    if (!canSeeCeoDashboard && ceoDashboard) setCeoDashboard(false);
-  }, [canSeeCeoDashboard, ceoDashboard]);
+  const ceoDashboard = ceoModeUser && canSeeCeoDashboard;
 
   // Set default view when views load
   useEffect(() => {
@@ -410,12 +408,12 @@ function DashboardInner() {
               role="button"
               tabIndex={0}
               onClick={() => {
-                setCeoDashboard(true);
+                setCeoModeUser(true);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  setCeoDashboard(true);
+                  setCeoModeUser(true);
                 }
               }}
               className={cn(
@@ -442,13 +440,13 @@ function DashboardInner() {
                     role="button"
                     tabIndex={0}
                     onClick={() => {
-                      setCeoDashboard(false);
+                      setCeoModeUser(false);
                       setActiveViewId(view.id);
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        setCeoDashboard(false);
+                        setCeoModeUser(false);
                         setActiveViewId(view.id);
                       }
                     }}

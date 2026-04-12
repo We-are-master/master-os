@@ -63,7 +63,10 @@ export function PartnerAvatarCropModal({
 
   useEffect(() => {
     if (!open || !imageFile) {
-      setImg(null);
+      queueMicrotask(() => {
+        setImg(null);
+        setCrop({ zoom: 1, panX: 0, panY: 0 });
+      });
       return;
     }
     const url = URL.createObjectURL(imageFile);
