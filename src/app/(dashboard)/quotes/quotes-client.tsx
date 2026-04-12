@@ -522,10 +522,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const searchParams = useSearchParams();
   const {
     data, loading, page, totalPages, totalItems,
-    setPage, search, setSearch, status, setStatus, refresh, refreshSilent,
+    setPage, search, setSearch, status, setStatus, refreshSilent,
   } = useSupabaseList<Quote>({
     fetcher: listQuotesForPage,
-    /** No realtime auto-refresh — avoids fetch loops; use header Refresh or row actions to reload. */
+    /** No realtime auto-refresh — avoids fetch loops; list reloads use `refreshSilent` / `refreshWithKpis` (no `refresh()`). */
     initialStatus: "pipeline",
     initialData,
   });
@@ -833,7 +833,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       await logBulkAction("quote", Array.from(selectedIds), "status_changed", "status", newStatus, profile?.id, profile?.full_name);
       toast.success(`${selectedIds.size} quotes updated`);
       setSelectedIds(new Set());
-      refresh();
+      refreshWithKpis();
     } catch { toast.error("Failed to update quotes"); }
   };
 
@@ -1033,14 +1033,14 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     [refreshWithKpis, profile?.id, profile?.full_name]
   );
 
-  /** Stable callback — use silent list refresh so drawer saves do not toggle table loading or amplify request storms. */
-  const handleQuoteDrawerUpdate = useCallback(
-    (updated: Quote) => {
-      setSelectedQuote(updated);
-      refreshSilent();
-    },
-    [refreshSilent],
-  );
+  /**
+   * Drawer saves: update the open quote only. Do not refetch the quotes list here — that was chaining
+   * extra `get_quotes_list_bundle` / enrichment traffic and could interact badly with effects. The table
+   * catches up when the user uses **Refresh** (or creates / bulk-actions / status moves that call `refreshWithKpis`).
+   */
+  const handleQuoteDrawerUpdate = useCallback((updated: Quote) => {
+    setSelectedQuote(updated);
+  }, []);
 
   const handleExport = useCallback(() => {
     const csv = ["Reference,Title,Client,Status,Amount,Owner"]
@@ -1146,9 +1146,9 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
             onClick={() => {
               void loadCounts();
-              refresh();
+              refreshSilent();
             }}
-            title="Reload quotes and tab counts from the server"
+            title="Reload quotes and tab counts from the server (no full-table loading flash)"
           >
             Refresh
           </Button>
