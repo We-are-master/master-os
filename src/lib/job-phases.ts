@@ -57,7 +57,7 @@ export function allConfiguredReportsApproved(job: Job): boolean {
 }
 
 /** Header actions that need custom handling on the job detail page (e.g. send + invoice flow). */
-export type JobStatusActionSpecial = "send_report_invoice" | "put_on_hold" | "resume_job";
+export type JobStatusActionSpecial = "send_report_invoice";
 
 export type JobStatusAction = {
   label: string;
@@ -66,8 +66,6 @@ export type JobStatusAction = {
   primary: boolean;
   destructive?: boolean;
   special?: JobStatusActionSpecial;
-  /** Optional button styling on job detail (Complete = success, On Hold = dark red outline). */
-  tone?: "success" | "hold";
 };
 
 /** Primary actions for advancing / rewinding job workflow, respecting `total_phases`. */
@@ -95,14 +93,6 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           icon: Play,
           primary: true,
         },
-        {
-          label: "On Hold",
-          status: "on_hold",
-          icon: Pause,
-          primary: false,
-          tone: "hold",
-          special: "put_on_hold",
-        },
         cancelAction,
       ];
     case "in_progress_phase1":
@@ -114,16 +104,8 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           status: "final_check",
           icon: CheckCircle2,
           primary: true,
-          tone: "success",
         },
-        {
-          label: "On Hold",
-          status: "on_hold",
-          icon: Pause,
-          primary: false,
-          tone: "hold",
-          special: "put_on_hold",
-        },
+        { label: "Pause Job", status: "scheduled", icon: Pause, primary: false },
         cancelAction,
       ];
     }
@@ -163,17 +145,6 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
         job.partner_id || job.partner_name?.trim() ? "scheduled" : "unassigned";
       return [{ label: "Reopen Job", status: reopenTarget, icon: RotateCcw, primary: false }];
     }
-    case "on_hold":
-      return [
-        {
-          label: "Resume job",
-          status: "in_progress_phase1",
-          icon: Play,
-          primary: true,
-          special: "resume_job",
-        },
-        cancelAction,
-      ];
     default:
       return [];
   }
@@ -194,7 +165,6 @@ export function getPreviousJobStatus(job: Job): Job["status"] | null {
   switch (job.status) {
     case "deleted":
     case "cancelled":
-    case "on_hold":
     case "unassigned":
       return null;
     case "auto_assigning":
@@ -243,18 +213,6 @@ export function canAdvanceJob(
 
   if (isRewindTransition(job, nextStatus)) {
     return { ok: true };
-  }
-
-  if (nextStatus === "on_hold") {
-    if (isJobOnSiteWorkStatus(job.status)) return { ok: true };
-    return { ok: false, message: "On hold is only available while the job is in progress on site." };
-  }
-
-  if (job.status === "on_hold") {
-    if (nextStatus === "cancelled") return { ok: true };
-    const prev = (job.on_hold_previous_status ?? "").trim() as Job["status"];
-    if (prev && nextStatus === prev && isJobOnSiteWorkStatus(prev)) return { ok: true };
-    return { ok: false, message: "Use Resume job to continue from on hold." };
   }
 
   if (nextStatus === "cancelled") {
@@ -329,8 +287,6 @@ export function jobStatusRank(status: Job["status"]): number {
     case "scheduled":
     case "late":
       return 0;
-    case "on_hold":
-      return 10;
     case "in_progress_phase1":
       return 10;
     case "in_progress_phase2":
@@ -364,9 +320,6 @@ export function minimumStatusRankForReportSlot(reportSlotIndex: number, totalPha
 export function canMarkReportUploaded(job: Job, reportSlotIndex: number): { ok: boolean; message?: string } {
   if (job.status === "cancelled") {
     return { ok: false, message: "Job is cancelled." };
-  }
-  if (job.status === "on_hold") {
-    return { ok: false, message: "Job is on hold — resume before updating reports." };
   }
   if (job.status === "completed") {
     return { ok: false, message: "Job is completed — reports are locked." };
@@ -436,17 +389,6 @@ export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; me
 /** True while partner is doing on-site work (not final check / payment). */
 export function isJobOnSiteWorkStatus(status: Job["status"]): boolean {
   return status === "in_progress_phase1" || status === "in_progress_phase2" || status === "in_progress_phase3";
-}
-
-/** After on hold, restore the step the job was on (scheduled/late vs on-site phases). */
-export function jobStatusAfterResumeFromOnHold(
-  previous: Job["status"] | string | null | undefined,
-): Job["status"] {
-  const p = String(previous ?? "in_progress_phase1").trim() as Job["status"];
-  if (isJobOnSiteWorkStatus(p)) return p;
-  if (p === "scheduled" || p === "late") return p;
-  if (p === "final_check" || p === "need_attention") return p;
-  return "in_progress_phase1";
 }
 
 /** When ops validates the last report, move to final_check and stop the on-site timer in the same update. */

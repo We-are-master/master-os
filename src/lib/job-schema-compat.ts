@@ -23,6 +23,8 @@ const JOB_DB_COMPAT_STRIP_KEYS = [
   "hourly_client_rate",
   "hourly_partner_rate",
   "billed_hours",
+  "images",
+  "additional_notes",
 ] as const;
 
 /**
@@ -96,8 +98,6 @@ export function prepareJobRowForInsert(row: Record<string, unknown>): Record<str
      * If the DB truly lacks the column, write retry falls back via `applyJobDbCompat`.
      */
     if ("images" in row) out.images = row.images;
-    if ("additional_notes" in row) out.additional_notes = row.additional_notes;
-    if ("report_link" in row) out.report_link = row.report_link;
     if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   }
   stripOperationalFlowKeysIfDisabled(out);
@@ -117,8 +117,6 @@ export function prepareJobRowForUpdate(patch: Record<string, unknown>): Record<s
      * If the DB truly lacks the column, write retry falls back via `applyJobDbCompat`.
      */
     if ("images" in patch) out.images = patch.images;
-    if ("additional_notes" in patch) out.additional_notes = patch.additional_notes;
-    if ("report_link" in patch) out.report_link = patch.report_link;
     if ("status" in out) out.status = mapStatusForLegacyEnvOnly(out.status);
   }
   stripOperationalFlowKeysIfDisabled(out);

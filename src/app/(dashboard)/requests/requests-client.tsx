@@ -700,7 +700,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Requests" subtitle="Manage incoming service requests and leads.">
+        <PageHeader title="Requests" subtitle="Manage incoming service requests and leads. Period defaults to the current calendar month (same as Finance: All · Monthly · Week · Date range).">
           <div className="relative flex items-center gap-2" ref={filterRef}>
             <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
             {(filterPriority !== "all" || filterService !== "all" || periodMode !== DEFAULT_FINANCE_PERIOD_MODE) && (

@@ -1,10 +1,6 @@
 import { getErrorMessage } from "@/lib/utils";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
-import {
-  isSupabaseMissingColumnError,
-  parsePostgrestUnknownColumnName,
-  postgrestFullErrorText,
-} from "@/lib/supabase-schema-compat";
+import { isSupabaseMissingColumnError, parsePostgrestUnknownColumnName } from "@/lib/supabase-schema-compat";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type QuoteLineItemInsertRow = {
@@ -42,7 +38,7 @@ export async function insertQuoteLineItemsResilient(
 
   let payload: Record<string, unknown>[] = rows.map((r) => ({ ...r }));
 
-  for (let attempt = 0; attempt < 24; attempt++) {
+  for (let attempt = 0; attempt < 16; attempt++) {
     const ins = await supabase.from("quote_line_items").insert(payload);
     if (!ins.error) return;
 
@@ -50,25 +46,19 @@ export async function insertQuoteLineItemsResilient(
     if (!isUnknownColumnSchemaError(err)) throw err;
 
     const col = parsePostgrestUnknownColumnName(err);
-    const msg = getErrorMessage(err, "") + postgrestFullErrorText(err);
+    const msg = getErrorMessage(err, "");
     if (col && payload[0] && col in payload[0]) {
       payload = stripColumnFromRows(payload, col);
       continue;
     }
-    const t = msg.toLowerCase();
-    if (
-      t.includes("quote_line_items") ||
-      t.includes("partner_unit_cost") ||
-      t.includes("notes")
-    ) {
-      const slim = payload.map((p) => {
-        const { notes: _n, partner_unit_cost: _p, ...rest } = p;
-        return rest;
-      });
-      if (JSON.stringify(slim) !== JSON.stringify(payload)) {
-        payload = slim;
-        continue;
-      }
+    // Back-compat if message shape differs from parsePostgrestUnknownColumnName
+    if (msg.includes("'notes'") && payload[0] && "notes" in payload[0]) {
+      payload = stripColumnFromRows(payload, "notes");
+      continue;
+    }
+    if (msg.includes("'partner_unit_cost'") && payload[0] && "partner_unit_cost" in payload[0]) {
+      payload = stripColumnFromRows(payload, "partner_unit_cost");
+      continue;
     }
 
     throw err;

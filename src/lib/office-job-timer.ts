@@ -34,7 +34,7 @@ export function statusChangeOfficeTimerPatch(
   });
 
   if (isJobOnSiteWorkStatus(job.status)) {
-    if (newStatus === "scheduled" || newStatus === "on_hold") return stopRunningPreserve();
+    if (newStatus === "scheduled") return stopRunningPreserve();
     if (newStatus === "final_check") return stopRunningPreserve();
     if (newStatus === "awaiting_payment" || newStatus === "cancelled" || newStatus === "completed") {
       return stopRunningPreserve();
@@ -51,7 +51,7 @@ export function statusChangeOfficeTimerPatch(
     return stopRunningPreserve();
   }
 
-  if ((job.status === "scheduled" || job.status === "late" || job.status === "on_hold") && newStatus === "in_progress_phase1") {
+  if ((job.status === "scheduled" || job.status === "late") && newStatus === "in_progress_phase1") {
     const elapsed = Number(job.timer_elapsed_seconds ?? 0) || 0;
     const hasPriorWork = elapsed > 0;
     if (hasPriorWork) {

@@ -91,9 +91,8 @@ import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-lab
 import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
-import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 
-const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
+const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
 const RESTORE_ALLOWED_JOB_STATUSES = new Set<string>([...JOB_STATUSES]);
 
@@ -243,7 +242,6 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   in_progress_phase1: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1, dot: true },
   in_progress_phase2: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2, dot: true },
   in_progress_phase3: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3, dot: true },
-  on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
   final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
   need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
@@ -419,21 +417,12 @@ function JobsPageContent() {
       "unassigned",
       "scheduled",
       "in_progress",
-      "on_hold",
       "final_check",
       "awaiting_payment",
       "completed",
       "cancelled",
     ] as const;
     return ids.map((id) => {
-      if (id === "on_hold") {
-        return {
-          id,
-          title: "On hold",
-          color: "bg-amber-500",
-          items: sortedData.filter((j) => j.status === "on_hold"),
-        };
-      }
       if (id === "in_progress") {
         return {
           id,
@@ -559,8 +548,6 @@ function JobsPageContent() {
   const inProgressTabCount =
     (tabCounts.in_progress_phase1 ?? 0) + (tabCounts.in_progress_phase2 ?? 0) + (tabCounts.in_progress_phase3 ?? 0);
 
-  const onHoldTabCount = tabCounts.on_hold ?? 0;
-
   const scheduledTabCount = (tabCounts.scheduled ?? 0) + (tabCounts.late ?? 0);
 
   const finalChecksTabCount = (tabCounts.final_check ?? 0) + (tabCounts.need_attention ?? 0);
@@ -575,7 +562,6 @@ function JobsPageContent() {
     { id: "unassigned", label: "Unassigned", count: unassignedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.unassigned },
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
     { id: "in_progress", label: "In Progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
-    { id: "on_hold", label: "On Hold", count: onHoldTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.on_hold },
     { id: "final_check", label: "Final Checks", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
     { id: "awaiting_payment", label: "Awaiting Payment", count: tabCounts.awaiting_payment ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
     { id: "completed", label: "Paid & Completed", count: tabCounts.completed ?? 0, accent: JOBS_MANAGEMENT_TAB_ACCENTS.completed },
@@ -693,7 +679,6 @@ function JobsPageContent() {
         customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
         scope: formData.scope?.trim() || undefined,
         additional_notes: formData.additional_notes?.trim() || undefined,
-        report_link: (formData as { report_link?: string | null }).report_link?.trim() || undefined,
         images: capJobImagesArray(coerceJobImagesArray(formData.images)),
       });
       await Promise.all([
@@ -1193,12 +1178,7 @@ function JobsPageContent() {
       render: (item) => {
         const st = effectiveJobStatusForDisplay(item);
         const c = statusConfig[st] ?? { label: st, variant: "default" as const };
-        return (
-          <div className="inline-flex flex-wrap items-center gap-1.5">
-            <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>
-            <JobOverdueBadge job={item} />
-          </div>
-        );
+        return <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>;
       },
     },
     {
@@ -1467,10 +1447,7 @@ function JobsPageContent() {
                         <div className="p-3 flex flex-col flex-1 min-w-0">
                           <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
                           <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(j.title) || j.title}</p>
-                          <div className="mt-1 flex flex-wrap items-center gap-1 min-w-0">
-                            <p className="text-[10px] text-text-tertiary truncate">{sc.label}</p>
-                            <JobOverdueBadge job={j} />
-                          </div>
+                          <p className="text-[10px] text-text-tertiary mt-1 truncate">{sc.label}</p>
                           {sched ? (
                             <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug" title={schedDetail ?? undefined}>
                               {sched}
@@ -1646,7 +1623,6 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     job_type: "fixed",
     scope: "",
     additional_notes: "",
-    report_link: "",
     hourly_client_rate: "",
     hourly_partner_rate: "",
     billed_hours: "1",
@@ -1837,7 +1813,6 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
       additional_notes: form.additional_notes.trim() || undefined,
-      report_link: form.report_link.trim() || undefined,
       images: uploadedImageUrls.length ? uploadedImageUrls : undefined,
     });
     setSitePhotoFiles([]);
@@ -1857,7 +1832,6 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       job_type: "fixed",
       scope: "",
       additional_notes: "",
-      report_link: "",
       hourly_client_rate: "",
       hourly_partner_rate: "",
       billed_hours: "1",
@@ -1943,6 +1917,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                 ...prev,
                 catalog_service_id: id,
                 title: service ? (normalizeTypeOfWork(service.name) || service.name) : prev.title,
+                scope: service?.default_description?.trim() || prev.scope,
                 hourly_client_rate: String(clientRate || ""),
                 hourly_partner_rate: String(partnerRate || ""),
                 billed_hours: String(hrs),
@@ -1992,17 +1967,6 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             rows={2}
             placeholder="Internal only — parking, keys, client preferences, things not in scope…"
             className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[56px]"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Report link (optional)</label>
-          <p className="text-[11px] text-text-tertiary mb-1.5">External URL (Drive, Notion, etc.) — not required.</p>
-          <Input
-            type="url"
-            value={form.report_link}
-            onChange={(e) => update("report_link", e.target.value)}
-            placeholder="https://…"
-            className="h-10"
           />
         </div>
         <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-2">
@@ -2376,10 +2340,7 @@ function JobsMapView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boo
               <LocationMiniMap address={j.property_address} className="h-full w-full" mapHeight="100%" showAddressBelowMap={false} lazy />
             </div>
             <div className="p-3 sm:p-4 flex flex-col flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
-                <JobOverdueBadge job={j} />
-              </div>
+              <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
               <p className="text-xs text-text-tertiary truncate mt-0.5">{normalizeTypeOfWork(j.title) || j.title}</p>
               <p className="text-xs text-text-tertiary truncate mt-1">{j.property_address}</p>
               {mapSched ? (

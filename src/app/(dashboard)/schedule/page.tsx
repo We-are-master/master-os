@@ -14,7 +14,6 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { ScheduleLiveMap, type ScheduleLiveMapPoint } from "@/components/dashboard/schedule-live-map";
-import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { motion, AnimatePresence } from "framer-motion";
 import { staggerContainer, staggerItem, fadeInUp } from "@/lib/motion";
 import {
@@ -70,7 +69,6 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   in_progress_phase1: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1 },
   in_progress_phase2: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2 },
   in_progress_phase3: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3 },
-  on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold },
   final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check },
   awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment },
   need_attention: { label: "Need attention", variant: JOB_STATUS_BADGE_VARIANT.need_attention },
@@ -671,11 +669,10 @@ export default function SchedulePage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="p-3 rounded-xl bg-surface-hover">
                 <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Status</label>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <div className="mt-1.5">
                   <Badge variant={statusConfig[selectedJob.status]?.variant ?? "default"} dot size="md">
                     {statusConfig[selectedJob.status]?.label ?? selectedJob.status}
                   </Badge>
-                  <JobOverdueBadge job={selectedJob} size="md" />
                 </div>
               </div>
               <div className="p-3 rounded-xl bg-surface-hover">
