@@ -1473,8 +1473,6 @@ function QuoteDetailDrawer({
   const [expandedBidIds, setExpandedBidIds] = useState<Set<string>>(new Set());
   /** Bid driving Review & Send figures without formal approve (submitted) or the approved bid id. */
   const [selectedReviewBidId, setSelectedReviewBidId] = useState<string | null>(null);
-  const [showAllBidsInTab, setShowAllBidsInTab] = useState(false);
-  const autoPickBestBidRef = useRef(false);
   const quoteRef = useRef(quote);
   quoteRef.current = quote;
   const onQuoteUpdateRef = useRef(onQuoteUpdate);
@@ -1525,8 +1523,6 @@ function QuoteDetailDrawer({
       setPricingOpen(false);
       setExpandedBidIds(new Set());
       setSelectedReviewBidId(null);
-      setShowAllBidsInTab(false);
-      autoPickBestBidRef.current = false;
       setQuoteClientPick({
       client_id: quote.client_id,
       client_address_id: quote.client_address_id,
@@ -1631,60 +1627,7 @@ function QuoteDetailDrawer({
         const list = await getBidsByQuoteId(quoteId);
         if (quoteRef.current.id !== quoteId) return;
         setBids(list);
-        const q = quoteRef.current;
-        const approved = list.find((b) => b.status === "approved");
-        const submitted = list.filter((b) => b.status === "submitted");
-
-        if (approved) {
-          setSelectedReviewBidId(approved.id);
-        } else if (submitted.length === 0) {
-          setSelectedReviewBidId(null);
-        } else if (!autoPickBestBidRef.current) {
-          /** Claim synchronously before any await so concurrent loadBids (e.g. Strict Mode) cannot double-persist. */
-          autoPickBestBidRef.current = true;
-          const best = [...submitted].sort(compareBidsForCheapest)[0];
-          const pre = computeCustomerProposalFromBid(best, q);
-          const scopeMerged = pre.scopeText ?? bidPayloadTrimmedString(q.scope as unknown);
-          const d1 =
-            normalizeCalendarDateToYmd(pre.startDate1 ?? bidPayloadTrimmedString(q.start_date_option_1 as unknown)) || "";
-          const d2 =
-            normalizeCalendarDateToYmd(pre.startDate2 ?? bidPayloadTrimmedString(q.start_date_option_2 as unknown)) || "";
-          const depPct =
-            pre.depositPercent ??
-            (q.deposit_percent != null && Number.isFinite(Number(q.deposit_percent))
-              ? String(Number(q.deposit_percent))
-              : String(inferDepositPercentFromLegacy(Number(q.deposit_required ?? 0), Number(q.total_value ?? 0))));
-          setLineItems(pre.lines);
-          setScopeText(bidPayloadTrimmedString(scopeMerged as unknown));
-          setStartDate1(d1);
-          setStartDate2(d2);
-          setDepositPercent(depPct);
-          setProposalScalePercent(100);
-          setSelectedReviewBidId(best.id);
-          /** End “loading” before the heavy persist so the drawer paints immediately; DB sync runs right after. */
-          if (quoteRef.current.id === quoteId) {
-            setBidsLoading(false);
-            clearedBidsLoadingEarly = true;
-          }
-          queueMicrotask(() => {
-            void (async () => {
-              if (quoteRef.current.id !== quoteId) return;
-              try {
-                const updated = await persistProposalToQuoteRef.current({
-                  lineItemsOverride: pre.lines,
-                  scopeTextOverride: scopeMerged,
-                  startDate1Override: d1,
-                  startDate2Override: d2,
-                  depositOverride: depPct,
-                  partnerCostOverride: best.bid_amount,
-                });
-                onQuoteUpdateRef.current?.(updated);
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : "Failed to sync bid to quote");
-              }
-            })();
-          });
-        }
+        setSelectedReviewBidId((prev) => (prev && list.some((b) => b.id === prev) ? prev : null));
       } finally {
         if (quoteRef.current.id === quoteId && !clearedBidsLoadingEarly) setBidsLoading(false);
       }
@@ -1733,12 +1676,6 @@ function QuoteDetailDrawer({
   }, [isAdmin]);
 
   const approvedBid = useMemo(() => bids.find((b) => b.status === "approved") ?? null, [bids]);
-  const approvedBidPartnerUnits = useMemo(() => {
-    if (!approvedBid) return null;
-    const payload = parseBidProposalFromNotes(approvedBid.notes);
-    return splitBidPartnerCosts(approvedBid.bid_amount, payload);
-  }, [approvedBid]);
-
   const bidsReceivedCount =
     quote.quote_type !== "partner" ? 0 : bidsLoading ? Number(quote.partner_quotes_count) || 0 : bids.length;
   const invitedPartnersCount = quote.quote_type !== "partner" ? 0 : Math.max(0, Number(quote.partner_quotes_count) || 0);
@@ -1748,69 +1685,35 @@ function QuoteDetailDrawer({
   );
 
   const orderedBidsForTab = useMemo(() => {
-    const sel = selectedReviewBidId;
-    const selected = sel ? bids.find((b) => b.id === sel) : undefined;
-    const rest = bids.filter((b) => b.id !== sel);
+    const rest = [...bids];
     rest.sort((a, b) => {
       const pa = Number(a.bid_amount) || 0;
       const pb = Number(b.bid_amount) || 0;
       if (pa !== pb) return pa - pb;
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     });
-    return selected ? [selected, ...rest] : rest;
-  }, [bids, selectedReviewBidId]);
+    return rest;
+  }, [bids]);
 
   const bidSpotlightEntries = useMemo(
     () => computeBidSpotlight(bids, selectedReviewBidId),
     [bids, selectedReviewBidId],
   );
-  const bidsCollapsedVisible = useMemo(() => {
-    if (bidSpotlightEntries.length > 0) return bidSpotlightEntries.map((e) => e.bid);
-    if (bids.length <= 3) return bids;
-    return bids.slice(0, 3);
-  }, [bidSpotlightEntries, bids]);
+  const bidsCollapsedVisible = useMemo(() => orderedBidsForTab.slice(0, 3), [orderedBidsForTab]);
   const bidSpotlightLabelById = useMemo(() => {
     const m = new Map<string, BidPriceRankLabel>();
     for (const e of bidSpotlightEntries) m.set(e.bid.id, e.label);
     return m;
   }, [bidSpotlightEntries]);
-  const bidsVisibleInTab = useMemo(
-    () => (showAllBidsInTab ? orderedBidsForTab : bidsCollapsedVisible),
-    [showAllBidsInTab, orderedBidsForTab, bidsCollapsedVisible],
-  );
-  const bidsTabMoreCount = useMemo(() => {
-    if (showAllBidsInTab) return 0;
-    const shown = new Set(bidsCollapsedVisible.map((b) => b.id));
-    return bids.filter((b) => !shown.has(b.id)).length;
-  }, [showAllBidsInTab, bids, bidsCollapsedVisible]);
+  const bidsVisibleInTab = useMemo(() => bidsCollapsedVisible, [bidsCollapsedVisible]);
 
-  /** If selection falls outside the price preview (edge cases), expand the full list automatically. */
+  /** If selection falls outside the visible top-3 preview, clear it. */
   useEffect(() => {
-    if (showAllBidsInTab) return;
     if (!selectedReviewBidId) return;
     if (!bidsCollapsedVisible.some((b) => b.id === selectedReviewBidId)) {
-      setShowAllBidsInTab(true);
+      setSelectedReviewBidId(null);
     }
-  }, [selectedReviewBidId, showAllBidsInTab, bidsCollapsedVisible]);
-
-  useEffect(() => {
-    if (!approvedBidPartnerUnits) return;
-    setLineItems((prev) => {
-      if (!prev.length) return prev;
-      const next = [...prev];
-      let changed = false;
-      const target = [approvedBidPartnerUnits.labour, approvedBidPartnerUnits.materials];
-      for (let i = 0; i < Math.min(2, next.length); i += 1) {
-        const current = Number(next[i]?.partnerUnitCost ?? 0);
-        const desired = Math.max(0, Number(target[i] ?? 0));
-        if (Math.abs(current - desired) > 0.005) {
-          next[i] = { ...next[i], partnerUnitCost: String(desired) };
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [approvedBidPartnerUnits]);
+  }, [selectedReviewBidId, bidsCollapsedVisible]);
 
   const config = statusConfig[quote.status] ?? { variant: "default" as const };
   const actions = getQuoteActions(quote);
@@ -2043,10 +1946,6 @@ function QuoteDetailDrawer({
       setSelectedReviewBidId(null);
     }
   }, [bids, selectedReviewBidId]);
-
-  useEffect(() => {
-    if (approvedBid) setSelectedReviewBidId(approvedBid.id);
-  }, [approvedBid?.id]);
 
   const saveProposalDraft = async () => {
     setProposalSaving(true);
@@ -3394,28 +3293,6 @@ function QuoteDetailDrawer({
                     </div>
                     );
                   })}
-                  {bidsTabMoreCount > 0 ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="w-full text-text-secondary hover:text-text-primary"
-                      onClick={() => setShowAllBidsInTab(true)}
-                    >
-                      See more ({bidsTabMoreCount} more bid{bidsTabMoreCount === 1 ? "" : "s"})
-                    </Button>
-                  ) : null}
-                  {showAllBidsInTab && orderedBidsForTab.length > bidsCollapsedVisible.length ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="w-full text-text-secondary hover:text-text-primary"
-                      onClick={() => setShowAllBidsInTab(false)}
-                    >
-                      Show fewer
-                    </Button>
-                  ) : null}
                 </div>
               )}
             </div>
