@@ -1602,9 +1602,6 @@ function QuoteDetailDrawer({
     }
   };
 
-  const loadLineItemsRef = useRef(loadLineItems);
-  loadLineItemsRef.current = loadLineItems;
-
   const loadPartners = useCallback(async () => {
     const res = await listPartners({ pageSize: 200, status: "all" });
     setPartners(res.data ?? []);
@@ -1682,7 +1679,6 @@ function QuoteDetailDrawer({
                   partnerCostOverride: best.bid_amount,
                 });
                 onQuoteUpdateRef.current?.(updated);
-                void loadLineItemsRef.current(quoteId, quoteRef.current);
               } catch (e) {
                 toast.error(e instanceof Error ? e.message : "Failed to sync bid to quote");
               }
@@ -1699,6 +1695,29 @@ function QuoteDetailDrawer({
   useEffect(() => {
     if (quote.quote_type === "partner") void loadBids(quote.id);
   }, [quote.id, quote.quote_type, loadBids]);
+
+  useEffect(() => {
+    if (quote.quote_type !== "partner" || tab !== "bids") return;
+    const supabase = getSupabase();
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const channel = supabase
+      .channel(`quote-bids:${quote.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "quote_bids", filter: `quote_id=eq.${quote.id}` },
+        () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => {
+            void loadBids(quote.id);
+          }, 140);
+        },
+      )
+      .subscribe();
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      void channel.unsubscribe();
+    };
+  }, [quote.id, quote.quote_type, tab, loadBids]);
 
   const handleRefreshBids = useCallback(async () => {
     const q = quoteRef.current;
