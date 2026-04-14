@@ -44,8 +44,10 @@ function usePortalTheme() {
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
       : false;
     const r: "light" | "dark" = initial === "system" ? (sysIsDark ? "dark" : "light") : initial;
-    setResolved(r);
-    document.documentElement.classList.toggle("dark", r === "dark");
+    queueMicrotask(() => {
+      setResolved(r);
+      document.documentElement.classList.toggle("dark", r === "dark");
+    });
   }, []);
 
   const toggle = useCallback(() => {

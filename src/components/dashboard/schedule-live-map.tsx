@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import type { RefObject } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import { MapPin } from "lucide-react";
+import { MapPin, Maximize2, Minimize2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
@@ -22,10 +24,34 @@ interface ScheduleLiveMapProps {
   className?: string;
 }
 
+function useMapResize(mapRef: RefObject<mapboxgl.Map | null>, fullscreen: boolean) {
+  useLayoutEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const run = () => {
+      map.resize();
+    };
+    run();
+    const t = window.setTimeout(run, 150);
+    return () => window.clearTimeout(t);
+  }, [mapRef, fullscreen]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const onWinResize = () => {
+      map.resize();
+    };
+    window.addEventListener("resize", onWinResize);
+    return () => window.removeEventListener("resize", onWinResize);
+  }, [mapRef]);
+}
+
 export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
+  const [fullscreen, setFullscreen] = useState(false);
 
   const validPoints = useMemo(
     () =>
@@ -38,6 +64,28 @@ export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
       ),
     [points],
   );
+
+  useMapResize(mapRef, fullscreen);
+
+  const exitFullscreen = useCallback(() => setFullscreen(false), []);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") exitFullscreen();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen, exitFullscreen]);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [fullscreen]);
 
   useEffect(() => {
     if (!mapContainerRef.current || !MAPBOX_TOKEN) return;
@@ -103,5 +151,54 @@ export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
     );
   }
 
-  return <div ref={mapContainerRef} className={cn("h-[68vh] min-h-[430px] w-full rounded-xl border border-border", className)} />;
+  return (
+    <div
+      className={cn(
+        fullscreen ? "fixed inset-0 z-[240] flex flex-col bg-card" : "relative",
+        !fullscreen && className,
+      )}
+      role={fullscreen ? "dialog" : undefined}
+      aria-modal={fullscreen ? "true" : undefined}
+      aria-label={fullscreen ? "Live team map fullscreen" : undefined}
+    >
+      {fullscreen ? (
+        <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+          <span className="truncate text-sm font-semibold text-text-primary">Live team map</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            icon={<Minimize2 className="h-3.5 w-3.5" />}
+            onClick={exitFullscreen}
+          >
+            Exit full screen
+          </Button>
+        </div>
+      ) : null}
+
+      <div className={cn("relative w-full", fullscreen ? "flex min-h-0 flex-1 flex-col" : "min-h-[430px]")}>
+        {!fullscreen ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="absolute left-3 top-3 z-10 border-border/80 bg-card/95 shadow-md backdrop-blur-sm"
+            icon={<Maximize2 className="h-3.5 w-3.5" />}
+            onClick={() => setFullscreen(true)}
+          >
+            Full screen
+          </Button>
+        ) : null}
+        <div
+          ref={mapContainerRef}
+          className={cn(
+            "w-full",
+            fullscreen
+              ? "min-h-0 flex-1 rounded-none border-0"
+              : "h-[68vh] min-h-[430px] rounded-xl border border-border",
+          )}
+        />
+      </div>
+    </div>
+  );
 }

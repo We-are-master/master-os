@@ -89,6 +89,40 @@ export function parseIsoDateOnly(input: string | undefined | null): string {
   return s;
 }
 
+/**
+ * Partner payloads often send UK-style DD/MM/YYYY; Postgres date columns need YYYY-MM-DD.
+ * Also accepts existing ISO dates. Returns "" if unparseable.
+ */
+export function normalizeCalendarDateToYmd(input: string | undefined | null): string {
+  if (input == null) return "";
+  const raw = String(input).trim();
+  if (!raw) return "";
+  const iso = parseIsoDateOnly(raw);
+  if (iso) return iso;
+  const m = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    const day = Number(m[1]);
+    const month = Number(m[2]);
+    const y = Number(m[3]);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && y >= 1900 && y <= 2100) {
+      const dt = new Date(Date.UTC(y, month - 1, day));
+      if (dt.getUTCFullYear() === y && dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day) {
+        return `${String(y).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      }
+    }
+  }
+  return "";
+}
+
+/** Display YYYY-MM-DD as DD/MM/YYYY (UK) for UI labels. */
+export function formatYmdUkDisplay(ymd: string | undefined | null): string {
+  const n = normalizeCalendarDateToYmd(ymd ?? "");
+  if (!n) return "";
+  const [y, mo, d] = n.split("-").map((x) => Number(x));
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }).format(dt);
+}
+
 /** True if string is a parseable ISO-like datetime (timestamptz-safe for Supabase). */
 export function isValidIsoDateTime(input: string | undefined | null): boolean {
   if (input == null || !String(input).trim()) return false;

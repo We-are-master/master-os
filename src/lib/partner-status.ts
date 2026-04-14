@@ -15,6 +15,7 @@ const LABELS: Record<string, string> = {
   low_compliance_score: "Low Compliance Score",
   expired_docs: "Expired Docs",
   on_break: "On Break",
+  force_activated: "Force Activated",
 };
 
 /** Human-readable label for a stored reason string (supports `other:…`). */
@@ -69,9 +70,14 @@ export function deriveAutoStatusAndReasons(
 ): { status: Partner["status"]; partner_status_reasons: string[] } {
   const current = partner.status;
   const merged = mergeUniqueReasons(partner.partner_status_reasons, autoCodes);
+  const isForceActivated = merged.includes("force_activated");
   /** Legacy top-level `on_break` is treated like inactive for automation (reason stays in `partner_status_reasons`). */
   if (current === "inactive" || current === "on_break") {
     return { status: current, partner_status_reasons: partner.partner_status_reasons ?? [] };
+  }
+  // Manual force activation wins over compliance automation while partner remains non-inactive.
+  if (isForceActivated) {
+    return { status: "active", partner_status_reasons: merged };
   }
   if (autoCodes.length === 0) {
     return { status: current, partner_status_reasons: partner.partner_status_reasons ?? [] };

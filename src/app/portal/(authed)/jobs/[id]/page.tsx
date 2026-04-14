@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { ArrowLeft, Calendar, MapPin, User, Briefcase } from "lucide-react";
 import { requirePortalUserOrRedirect } from "@/lib/portal-auth";
 import { fetchPortalJobDetail } from "@/lib/server-fetchers/portal-jobs";
@@ -76,13 +77,14 @@ export default async function PortalJobDetailPage({ params }: PageProps) {
 
       <div className="bg-card rounded-2xl border border-border overflow-hidden">
         <div className="px-6 py-5 border-b border-border-light">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
             <span className="text-xs font-mono text-text-tertiary">{job.reference}</span>
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
               STATUS_COLOR[job.status] ?? "bg-surface-tertiary text-text-secondary"
             }`}>
               {STATUS_LABEL[job.status] ?? job.status.replace(/_/g, " ")}
             </span>
+            <JobOverdueBadge job={job} />
           </div>
           <h1 className="text-2xl font-black text-text-primary">{job.title}</h1>
         </div>

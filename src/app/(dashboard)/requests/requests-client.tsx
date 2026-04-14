@@ -70,7 +70,6 @@ import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar
 import {
   DEFAULT_FINANCE_PERIOD_MODE,
   getFinancePeriodClosedBounds,
-  getMonthBoundsForDate,
   type FinancePeriodMode,
 } from "@/lib/finance-period";
 
@@ -143,8 +142,9 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [periodRangeFrom, setPeriodRangeFrom] = useState("");
   const [periodRangeTo, setPeriodRangeTo] = useState("");
-  const [dateFrom, setDateFrom] = useState(() => getMonthBoundsForDate(new Date()).from);
-  const [dateTo, setDateTo] = useState(() => getMonthBoundsForDate(new Date()).to);
+  /** Empty until `periodMode` sync runs — must match default "all" (no range) on first paint. */
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
     const bounds = getFinancePeriodClosedBounds(
@@ -707,7 +707,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Requests" subtitle="Manage incoming service requests and leads. Period defaults to the current calendar month (same as Finance: All · Monthly · Week · Date range).">
+        <PageHeader title="Requests" subtitle="Manage incoming service requests and leads.">
           <div className="relative flex items-center gap-2" ref={filterRef}>
             <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
             {(filterPriority !== "all" || filterService !== "all" || periodMode !== DEFAULT_FINANCE_PERIOD_MODE || buFilter.selectedBuId) && (

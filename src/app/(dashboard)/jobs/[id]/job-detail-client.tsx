@@ -4,30 +4,38 @@ import type { JobDetailBundle } from "@/services/jobs";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { formatDistanceStrict } from "date-fns/formatDistanceStrict";
+import { parseISO } from "date-fns/parseISO";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
+import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeft,
   Building2,
+  Calendar,
   Check,
   CheckCircle2,
   ChevronDown,
+  ClipboardCheck,
   Search,
   Copy,
+  CreditCard,
   FileText,
+  HardHat,
   Upload,
   ShieldCheck,
   Plus,
   ImagePlus,
   ExternalLink,
   AlertTriangle,
-  CreditCard,
+  PauseCircle,
   RefreshCw,
   Timer,
   X,
@@ -71,7 +79,7 @@ import {
   canMarkReportUploaded,
   canSendReportAndRequestFinalPayment,
   getJobStatusActions,
-  isJobInProgressStatus,
+  jobStatusAfterResumeFromOnHold,
   normalizeTotalPhases,
   reportPhaseIndices,
   reportPhaseLabel,
@@ -135,6 +143,7 @@ import {
 } from "@/lib/job-office-cancellation";
 import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
+import { jobReportLinkHref } from "@/lib/job-report-link";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
 import {
   JobMoneyDrawer,
@@ -145,6 +154,12 @@ import {
 import { executeJobMoneyAction } from "@/services/job-money-actions";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
+import {
+  buildSchedulePatchForResume,
+  localHmFromIsoTimestamp,
+  onHoldSnapshotArrivalYmd,
+  validateResumeArrivalDate,
+} from "@/lib/job-on-hold";
 
 const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned, dot: true },
@@ -154,6 +169,7 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   in_progress_phase1: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1, dot: true },
   in_progress_phase2: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2, dot: true },
   in_progress_phase3: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3, dot: true },
+  on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
   final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
   need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
@@ -238,17 +254,19 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
   );
 }
 
-const JOB_FLOW_STEPS: { label: string; statuses: Job["status"][] }[] = [
-  { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"] },
-  { label: "On site", statuses: ["in_progress_phase1", "in_progress_phase2", "in_progress_phase3"] },
-  { label: "Final check", statuses: ["final_check", "need_attention"] },
-  { label: "Awaiting payment", statuses: ["awaiting_payment"] },
-  { label: "Completed", statuses: ["completed"] },
+/** Six-stage pipeline shown on job detail (matches ops mental model). */
+const JOB_FLOW_STEPS: readonly { label: string; statuses: readonly Job["status"][]; icon: LucideIcon }[] = [
+  { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"], icon: Calendar },
+  { label: "On site", statuses: ["in_progress_phase1", "in_progress_phase2", "in_progress_phase3"], icon: HardHat },
+  { label: "On hold", statuses: ["on_hold"], icon: PauseCircle },
+  { label: "Final checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
+  { label: "Awaiting payment", statuses: ["awaiting_payment"], icon: CreditCard },
+  { label: "Completed", statuses: ["completed"], icon: CheckCircle2 },
 ];
 
 function jobFlowActiveStepIndex(status: Job["status"]): number {
-  if (status === "cancelled") return -1;
-  const i = JOB_FLOW_STEPS.findIndex((s) => s.statuses.includes(status));
+  if (status === "cancelled" || status === "deleted") return -1;
+  const i = JOB_FLOW_STEPS.findIndex((s) => (s.statuses as readonly string[]).includes(status));
   return i >= 0 ? i : 0;
 }
 
@@ -309,6 +327,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingOwner, setSavingOwner] = useState(false);
   const [partnerModalOpen, setPartnerModalOpen] = useState(false);
   const [cancelJobOpen, setCancelJobOpen] = useState(false);
+  const [putOnHoldOpen, setPutOnHoldOpen] = useState(false);
+  const [putOnHoldReason, setPutOnHoldReason] = useState("");
+  const [putOnHoldSaving, setPutOnHoldSaving] = useState(false);
+  const [resumeJobOpen, setResumeJobOpen] = useState(false);
+  const [resumeArrivalDate, setResumeArrivalDate] = useState("");
+  const [resumeArrivalTime, setResumeArrivalTime] = useState("");
+  const [resumeSaving, setResumeSaving] = useState(false);
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
   const [validatingComplete, setValidatingComplete] = useState(false);
   const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
@@ -369,6 +394,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingScope, setSavingScope] = useState(false);
   const [additionalNotesDraft, setAdditionalNotesDraft] = useState("");
   const [savingAdditionalNotes, setSavingAdditionalNotes] = useState(false);
+  const [reportLinkDraft, setReportLinkDraft] = useState("");
+  const [savingReportLink, setSavingReportLink] = useState(false);
   const [sitePhotoUploading, setSitePhotoUploading] = useState(false);
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
@@ -889,6 +916,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setAdditionalNotesDraft(job.additional_notes ?? "");
   }, [job?.id, job?.additional_notes]);
 
+  useEffect(() => {
+    if (!job) return;
+    setReportLinkDraft(job.report_link ?? "");
+  }, [job?.id, job?.report_link]);
+
   const handleJobUpdate = useCallback(async (
     jobId: string,
     updates: Partial<Job>,
@@ -1017,9 +1049,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         partner_cost: totals.partnerTotal,
         title: titleOut,
         customer_final_payment,
-        ...(service.default_description?.trim()
-          ? { scope: service.default_description.trim() }
-          : {}),
       };
       setSavingJobTypeEdit(true);
       try {
@@ -1546,6 +1575,135 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return null;
     }
   }, [profile?.id, profile?.full_name, customerPayments, partnerPayments]);
+
+  const confirmPutOnHold = useCallback(async () => {
+    if (!job) return;
+    const reason = putOnHoldReason.trim();
+    if (!reason) {
+      toast.error("Add a short reason for on hold.");
+      return;
+    }
+    setPutOnHoldSaving(true);
+    try {
+      const extraPatch: Partial<Job> = {
+        on_hold_previous_status: job.status,
+        on_hold_at: new Date().toISOString(),
+        on_hold_reason: reason,
+        on_hold_snapshot_scheduled_date: job.scheduled_date ?? null,
+        on_hold_snapshot_scheduled_start_at: job.scheduled_start_at ?? null,
+        on_hold_snapshot_scheduled_end_at: job.scheduled_end_at ?? null,
+        on_hold_snapshot_scheduled_finish_date: job.scheduled_finish_date ?? null,
+      };
+      const updated = await handleStatusChange(job, "on_hold", { extraPatch });
+      if (updated) {
+        setPutOnHoldOpen(false);
+        setPutOnHoldReason("");
+        try {
+          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        } catch {
+          /* non-blocking */
+        }
+      }
+    } finally {
+      setPutOnHoldSaving(false);
+    }
+  }, [job, putOnHoldReason, handleStatusChange]);
+
+  const openResumeJobModal = useCallback(() => {
+    if (!job || job.status !== "on_hold") return;
+    const ymd = onHoldSnapshotArrivalYmd(job) ?? job.scheduled_date?.trim().slice(0, 10) ?? "";
+    setResumeArrivalDate(ymd);
+    const hm =
+      localHmFromIsoTimestamp(job.on_hold_snapshot_scheduled_start_at ?? job.scheduled_start_at ?? null) ||
+      scheduleTime.trim();
+    setResumeArrivalTime(hm);
+    setResumeJobOpen(true);
+  }, [job, scheduleTime]);
+
+  const confirmResumeJob = useCallback(async () => {
+    if (!job || job.status !== "on_hold") return;
+    const snapYmd = onHoldSnapshotArrivalYmd(job);
+    const gate = validateResumeArrivalDate({ snapshotYmd: snapYmd, selectedYmd: resumeArrivalDate });
+    if (!gate.ok) {
+      toast.error(gate.message);
+      return;
+    }
+    if (!resumeArrivalTime.trim()) {
+      toast.error("Set an arrival time.");
+      return;
+    }
+    const schedule = buildSchedulePatchForResume({
+      arrivalDateYmd: resumeArrivalDate,
+      arrivalTimeHm: resumeArrivalTime,
+      snapshotStartAt: job.on_hold_snapshot_scheduled_start_at,
+      snapshotEndAt: job.on_hold_snapshot_scheduled_end_at,
+      snapshotFinishDate: job.on_hold_snapshot_scheduled_finish_date,
+      fallbackFinishDate: job.scheduled_finish_date,
+    });
+    const arrY = resumeArrivalDate.trim().slice(0, 10);
+    const finishY = (schedule.scheduled_finish_date ?? "").toString().slice(0, 10);
+    if (finishY && finishY < arrY) {
+      toast.error("Arrival date cannot be after the expected finish date.");
+      return;
+    }
+    const prevRaw = (job.on_hold_previous_status ?? "in_progress_phase1").trim();
+    const prev = jobStatusAfterResumeFromOnHold(prevRaw as Job["status"]);
+    const timerBasis = { ...job, status: "on_hold" as Job["status"] };
+    const patch: Partial<Job> = {
+      status: prev,
+      ...schedule,
+      on_hold_previous_status: null,
+      on_hold_at: null,
+      on_hold_reason: null,
+      on_hold_snapshot_scheduled_date: null,
+      on_hold_snapshot_scheduled_start_at: null,
+      on_hold_snapshot_scheduled_end_at: null,
+      on_hold_snapshot_scheduled_finish_date: null,
+      ...statusChangePartnerTimerPatch(timerBasis, prev),
+      ...statusChangeOfficeTimerPatch(timerBasis, prev),
+    };
+    setResumeSaving(true);
+    try {
+      const updated = await handleJobUpdate(job.id, patch, { silent: true, notifyPartner: false });
+      if (updated) {
+        await logAudit({
+          entityType: "job",
+          entityId: job.id,
+          entityRef: job.reference,
+          action: "status_changed",
+          fieldName: "status",
+          oldValue: job.status,
+          newValue: prev,
+          userId: profile?.id,
+          userName: profile?.full_name,
+        });
+        setResumeJobOpen(false);
+        toast.success("Job resumed");
+        try {
+          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        } catch {
+          /* non-blocking */
+        }
+        if (updated.partner_id) {
+          notifyAssignedPartnerAboutJob({
+            partnerId: updated.partner_id,
+            job: updated,
+            kind: "job_status_changed",
+            statusLabel: statusConfig[prev]?.label ?? prev,
+          });
+        }
+      }
+    } finally {
+      setResumeSaving(false);
+    }
+  }, [
+    job,
+    resumeArrivalDate,
+    resumeArrivalTime,
+    handleJobUpdate,
+    profile?.id,
+    profile?.full_name,
+  ]);
 
   const handleScheduleChange = useCallback(
     (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string) => {
@@ -2374,6 +2532,32 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     : partnerLiveActiveMs != null
       ? formatPartnerLiveTimer(partnerLiveActiveMs)
       : formatOfficeTimer(Number(job.timer_elapsed_seconds ?? 0) || 0);
+  const progressTimerActiveVisual =
+    job.timer_is_running ||
+    (partnerLiveActiveMs != null && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null);
+  const progressTimerPausedBadge =
+    (job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null) ||
+    job.status === "on_hold" ||
+    (officeTimerDisplaySeconds != null &&
+      !job.timer_is_running &&
+      job.status === "scheduled" &&
+      Number(job.timer_elapsed_seconds ?? 0) > 0);
+  const progressTimerSubline =
+    officeTimerDisplaySeconds != null
+      ? job.timer_is_running
+        ? "Running"
+        : job.status === "on_hold"
+          ? "On hold"
+          : job.status === "scheduled" && Number(job.timer_elapsed_seconds ?? 0) > 0
+            ? "Paused"
+            : "Saved"
+      : partnerLiveActiveMs != null
+        ? job.partner_timer_ended_at
+          ? "Ended"
+          : "Live"
+        : Number(job.timer_elapsed_seconds ?? 0) > 0
+          ? "Recorded"
+          : "Not started";
   const attestationDisplayName = profile?.full_name?.trim() || job.owner_name?.trim() || "Victor";
   const ownerAttestationText = `I, ${attestationDisplayName}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
@@ -2430,6 +2614,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold text-text-primary">{job.reference}</h1>
               <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
+              <JobOverdueBadge job={job} size="md" />
             </div>
             <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
             {job.status === "cancelled" && job.partner_cancelled_at ? (
@@ -2479,181 +2664,185 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ) : null}
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end sm:justify-start">
-            {statusActions.map((action, idx) => (
-              <Button
-                key={`${action.special ?? action.status}-${idx}`}
-                variant={action.destructive ? "danger" : action.primary ? "primary" : "outline"}
-                size="sm"
-                icon={<action.icon className="h-3.5 w-3.5" />}
-                disabled={action.special === "send_report_invoice" ? !sendReportFinalCheck.ok : false}
-                title={action.special === "send_report_invoice" ? sendReportFinalCheck.message : undefined}
-                onClick={() => {
-                  if (action.status === "cancelled") {
-                    setCancelPresetId(OFFICE_JOB_CANCELLATION_REASONS[0].id);
-                    setCancelDetail("");
-                    setCancelJobOpen(true);
-                    return;
-                  }
-                  if (action.special === "send_report_invoice") {
-                    setApprovalMode("review_approve");
-                    setOwnerApprovalChecked(true);
-                    setForceApprovalChecked(false);
-                    setForceApprovalReason("");
-                    setValidateCompleteOpen(true);
-                    return;
-                  }
-                  if (job.status === "need_attention" && action.status === "completed") {
-                    setApprovalMode("validate_complete");
-                    setOwnerApprovalChecked(false);
-                    setForceApprovalChecked(false);
-                    setForceApprovalReason("");
-                    setValidateCompleteOpen(true);
-                    return;
-                  }
-                  void handleStatusChange(job, action.status as Job["status"]);
-                }}
-              >
-                {action.label}
-              </Button>
-            ))}
+            {statusActions.map((action, idx) => {
+              const completeGreenClass =
+                "border-emerald-600/45 bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm dark:border-emerald-700/55 dark:bg-emerald-600 dark:hover:bg-emerald-500";
+              const holdDarkRedClass =
+                "border-red-950/40 bg-red-950/[0.08] text-red-950 hover:bg-red-950/12 dark:border-red-900/55 dark:bg-red-950/45 dark:text-red-50 dark:hover:bg-red-950/55";
+              const variant =
+                action.destructive ? "danger" : action.primary && action.tone !== "success" ? "primary" : "outline";
+              const toneClass = action.tone === "success" ? completeGreenClass : action.tone === "hold" ? holdDarkRedClass : undefined;
+              return (
+                <Button
+                  key={`${action.special ?? action.status}-${idx}`}
+                  variant={variant}
+                  className={cn(toneClass)}
+                  size="sm"
+                  icon={<action.icon className="h-3.5 w-3.5" />}
+                  disabled={action.special === "send_report_invoice" ? !sendReportFinalCheck.ok : false}
+                  title={action.special === "send_report_invoice" ? sendReportFinalCheck.message : undefined}
+                  onClick={() => {
+                    if (action.status === "cancelled") {
+                      setCancelPresetId(OFFICE_JOB_CANCELLATION_REASONS[0].id);
+                      setCancelDetail("");
+                      setCancelJobOpen(true);
+                      return;
+                    }
+                    if (action.special === "put_on_hold") {
+                      setPutOnHoldReason("");
+                      setPutOnHoldOpen(true);
+                      return;
+                    }
+                    if (action.special === "resume_job") {
+                      openResumeJobModal();
+                      return;
+                    }
+                    if (action.special === "send_report_invoice") {
+                      setApprovalMode("review_approve");
+                      setOwnerApprovalChecked(true);
+                      setForceApprovalChecked(false);
+                      setForceApprovalReason("");
+                      setValidateCompleteOpen(true);
+                      return;
+                    }
+                    if (job.status === "need_attention" && action.status === "completed") {
+                      setApprovalMode("validate_complete");
+                      setOwnerApprovalChecked(false);
+                      setForceApprovalChecked(false);
+                      setForceApprovalReason("");
+                      setValidateCompleteOpen(true);
+                      return;
+                    }
+                    void handleStatusChange(job, action.status as Job["status"]);
+                  }}
+                >
+                  {action.label}
+                </Button>
+              );
+            })}
           </div>
         </div>
 
-        {job.status !== "cancelled" ? (
+        {job.status !== "cancelled" && job.status !== "deleted" ? (
           <section
-            className="rounded-xl bg-card overflow-hidden shadow-[0_4px_24px_-8px_rgba(0,0,0,0.12)] dark:shadow-[0_4px_28px_-6px_rgba(0,0,0,0.45)]"
+            className="rounded-2xl border border-border-light bg-gradient-to-br from-card via-card to-emerald-500/[0.04] dark:to-emerald-950/20 overflow-hidden shadow-[0_2px_16px_-6px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-6px_rgba(0,0,0,0.45)]"
             aria-label="Work time and job progress"
           >
-            <div className="px-3 py-2.5 sm:px-4 sm:py-3 space-y-2.5">
-              {(officeTimerDisplaySeconds != null || partnerLiveActiveMs != null) && (
-                <div className="flex items-center justify-between gap-2 min-w-0">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div
-                      className={cn(
-                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-                        job.timer_is_running || (partnerLiveActiveMs != null && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null)
-                          ? "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
-                          : "bg-surface-tertiary/70 text-text-secondary",
-                      )}
-                      aria-hidden
-                    >
-                      <Timer className="h-4 w-4" strokeWidth={2} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[9px] font-medium uppercase tracking-wide text-text-tertiary">Work time</p>
-                      <p className="text-[11px] text-text-secondary truncate leading-tight">
-                        {officeTimerDisplaySeconds != null
-                          ? job.timer_is_running
-                            ? "Timer running"
-                            : job.status === "scheduled" && (Number(job.timer_elapsed_seconds ?? 0) > 0)
-                              ? "Paused — resume with Start Job"
-                              : "Time recorded"
-                          : job.partner_timer_ended_at
-                            ? "On-site ended"
-                            : "Live timer"}
+            <div className="px-3 py-2.5 sm:px-4 sm:py-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
+                <div className="min-w-0 flex-1 flex flex-col gap-2 lg:pr-4">
+                  <div className="flex flex-wrap items-end justify-between gap-2">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Job pipeline
+                      </p>
+                      <p className="text-sm font-semibold text-text-primary mt-0.5">
+                        {JOB_FLOW_STEPS[flowStep]?.label ?? "Progress"}
+                        <span className="ml-2 text-xs font-normal text-text-secondary tabular-nums">
+                          Step {Math.min(flowStep + 1, JOB_FLOW_STEPS.length)} of {JOB_FLOW_STEPS.length}
+                        </span>
                       </p>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {(job.partner_timer_is_paused && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null) ||
-                    (officeTimerDisplaySeconds != null &&
-                      !job.timer_is_running &&
-                      job.status === "scheduled" &&
-                      (Number(job.timer_elapsed_seconds ?? 0) > 0)) ? (
-                      <Badge variant="warning" size="sm">
-                        Paused
-                      </Badge>
-                    ) : null}
-                    <span className="text-lg sm:text-xl font-semibold tabular-nums tracking-tight text-text-primary">
-                      {officeTimerDisplaySeconds != null
-                        ? formatOfficeTimer(officeTimerDisplaySeconds)
-                        : formatPartnerLiveTimer(partnerLiveActiveMs!)}
+                    <span className="text-xs font-medium tabular-nums text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                      {Math.round(((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}% complete
                     </span>
                   </div>
-                </div>
-              )}
 
-              <div>
-                <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 mb-1.5">
-                  <div className="flex items-baseline gap-2">
-                    <p className="text-[9px] font-medium uppercase tracking-wide text-text-tertiary">Job progress</p>
-                    <span className="text-[10px] text-text-secondary tabular-nums">
-                      Step {Math.min(flowStep + 1, JOB_FLOW_STEPS.length)}/{JOB_FLOW_STEPS.length}
-                    </span>
+                  <div className="relative h-1.5 rounded-full bg-surface-tertiary/70 dark:bg-surface-tertiary/50 overflow-hidden ring-1 ring-black/[0.04] dark:ring-white/[0.06]">
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 dark:from-emerald-400 dark:to-teal-400 transition-[width] duration-500 ease-out shadow-sm"
+                      style={{ width: `${Math.min(100, ((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%` }}
+                    />
                   </div>
-                  <span className="text-[10px] tabular-nums text-text-tertiary">
-                    {Math.round(((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%
-                  </span>
-                </div>
 
-                <div className="relative h-1 rounded-full bg-surface-tertiary/60 dark:bg-surface-tertiary/40 mb-2 overflow-hidden">
-                  <div
-                    className="absolute inset-y-0 left-0 rounded-full bg-emerald-500 dark:bg-emerald-500 transition-[width] duration-300 ease-out"
-                    style={{ width: `${Math.min(100, ((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%` }}
-                  />
-                </div>
-
-                <div className="overflow-x-auto overscroll-x-contain -mx-0.5 px-0.5 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border-subtle/80">
-                  <ol className="flex min-w-max sm:min-w-0 sm:flex-wrap sm:justify-between items-stretch gap-0.5 sm:gap-0">
+                  <ol
+                    className="flex gap-0 overflow-x-auto overscroll-x-contain pb-0.5 -mx-1 px-1 snap-x snap-mandatory [scrollbar-width:thin] sm:mx-0 sm:px-0 sm:overflow-visible sm:grid sm:grid-cols-6 sm:gap-2"
+                    role="list"
+                  >
                     {JOB_FLOW_STEPS.map((step, idx) => {
                       const done = flowStep > idx;
                       const current = flowStep === idx;
+                      const Icon = step.icon;
                       return (
-                        <li key={step.label} className="flex items-center shrink-0">
-                          {idx > 0 ? (
-                            <span
-                              className={cn(
-                                "hidden sm:block w-2 md:w-5 lg:w-8 h-px shrink-0 mx-0.5 self-center mt-[0.875rem]",
-                                done ? "bg-emerald-400/60" : "bg-border-subtle/70",
-                              )}
-                              aria-hidden
-                            />
-                          ) : null}
-                          <span
-                            className={cn(
-                              "flex flex-col items-center gap-1 rounded-lg px-1.5 py-1 sm:px-2 min-w-[4.25rem] sm:min-w-0 max-w-[6.5rem] text-center transition-colors",
-                              current && "bg-emerald-500/[0.08] text-text-primary ring-1 ring-emerald-500/20",
-                              done && !current && "text-emerald-700 dark:text-emerald-400",
-                              !done && !current && "text-text-tertiary/90",
-                            )}
-                          >
+                        <li
+                          key={step.label}
+                          className={cn(
+                            "snap-center shrink-0 flex flex-col items-center text-center min-w-[5.25rem] sm:min-w-0 rounded-xl px-1.5 py-2 sm:py-2.5 transition-all duration-200",
+                            current &&
+                              "bg-emerald-500/[0.12] dark:bg-emerald-500/15 ring-2 ring-emerald-500/25 shadow-[0_0_0_1px_rgba(16,185,129,0.08)] scale-[1.02]",
+                            done && !current && "opacity-95",
+                            !done && !current && "opacity-70",
+                          )}
+                          aria-current={current ? "step" : undefined}
+                        >
+                          <div className="relative flex flex-col items-center gap-1.5 w-full">
                             {done ? (
-                              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/12">
-                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md shadow-emerald-500/25">
+                                <Check className="h-4 w-4" strokeWidth={2.5} aria-hidden />
                               </span>
                             ) : (
                               <span
                                 className={cn(
-                                  "flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums",
+                                  "flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors",
                                   current
-                                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/25"
-                                    : "bg-surface-tertiary/80 text-text-tertiary",
+                                    ? "border-emerald-500 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200 shadow-[0_0_12px_-2px_rgba(16,185,129,0.35)]"
+                                    : "border-border/80 bg-card/80 text-text-tertiary dark:bg-surface-secondary/80",
                                 )}
                               >
-                                {idx + 1}
+                                <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
                               </span>
                             )}
-                            <span className="text-[9px] sm:text-[10px] font-medium leading-tight px-0.5 line-clamp-2">
+                            <span
+                              className={cn(
+                                "text-[9px] sm:text-[10px] font-semibold leading-snug max-w-[5.5rem] sm:max-w-none text-balance",
+                                current && "text-text-primary",
+                                done && !current && "text-emerald-800 dark:text-emerald-300/90",
+                                !done && !current && "text-text-tertiary",
+                              )}
+                            >
                               {step.label}
                             </span>
-                          </span>
+                          </div>
                         </li>
                       );
                     })}
                   </ol>
                 </div>
-              </div>
 
-              {officeTimerDisplaySeconds == null &&
-              partnerLiveActiveMs == null &&
-              (isJobInProgressStatus(job.status) || job.status === "awaiting_payment") ? (
-                <p className="text-[10px] leading-snug text-text-tertiary pt-1">
-                  <strong className="font-medium text-text-secondary">Start Job</strong> begins the timer;{" "}
-                  <strong className="font-medium text-text-secondary">Pause Job</strong> freezes it;{" "}
-                  <strong className="font-medium text-text-secondary">Complete Job</strong> records the total;{" "}
-                  <strong className="font-medium text-text-secondary">Reopen</strong> then Start Job continues from that total.
-                </p>
-              ) : null}
+                <div className="flex flex-row lg:flex-col items-center justify-between gap-3 lg:justify-center shrink-0 rounded-xl lg:rounded-none border border-border/60 lg:border-0 lg:border-l border-border-light bg-card/70 dark:bg-card/40 lg:bg-transparent px-3 py-2 lg:py-1 lg:pl-4 lg:pr-1 lg:min-w-[7rem]">
+                  <div className="flex items-center gap-2.5 min-w-0 lg:flex-col lg:items-center lg:gap-1 lg:text-center">
+                    <div
+                      className={cn(
+                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent",
+                        progressTimerActiveVisual
+                          ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/20 dark:text-emerald-400"
+                          : "bg-surface-tertiary/50 text-text-secondary dark:bg-surface-tertiary/40",
+                      )}
+                      aria-hidden
+                    >
+                      <Timer className="h-4 w-4" strokeWidth={2} />
+                    </div>
+                    <div className="min-w-0 lg:w-full">
+                      <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
+                        Work time
+                      </p>
+                      <p className="text-[11px] text-text-secondary leading-snug mt-0.5 line-clamp-2">
+                        {progressTimerSubline}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {progressTimerPausedBadge ? (
+                      <Badge variant="warning" size="sm" className="text-[9px] px-1.5 py-0 h-5">
+                        Paused
+                      </Badge>
+                    ) : null}
+                    <span className="text-lg font-bold tabular-nums tracking-tight text-text-primary">
+                      {timeSpentLabel}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
         ) : (
@@ -3032,6 +3221,51 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 >
                   Save additional notes
                 </Button>
+              </div>
+
+              <div className="space-y-2 pt-3 border-t border-border-light">
+                <p className="text-xs font-medium text-text-secondary">Report link (optional)</p>
+                <p className="text-[11px] text-text-tertiary">External URL — Google Drive, Notion, shared doc. Not shown to the client.</p>
+                <Input
+                  type="url"
+                  value={reportLinkDraft}
+                  onChange={(e) => setReportLinkDraft(e.target.value)}
+                  placeholder="https://…"
+                  className="h-10"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    loading={savingReportLink}
+                    onClick={async () => {
+                      if (!job) return;
+                      setSavingReportLink(true);
+                      try {
+                        await handleJobUpdate(job.id, { report_link: reportLinkDraft.trim() || null });
+                      } finally {
+                        setSavingReportLink(false);
+                      }
+                    }}
+                  >
+                    Save report link
+                  </Button>
+                  {(() => {
+                    const href = jobReportLinkHref(reportLinkDraft || job.report_link);
+                    return href ? (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                      >
+                        Open link
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    ) : null;
+                  })()}
+                </div>
               </div>
             </div>
 
@@ -4420,6 +4654,105 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </Button>
             <Button type="button" loading={validatingComplete} disabled={!canSubmitApproval} onClick={() => void handleValidateAndComplete()}>
               {approvalMode === "review_approve" ? "Review & approve" : "Approve and continue"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={putOnHoldOpen}
+        onClose={() => {
+          if (!putOnHoldSaving) {
+            setPutOnHoldOpen(false);
+            setPutOnHoldReason("");
+          }
+        }}
+        title="Put job on hold"
+        subtitle={job.reference}
+        size="md"
+      >
+        <div className="p-4 space-y-4">
+          <p className="text-sm text-text-secondary">
+            The job leaves the on-site step until you resume. Current schedule is saved for the resume flow; add a reason for your team and the audit trail.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason *</label>
+            <textarea
+              value={putOnHoldReason}
+              onChange={(e) => setPutOnHoldReason(e.target.value)}
+              rows={3}
+              placeholder="Why is this job on hold?"
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[72px]"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2 justify-end pt-1">
+            <Button variant="ghost" size="sm" disabled={putOnHoldSaving} onClick={() => { setPutOnHoldOpen(false); setPutOnHoldReason(""); }}>
+              Back
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-red-950/40 bg-red-950/[0.08] text-red-950 hover:bg-red-950/12 dark:border-red-900/55 dark:bg-red-950/45 dark:text-red-50 dark:hover:bg-red-950/55"
+              loading={putOnHoldSaving}
+              onClick={() => void confirmPutOnHold()}
+            >
+              Put on hold
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={resumeJobOpen}
+        onClose={() => {
+          if (!resumeSaving) setResumeJobOpen(false);
+        }}
+        title="Resume job"
+        subtitle={job.reference}
+        size="md"
+      >
+        <div className="p-4 space-y-4">
+          {job.on_hold_at ? (
+            <div className="rounded-lg border border-border-light bg-surface-hover/50 px-3 py-2 space-y-1 text-xs text-text-secondary">
+              <p>
+                <span className="font-semibold text-text-primary">Time on hold:</span>{" "}
+                {(() => {
+                  try {
+                    const t = parseISO(job.on_hold_at!);
+                    return Number.isNaN(t.getTime()) ? "—" : formatDistanceStrict(t, new Date(), { addSuffix: false });
+                  } catch {
+                    return "—";
+                  }
+                })()}
+              </p>
+              {job.on_hold_reason?.trim() ? (
+                <p>
+                  <span className="font-semibold text-text-primary">Reason:</span> {job.on_hold_reason.trim()}
+                </p>
+              ) : (
+                <p className="text-text-tertiary italic">No reason recorded.</p>
+              )}
+            </div>
+          ) : null}
+          <p className="text-sm text-text-secondary">
+            Confirm arrival for the partner. If the saved arrival date is no longer in the future, you must pick a later date before resuming.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date *</label>
+              <Input type="date" value={resumeArrivalDate} onChange={(e) => setResumeArrivalDate(e.target.value)} className="h-10" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival time *</label>
+              <TimeSelect value={resumeArrivalTime} onChange={(v) => setResumeArrivalTime(v)} />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 justify-end pt-1">
+            <Button variant="ghost" size="sm" disabled={resumeSaving} onClick={() => setResumeJobOpen(false)}>
+              Back
+            </Button>
+            <Button variant="primary" size="sm" loading={resumeSaving} onClick={() => void confirmResumeJob()}>
+              Resume job
             </Button>
           </div>
         </div>

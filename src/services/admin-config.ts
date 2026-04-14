@@ -1,5 +1,5 @@
 import { getSupabase } from "./base";
-import type { NavGroup } from "@/lib/constants";
+import type { NavGroup, NavItem } from "@/lib/constants";
 import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
 
 const SERVICES_NAV_ITEM = {
@@ -32,6 +32,63 @@ const SETTINGS_NAV_ITEM = {
   icon: "settings",
   permission: "settings" as const,
 };
+
+const INBOX_GROUP_LABEL = "Inbox";
+const INBOX_HREFS = ["/tickets", "/outreach"] as const;
+
+function defaultInboxItem(href: (typeof INBOX_HREFS)[number]): NavItem {
+  if (href === "/tickets") return { label: "Tickets", href: "/tickets", icon: "message-square" };
+  return { label: "Outreach", href: "/outreach", icon: "mail-plus" };
+}
+
+/** Pull Tickets + Outreach into a single Inbox group directly under Overview (migrates legacy layouts). */
+function relocateInboxItems(nav: NavGroup[]): NavGroup[] {
+  const found = new Map<string, NavItem>();
+  const rest = nav
+    .filter((g) => g.label !== INBOX_GROUP_LABEL)
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((i) => {
+        if (i.href === "/tickets" || i.href === "/outreach") {
+          found.set(i.href, i);
+          return false;
+        }
+        return true;
+      }),
+    }));
+  const items: NavItem[] = INBOX_HREFS.map((h) => found.get(h) ?? defaultInboxItem(h));
+  const inboxGroup: NavGroup = { label: INBOX_GROUP_LABEL, items };
+  const overviewIdx = rest.findIndex((g) => g.label === "Overview");
+  if (overviewIdx >= 0) {
+    const out = [...rest];
+    out.splice(overviewIdx + 1, 0, inboxGroup);
+    return out;
+  }
+  return [inboxGroup, ...rest];
+}
+
+const PIPELINE_SIDEBAR_HREFS = new Set(["/pipelines/partners", "/pipelines/corporate"]);
+
+/** Hide partner/corporate pipeline pages from the sidebar (routes remain reachable by URL). */
+function removePipelineSidebarNav(nav: NavGroup[]): NavGroup[] {
+  return nav
+    .filter((g) => g.label !== "Pipeline")
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((i) => !PIPELINE_SIDEBAR_HREFS.has(i.href)),
+    }))
+    .filter((g) => g.items.length > 0);
+}
+
+/** Activity log moved to header; drop legacy sidebar link. */
+function removeActivitySidebarNav(nav: NavGroup[]): NavGroup[] {
+  return nav
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((i) => i.href !== "/activity"),
+    }))
+    .filter((g) => g.items.length > 0);
+}
 
 /**
  * Migrate stored navigation: Services → Admin; strip duplicates; Team → People; Payroll nav item stripped (hidden).
@@ -85,7 +142,7 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     next.splice(financeIdx, 0, peopleGroup);
   }
 
-  return next;
+  return removePipelineSidebarNav(removeActivitySidebarNav(relocateInboxItems(next)));
 }
 
 function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByRole {
@@ -99,6 +156,13 @@ function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByR
 
 const DEFAULT_NAVIGATION: NavGroup[] = [
   { label: "Overview", items: [{ label: "Dashboard", href: "/", icon: "grid-2x2", permission: "dashboard" }] },
+  {
+    label: INBOX_GROUP_LABEL,
+    items: [
+      { label: "Tickets", href: "/tickets", icon: "message-square" },
+      { label: "Outreach", href: "/outreach", icon: "mail-plus" },
+    ],
+  },
   {
     label: "Operations",
     items: [

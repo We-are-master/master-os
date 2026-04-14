@@ -79,6 +79,7 @@ function tierProgress(revenue: number, tiers: CommissionTier[]): {
 }
 
 export function OverviewExecutiveBundle() {
+  const showInvoiceDueCashForecast = false;
   const { bounds, rangeLabel, preset, customFrom, customTo } = useDashboardDateRange();
   const boundsKey = bounds ? `${bounds.fromIso}|${bounds.toIso}` : "all";
   const rangeDepsKey = `${preset}|${customFrom}|${customTo}`;
@@ -758,7 +759,7 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card>
 
-      <Card padding="none" className="overflow-hidden border-border-light">
+      {showInvoiceDueCashForecast ? <Card padding="none" className="overflow-hidden border-border-light">
         <div className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 border-b border-border-light/70">
           <div className="flex items-center gap-2 min-w-0">
             <div className="h-7 w-7 rounded-lg bg-emerald-500/15 flex items-center justify-center shrink-0">
@@ -797,7 +798,7 @@ export function OverviewExecutiveBundle() {
             <p className="text-[10px] text-text-tertiary">Set a monthly sales goal in Settings.</p>
           )}
         </div>
-      </Card>
+      </Card> : null}
 
       <Card padding="none" className="overflow-hidden border-border-light">
         <CardHeader className="px-4 pt-3 pb-2">

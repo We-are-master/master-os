@@ -13,7 +13,7 @@ import {
   prepareJobRowForUpdate,
 } from "@/lib/job-schema-compat";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
-import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { isSupabaseMissingColumnError, parsePostgrestUnknownColumnName } from "@/lib/supabase-schema-compat";
 import {
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
   jobHasPartnerSet,
@@ -93,6 +93,7 @@ export const JOB_LIST_ALL_TAB_STATUSES = [
   "in_progress_phase1",
   "in_progress_phase2",
   "in_progress_phase3",
+  "on_hold",
   "final_check",
   "awaiting_payment",
   "need_attention",
@@ -106,6 +107,7 @@ export function jobMatchesJobsManagementTab(jobStatus: string, tabId: string): b
   }
   if (tabId === "unassigned") return jobStatus === "unassigned" || jobStatus === "auto_assigning";
   if (tabId === "scheduled") return jobStatus === "scheduled" || jobStatus === "late";
+  if (tabId === "on_hold") return jobStatus === "on_hold";
   if (tabId === "in_progress") return (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(jobStatus);
   if (tabId === "final_check") return jobStatus === "final_check" || jobStatus === "need_attention";
   if (tabId === "awaiting_payment") return jobStatus === "awaiting_payment";
@@ -138,6 +140,7 @@ export function jobVisibleOnSchedule(job: Pick<Job, "status" | "partner_id" | "p
     jobRowMatchesJobsManagementTab(job, "unassigned") ||
     jobRowMatchesJobsManagementTab(job, "scheduled") ||
     jobRowMatchesJobsManagementTab(job, "in_progress") ||
+    job.status === "on_hold" ||
     jobRowMatchesJobsManagementTab(job, "final_check")
   );
 }
@@ -322,6 +325,21 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
       }
     );
   }
+  if (params.status === "on_hold") {
+    const { status: _omit, ...rest } = params;
+    return queryList<Job>(
+      "jobs",
+      {
+        ...rest,
+        status: "on_hold",
+        jobsRequirePartnerSet: true,
+      },
+      {
+        searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
+        defaultSort: "created_at",
+      },
+    );
+  }
   if (params.status === "unassigned") {
     const { status: _omit, ...rest } = params;
     return queryList<Job>(
@@ -459,11 +477,29 @@ export async function createJob(
     baseRow.longitude = coords.longitude;
   }
   const row = prepareJobRowForInsert(baseRow);
-  let { data, error } = await supabase.from("jobs").insert(row).select().single();
-  if (error && isPostgrestWriteRetryableError(error)) {
-    const retry = await supabase.from("jobs").insert(applyJobDbCompat(baseRow)).select().single();
-    data = retry.data;
-    error = retry.error;
+  let attemptPayload: Record<string, unknown> = { ...row };
+  let { data, error } = await supabase.from("jobs").insert(attemptPayload).select().single();
+  for (let attempt = 0; attempt < 32 && error; attempt++) {
+    const col = parsePostgrestUnknownColumnName(error);
+    if (
+      (isPostgrestWriteRetryableError(error) || isSupabaseMissingColumnError(error)) &&
+      col &&
+      col in attemptPayload
+    ) {
+      delete attemptPayload[col];
+      const retry = await supabase.from("jobs").insert(attemptPayload).select().single();
+      data = retry.data;
+      error = retry.error;
+      continue;
+    }
+    if (error && isPostgrestWriteRetryableError(error)) {
+      attemptPayload = { ...applyJobDbCompat(baseRow) };
+      const retry = await supabase.from("jobs").insert(attemptPayload).select().single();
+      data = retry.data;
+      error = retry.error;
+      continue;
+    }
+    break;
   }
   if (error) throw error;
   let job = data as Job;
@@ -609,12 +645,29 @@ export async function updateJob(
     return supabase.from("jobs").update(row).eq("id", trimmedId).select("*");
   }
 
-  let { data: rows, error } = await runUpdateReturning(patch);
-  if (error && isPostgrestWriteRetryableError(error)) {
-    /** Use full `patch` (incl. geocoded lat/lng), not `effectivePatch` — compat strip must not drop coords. */
-    const retry = await runUpdateReturning(applyJobDbCompat({ ...patch }));
-    rows = retry.data;
-    error = retry.error;
+  let patchPayload: Record<string, unknown> = { ...patch };
+  let { data: rows, error } = await runUpdateReturning(patchPayload);
+  for (let attempt = 0; attempt < 32 && error; attempt++) {
+    const col = parsePostgrestUnknownColumnName(error);
+    if (
+      (isPostgrestWriteRetryableError(error) || isSupabaseMissingColumnError(error)) &&
+      col &&
+      col in patchPayload
+    ) {
+      delete patchPayload[col];
+      const retry = await runUpdateReturning(patchPayload);
+      rows = retry.data;
+      error = retry.error;
+      continue;
+    }
+    if (error && isPostgrestWriteRetryableError(error)) {
+      patchPayload = { ...applyJobDbCompat({ ...patchPayload }) };
+      const retry = await runUpdateReturning(patchPayload);
+      rows = retry.data;
+      error = retry.error;
+      continue;
+    }
+    break;
   }
   if (error) throw error;
   if (!rows?.length) {

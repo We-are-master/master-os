@@ -7,13 +7,13 @@ import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings, Menu, LogOut, Moon, Sun, Sparkles,
-  Search, X,
+  Search, X, History,
 } from "lucide-react";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import Link from "next/link";
 import { useTheme } from "@/hooks/use-theme";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { getSupabase } from "@/services/base";
 
 // ── Global Search ────────────────────────────────────────────────────────────
@@ -239,9 +239,11 @@ function GlobalSearch() {
 // ── Header ───────────────────────────────────────────────────────────────────
 
 export function Header() {
+  const pathname = usePathname();
   const { toggleMobile } = useSidebar();
   const { profile } = useProfile();
   const { resolved, toggle: toggleTheme } = useTheme();
+  const activityLogActive = pathname === "/activity" || pathname.startsWith("/activity/");
   const displayName = profile?.full_name || "User";
   const displayRole = profile?.role
     ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1)
@@ -288,6 +290,19 @@ export function Header() {
             )}
           </AnimatePresence>
         </button>
+        <Link
+          href="/activity"
+          className={cn(
+            "h-9 w-9 rounded-lg flex items-center justify-center transition-colors",
+            activityLogActive
+              ? "bg-primary/15 text-primary"
+              : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
+          )}
+          title="Activity log"
+          aria-label="Activity log"
+        >
+          <History className="h-[18px] w-[18px]" />
+        </Link>
         <NotificationsMenu />
         <button
           type="button"

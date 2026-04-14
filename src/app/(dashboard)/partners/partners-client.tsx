@@ -2735,7 +2735,10 @@ function PartnerDetailDrawer({
         setActivateForceOpen(true);
         return;
       }
-      await onPartnerPatch({ status: "active", partner_status_reasons: [] });
+      await onPartnerPatch({
+        status: "active",
+        partner_status_reasons: force ? ["force_activated"] : [],
+      });
       setActivateForceOpen(false);
     },
     [partner, computedCompliance, onPartnerPatch],
