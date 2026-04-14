@@ -16,10 +16,10 @@ import { fadeInUp, staggerItem } from "@/lib/motion";
 import { Plus, Loader2, FileText, Wallet, Building2, Pencil, Trash2, Users, HardHat } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { InternalCost, InternalCostStatus, PayrollInternalEmploymentType, Squad } from "@/types/database";
+import type { InternalCost, InternalCostStatus, PayrollInternalEmploymentType, BusinessUnit } from "@/types/database";
 import { getSupabase } from "@/services/base";
-import { listSquads, createSquad, updateSquad, deleteSquad } from "@/services/teams";
-import { SquadModal } from "@/components/teams/squad-modal";
+import { listBusinessUnits, createBusinessUnit, updateBusinessUnit, deleteBusinessUnit } from "@/services/teams";
+import { BuModal } from "@/components/teams/bu-modal";
 import {
   PAYROLL_FREQUENCY_OPTIONS,
   PAYROLL_COST_CATEGORIES,
@@ -56,26 +56,26 @@ function payrollProfileEmail(raw: unknown): string | undefined {
 
 type PeopleTab = "internal" | "contractors";
 
-/** Payroll row + joined squad name for cards */
-export type PeopleRow = InternalCost & { squad_name?: string | null };
+/** Payroll row + joined BU name for cards */
+export type PeopleRow = InternalCost & { bu_name?: string | null };
 
 function mapCostRows(
   data: unknown,
 ): PeopleRow[] {
-  const list = (data ?? []) as (InternalCost & { squads?: { name: string } | null })[];
+  const list = (data ?? []) as (InternalCost & { business_units?: { name: string } | null })[];
   return list.map((r) => {
-    const { squads, ...rest } = r;
-    return { ...rest, squad_name: squads?.name ?? null };
+    const { business_units, ...rest } = r;
+    return { ...rest, bu_name: business_units?.name ?? null };
   });
 }
 
 export default function PeoplePage() {
   const [section, setSection] = useState<PeopleTab>("internal");
   const [rows, setRows] = useState<PeopleRow[]>([]);
-  const [squads, setSquads] = useState<Squad[]>([]);
+  const [bus, setBus] = useState<BusinessUnit[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [squadFilter, setSquadFilter] = useState<string>("all");
+  const [buFilter, setBuFilter] = useState<string>("all");
   const [selected, setSelected] = useState<PeopleRow | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -90,25 +90,25 @@ export default function PeoplePage() {
   const [formDue, setFormDue] = useState("");
   const [formFreq, setFormFreq] = useState<"" | "weekly" | "biweekly" | "monthly">("monthly");
   const [formEmployment, setFormEmployment] = useState<PayrollInternalEmploymentType>("employee");
-  const [formSquadId, setFormSquadId] = useState("");
+  const [formBuId, setFormBuId] = useState("");
 
-  const [squadModalOpen, setSquadModalOpen] = useState(false);
-  const [editingSquad, setEditingSquad] = useState<Squad | null>(null);
-  const [squadSaving, setSquadSaving] = useState(false);
+  const [buModalOpen, setBuModalOpen] = useState(false);
+  const [editingBu, setEditingBu] = useState<BusinessUnit | null>(null);
+  const [buSaving, setBuSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const supabase = getSupabase();
       const [sq, costsRes] = await Promise.all([
-        listSquads(),
+        listBusinessUnits(),
         supabase
           .from("payroll_internal_costs")
-          .select("*, squads(name)")
+          .select("*, business_units(name)")
           .order("due_date", { ascending: true, nullsFirst: false })
           .order("created_at", { ascending: false }),
       ]);
-      setSquads(sq);
+      setBus(sq);
       if (costsRes.error) {
         const { data: fallback, error: fbErr } = await supabase
           .from("payroll_internal_costs")
@@ -136,23 +136,23 @@ export default function PeoplePage() {
     const want: PayrollInternalEmploymentType =
       section === "internal" ? "employee" : "self_employed";
     let list = rows.filter((r) => r.employment_type === want);
-    if (squadFilter === "unassigned") {
-      list = list.filter((r) => !r.squad_id);
-    } else if (squadFilter !== "all") {
-      list = list.filter((r) => r.squad_id === squadFilter);
+    if (buFilter === "unassigned") {
+      list = list.filter((r) => !r.bu_id);
+    } else if (buFilter !== "all") {
+      list = list.filter((r) => r.bu_id === buFilter);
     }
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((r) => {
         const name = (r.payee_name ?? "").toLowerCase();
         const desc = (r.description ?? "").toLowerCase();
-        const sq = (r.squad_name ?? "").toLowerCase();
+        const sq = (r.bu_name ?? "").toLowerCase();
         return name.includes(q) || desc.includes(q) || sq.includes(q);
       });
     }
     list = list.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard");
     return list;
-  }, [rows, section, search, squadFilter]);
+  }, [rows, section, search, buFilter]);
 
   const rosterCounts = useMemo(() => {
     const base = rows.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard");
@@ -215,7 +215,7 @@ export default function PeoplePage() {
     await load();
     if (!id) return;
     const supabase = getSupabase();
-    const { data, error } = await supabase.from("payroll_internal_costs").select("*, squads(name)").eq("id", id).maybeSingle();
+    const { data, error } = await supabase.from("payroll_internal_costs").select("*, business_units(name)").eq("id", id).maybeSingle();
     if (error) {
       const { data: fb } = await supabase.from("payroll_internal_costs").select("*").eq("id", id).maybeSingle();
       if (fb) setSelected(fb as PeopleRow);
@@ -261,7 +261,7 @@ export default function PeoplePage() {
         equity_vesting_notes: null as string | null,
         equity_start_date: null as string | null,
         payroll_profile: {},
-        squad_id: formSquadId.trim() || null,
+        bu_id: formBuId.trim() || null,
         created_at: now,
         updated_at: now,
       };
@@ -273,7 +273,7 @@ export default function PeoplePage() {
         throw new Error(insErr.message || "Insert failed");
       }
       if (compatLevel === 1) {
-        toast.warning("Person created — apply migration 096 to enable squads.");
+        toast.warning("Person created — apply migration 096 to enable business units.");
       } else if (compatLevel >= 2 && compatLevel <= 3) {
         toast.warning("Person created — DB missing lifecycle/profile columns; run migration 093 when you can.");
       } else if (compatLevel >= 4 && compatLevel <= 5) {
@@ -289,12 +289,12 @@ export default function PeoplePage() {
       setFormOtherDesc("");
       setFormAmount("");
       setFormDue("");
-      setFormSquadId("");
+      setFormBuId("");
       await load();
       if (inserted) {
         const ic = inserted as InternalCost;
-        const sn = ic.squad_id ? squads.find((s) => s.id === ic.squad_id)?.name ?? null : null;
-        setSelected({ ...ic, squad_name: sn });
+        const sn = ic.bu_id ? bus.find((s) => s.id === ic.bu_id)?.name ?? null : null;
+        setSelected({ ...ic, bu_name: sn });
         setDrawerOpen(true);
       }
     } catch (e) {
@@ -304,37 +304,37 @@ export default function PeoplePage() {
     }
   };
 
-  const squadFilterOptions = useMemo(
+  const buFilterOptions = useMemo(
     () => [
-      { value: "all", label: "All squads" },
-      { value: "unassigned", label: "No squad" },
-      ...squads.map((s) => ({ value: s.id, label: s.name })),
+      { value: "all", label: "All BUs" },
+      { value: "unassigned", label: "No BU" },
+      ...bus.map((s) => ({ value: s.id, label: s.name })),
     ],
-    [squads],
+    [bus],
   );
 
-  const openAddSquad = () => {
-    setEditingSquad(null);
-    setSquadModalOpen(true);
+  const openAddBu = () => {
+    setEditingBu(null);
+    setBuModalOpen(true);
   };
 
-  const openEditSquad = (s: Squad) => {
-    setEditingSquad(s);
-    setSquadModalOpen(true);
+  const openEditBu = (s: BusinessUnit) => {
+    setEditingBu(s);
+    setBuModalOpen(true);
   };
 
-  const handleSaveSquad = async (name: string) => {
-    setSquadSaving(true);
+  const handleSaveBu = async (name: string) => {
+    setBuSaving(true);
     try {
-      if (editingSquad) {
-        await updateSquad(editingSquad.id, { name });
-        toast.success("Squad updated");
+      if (editingBu) {
+        await updateBusinessUnit(editingBu.id, { name });
+        toast.success("BU updated");
       } else {
-        await createSquad(name);
-        toast.success("Squad created");
+        await createBusinessUnit(name);
+        toast.success("BU created");
       }
-      setSquadModalOpen(false);
-      setEditingSquad(null);
+      setBuModalOpen(false);
+      setEditingBu(null);
       await load();
     } catch (e) {
       const msg =
@@ -342,23 +342,23 @@ export default function PeoplePage() {
           ? e.message
           : typeof e === "object" && e !== null && "message" in (e as object)
             ? String((e as { message: unknown }).message)
-            : "Failed to save squad";
-      console.error("Save squad failed", e);
+            : "Failed to save BU";
+      console.error("Save BU failed", e);
       toast.error(msg);
     } finally {
-      setSquadSaving(false);
+      setBuSaving(false);
     }
   };
 
-  const handleDeleteSquad = async (s: Squad) => {
-    if (!confirm(`Remove squad “${s.name}”? People in this squad will become unassigned.`)) return;
+  const handleDeleteBu = async (s: BusinessUnit) => {
+    if (!confirm(`Remove BU “${s.name}”? People in this BU will become unassigned.`)) return;
     try {
-      await deleteSquad(s.id);
-      toast.success("Squad removed");
-      if (squadFilter === s.id) setSquadFilter("all");
+      await deleteBusinessUnit(s.id);
+      toast.success("BU removed");
+      if (buFilter === s.id) setBuFilter("all");
       await load();
     } catch {
-      toast.error("Failed to delete squad");
+      toast.error("Failed to delete BU");
     }
   };
 
@@ -367,22 +367,22 @@ export default function PeoplePage() {
       <div className="space-y-6">
         <PageHeader
           title="Workforce"
-          subtitle="Working roster — internal employees and self-employed contractors. Open a card for profile photo, contact details, compliance documents, and pay. Squads group people the same way as the field teams."
+          subtitle="Working roster — internal employees and self-employed contractors. Open a card for profile photo, contact details, compliance documents, and pay. Business Units group people the same way as the field teams."
         >
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               size="sm"
               icon={<Building2 className="h-4 w-4" />}
-              onClick={openAddSquad}
+              onClick={openAddBu}
             >
-              Add squad
+              Add BU
             </Button>
             <Button
               icon={<Plus className="h-4 w-4" />}
               onClick={() => {
                 setFormEmployment(section === "internal" ? "employee" : "self_employed");
-                setFormSquadId(squadFilter !== "all" && squadFilter !== "unassigned" ? squadFilter : "");
+                setFormBuId(buFilter !== "all" && buFilter !== "unassigned" ? buFilter : "");
                 setAddOpen(true);
               }}
             >
@@ -397,10 +397,10 @@ export default function PeoplePage() {
           <span className="font-medium text-text-secondary">Contractors</span> for self-billed partners. Finance → Payroll keeps commission runs and recurring bills; people live here.
         </p>
 
-        {squads.length > 0 && (
+        {bus.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 px-1">
-            <span className="text-xs font-medium text-text-tertiary">Squads:</span>
-            {squads.map((s) => (
+            <span className="text-xs font-medium text-text-tertiary">Business Units:</span>
+            {bus.map((s) => (
               <div key={s.id} className="inline-flex items-center gap-0.5 rounded-full border border-border-light bg-surface-hover/50 pl-2.5 pr-1 py-0.5">
                 <span className="text-xs font-medium text-text-primary">{s.name}</span>
                 <Button
@@ -409,7 +409,7 @@ export default function PeoplePage() {
                   size="sm"
                   className="h-6 w-6 p-0"
                   aria-label={`Edit ${s.name}`}
-                  onClick={() => openEditSquad(s)}
+                  onClick={() => openEditBu(s)}
                   icon={<Pencil className="h-3 w-3" />}
                 />
                 <Button
@@ -418,7 +418,7 @@ export default function PeoplePage() {
                   size="sm"
                   className="h-6 w-6 p-0 text-red-600"
                   aria-label={`Delete ${s.name}`}
-                  onClick={() => void handleDeleteSquad(s)}
+                  onClick={() => void handleDeleteBu(s)}
                   icon={<Trash2 className="h-3 w-3" />}
                 />
               </div>
@@ -447,15 +447,15 @@ export default function PeoplePage() {
             />
             <div className="flex flex-col sm:flex-row gap-2 sm:items-center w-full lg:max-w-2xl">
               <Select
-                value={squadFilter}
-                onChange={(e) => setSquadFilter(e.target.value)}
-                options={squadFilterOptions}
+                value={buFilter}
+                onChange={(e) => setBuFilter(e.target.value)}
+                options={buFilterOptions}
                 className="min-w-[160px] shrink-0"
               />
               <SearchInput
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by name, role, squad…"
+                placeholder="Search by name, role, BU…"
                 className="flex-1 w-full min-w-0"
               />
             </div>
@@ -520,9 +520,9 @@ export default function PeoplePage() {
                           {emailLine ? <p className="text-xs text-text-secondary truncate">{emailLine}</p> : null}
                           <p className="text-xs text-text-tertiary line-clamp-2">{r.description}</p>
                           <div className="flex flex-wrap gap-1.5 mt-2">
-                            {r.squad_name ? (
+                            {r.bu_name ? (
                               <Badge variant="default" size="sm" className="max-w-[140px] truncate">
-                                {r.squad_name}
+                                {r.bu_name}
                               </Badge>
                             ) : null}
                             <Badge variant={stage === "active" ? "success" : "info"} size="sm">
@@ -567,21 +567,21 @@ export default function PeoplePage() {
 
       <WorkforcePersonDrawer
         person={selected}
-        squads={squads}
+        bus={bus}
         open={drawerOpen && !!selected}
         onClose={closeDrawer}
         onSaved={handleDrawerSaved}
       />
 
-      <SquadModal
-        open={squadModalOpen}
+      <BuModal
+        open={buModalOpen}
         onClose={() => {
-          setSquadModalOpen(false);
-          setEditingSquad(null);
+          setBuModalOpen(false);
+          setEditingBu(null);
         }}
-        initial={editingSquad}
-        onSave={handleSaveSquad}
-        saving={squadSaving}
+        initial={editingBu}
+        onSave={handleSaveBu}
+        saving={buSaving}
       />
 
       <Modal
@@ -667,10 +667,10 @@ export default function PeoplePage() {
             className="min-w-0"
           />
           <Select
-            label="Squad"
-            value={formSquadId}
-            onChange={(e) => setFormSquadId(e.target.value)}
-            options={[{ value: "", label: "— No squad" }, ...squads.map((s) => ({ value: s.id, label: s.name }))]}
+            label="Business Unit"
+            value={formBuId}
+            onChange={(e) => setFormBuId(e.target.value)}
+            options={[{ value: "", label: "— No BU" }, ...bus.map((s) => ({ value: s.id, label: s.name }))]}
             className="min-w-0"
           />
           <div className="flex flex-col-reverse gap-2 pt-3 sm:flex-row sm:justify-end sm:gap-2 sm:pt-2 sticky bottom-0 z-[1] bg-card pb-3 -mx-4 px-4 sm:static sm:z-0 sm:mx-0 sm:px-0 sm:pb-0 border-t border-border-light/80 sm:border-0 mt-1 sm:mt-0">

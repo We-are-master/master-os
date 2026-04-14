@@ -44,6 +44,7 @@ import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
 import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { listPartners } from "@/services/partners";
+import { useBuFilter } from "@/hooks/use-bu-filter";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { getBidsByQuoteId, approveBid, type QuoteBid } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
@@ -371,6 +372,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterQuoteType, setFilterQuoteType] = useState<"all" | "internal" | "partner">("all");
+  const buFilter = useBuFilter();
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
   const [drawerPendingTab, setDrawerPendingTab] = useState<"overview" | "bids" | null>(null);
@@ -410,9 +412,15 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, [filterOpen]);
 
   const filteredQuotes = useMemo(() => {
-    if (filterQuoteType === "all") return data;
-    return data.filter((q) => (q.quote_type ?? "internal") === filterQuoteType);
-  }, [data, filterQuoteType]);
+    return data.filter((q) => {
+      if (filterQuoteType !== "all" && (q.quote_type ?? "internal") !== filterQuoteType) return false;
+      if (buFilter.selectedBuId) {
+        if (!buFilter.clientIdsInBu) return true;
+        if (!q.client_id || !buFilter.clientIdsInBu.has(q.client_id)) return false;
+      }
+      return true;
+    });
+  }, [data, filterQuoteType, buFilter.selectedBuId, buFilter.clientIdsInBu]);
 
   const quoteKanbanColumns = useMemo(() => {
     const ids = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"];
@@ -1065,16 +1073,33 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               <SearchInput placeholder="Search quotes..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
               <div className="relative" ref={filterRef}>
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-                {filterQuoteType !== "all" && <span className="ml-1 text-[10px] font-medium text-primary">Active</span>}
+                {(filterQuoteType !== "all" || buFilter.selectedBuId) && <span className="ml-1 text-[10px] font-medium text-primary">Active</span>}
                 {filterOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-48 rounded-xl border border-border bg-card shadow-lg z-50 p-3">
-                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Quote type</p>
-                    <select value={filterQuoteType} onChange={(e) => setFilterQuoteType(e.target.value as "all" | "internal" | "partner")} className="w-full h-8 rounded-lg border border-border bg-card text-sm px-2">
-                      <option value="all">All</option>
-                      <option value="internal">Manual</option>
-                      <option value="partner">Partner</option>
-                    </select>
-                    <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setFilterQuoteType("all")}>Clear</Button>
+                  <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Quote type</p>
+                      <select value={filterQuoteType} onChange={(e) => setFilterQuoteType(e.target.value as "all" | "internal" | "partner")} className="w-full h-8 rounded-lg border border-border bg-card text-sm px-2">
+                        <option value="all">All</option>
+                        <option value="internal">Manual</option>
+                        <option value="partner">Partner</option>
+                      </select>
+                    </div>
+                    {buFilter.visible && (
+                      <div>
+                        <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Business Unit</p>
+                        <select
+                          value={buFilter.selectedBuId ?? ""}
+                          onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
+                          className="w-full h-8 rounded-lg border border-border bg-card text-sm px-2"
+                        >
+                          <option value="">All BUs</option>
+                          {buFilter.bus.map((bu) => (
+                            <option key={bu.id} value={bu.id}>{bu.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterQuoteType("all"); buFilter.setSelectedBuId(null); }}>Clear</Button>
                   </div>
                 )}
               </div>

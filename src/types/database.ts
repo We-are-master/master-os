@@ -449,6 +449,8 @@ export interface Account {
   logo_url?: string | null;
   /** Optional URL/path for the signed client contract document */
   contract_url?: string | null;
+  /** Business Unit responsible for this account — drives request/quote/job filtering. */
+  bu_id?: string | null;
   total_revenue: number;
   active_jobs: number;
   created_at: string;
@@ -579,8 +581,8 @@ export interface InternalCost {
   due_date?: string;
   status: InternalCostStatus;
   paid_at?: string;
-  /** Optional squad (People UI — same `squads` table as legacy team_members). */
-  squad_id?: string | null;
+  /** Optional Business Unit (People UI — same `business_units` table as team_members). */
+  bu_id?: string | null;
   /** Person paid (salary / contractor). */
   payee_name?: string | null;
   /** Drives required document checklist in UI. */
@@ -623,15 +625,18 @@ export interface RecurringBill {
   updated_at: string;
 }
 
-/** Internal squad (London, Midlands, North) for routing and payroll */
-export interface Squad {
+/** Business Unit (London, Midlands, North) for routing, payroll and account segmentation */
+export interface BusinessUnit {
   id: string;
   name: string;
-  /** Present when the DB enforces a unique slug per squad */
+  /** Present when the DB enforces a unique slug per BU */
   slug?: string | null;
   created_at: string;
   updated_at: string;
 }
+
+/** @deprecated Use `BusinessUnit` — kept as alias to ease migration. */
+export type Squad = BusinessUnit;
 
 export type TeamMemberRole = "am" | "ops_coord" | "biz_dev" | "head_ops" | "ceo" | "it";
 export type TeamMemberStatus = "active" | "inactive";
@@ -644,8 +649,8 @@ export interface TeamMember {
   email?: string;
   phone?: string;
   role: TeamMemberRole;
-  squad_id?: string;
-  squad_name?: string;
+  bu_id?: string;
+  bu_name?: string;
   base_salary?: number;
   start_date?: string;
   status: TeamMemberStatus;

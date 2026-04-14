@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import type { Squad } from "@/types/database";
+import type { BusinessUnit } from "@/types/database";
 
-export function SquadModal({
+export function BuModal({
   open,
   onClose,
   initial,
@@ -17,7 +17,7 @@ export function SquadModal({
 }: {
   open: boolean;
   onClose: () => void;
-  initial: Squad | null;
+  initial: BusinessUnit | null;
   onSave: (name: string) => void | Promise<void>;
   saving: boolean;
 }) {
@@ -37,11 +37,11 @@ export function SquadModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={initial ? "Edit squad" : "Add squad"} size="sm">
+    <Modal open={open} onClose={onClose} title={initial ? "Edit business unit" : "Add business unit"} size="sm">
       <form onSubmit={submit} className="p-6 space-y-4">
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Squad name</label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Squad London" required />
+          <label className="block text-xs font-medium text-text-secondary mb-1.5">BU name</label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. London" required />
         </div>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={onClose}>

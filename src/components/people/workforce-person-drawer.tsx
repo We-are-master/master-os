@@ -17,7 +17,7 @@ import type {
   PayrollInternalEmploymentType,
   PayrollInternalProfile,
   SelfBill,
-  Squad,
+  BusinessUnit,
 } from "@/types/database";
 import {
   PAYROLL_FREQUENCY_OPTIONS,
@@ -96,13 +96,13 @@ type TabId = "overview" | "documents" | "finance";
 
 export function WorkforcePersonDrawer({
   person,
-  squads,
+  bus,
   open,
   onClose,
   onSaved,
 }: {
   person: InternalCost | null;
-  squads: Squad[];
+  bus: BusinessUnit[];
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -123,7 +123,7 @@ export function WorkforcePersonDrawer({
   const [paymentDay, setPaymentDay] = useState("");
   const [status, setStatus] = useState<InternalCostStatus>("pending");
   const [profile, setProfile] = useState<PayrollInternalProfile>({});
-  const [squadId, setSquadId] = useState<string>("");
+  const [buId, setBuId] = useState<string>("");
 
   const [internalBills, setInternalBills] = useState<SelfBill[]>([]);
   const [loadingBills, setLoadingBills] = useState(false);
@@ -160,7 +160,7 @@ export function WorkforcePersonDrawer({
     setPaymentDay(person.payment_day_of_month != null ? String(person.payment_day_of_month) : "");
     setStatus(person.status === "paid" ? "paid" : "pending");
     setProfile(parsePayrollProfile(person.payroll_profile));
-    setSquadId(person.squad_id ?? "");
+    setBuId(person.bu_id ?? "");
     const files = parsePayrollDocumentFiles(person.payroll_document_files);
     const photoMeta = files[PROFILE_PHOTO_DOC_KEY];
     if (photoMeta?.path) {
@@ -251,7 +251,7 @@ export function WorkforcePersonDrawer({
         payee_name: payeeName.trim() || null,
         pay_frequency: payFrequency.trim() || null,
         payment_day_of_month: paymentDay.trim() ? Number(paymentDay) : null,
-        squad_id: squadId.trim() || null,
+        bu_id: buId.trim() || null,
         payroll_profile,
         payroll_document_files: mergedFiles,
         updated_at: now,
@@ -259,12 +259,12 @@ export function WorkforcePersonDrawer({
       };
       if (status === "paid") updates.paid_at = now.split("T")[0];
       const { error } = await supabase.from("payroll_internal_costs").update(updates).eq("id", person.id);
-      if (error && String(error.message ?? "").toLowerCase().includes("squad")) {
-        const noSquad = { ...updates };
-        delete noSquad.squad_id;
-        const retry = await supabase.from("payroll_internal_costs").update(noSquad).eq("id", person.id);
+      if (error && String(error.message ?? "").toLowerCase().includes("bu_id")) {
+        const noBu = { ...updates };
+        delete noBu.bu_id;
+        const retry = await supabase.from("payroll_internal_costs").update(noBu).eq("id", person.id);
         if (retry.error) throw retry.error;
-        toast.warning("Saved without squad — apply migration 096 for squad column.");
+        toast.warning("Saved without BU — apply migration 137 for bu_id column.");
       } else if (error) {
         throw error;
       }
@@ -575,12 +575,12 @@ export function WorkforcePersonDrawer({
                 </div>
                 <div className="sm:col-span-2">
                   <Select
-                    label="Squad"
-                    value={squadId}
-                    onChange={(e) => setSquadId(e.target.value)}
+                    label="Business Unit"
+                    value={buId}
+                    onChange={(e) => setBuId(e.target.value)}
                     options={[
-                      { value: "", label: "— No squad" },
-                      ...squads.map((s) => ({ value: s.id, label: s.name })),
+                      { value: "", label: "— No BU" },
+                      ...bus.map((s) => ({ value: s.id, label: s.name })),
                     ]}
                   />
                 </div>
