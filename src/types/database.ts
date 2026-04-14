@@ -82,6 +82,8 @@ export interface Profile {
   last_login_at?: string;
   /** Per-user permission overrides. Absent key = inherit from role. */
   custom_permissions?: UserPermissionOverride | null;
+  /** True when admin created this user with a temporary password — forces change on first login. */
+  must_change_password?: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -605,6 +607,8 @@ export interface InternalCost {
   equity_vesting_notes?: string | null;
   equity_start_date?: string | null;
   payroll_profile?: PayrollInternalProfile | null;
+  /** Linked profiles.id when the person has a dashboard login (nullable). */
+  profile_id?: string | null;
   created_at: string;
   updated_at: string;
 }

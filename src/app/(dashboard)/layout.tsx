@@ -9,6 +9,7 @@ import { ProfileContext, useProfileLoader } from "@/hooks/use-profile";
 import { ThemeContext, useThemeProvider } from "@/hooks/use-theme";
 import { AdminConfigProvider } from "@/hooks/use-admin-config";
 import { DuplicateConfirmProvider } from "@/contexts/duplicate-confirm-context";
+import { ForcePasswordChangeModal } from "@/components/layout/force-password-change-modal";
 
 // AI assistant is not critical-path — lazy-loaded so it doesn't bloat the
 // initial dashboard bundle and doesn't block navigation.
@@ -60,6 +61,7 @@ export default function DashboardLayout({
               <MasterBrainAssistant />
             </div>
           </div>
+          <ForcePasswordChangeModal />
           </DuplicateConfirmProvider>
           </AdminConfigProvider>
         </ProfileContext.Provider>

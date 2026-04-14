@@ -91,6 +91,10 @@ export default function PeoplePage() {
   const [formFreq, setFormFreq] = useState<"" | "weekly" | "biweekly" | "monthly">("monthly");
   const [formEmployment, setFormEmployment] = useState<PayrollInternalEmploymentType>("employee");
   const [formBuId, setFormBuId] = useState("");
+  const [formCreateAccess, setFormCreateAccess] = useState(false);
+  const [formAccessEmail, setFormAccessEmail] = useState("");
+  const [formAccessRole, setFormAccessRole] = useState<"admin" | "manager" | "operator">("operator");
+  const [formAccessPassword, setFormAccessPassword] = useState("");
 
   const [buModalOpen, setBuModalOpen] = useState(false);
   const [editingBu, setEditingBu] = useState<BusinessUnit | null>(null);
@@ -290,6 +294,49 @@ export default function PeoplePage() {
       setFormAmount("");
       setFormDue("");
       setFormBuId("");
+
+      // Optional: create dashboard access alongside the workforce row
+      if (formCreateAccess && inserted) {
+        const insertedId = (inserted as InternalCost).id;
+        const accessEmail = formAccessEmail.trim().toLowerCase();
+        const accessPassword = formAccessPassword;
+        try {
+          if (!accessEmail.includes("@")) {
+            throw new Error("Valid email is required for dashboard access");
+          }
+          if (accessPassword.length < 8) {
+            throw new Error("Temporary password must be at least 8 characters");
+          }
+          const res = await fetch("/api/admin/team/create-user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: accessEmail,
+              full_name: formPayee.trim(),
+              role: formAccessRole,
+              password: accessPassword,
+              payroll_internal_cost_id: insertedId,
+            }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.error ?? "Failed to create dashboard access");
+          }
+          toast.success("Dashboard access created");
+        } catch (err) {
+          toast.warning(
+            err instanceof Error
+              ? `Person saved, but access failed: ${err.message}`
+              : "Person saved, but access failed",
+          );
+        } finally {
+          setFormCreateAccess(false);
+          setFormAccessEmail("");
+          setFormAccessPassword("");
+          setFormAccessRole("operator");
+        }
+      }
+
       await load();
       if (inserted) {
         const ic = inserted as InternalCost;
@@ -673,6 +720,61 @@ export default function PeoplePage() {
             options={[{ value: "", label: "— No BU" }, ...bus.map((s) => ({ value: s.id, label: s.name }))]}
             className="min-w-0"
           />
+
+          <div className="rounded-xl border border-border-light p-3 space-y-3">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formCreateAccess}
+                onChange={(e) => setFormCreateAccess(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-border accent-primary cursor-pointer"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-text-primary">Create dashboard access</p>
+                <p className="text-[11px] text-text-tertiary mt-0.5">
+                  Grant this person a Master OS web login. You can also add this later from the Dashboard Access tab.
+                </p>
+              </div>
+            </label>
+            {formCreateAccess && (
+              <div className="space-y-2.5 pt-1 pl-6">
+                <div>
+                  <label className="block text-[11px] font-medium text-text-secondary mb-1">Email</label>
+                  <Input
+                    type="email"
+                    value={formAccessEmail}
+                    onChange={(e) => setFormAccessEmail(e.target.value)}
+                    placeholder="person@example.com"
+                    className="w-full min-w-0"
+                  />
+                </div>
+                <Select
+                  label="Role"
+                  value={formAccessRole}
+                  onChange={(e) => setFormAccessRole(e.target.value as typeof formAccessRole)}
+                  options={[
+                    { value: "admin", label: "Admin" },
+                    { value: "manager", label: "Manager" },
+                    { value: "operator", label: "Operator" },
+                  ]}
+                  className="min-w-0"
+                />
+                <div>
+                  <label className="block text-[11px] font-medium text-text-secondary mb-1">Temporary password</label>
+                  <Input
+                    type="password"
+                    value={formAccessPassword}
+                    onChange={(e) => setFormAccessPassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                    className="w-full min-w-0"
+                    autoComplete="new-password"
+                  />
+                  <p className="text-[11px] text-text-tertiary mt-1">User will be forced to change it on first login.</p>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-col-reverse gap-2 pt-3 sm:flex-row sm:justify-end sm:gap-2 sm:pt-2 sticky bottom-0 z-[1] bg-card pb-3 -mx-4 px-4 sm:static sm:z-0 sm:mx-0 sm:px-0 sm:pb-0 border-t border-border-light/80 sm:border-0 mt-1 sm:mt-0">
             <Button variant="outline" className="w-full sm:w-auto shrink-0" onClick={() => setAddOpen(false)}>
               Cancel

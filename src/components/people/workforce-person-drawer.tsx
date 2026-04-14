@@ -39,6 +39,7 @@ import {
   listInternalSelfBillsForCost,
   type InternalSelfBillLine,
 } from "@/services/internal-self-bills";
+import { WorkforceAccessTab } from "./workforce-access-tab";
 import {
   FileText,
   Wallet,
@@ -92,7 +93,7 @@ const lifecycleLabel: Record<string, string> = {
   offboard: "Offboard",
 };
 
-type TabId = "overview" | "documents" | "finance";
+type TabId = "overview" | "documents" | "finance" | "access";
 
 export function WorkforcePersonDrawer({
   person,
@@ -402,6 +403,7 @@ export function WorkforcePersonDrawer({
     { id: "overview" as const, label: "Profile" },
     { id: "documents" as const, label: "Documents" },
     { id: "finance" as const, label: "Finance" },
+    { id: "access" as const, label: "Dashboard Access" },
   ];
 
   const stage = person.lifecycle_stage ?? "active";
@@ -904,6 +906,10 @@ export function WorkforcePersonDrawer({
 
         {tab === "finance" && !isEmployee && !isContractor && (
           <p className="text-sm text-text-tertiary">Set employment type on the Payroll page to unlock finance tools.</p>
+        )}
+
+        {tab === "access" && (
+          <WorkforceAccessTab person={person} onSaved={onSaved} />
         )}
       </div>
     </Drawer>
