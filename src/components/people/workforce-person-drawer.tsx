@@ -172,7 +172,12 @@ export function WorkforcePersonDrawer({
     const photoMeta = files[PROFILE_PHOTO_DOC_KEY];
     if (photoMeta?.path) {
       try {
-        const u = await getPayrollDocumentSignedUrl(photoMeta.path);
+        // xl Avatar = 64 px (drawer hero). Thumbnail transform keeps payload small.
+        const u = await getPayrollDocumentSignedUrl(photoMeta.path, 3600, {
+          width: 192,
+          height: 192,
+          resize: "cover",
+        });
         setPhotoUrl(u);
       } catch {
         setPhotoUrl(null);

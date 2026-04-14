@@ -27,7 +27,7 @@ import {
   payrollDocsRowCompletion,
   type PayrollDocumentFileMeta,
 } from "@/lib/payroll-doc-checklist";
-import { getPayrollDocumentSignedUrl } from "@/services/payroll-documents-storage";
+import { getPayrollDocumentSignedUrls } from "@/services/payroll-documents-storage";
 import { WorkforcePersonDrawer } from "@/components/people/workforce-person-drawer";
 import { buildPayLineDescription, WORKFORCE_DEPARTMENT_SELECT_OPTIONS } from "@/lib/workforce-departments";
 import { insertPayrollInternalCostWithCompat } from "@/lib/payroll-internal-insert-compat";
@@ -184,20 +184,38 @@ export default function PeoplePage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const out: Record<string, string> = {};
-      await Promise.all(
-        filtered.map(async (r) => {
-          const f = parsePayrollDocumentFiles(r.payroll_document_files);
-          const p = f[PROFILE_PHOTO_DOC_KEY]?.path;
-          if (!p) return;
-          try {
-            out[r.id] = await getPayrollDocumentSignedUrl(p);
-          } catch {
-            /* bucket / RLS — card falls back to initials */
-          }
-        }),
-      );
-      if (!cancelled) setPhotoUrlsById(out);
+      // Build path→id map + collect paths for a SINGLE batch request
+      const pathToIds: Record<string, string[]> = {};
+      for (const r of filtered) {
+        const f = parsePayrollDocumentFiles(r.payroll_document_files);
+        const p = f[PROFILE_PHOTO_DOC_KEY]?.path;
+        if (!p) continue;
+        (pathToIds[p] ??= []).push(r.id);
+      }
+      const paths = Object.keys(pathToIds);
+      if (paths.length === 0) {
+        if (!cancelled) setPhotoUrlsById({});
+        return;
+      }
+      try {
+        // Thumbnail transform: 144×144 cover fits the largest Avatar (xl)
+        // while cutting payload from ~2–5 MB to ~15–30 KB per photo.
+        const urls = await getPayrollDocumentSignedUrls(paths, 3600, {
+          width: 144,
+          height: 144,
+          resize: "cover",
+        });
+        if (cancelled) return;
+        const out: Record<string, string> = {};
+        for (const [p, ids] of Object.entries(pathToIds)) {
+          const u = urls[p];
+          if (!u) continue;
+          for (const id of ids) out[id] = u;
+        }
+        setPhotoUrlsById(out);
+      } catch {
+        /* bucket / RLS — cards fall back to initials */
+      }
     })();
     return () => {
       cancelled = true;

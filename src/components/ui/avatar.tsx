@@ -18,6 +18,16 @@ const sizeStyles = {
   xl: "h-16 w-16 text-lg",
 };
 
+/** Pixel dimensions matching sizeStyles — fed to the native <img> tag so
+ *  the browser reserves exact space (no CLS) and can lazy-decode. */
+const sizePx: Record<NonNullable<AvatarProps["size"]>, number> = {
+  xs: 24,
+  sm: 32,
+  md: 40,
+  lg: 48,
+  xl: 64,
+};
+
 const colors = [
   "bg-primary/10 text-primary",
   "bg-blue-100 text-blue-700",
@@ -40,10 +50,16 @@ function getColorFromName(name: string): string {
 export function Avatar({ src, name, size = "md", className }: AvatarProps) {
   const displayName = name ?? "";
   if (src) {
+    const px = sizePx[size];
     return (
       <img
         src={src}
         alt={displayName || "Avatar"}
+        width={px}
+        height={px}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
         className={cn(
           "rounded-full object-cover object-center ring-2 ring-white",
           sizeStyles[size],
