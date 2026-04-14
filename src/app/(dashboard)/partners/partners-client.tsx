@@ -2246,6 +2246,7 @@ function PartnerDetailDrawer({
   const [appFinancial, setAppFinancial] = useState<Awaited<ReturnType<typeof getPartnerFinancial>> | null>(null);
   const [loadingApp, setLoadingApp] = useState(false);
   const [actionEmail, setActionEmail] = useState("");
+  const [actionPassword, setActionPassword] = useState("");
   const [actionSubmitting, setActionSubmitting] = useState(false);
   const [bankSortCodeInput, setBankSortCodeInput] = useState("");
   const [bankAccountNumberInput, setBankAccountNumberInput] = useState("");
@@ -3000,14 +3001,52 @@ function PartnerDetailDrawer({
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Reset password</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Set new password</label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      value={actionPassword}
+                      onChange={(e) => setActionPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                      className="flex-1"
+                      autoComplete="new-password"
+                    />
+                    <Button
+                      size="sm"
+                      icon={<KeyRound className="h-3.5 w-3.5" />}
+                      disabled={actionSubmitting || actionPassword.length < 8}
+                      onClick={async () => {
+                        setActionSubmitting(true);
+                        try {
+                          const res = await fetch("/api/admin/partner/reset-password", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ userId: teamMember.id, new_password: actionPassword }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || "Failed");
+                          toast.success("Password updated");
+                          setActionPassword("");
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Failed");
+                        } finally {
+                          setActionSubmitting(false);
+                        }
+                      }}
+                    >
+                      Set password
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Or send recovery link</label>
                   <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
                     setActionSubmitting(true);
                     try {
                       const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: teamMember.id }) });
                       const data = await res.json();
                       if (!res.ok) throw new Error(data.error || "Failed");
-                      toast.success(data.reset_link ? "Link generated" : data.message);
+                      toast.success(data.reset_link ? "Link copied to clipboard" : data.message);
                       if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
                     } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
                   }}>Generate reset link</Button>
@@ -4324,14 +4363,57 @@ function PartnerDetailDrawer({
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Reset password</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Set new password</label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      value={actionPassword}
+                      onChange={(e) => setActionPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                      className="flex-1"
+                      autoComplete="new-password"
+                    />
+                    <Button
+                      size="sm"
+                      icon={<KeyRound className="h-3.5 w-3.5" />}
+                      disabled={actionSubmitting || actionPassword.length < 8}
+                      onClick={async () => {
+                        setActionSubmitting(true);
+                        try {
+                          const res = await fetch("/api/admin/partner/reset-password", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ userId: partner.auth_user_id, new_password: actionPassword }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || "Failed");
+                          toast.success("Password updated");
+                          setActionPassword("");
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Failed");
+                        } finally {
+                          setActionSubmitting(false);
+                        }
+                      }}
+                    >
+                      Set password
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-text-tertiary mt-1">
+                    Sets the password directly. Share it with the partner securely.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">
+                    Or send a recovery link
+                  </label>
                   <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
                     setActionSubmitting(true);
                     try {
                       const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
                       const data = await res.json();
                       if (!res.ok) throw new Error(data.error || "Failed");
-                      toast.success(data.reset_link ? "Link generated" : data.message);
+                      toast.success(data.reset_link ? "Link copied to clipboard" : data.message);
                       if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
                     } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
                   }}>Generate reset link</Button>
