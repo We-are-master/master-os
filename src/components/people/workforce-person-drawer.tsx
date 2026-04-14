@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { Drawer } from "@/components/ui/drawer";
+import { Modal } from "@/components/ui/modal";
 import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -112,6 +113,11 @@ export function WorkforcePersonDrawer({
   const [saving, setSaving] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<Record<string, File | undefined>>({});
+
+  // Danger-zone modal state
+  const [offboardOpen, setOffboardOpen] = useState(false);
+  const [offboardReason, setOffboardReason] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const [payeeName, setPayeeName] = useState("");
   const [payLineDept, setPayLineDept] = useState("");
@@ -282,6 +288,130 @@ export function WorkforcePersonDrawer({
 
   const handleDocPick = (docKey: string, file: File | null) => {
     setPendingFiles((prev) => ({ ...prev, [docKey]: file ?? undefined }));
+  };
+
+  const handleOffboardConfirm = async () => {
+    if (!person) return;
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      // Offboarding = hide from active roster + stop all payroll:
+      //   - amount = 0 (zero out recurring salary/fee)
+      //   - status = "paid" (nothing outstanding → excluded from Pay Run)
+      //   - pay_frequency = null + payment_day_of_month = null (no future schedule)
+      //   - recurring_approved_at = null (breaks recurring generator)
+      //   - lifecycle_stage = "offboard" (hidden from Workforce active lists)
+      const { error } = await getSupabase()
+        .from("payroll_internal_costs")
+        .update({
+          lifecycle_stage: "offboard",
+          offboard_at: now,
+          offboard_reason: offboardReason.trim() || null,
+          amount: 0,
+          status: "paid",
+          pay_frequency: null,
+          payment_day_of_month: null,
+          recurring_approved_at: null,
+          updated_at: now,
+        })
+        .eq("id", person.id);
+      if (error) throw error;
+
+      // If there's a linked profile, deactivate the dashboard access
+      // (cannot sign in anymore; history preserved)
+      if (person.profile_id) {
+        try {
+          await fetch(`/api/admin/team/user/${person.profile_id}`, { method: "DELETE" });
+        } catch {
+          /* best effort */
+        }
+      }
+
+      toast.success("Person offboarded — dashboard access revoked, payroll stopped");
+      setOffboardOpen(false);
+      setOffboardReason("");
+      onSaved();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to offboard");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReactivate = async () => {
+    if (!person) return;
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      const { error } = await getSupabase()
+        .from("payroll_internal_costs")
+        .update({
+          lifecycle_stage: "active",
+          offboard_at: null,
+          offboard_reason: null,
+          updated_at: now,
+        })
+        .eq("id", person.id);
+      if (error) throw error;
+
+      // Reactivate linked profile too
+      if (person.profile_id) {
+        try {
+          await fetch(`/api/admin/team/user/${person.profile_id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_active: true }),
+          });
+        } catch {
+          /* best effort */
+        }
+      }
+
+      toast.success("Person reactivated");
+      onSaved();
+      void syncFromPerson();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to reactivate");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!person) return;
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      // Soft delete via deleted_at (consistent with softDeleteById pattern)
+      const { error } = await getSupabase()
+        .from("payroll_internal_costs")
+        .update({
+          deleted_at: now,
+          lifecycle_stage: "offboard",
+          updated_at: now,
+        })
+        .eq("id", person.id);
+      if (error) throw error;
+
+      // Deactivate linked profile
+      if (person.profile_id) {
+        try {
+          await fetch(`/api/admin/team/user/${person.profile_id}`, { method: "DELETE" });
+        } catch {
+          /* best effort */
+        }
+      }
+
+      toast.success("Person removed");
+      setDeleteOpen(false);
+      onSaved();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to remove");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSaveDocumentsOnly = async () => {
@@ -630,14 +760,54 @@ export function WorkforcePersonDrawer({
             )}
 
             <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
-              <Link href="/team" className="w-full sm:w-auto">
-                <Button variant="outline" className="w-full sm:w-auto">
-                  Users Access
-                </Button>
-              </Link>
               <Button className="w-full sm:w-auto" disabled={saving} onClick={() => void handleSaveOverview()}>
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save profile"}
               </Button>
+            </div>
+
+            {/* Danger zone — offboard / reactivate / remove */}
+            <div className="pt-5 mt-2 border-t border-dashed border-border-light">
+              <p className="text-[11px] font-semibold text-red-600 dark:text-red-400 uppercase tracking-wide mb-2">
+                Danger zone
+              </p>
+              <p className="text-xs text-text-tertiary mb-3">
+                {stage === "offboard"
+                  ? "This person is offboarded. Reactivate to bring them back, or remove permanently."
+                  : "Offboard keeps the record (hides from active lists). Remove soft-deletes the payroll row and deactivates the linked dashboard access. History is always preserved."}
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                {stage === "offboard" ? (
+                  <Button
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    disabled={saving}
+                    onClick={() => void handleReactivate()}
+                  >
+                    Reactivate person
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    disabled={saving}
+                    onClick={() => {
+                      setOffboardReason("");
+                      setOffboardOpen(true);
+                    }}
+                  >
+                    Offboard
+                  </Button>
+                )}
+                <Button
+                  variant="danger"
+                  className="w-full sm:w-auto"
+                  disabled={saving}
+                  onClick={() => setDeleteOpen(true)}
+                  icon={<Trash2 className="h-3.5 w-3.5" />}
+                >
+                  Remove person
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -912,6 +1082,91 @@ export function WorkforcePersonDrawer({
           <WorkforceAccessTab person={person} onSaved={onSaved} />
         )}
       </div>
+
+      {/* Offboard confirmation modal */}
+      <Modal
+        open={offboardOpen}
+        onClose={() => !saving && setOffboardOpen(false)}
+        title={`Offboard ${person?.payee_name ?? "this person"}?`}
+        subtitle="Revokes dashboard access, zeroes the salary, and removes them from Pay Run / Payroll."
+        size="sm"
+      >
+        <div className="p-6 space-y-4">
+          <div className="rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40 p-3 space-y-1 text-xs text-text-secondary">
+            <p className="font-semibold text-amber-700 dark:text-amber-400">This will:</p>
+            <ul className="list-disc list-inside space-y-0.5">
+              <li>Deactivate their dashboard login (if any) — cannot sign in anymore</li>
+              <li>Zero out their salary / recurring fee</li>
+              <li>Remove them from Pay Run and Payroll going forward</li>
+              <li>Hide them from the active Workforce roster</li>
+              <li>Preserve history (jobs, quotes, audit logs)</li>
+            </ul>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">
+              Reason (optional)
+            </label>
+            <Input
+              value={offboardReason}
+              onChange={(e) => setOffboardReason(e.target.value)}
+              placeholder="e.g. End of contract"
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setOffboardOpen(false)}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => void handleOffboardConfirm()}
+              disabled={saving}
+              icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
+            >
+              {saving ? "Offboarding..." : "Offboard"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Remove (soft delete) confirmation modal */}
+      <Modal
+        open={deleteOpen}
+        onClose={() => !saving && setDeleteOpen(false)}
+        title={`Remove ${person?.payee_name ?? "this person"}?`}
+        subtitle="Soft-deletes the payroll record and deactivates any linked dashboard access."
+        size="sm"
+      >
+        <div className="p-6 space-y-4">
+          <div className="rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200/60 dark:border-red-900/40 p-3 text-xs text-text-secondary">
+            <p className="font-semibold text-red-700 dark:text-red-400 mb-1">Destructive action</p>
+            <p>
+              This hides the person from every list in Workforce. The linked dashboard login is deactivated. History (jobs, quotes, audit logs) is preserved and can still be queried by reference.
+            </p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteOpen(false)}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => void handleDeleteConfirm()}
+              disabled={saving}
+              icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            >
+              {saving ? "Removing..." : "Remove person"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </Drawer>
   );
 }
