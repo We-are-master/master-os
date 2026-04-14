@@ -280,6 +280,40 @@ export function WorkforcePersonDrawer({
       } else if (error) {
         throw error;
       }
+
+      // If this person has dashboard access linked, propagate the profile
+      // changes (email + name) to auth.users + profiles so they can still
+      // sign in with their updated details.
+      if (person.profile_id) {
+        const authPatch: Record<string, unknown> = {};
+        const prevProfile = parsePayrollProfile(person.payroll_profile);
+        const nextEmail = payroll_profile.email ?? "";
+        if (nextEmail && nextEmail !== (prevProfile.email ?? "")) {
+          authPatch.email = nextEmail;
+        }
+        const nextName = payeeName.trim();
+        if (nextName && nextName !== (person.payee_name ?? "").trim()) {
+          authPatch.full_name = nextName;
+        }
+        if (Object.keys(authPatch).length > 0) {
+          try {
+            const res = await fetch(`/api/admin/team/user/${person.profile_id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(authPatch),
+            });
+            if (!res.ok) {
+              const errBody = await res.json().catch(() => ({}));
+              toast.warning(
+                `Payroll saved, but dashboard login sync failed: ${errBody.error ?? "unknown"}`,
+              );
+            }
+          } catch {
+            toast.warning("Payroll saved, but dashboard login sync failed");
+          }
+        }
+      }
+
       toast.success("Saved");
       setPendingFiles({});
       onSaved();

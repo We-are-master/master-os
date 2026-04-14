@@ -49,6 +49,7 @@ export async function PATCH(
     is_active?: boolean;
     full_name?: string;
     new_password?: string;
+    email?: string;
   };
   try {
     body = await req.json();
@@ -67,6 +68,35 @@ export async function PATCH(
   if (typeof body.is_active === "boolean") updates.is_active = body.is_active;
   if (typeof body.full_name === "string" && body.full_name.trim()) {
     updates.full_name = body.full_name.trim();
+  }
+
+  // Email change — propagate to both auth.users and profiles so the user
+  // can sign in with the new address. Do auth first: if it fails (e.g.
+  // email already taken by another user), we abort before touching
+  // profiles to keep the two in sync.
+  if (typeof body.email === "string") {
+    const cleanEmail = body.email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      return NextResponse.json({ error: "Invalid email" }, { status: 400 });
+    }
+    const { error: emailErr } = await admin.auth.admin.updateUserById(id, {
+      email: cleanEmail,
+      email_confirm: true,
+    });
+    if (emailErr) {
+      const msg = emailErr.message.toLowerCase();
+      if (msg.includes("already") || msg.includes("registered")) {
+        return NextResponse.json(
+          { error: "That email is already used by another account." },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json(
+        { error: `Failed to change email: ${emailErr.message}` },
+        { status: 500 },
+      );
+    }
+    updates.email = cleanEmail;
   }
 
   // Reset password via Supabase Auth Admin API — also sets must_change_password
