@@ -24,6 +24,7 @@ import {
 import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
+import { useBuFilter } from "@/hooks/use-bu-filter";
 import {
   listJobs,
   createJob,
@@ -316,6 +317,7 @@ function JobsPageContent() {
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterPartner, setFilterPartner] = useState<"all" | "with" | "without">("all");
   const [filterScheduled, setFilterScheduled] = useState<"all" | "scheduled" | "unscheduled">("all");
+  const buFilter = useBuFilter();
   const [filterSort, setFilterSort] = useState<JobsSortMode>("schedule_nearest");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover">(null);
@@ -352,9 +354,13 @@ function JobsPageContent() {
       const hasDate = !!(j.scheduled_date || j.scheduled_start_at || j.scheduled_finish_date);
       if (filterScheduled === "scheduled" && !hasDate) return false;
       if (filterScheduled === "unscheduled" && hasDate) return false;
+      if (buFilter.selectedBuId) {
+        if (!buFilter.clientIdsInBu) return true; // still loading
+        if (!j.client_id || !buFilter.clientIdsInBu.has(j.client_id)) return false;
+      }
       return true;
     });
-  }, [data, filterPartner, filterScheduled]);
+  }, [data, filterPartner, filterScheduled, buFilter.selectedBuId, buFilter.clientIdsInBu]);
 
   /** Default sorting for Jobs Management: nearest schedule first (today -> tomorrow -> future). */
   const sortedData = useMemo(() => {
@@ -1275,7 +1281,7 @@ function JobsPageContent() {
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="relative flex items-center gap-2" ref={filterRef}>
               <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-              {(filterPartner !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest") && <span className="text-[10px] font-medium text-primary">Active</span>}
+              {(filterPartner !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest" || buFilter.selectedBuId) && <span className="text-[10px] font-medium text-primary">Active</span>}
               {filterOpen && (
                 <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
                   <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
@@ -1293,7 +1299,22 @@ function JobsPageContent() {
                     <option value="booking_recent">Most recent booking</option>
                     <option value="booking_oldest">Oldest booking</option>
                   </select>
-                  <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); }}>Clear filters</Button>
+                  {buFilter.visible && (
+                    <>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Business Unit</p>
+                      <select
+                        value={buFilter.selectedBuId ?? ""}
+                        onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
+                        className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2"
+                      >
+                        <option value="">All BUs</option>
+                        {buFilter.bus.map((bu) => (
+                          <option key={bu.id} value={bu.id}>{bu.name}</option>
+                        ))}
+                      </select>
+                    </>
+                  )}
+                  <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
                 </div>
               )}
             </div>
