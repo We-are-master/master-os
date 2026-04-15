@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
+import { getCachedSignedUrl } from "@/lib/signed-url-cache";
 
 const BUCKET = "partner-documents";
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -115,5 +116,12 @@ export async function getPartnerDocumentSignedUrlWithSupabase(
 }
 
 export async function getPartnerDocumentSignedUrl(path: string, expiresSec = 3600): Promise<string> {
-  return getPartnerDocumentSignedUrlWithSupabase(getSupabase(), path, expiresSec);
+  // Deduped + memory-cached so repeated "open signed URL" clicks don't
+  // round-trip the Storage API every time.
+  return getCachedSignedUrl(
+    BUCKET,
+    path,
+    () => getPartnerDocumentSignedUrlWithSupabase(getSupabase(), path, expiresSec),
+    { ttlMs: Math.max(0, (expiresSec - 300) * 1000) },
+  );
 }

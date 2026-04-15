@@ -22,7 +22,7 @@ type OpsJob = Pick<
   "scheduled_start_at" | "updated_at" | "created_at" | "timer_last_started_at" | "start_report_submitted" | "customer_review_rating"
 > & {
   service_type?: string | null;
-  squad_name?: string | null;
+  bu_name?: string | null;
 };
 
 const IN_PROGRESS_STATUSES = new Set<Job["status"]>(["in_progress_phase1", "in_progress_phase2", "in_progress_phase3"]);
@@ -77,7 +77,7 @@ export function OperationsStatus() {
   const [jobs, setJobs] = useState<OpsJob[]>([]);
   const [activePartnersCount, setActivePartnersCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [squadFilter, setSquadFilter] = useState("all");
+  const [buFilter, setBuFilter] = useState("all");
   const [datePreset, setDatePreset] = useState<DatePreset>("this_month");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
@@ -98,7 +98,7 @@ export function OperationsStatus() {
       const [jobsRes, partnersRes] = await Promise.all([
         supabase
           .from("jobs")
-          .select("id, reference, title, client_name, status, partner_id, partner_name, scheduled_date, scheduled_start_at, updated_at, created_at, timer_last_started_at, start_report_submitted, customer_review_rating, service_type, squad_name")
+          .select("id, reference, title, client_name, status, partner_id, partner_name, scheduled_date, scheduled_start_at, updated_at, created_at, timer_last_started_at, start_report_submitted, customer_review_rating, service_type, bu_name")
           .is("deleted_at", null)
           .gte("created_at", cutoffIso)
           .order("created_at", { ascending: false })
@@ -147,11 +147,11 @@ export function OperationsStatus() {
   const weekStart = new Date(todayStart);
   weekStart.setDate(todayStart.getDate() - ((todayStart.getDay() + 6) % 7));
 
-  const squadOptions = useMemo(() => {
+  const buOptions = useMemo(() => {
     const set = new Set<string>();
     for (const j of jobs) {
-      const squad = String((j as { squad_name?: string | null }).squad_name ?? "").trim();
-      if (squad) set.add(squad);
+      const bu = String((j as { bu_name?: string | null }).bu_name ?? "").trim();
+      if (bu) set.add(bu);
     }
     return ["all", ...Array.from(set)];
   }, [jobs]);
@@ -192,13 +192,13 @@ export function OperationsStatus() {
     return jobs.filter((j) => {
       const created = safeDate(j.created_at);
       if (!created || created < filterBounds.from || created > filterBounds.to) return false;
-      if (squadFilter !== "all") {
-        const squad = String((j as { squad_name?: string | null }).squad_name ?? "").trim();
-        if (squad !== squadFilter) return false;
+      if (buFilter !== "all") {
+        const bu = String((j as { bu_name?: string | null }).bu_name ?? "").trim();
+        if (bu !== buFilter) return false;
       }
       return true;
     });
-  }, [jobs, filterBounds, squadFilter]);
+  }, [jobs, filterBounds, buFilter]);
 
   const pipeline = useMemo(
     () =>
@@ -354,9 +354,9 @@ export function OperationsStatus() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Select
-            options={squadOptions.map((s) => ({ value: s, label: s === "all" ? "All squads" : s }))}
-            value={squadFilter}
-            onChange={(e) => setSquadFilter(e.target.value)}
+            options={buOptions.map((s) => ({ value: s, label: s === "all" ? "All BUs" : s }))}
+            value={buFilter}
+            onChange={(e) => setBuFilter(e.target.value)}
             className="w-40"
           />
           <Select

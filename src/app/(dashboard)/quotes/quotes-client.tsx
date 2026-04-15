@@ -41,10 +41,9 @@ import {
   formatQuoteDuplicateLines,
 } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
-import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
-import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
-import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
+import { createJob, getJobByQuoteId } from "@/services/jobs";
 import { listPartners } from "@/services/partners";
+import { useBuFilter } from "@/hooks/use-bu-filter";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import {
   getBidsByQuoteId,
@@ -561,6 +560,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterQuoteType, setFilterQuoteType] = useState<"all" | "internal" | "partner">("all");
+  const buFilter = useBuFilter();
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
   const [drawerPendingTab, setDrawerPendingTab] = useState<"overview" | "bids" | null>(null);
@@ -600,9 +600,15 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, [filterOpen]);
 
   const filteredQuotes = useMemo(() => {
-    if (filterQuoteType === "all") return data;
-    return data.filter((q) => (q.quote_type ?? "internal") === filterQuoteType);
-  }, [data, filterQuoteType]);
+    return data.filter((q) => {
+      if (filterQuoteType !== "all" && (q.quote_type ?? "internal") !== filterQuoteType) return false;
+      if (buFilter.selectedBuId) {
+        if (!buFilter.clientIdsInBu) return true;
+        if (!q.client_id || !buFilter.clientIdsInBu.has(q.client_id)) return false;
+      }
+      return true;
+    });
+  }, [data, filterQuoteType, buFilter.selectedBuId, buFilter.clientIdsInBu]);
 
   const [avgBidByQuoteId, setAvgBidByQuoteId] = useState<Record<string, number>>({});
   const dataIdsKey = useMemo(() => data.map((q) => q.id).sort().join(","), [data]);
@@ -890,8 +896,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         const quotePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
         const quotePartnerName = (formData.partner_name ?? quoteToConvert.partner_name)?.trim();
         const hasPartner = !!(quotePartnerId?.trim() || quotePartnerName);
-        /** Pre-fetch invoice due date in parallel with dup check + image resolve — it doesn't depend on the new job. */
-        const dueDatePromise = getInvoiceDueDateIsoForClient(formData.client_id ?? null);
         const [dupJobs, siteImages] = await Promise.all([
           findDuplicateJobs({
             clientId: formData.client_id,
@@ -944,31 +948,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           images: siteImages.length ? siteImages : undefined,
         });
 
-        const totalClient = Number(formData.client_price ?? 0);
-        /** Invoice flow runs in parallel with quote-status update + audit log — they touch different rows. */
-        const invoiceFlow = (async () => {
-          if (totalClient <= 0.01) return;
-          const dueStr = await dueDatePromise;
-          const linked = await listInvoicesLinkedToJob(job.reference, job.invoice_id);
-          if (linked.length > 0) {
-            const pick = linked.find((i) => i.invoice_kind === "combined") ?? linked[linked.length - 1];
-            await updateJob(job.id, { invoice_id: pick.id });
-            return;
-          }
-          const combined = await createInvoice({
-            client_name: formData.client_name,
-            job_reference: job.reference,
-            amount: totalClient,
-            status: "pending",
-            due_date: dueStr,
-            collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
-            invoice_kind: "combined",
-          });
-          await updateJob(job.id, { invoice_id: combined.id });
-        })();
-
+        /** Draft invoice is created inside `createJob` (unified for quote + modal paths). */
         await Promise.all([
-          invoiceFlow,
           updateQuote(quoteToConvert.id, { status: "converted_to_job" }),
           logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: { from_quote: quoteToConvert.reference }, userId: profile?.id, userName: profile?.full_name }),
         ]);
@@ -1306,16 +1287,33 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               <SearchInput placeholder="Search quotes..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
               <div className="relative" ref={filterRef}>
                 <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-                {filterQuoteType !== "all" && <span className="ml-1 text-[10px] font-medium text-primary">Active</span>}
+                {(filterQuoteType !== "all" || buFilter.selectedBuId) && <span className="ml-1 text-[10px] font-medium text-primary">Active</span>}
                 {filterOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-48 rounded-xl border border-border bg-card shadow-lg z-50 p-3">
-                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Quote type</p>
-                    <select value={filterQuoteType} onChange={(e) => setFilterQuoteType(e.target.value as "all" | "internal" | "partner")} className="w-full h-8 rounded-lg border border-border bg-card text-sm px-2">
-                      <option value="all">All</option>
-                      <option value="internal">Manual</option>
-                      <option value="partner">Partner</option>
-                    </select>
-                    <Button variant="ghost" size="sm" className="w-full mt-2" onClick={() => setFilterQuoteType("all")}>Clear</Button>
+                  <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                    <div>
+                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Quote type</p>
+                      <select value={filterQuoteType} onChange={(e) => setFilterQuoteType(e.target.value as "all" | "internal" | "partner")} className="w-full h-8 rounded-lg border border-border bg-card text-sm px-2">
+                        <option value="all">All</option>
+                        <option value="internal">Manual</option>
+                        <option value="partner">Partner</option>
+                      </select>
+                    </div>
+                    {buFilter.visible && (
+                      <div>
+                        <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Business Unit</p>
+                        <select
+                          value={buFilter.selectedBuId ?? ""}
+                          onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
+                          className="w-full h-8 rounded-lg border border-border bg-card text-sm px-2"
+                        >
+                          <option value="">All BUs</option>
+                          {buFilter.bus.map((bu) => (
+                            <option key={bu.id} value={bu.id}>{bu.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterQuoteType("all"); buFilter.setSelectedBuId(null); }}>Clear</Button>
                   </div>
                 )}
               </div>

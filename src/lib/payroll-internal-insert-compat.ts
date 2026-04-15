@@ -35,12 +35,12 @@ export async function insertPayrollInternalCostWithCompat(
 ): Promise<PayrollInternalInsertResult> {
   const attempts: { row: Record<string, unknown>; level: number }[] = [
     { row: fullRow, level: 0 },
-    { row: omit(fullRow, ["squad_id"]), level: 1 },
-    { row: omit(fullRow, [...KEYS_093, "squad_id"]), level: 2 },
+    { row: omit(fullRow, ["bu_id"]), level: 1 },
+    { row: omit(fullRow, [...KEYS_093, "bu_id"]), level: 2 },
     { row: omit(fullRow, KEYS_093), level: 3 },
     {
       row: {
-        ...omit(fullRow, [...KEYS_092, ...KEYS_093, "squad_id"]),
+        ...omit(fullRow, [...KEYS_092, ...KEYS_093, "bu_id"]),
         documents_on_file: {},
       },
       level: 4,

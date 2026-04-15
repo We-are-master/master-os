@@ -43,6 +43,7 @@ import { LocationMiniMap } from "@/components/ui/location-picker";
 import { ClientAddressPicker, type ClientAndAddressValue } from "@/components/ui/client-address-picker";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { useRouter } from "next/navigation";
+import { useBuFilter } from "@/hooks/use-bu-filter";
 import { listPartners, listPartnersAll } from "@/services/partners";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { createClientAddress, listAddressesByClient } from "@/services/client-addresses";
@@ -208,6 +209,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterPriority, setFilterPriority] = useState<"all" | "high" | "urgent">("all");
   const [filterService, setFilterService] = useState<string>("all");
+  const buFilter = useBuFilter();
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
   const [savingOwner, setSavingOwner] = useState(false);
   const allPartnersCacheRef = useRef<Partner[] | null>(null);
@@ -251,9 +253,14 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
       if (filterPriority === "high" && r.priority !== "high" && r.priority !== "urgent") return false;
       if (filterPriority === "urgent" && r.priority !== "urgent") return false;
       if (filterService !== "all" && normalizeTypeOfWork(r.service_type) !== normalizeTypeOfWork(filterService)) return false;
+      if (buFilter.selectedBuId) {
+        // clientIdsInBu undefined = still loading → don't filter yet
+        if (!buFilter.clientIdsInBu) return true;
+        if (!r.client_id || !buFilter.clientIdsInBu.has(r.client_id)) return false;
+      }
       return true;
     });
-  }, [data, filterPriority, filterService]);
+  }, [data, filterPriority, filterService, buFilter.selectedBuId, buFilter.clientIdsInBu]);
 
   const requestKpis = useMemo(() => {
     const c = statusCounts;
@@ -703,7 +710,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
         <PageHeader title="Requests" subtitle="Manage incoming service requests and leads.">
           <div className="relative flex items-center gap-2" ref={filterRef}>
             <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-            {(filterPriority !== "all" || filterService !== "all" || periodMode !== DEFAULT_FINANCE_PERIOD_MODE) && (
+            {(filterPriority !== "all" || filterService !== "all" || periodMode !== DEFAULT_FINANCE_PERIOD_MODE || buFilter.selectedBuId) && (
               <span className="text-[10px] font-medium text-primary">Active</span>
             )}
             {filterOpen && (
@@ -728,6 +735,21 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                     <option key={name} value={name}>{name}</option>
                   ))}
                 </select>
+                {buFilter.visible && (
+                  <>
+                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Business Unit</p>
+                    <select
+                      value={buFilter.selectedBuId ?? ""}
+                      onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
+                      className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2"
+                    >
+                      <option value="">All BUs</option>
+                      {buFilter.bus.map((bu) => (
+                        <option key={bu.id} value={bu.id}>{bu.name}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -735,6 +757,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                   onClick={() => {
                     setFilterPriority("all");
                     setFilterService("all");
+                    buFilter.setSelectedBuId(null);
                     setPeriodMode(DEFAULT_FINANCE_PERIOD_MODE);
                     setWeekAnchor(new Date());
                     setMonthAnchor(new Date());

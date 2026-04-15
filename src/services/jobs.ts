@@ -8,6 +8,7 @@ import { createOrAppendJobInvoice } from "./weekly-account-invoice";
 import {
   cancelOpenSelfBillsForJobCancellation,
   createSelfBillFromJob,
+  ensureWeeklySelfBillForJob,
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
@@ -441,14 +442,10 @@ export async function createJob(
   input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Job> {
   const supabase = getSupabase();
-  const inputFromQuotePre = (() => {
-    const qid = (input as { quote_id?: string | null }).quote_id;
-    return qid != null && String(qid).trim() !== "";
-  })();
   const billablePre = Number(input.client_price ?? 0) + Number(input.extras_amount ?? 0);
   const scheduledPre = Number(input.customer_deposit ?? 0) + Number(input.customer_final_payment ?? 0);
   const invoiceTotalPre = Math.max(0, Math.max(billablePre, scheduledPre));
-  const needInvoice = invoiceTotalPre > 0.01 && !inputFromQuotePre;
+  const needInvoice = invoiceTotalPre > 0.01;
   /** Geocode in parallel with ref RPCs — same critical path, independent I/O. */
   const [jobRefRes, invRefRes, coords] = await Promise.all([
     supabase.rpc("next_job_ref"),
@@ -522,6 +519,12 @@ export async function createJob(
   if (error) throw error;
   let job = data as Job;
 
+  /**
+   * Invoice draft is created for every new job (quote or direct-from-modal) so Finance always has
+   * a paired draft invoice + draft self-bill to review. Invoice stays `draft` — the Finance
+   * "Review & approve" flow transitions it to `pending` (and optionally emails the PDF to the
+   * client at that point).
+   */
   const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
   const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
@@ -534,6 +537,7 @@ export async function createJob(
         // Do not block invoice creation when payment-terms lookup fails.
         dueDateStr = new Date().toISOString().slice(0, 10);
       }
+      const hasDeposit = Number(job.customer_deposit ?? 0) > 0.01;
       const inv = await createInvoice(
         {
           client_name: job.client_name,
@@ -541,7 +545,8 @@ export async function createJob(
           amount: invoiceTotal,
           status: "draft",
           due_date: dueDateStr,
-          invoice_kind: "final",
+          invoice_kind: "combined",
+          collection_stage: hasDeposit ? "awaiting_deposit" : "awaiting_final",
         },
         invoiceRefPre ? { reference: invoiceRefPre } : undefined,
       );
@@ -570,6 +575,24 @@ export async function createJob(
       } catch (fallbackErr) {
         console.error("createJob invoice fallback create failed:", fallbackErr);
       }
+    }
+  }
+
+  /**
+   * Auto-link the weekly self-bill when a partner is assigned. Idempotent — reuses the
+   * partner's bill for the current week or creates a new one. Failure is non-fatal: the
+   * Jobs detail page has a "Link weekly self bill" button as a manual fallback.
+   */
+  if (job.partner_id?.trim() && !job.self_bill_id) {
+    try {
+      const sbId = await ensureWeeklySelfBillForJob(job);
+      if (sbId) job = { ...job, self_bill_id: sbId };
+    } catch (e) {
+      console.error(
+        "createJob: auto-link weekly self-bill failed",
+        { jobId: job.id, ref: job.reference, partnerId: job.partner_id },
+        e,
+      );
     }
   }
 

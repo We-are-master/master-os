@@ -41,6 +41,7 @@ import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { findDuplicateAccountHints, formatAccountDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
+import { BusinessUnitSelect } from "@/components/ui/business-unit-select";
 import { listActiveAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { jobStatusBadgeVariant, type JobsManagementTabAccent } from "@/lib/job-status-ui";
 
@@ -127,6 +128,7 @@ const emptyForm = {
   industry: INDUSTRY_OPTIONS[0].value,
   credit_limit: "",
   payment_terms: PAYMENT_TERMS_OPTIONS[1].value,
+  bu_id: "" as string,
 };
 
 export default function AccountsPage() {
@@ -260,6 +262,7 @@ export default function AccountsPage() {
         status: "onboarding",
         credit_limit: Number(form.credit_limit) || 0,
         payment_terms: form.payment_terms,
+        bu_id: form.bu_id || null,
         contract_url: null,
       });
       setCreateOpen(false);
@@ -556,6 +559,17 @@ export default function AccountsPage() {
               onChange={(e) => setForm((f) => ({ ...f, credit_limit: e.target.value }))}
               placeholder="100000"
             />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Business Unit</label>
+            <BusinessUnitSelect
+              value={form.bu_id || null}
+              onChange={(id) => setForm((f) => ({ ...f, bu_id: id ?? "" }))}
+              placeholder="— No BU —"
+            />
+            <p className="text-[11px] text-text-tertiary mt-1">
+              Assign this account to a Business Unit so Requests, Quotes, and Jobs can be filtered accordingly.
+            </p>
           </div>
           <p className="text-xs text-text-tertiary">
             Contract upload is available after creating the account (inside the account drawer).

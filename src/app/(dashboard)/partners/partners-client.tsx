@@ -2107,6 +2107,104 @@ function PartnerDocumentDetailModal({
   );
 }
 
+function ContractsTab({ partnerId }: { partnerId: string }) {
+  const [signatures, setSignatures] = useState<
+    { id: string; contract_type: string; signer_full_name: string; signer_email: string; signed_at: string; signature_image_url: string; signature_pdf_url: string | null; device_info: string | null; signer_ip: string | null; contract_version_id: string }[]
+  >([]);
+  const [versions, setVersions] = useState<
+    { id: string; contract_type: string; version: string; title: string }[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const supabase = getSupabase();
+    Promise.all([
+      supabase
+        .from("partner_contract_signatures")
+        .select("id, contract_type, signer_full_name, signer_email, signed_at, signature_image_url, signature_pdf_url, device_info, signer_ip, contract_version_id")
+        .eq("partner_id", partnerId)
+        .order("signed_at", { ascending: false }),
+      supabase
+        .from("contract_versions")
+        .select("id, contract_type, version, title")
+        .eq("is_active", true),
+    ]).then(([sigRes, verRes]) => {
+      if (cancelled) return;
+      setSignatures((sigRes.data ?? []) as typeof signatures);
+      setVersions((verRes.data ?? []) as typeof versions);
+      setLoading(false);
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [partnerId]);
+
+  if (loading) {
+    return <div className="p-6 text-sm text-text-tertiary">Carregando contratos...</div>;
+  }
+
+  const signedMap = new Map(signatures.map((s) => [s.contract_type, s]));
+
+  return (
+    <div className="p-6 space-y-4">
+      <div className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">
+        Contratos do Partner
+      </div>
+
+      {versions.length === 0 && (
+        <p className="text-sm text-text-tertiary">Nenhuma versão de contrato ativa no sistema.</p>
+      )}
+
+      {versions.map((v) => {
+        const sig = signedMap.get(v.contract_type);
+        return (
+          <div
+            key={v.id}
+            className="rounded-xl border border-border-light p-4 space-y-2"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-text-primary">{v.title}</div>
+                <div className="text-[11px] text-text-tertiary">Versão {v.version}</div>
+              </div>
+              {sig ? (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-medium rounded-md bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200/50 dark:bg-emerald-950/30 dark:text-emerald-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  Assinado
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-medium rounded-md bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200/50 dark:bg-amber-950/30 dark:text-amber-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  Pendente
+                </span>
+              )}
+            </div>
+
+            {sig && (
+              <div className="text-xs text-text-secondary space-y-1 pt-1 border-t border-border-light">
+                <div><strong>Assinado por:</strong> {sig.signer_full_name} ({sig.signer_email})</div>
+                <div><strong>Data:</strong> {new Date(sig.signed_at).toLocaleString("pt-BR")}</div>
+                {sig.device_info && <div><strong>Dispositivo:</strong> {sig.device_info}</div>}
+                {sig.signer_ip && <div><strong>IP:</strong> {sig.signer_ip}</div>}
+                {sig.signature_image_url && (
+                  <div className="pt-2">
+                    <div className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1">Assinatura</div>
+                    <div className="rounded-lg border border-border-light bg-white p-2 inline-block">
+                      <img src={sig.signature_image_url} alt="Assinatura" className="h-12 object-contain" />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PartnerDetailDrawer({
   partner,
   teamMember,
@@ -2148,6 +2246,7 @@ function PartnerDetailDrawer({
   const [appFinancial, setAppFinancial] = useState<Awaited<ReturnType<typeof getPartnerFinancial>> | null>(null);
   const [loadingApp, setLoadingApp] = useState(false);
   const [actionEmail, setActionEmail] = useState("");
+  const [actionPassword, setActionPassword] = useState("");
   const [actionSubmitting, setActionSubmitting] = useState(false);
   const [bankSortCodeInput, setBankSortCodeInput] = useState("");
   const [bankAccountNumberInput, setBankAccountNumberInput] = useState("");
@@ -2902,14 +3001,52 @@ function PartnerDetailDrawer({
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Reset password</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Set new password</label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      value={actionPassword}
+                      onChange={(e) => setActionPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                      className="flex-1"
+                      autoComplete="new-password"
+                    />
+                    <Button
+                      size="sm"
+                      icon={<KeyRound className="h-3.5 w-3.5" />}
+                      disabled={actionSubmitting || actionPassword.length < 8}
+                      onClick={async () => {
+                        setActionSubmitting(true);
+                        try {
+                          const res = await fetch("/api/admin/partner/reset-password", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ userId: teamMember.id, new_password: actionPassword }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || "Failed");
+                          toast.success("Password updated");
+                          setActionPassword("");
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Failed");
+                        } finally {
+                          setActionSubmitting(false);
+                        }
+                      }}
+                    >
+                      Set password
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Or send recovery link</label>
                   <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
                     setActionSubmitting(true);
                     try {
                       const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: teamMember.id }) });
                       const data = await res.json();
                       if (!res.ok) throw new Error(data.error || "Failed");
-                      toast.success(data.reset_link ? "Link generated" : data.message);
+                      toast.success(data.reset_link ? "Link copied to clipboard" : data.message);
                       if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
                     } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
                   }}>Generate reset link</Button>
@@ -3018,6 +3155,7 @@ function PartnerDetailDrawer({
       label: "Compliance",
       count: complianceAttentionCount > 0 ? complianceAttentionCount : undefined,
     },
+    { id: "contracts" as const, label: "Contracts" },
     { id: "actions" as const, label: "Privacy & Permissions" },
     { id: "notes", label: "Notes", count: notes.length },
     ...(partner.auth_user_id ? [{ id: "location" as const, label: "Location" }] : []),
@@ -4184,6 +4322,11 @@ function PartnerDetailDrawer({
           </div>
         )}
 
+        {/* ========== CONTRACTS ========== */}
+        {tab === "contracts" && (
+          <ContractsTab partnerId={partner.id} />
+        )}
+
         {/* ========== PRIVACY & PERMISSIONS ========== */}
         {tab === "actions" && (
           <div className="p-6 space-y-5">
@@ -4220,14 +4363,57 @@ function PartnerDetailDrawer({
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Reset password</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Set new password</label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      value={actionPassword}
+                      onChange={(e) => setActionPassword(e.target.value)}
+                      placeholder="At least 8 characters"
+                      className="flex-1"
+                      autoComplete="new-password"
+                    />
+                    <Button
+                      size="sm"
+                      icon={<KeyRound className="h-3.5 w-3.5" />}
+                      disabled={actionSubmitting || actionPassword.length < 8}
+                      onClick={async () => {
+                        setActionSubmitting(true);
+                        try {
+                          const res = await fetch("/api/admin/partner/reset-password", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ userId: partner.auth_user_id, new_password: actionPassword }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data.error || "Failed");
+                          toast.success("Password updated");
+                          setActionPassword("");
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Failed");
+                        } finally {
+                          setActionSubmitting(false);
+                        }
+                      }}
+                    >
+                      Set password
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-text-tertiary mt-1">
+                    Sets the password directly. Share it with the partner securely.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">
+                    Or send a recovery link
+                  </label>
                   <Button size="sm" variant="outline" icon={<KeyRound className="h-3.5 w-3.5" />} disabled={actionSubmitting} onClick={async () => {
                     setActionSubmitting(true);
                     try {
                       const res = await fetch("/api/admin/partner/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: partner.auth_user_id }) });
                       const data = await res.json();
                       if (!res.ok) throw new Error(data.error || "Failed");
-                      toast.success(data.reset_link ? "Link generated" : data.message);
+                      toast.success(data.reset_link ? "Link copied to clipboard" : data.message);
                       if (data.reset_link) navigator.clipboard?.writeText(data.reset_link);
                     } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setActionSubmitting(false); }
                   }}>Generate reset link</Button>
