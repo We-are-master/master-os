@@ -4,7 +4,7 @@ import { jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
 import type { Job } from "@/types/database";
 import { cancelOpenInvoicesForJobCancellation, createInvoice } from "./invoices";
 import { getInvoiceDueDateIsoForClient } from "./invoice-due-date";
-import { syncSelfBillAfterJobChange } from "./self-bills";
+import { ensureWeeklySelfBillForJob, syncSelfBillAfterJobChange } from "./self-bills";
 import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
 import {
   applyJobDbCompat,
@@ -537,6 +537,24 @@ export async function createJob(
       const msg = e instanceof Error ? e.message : "unknown error";
       throw new Error(
         `Job ${job.reference} was created but its draft invoice failed (${msg}). Create it manually in Finance.`,
+      );
+    }
+  }
+
+  /**
+   * Auto-link the weekly self-bill when a partner is assigned. Idempotent — reuses the
+   * partner's bill for the current week or creates a new one. Failure is non-fatal: the
+   * Jobs detail page has a "Link weekly self bill" button as a manual fallback.
+   */
+  if (job.partner_id?.trim() && !job.self_bill_id) {
+    try {
+      const sbId = await ensureWeeklySelfBillForJob(job);
+      if (sbId) job = { ...job, self_bill_id: sbId };
+    } catch (e) {
+      console.error(
+        "createJob: auto-link weekly self-bill failed",
+        { jobId: job.id, ref: job.reference, partnerId: job.partner_id },
+        e,
       );
     }
   }
