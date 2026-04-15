@@ -243,7 +243,7 @@ export function canAdvanceJob(
   }
 
   if (nextStatus === "on_hold") {
-    if (job.status === "cancelled" || job.status === "deleted" || job.status === "completed" || job.status === "on_hold") {
+    if (job.status === "cancelled" || job.status === "completed" || job.status === "on_hold") {
       return { ok: false, message: "On hold is not available for this status." };
     }
     return { ok: true };
