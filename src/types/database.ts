@@ -125,8 +125,37 @@ export interface ServiceRequest {
   /** Access / logistics flags used for call-out pricing. */
   in_ccz?: boolean | null;
   has_free_parking?: boolean | null;
+  /** Corporate account (denormalized; also derivable via client → source_account_id). */
+  account_id?: string | null;
+  /** Physical site for this request when using the Assets / properties model. */
+  property_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Physical site / property linked to an account (Assets module). Contacts are `clients` with matching source_account_id. */
+export interface AccountProperty {
+  id: string;
+  account_id: string;
+  name: string;
+  full_address: string;
+  property_type: string;
+  primary_contact_id?: string | null;
+  phone?: string | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+}
+
+export interface AccountPropertyDocument {
+  id: string;
+  property_id: string;
+  file_name: string;
+  storage_path: string;
+  created_at: string;
+  uploaded_by?: string | null;
 }
 
 export interface ClientAddress {
@@ -190,6 +219,8 @@ export interface Quote {
   service_type?: string | null;
   /** Public URLs (quote-invite-images bucket) shown to partners in the app. */
   images?: string[] | null;
+  /** Linked physical site when using the Assets model. */
+  property_id?: string | null;
   created_at: string;
   updated_at: string;
   expires_at?: string;
@@ -213,6 +244,8 @@ export interface Job {
   title: string;
   client_id?: string;
   client_address_id?: string;
+  /** Physical site when using the Assets model. */
+  property_id?: string | null;
   client_name: string;
   property_address: string;
   /** WGS84; geocoded from `property_address` (OpenCage) for partner app map. */
@@ -506,6 +539,7 @@ export interface Invoice {
 }
 
 export type SelfBillStatus =
+  | "draft"
   | "accumulating"
   | "pending_review"
   | "needs_attention"
@@ -843,7 +877,7 @@ export interface Activity {
 }
 
 export type AuditAction = "created" | "updated" | "status_changed" | "phase_advanced" | "assigned" | "deleted" | "note" | "document_added" | "payment" | "bulk_update";
-export type AuditEntityType = "request" | "quote" | "job" | "invoice" | "partner" | "account" | "self_bill" | "system";
+export type AuditEntityType = "request" | "quote" | "job" | "invoice" | "partner" | "account" | "self_bill" | "system" | "property";
 
 export interface AuditLog {
   id: string;

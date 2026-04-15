@@ -63,11 +63,14 @@ import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS } from "@/lib/job
 import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import {
+  formatArrivalTimeRange,
   formatJobScheduleLine,
   formatJobScheduleListLabel,
+  formatHourMinuteAmPm,
   jobFinishYmd,
   jobScheduleYmd,
 } from "@/lib/schedule-calendar";
+import { formatBritishDate } from "@/lib/utils/date";
 import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
@@ -176,7 +179,7 @@ function readStoredJobsSchedulePreset(): ScheduleDatePreset {
 function formatMediumYmd(ymd: string): string {
   const [y, m, d] = ymd.split("-").map(Number);
   if (!y || !m || !d) return ymd;
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return formatBritishDate(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
 }
 
 function scheduleFilterSubtitle(
@@ -1119,6 +1122,18 @@ function JobsPageContent() {
       render: (item) => {
         const line = formatJobScheduleListLabel(item);
         const detail = formatJobScheduleLine(item);
+        const arrivalTimeLabel = (() => {
+          const startIso = item.scheduled_start_at?.trim();
+          if (!startIso) return "Arrival: —";
+          const dt = new Date(startIso);
+          if (Number.isNaN(dt.getTime())) return "Arrival: —";
+          const endIso = item.scheduled_end_at?.trim();
+          if (endIso) {
+            const range = formatArrivalTimeRange(startIso, endIso);
+            if (range) return `Arrival: ${range}`;
+          }
+          return `Arrival: ${formatHourMinuteAmPm(dt)}`;
+        })();
         const scheduleYmd = jobScheduleStartYmdUk(item) ?? "";
         const todayYmd = ukTodayYmd(new Date());
         const tomorrowYmd = addDaysYmd(todayYmd, 1);
@@ -1127,62 +1142,56 @@ function JobsPageContent() {
         const isToday = scheduleYmd === todayYmd || line === "Today";
         const isInTwoDays = scheduleYmd === inTwoDaysYmd;
         const chipLabel = isToday ? "Today" : isTomorrow ? "Tomorrow" : isInTwoDays ? "In 2 days" : line;
-        return line ? (
-          isTomorrow || isToday || isInTwoDays ? (
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
-                isToday
-                  ? "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
-                  : isTomorrow
-                    ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
-                    : "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
-              )}
-              title={detail ?? undefined}
-            >
-              {chipLabel}
-            </span>
-          ) : (
-            <span
-              className="text-xs text-text-secondary leading-snug block whitespace-normal break-words"
-              title={detail ?? undefined}
-            >
-              {line}
-            </span>
-          )
-        ) : (
-          <span className="text-xs text-text-tertiary">—</span>
+        return (
+          <div className="min-w-0">
+            {line ? (
+              isTomorrow || isToday || isInTwoDays ? (
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
+                    isToday
+                      ? "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
+                      : isTomorrow
+                        ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                        : "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
+                  )}
+                  title={detail ?? undefined}
+                >
+                  {chipLabel}
+                </span>
+              ) : (
+                <span
+                  className="text-xs text-text-secondary leading-snug block whitespace-normal break-words"
+                  title={detail ?? undefined}
+                >
+                  {line}
+                </span>
+              )
+            ) : (
+              <span className="text-xs text-text-tertiary">—</span>
+            )}
+            <p className="mt-0.5 text-[11px] text-text-tertiary">{arrivalTimeLabel}</p>
+          </div>
         );
       },
     },
     {
       key: "type_of_work",
-      label: "TOW / Partner",
+      label: "Partner",
       minWidth: "132px",
       cellClassName: "min-w-[7rem] max-w-[12rem]",
       headerClassName: "whitespace-nowrap",
       render: (item) => {
-        const raw = (item as { service_type?: string | null }).service_type?.trim();
-        const fromTitle = normalizeTypeOfWork(item.title) || item.title?.trim();
-        const tow = raw ? normalizeTypeOfWork(raw) || raw : fromTitle;
         const partner = item.partner_name?.trim();
-        const towTitle = tow || "—";
         return (
           <div className="min-w-0">
-            {tow ? (
-              <span className="text-sm text-text-secondary truncate block" title={tow}>
-                {tow}
-              </span>
-            ) : (
-              <span className="text-xs text-text-tertiary">—</span>
-            )}
             {partner ? (
-              <div className="mt-0.5 flex items-center gap-1.5 min-w-0" title={partner}>
+              <div className="flex items-center gap-1.5 min-w-0" title={partner}>
                 <Avatar name={partner} size="xs" className="shrink-0" />
-                <span className="text-[11px] text-text-tertiary truncate">{partner}</span>
+                <span className="text-sm text-text-secondary truncate">{partner}</span>
               </div>
             ) : (
-              <span className="text-[11px] text-text-tertiary italic mt-0.5 block" title={towTitle}>
+              <span className="text-[11px] text-text-tertiary italic block">
                 Unassigned
               </span>
             )}

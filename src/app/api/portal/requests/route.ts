@@ -3,6 +3,7 @@ import { Resend } from "resend";
 import { requirePortalUser } from "@/lib/portal-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { isUuid } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -34,7 +35,7 @@ function safeExtForMime(mime: string): string {
 /**
  * POST /api/portal/requests
  * multipart/form-data:
- *   - serviceType, description, propertyAddress, desiredDate (optional), images[]
+ *   - serviceType, description, propertyId (account property / asset), desiredDate (optional), images[]
  *
  * Creates a service_requests row scoped to the caller's account, uploads
  * any images to the quote-invite-images bucket, and emails hello@wearemaster.com
@@ -64,18 +65,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const serviceType     = String(form.get("serviceType")     ?? "").trim();
-  const description     = String(form.get("description")     ?? "").trim();
-  const propertyAddress = String(form.get("propertyAddress") ?? "").trim();
-  const desiredDate     = String(form.get("desiredDate")     ?? "").trim();
+  const serviceType = String(form.get("serviceType") ?? "").trim();
+  const description = String(form.get("description") ?? "").trim();
+  const desiredDate = String(form.get("desiredDate") ?? "").trim();
+  const propertyId  = String(form.get("propertyId") ?? "").trim();
 
-  if (!serviceType || !description || !propertyAddress) {
+  if (!serviceType || !description || !propertyId) {
     return NextResponse.json(
-      { error: "Service type, description, and property address are required." },
+      { error: "Service type, description, and property (asset) are required." },
       { status: 400 },
     );
   }
-  if (serviceType.length > 80 || description.length > 4000 || propertyAddress.length > 500) {
+  if (!isUuid(propertyId)) {
+    return NextResponse.json({ error: "Please select a valid property." }, { status: 400 });
+  }
+  if (serviceType.length > 80 || description.length > 4000) {
     return NextResponse.json({ error: "One of your fields is too long." }, { status: 400 });
   }
 
@@ -95,11 +99,26 @@ export async function POST(req: NextRequest) {
 
   const supabase = createServiceClient();
 
+  const { data: propRow } = await supabase
+    .from("account_properties")
+    .select("id, full_address, primary_contact_id, account_id")
+    .eq("id", propertyId)
+    .eq("account_id", accountId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!propRow) {
+    return NextResponse.json(
+      { error: "That property is not part of your account. Add it under Assets first." },
+      { status: 400 },
+    );
+  }
+  const prop = propRow as { id: string; full_address: string; primary_contact_id?: string | null };
+  const propertyAddress = prop.full_address.trim();
+  if (!propertyAddress || propertyAddress.length > 1000) {
+    return NextResponse.json({ error: "Property address on file is invalid." }, { status: 400 });
+  }
+
   // ─── Resolve / create the client row for this account ──────────────────
-  // Each account needs at least one clients row to attach service_requests
-  // to (because service_requests.client_id is the FK we use for scoping).
-  // First time a portal user creates a request, we auto-create one seeded
-  // from the accounts row.
   const { data: account } = await supabase
     .from("accounts")
     .select("id, company_name, contact_name, email, address")
@@ -110,36 +129,67 @@ export async function POST(req: NextRequest) {
   }
   const acc = account as { id: string; company_name: string; contact_name: string; email: string; address: string | null };
 
-  let clientId: string | null = null;
-  const { data: existingClient } = await supabase
-    .from("clients")
-    .select("id")
-    .eq("source_account_id", accountId)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (existingClient) {
-    clientId = (existingClient as { id: string }).id;
-  } else {
-    const { data: newClient, error: clientErr } = await supabase
+  const portalContact = portalUser.contact_id && isUuid(portalUser.contact_id) ? portalUser.contact_id : null;
+  const primaryOnProperty =
+    prop.primary_contact_id && isUuid(String(prop.primary_contact_id)) ? String(prop.primary_contact_id) : null;
+
+  let clientId: string | null = portalContact ?? primaryOnProperty;
+
+  if (clientId) {
+    const { data: cchk } = await supabase
       .from("clients")
-      .insert({
-        full_name:         acc.contact_name || acc.company_name,
-        email:             acc.email,
-        address:           acc.address,
-        source_account_id: accountId,
-        client_type:       "business",
-        source:            "portal",
-        status:            "active",
-      })
       .select("id")
-      .single();
-    if (clientErr || !newClient) {
-      console.error("[portal/requests] failed to seed client row:", clientErr);
-      return NextResponse.json({ error: "Could not initialise your client record." }, { status: 500 });
+      .eq("id", clientId)
+      .eq("source_account_id", accountId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!cchk) clientId = null;
+  }
+
+  if (!clientId) {
+    const { data: existingClient } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("source_account_id", accountId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (existingClient) {
+      clientId = (existingClient as { id: string }).id;
+    } else {
+      const { data: newClient, error: clientErr } = await supabase
+        .from("clients")
+        .insert({
+          full_name:         acc.contact_name || acc.company_name,
+          email:             acc.email,
+          address:           acc.address,
+          source_account_id: accountId,
+          client_type:       "commercial",
+          source:            "portal",
+          status:            "active",
+        })
+        .select("id")
+        .single();
+      if (clientErr || !newClient) {
+        console.error("[portal/requests] failed to seed client row:", clientErr);
+        return NextResponse.json({ error: "Could not initialise your client record." }, { status: 500 });
+      }
+      clientId = (newClient as { id: string }).id;
     }
-    clientId = (newClient as { id: string }).id;
+  }
+
+  let clientName = acc.contact_name || acc.company_name;
+  let clientEmail = portalUser.email;
+  const { data: contactRow } = await supabase
+    .from("clients")
+    .select("full_name, email, phone")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (contactRow) {
+    const cr = contactRow as { full_name: string; email?: string | null; phone?: string | null };
+    clientName = cr.full_name || clientName;
+    clientEmail = (cr.email && String(cr.email).trim()) || clientEmail;
   }
 
   // ─── Generate reference + insert request ─────────────────────────────
@@ -158,9 +208,11 @@ export async function POST(req: NextRequest) {
     .from("service_requests")
     .insert({
       reference,
+      account_id:       accountId,
+      property_id:      propertyId,
       client_id:        clientId,
-      client_name:      acc.contact_name || acc.company_name,
-      client_email:     portalUser.email,
+      client_name:      clientName,
+      client_email:     clientEmail,
       property_address: propertyAddress,
       service_type:     serviceType,
       description,

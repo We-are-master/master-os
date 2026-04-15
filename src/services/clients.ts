@@ -78,3 +78,17 @@ export async function updateClient(id: string, data: Partial<Client>): Promise<C
 export async function deleteClient(id: string): Promise<void> {
   await softDeleteById("clients", id);
 }
+
+/** Contacts (clients) belonging to a corporate account — used for property site managers & portal. */
+export async function listContactsForAccount(accountId: string): Promise<Client[]> {
+  if (!accountId?.trim()) return [];
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("clients")
+    .select("*")
+    .eq("source_account_id", accountId.trim())
+    .is("deleted_at", null)
+    .order("full_name", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Client[];
+}

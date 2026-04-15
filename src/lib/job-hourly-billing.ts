@@ -33,23 +33,33 @@ export function partnerHourlyRateFromCatalogBundle(
 export function resolveJobHourlyRates(job: Job): { clientRate: number; partnerRate: number } {
   const rawBilled = Number(job.billed_hours);
   const billedHours = Math.max(0.25, rawBilled > 0 ? rawBilled : 1);
-  /** Prefer implied £/h from stored totals when hours are known — beats stale `hourly_*_rate` after approve. */
+  /**
+   * Keep hourly labour rates isolated from one-time charges:
+   * - client labour base = client_price - extras_amount (CCZ/parking/manual extras stay flat)
+   * - partner labour base = partner_cost - partner_extras_amount (extra payout stays flat)
+   */
+  const clientPriceStored = Math.max(0, Number(job.client_price) || 0);
+  const clientFlatExtrasStored = Math.max(0, Number(job.extras_amount) || 0);
+  const clientLabourBase = Math.max(0, clientPriceStored - clientFlatExtrasStored);
+  const partnerCostStored = Math.max(0, Number(job.partner_cost) || 0);
+  const partnerFlatExtrasStored = Math.max(0, Number(job.partner_extras_amount) || 0);
+  const partnerLabourBase = Math.max(0, partnerCostStored - partnerFlatExtrasStored);
   const impliedClient =
-    rawBilled > 0 ? Math.round(((Number(job.client_price) || 0) / rawBilled) * 100) / 100 : 0;
+    rawBilled > 0 ? Math.round((clientLabourBase / rawBilled) * 100) / 100 : 0;
   const impliedPartner =
-    rawBilled > 0 ? Math.round(((Number(job.partner_cost) || 0) / rawBilled) * 100) / 100 : 0;
+    rawBilled > 0 ? Math.round((partnerLabourBase / rawBilled) * 100) / 100 : 0;
   const clientRate =
-    impliedClient > 0.02
-      ? impliedClient
-      : Number(job.hourly_client_rate) > 0
-        ? Number(job.hourly_client_rate)
-        : Math.round(((Number(job.client_price) || 0) / billedHours) * 100) / 100;
+    Number(job.hourly_client_rate) > 0
+      ? Number(job.hourly_client_rate)
+      : impliedClient > 0.02
+        ? impliedClient
+        : Math.round((clientLabourBase / billedHours) * 100) / 100;
   const partnerRate =
-    impliedPartner > 0.02
-      ? impliedPartner
-      : Number(job.hourly_partner_rate) > 0
-        ? Number(job.hourly_partner_rate)
-        : Math.round(((Number(job.partner_cost) || 0) / billedHours) * 100) / 100;
+    Number(job.hourly_partner_rate) > 0
+      ? Number(job.hourly_partner_rate)
+      : impliedPartner > 0.02
+        ? impliedPartner
+        : Math.round((partnerLabourBase / billedHours) * 100) / 100;
   return {
     clientRate: Math.max(0, clientRate || 0),
     partnerRate: Math.max(0, partnerRate || 0),

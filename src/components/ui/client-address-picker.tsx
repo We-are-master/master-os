@@ -19,7 +19,7 @@ import { listAddressesByClient, createClientAddress } from "@/services/client-ad
 import { listClientSourceAccounts, createClientSourceAccount } from "@/services/client-source-accounts";
 import type { ClientSourceAccount } from "@/types/database";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
-import { isUuid } from "@/lib/utils";
+import { cn, isUuid } from "@/lib/utils";
 import {
   findDuplicateAccountHints,
   findDuplicateClients,
@@ -70,6 +70,8 @@ interface ClientAddressPickerProps {
    * to open the full client address list + add new. Create flows should leave this off.
    */
   jobCurrentAddressOnly?: boolean;
+  /** Optional classes merged onto the client name search input. */
+  clientNameInputClassName?: string;
 }
 
 export function ClientAddressPicker({
@@ -82,6 +84,7 @@ export function ClientAddressPicker({
   lockClient = false,
   loadAllClientsOnOpen = false,
   jobCurrentAddressOnly = false,
+  clientNameInputClassName,
 }: ClientAddressPickerProps) {
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const clientSectionLocked = lockClient && !!value.client_id;
@@ -533,7 +536,10 @@ export function ClientAddressPicker({
                 window.setTimeout(() => void resolveSearchToClient(), 0);
               }}
               placeholder={loadAllClientsOnOpen ? "Search or pick from the list…" : "Search by name or email..."}
-              className="w-full h-9 rounded-lg border border-border bg-card px-3 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30"
+              className={cn(
+                "w-full h-9 rounded-lg border border-border bg-card px-3 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30",
+                clientNameInputClassName,
+              )}
               autoComplete="off"
               aria-autocomplete="list"
               aria-expanded={clientDropdownOpen}
