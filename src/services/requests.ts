@@ -31,6 +31,16 @@ function stripAccessFlags<T extends Record<string, unknown>>(row: T): Omit<T, "i
   return rest;
 }
 
+/** JWT user id may not exist in `profiles` — drop owner fields and retry (same idea as jobs insert). */
+function isServiceRequestOwnerFkViolation(err: { code?: string; message?: string }): boolean {
+  const code = err.code;
+  const msg = (err.message ?? "").toLowerCase();
+  return (
+    code === "23503" &&
+    (msg.includes("service_requests_owner_id_fkey") || (msg.includes("owner_id") && msg.includes("profiles")))
+  );
+}
+
 function buildServiceRequestInsertPayload(
   input: Omit<ServiceRequest, "id" | "reference" | "created_at" | "updated_at">,
   reference: string,
@@ -137,6 +147,17 @@ export async function createRequest(
   let { data, error } = await supabase.from("service_requests").insert(payload).select().single();
   if (error && isMissingAccessFlagsColumnError(error)) {
     const retry = await supabase.from("service_requests").insert(stripAccessFlags(payload)).select().single();
+    data = retry.data;
+    error = retry.error;
+  }
+  if (error && isServiceRequestOwnerFkViolation(error)) {
+    const withoutOwner = { ...payload } as Record<string, unknown>;
+    delete withoutOwner.owner_id;
+    delete withoutOwner.owner_name;
+    let retry = await supabase.from("service_requests").insert(withoutOwner).select().single();
+    if (retry.error && isMissingAccessFlagsColumnError(retry.error)) {
+      retry = await supabase.from("service_requests").insert(stripAccessFlags(withoutOwner)).select().single();
+    }
     data = retry.data;
     error = retry.error;
   }

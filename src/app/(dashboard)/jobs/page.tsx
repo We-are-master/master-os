@@ -19,9 +19,9 @@ import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon,
   ArrowRight, Briefcase, Receipt,
   MapPin, Building2, TrendingUp,
-  AlertTriangle, XCircle, PoundSterling,   Undo2, ImagePlus, Loader2,
+  AlertTriangle, XCircle, PoundSterling,   Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, Search,
 } from "lucide-react";
-import { cn, formatCurrency, formatCurrencyPrecise, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
+import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useBuFilter } from "@/hooks/use-bu-filter";
@@ -36,7 +36,7 @@ import {
 } from "@/services/jobs";
 import { refreshSelfBillPayoutState, refreshSelfBillPayoutStatesForJobIds } from "@/services/self-bills";
 import { statusChangePartnerTimerPatch } from "@/lib/partner-live-timer";
-import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
+import { computeOfficeTimerElapsedSeconds, formatOfficeTimer, statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
 import { createSelfBillFromJob } from "@/services/self-bills";
 import { getSupabase, getStatusCounts, type ListParams } from "@/services/base";
@@ -52,7 +52,7 @@ import { logAudit, logBulkAction } from "@/services/audit";
 import { findDuplicateJobs, formatJobDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { KanbanBoard } from "@/components/shared/kanban-board";
-import { canAdvanceJob, getPreviousJobStatus, normalizeTotalPhases } from "@/lib/job-phases";
+import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases } from "@/lib/job-phases";
 import {
   effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
@@ -73,13 +73,13 @@ import {
 import { formatBritishDate } from "@/lib/utils/date";
 import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
-import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
+import { TimeSelect } from "@/components/ui/time-select";
+import { ARRIVAL_WINDOW_OPTIONS } from "@/lib/job-arrival-window";
 import {
   jobBillableRevenue,
   jobCustomerBillableRevenueForCollections,
   jobMarginPercent,
   jobProfit,
-  suggestedPartnerCostForTargetMargin,
   SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
@@ -160,6 +160,95 @@ function jobScheduleStartYmdUk(job: Pick<Job, "scheduled_start_at" | "scheduled_
   const raw = String(job.scheduled_date ?? "").trim();
   const ymd = raw.slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;
+}
+
+/**
+ * Second row under the schedule date in Jobs Management — arrival window only for Unassigned/Scheduled
+ * pipeline jobs; on-site in-progress uses {@link ScheduleInProgressLiveSecondary}; on hold / final checks
+ * show durations; awaiting payment, completed, and cancelled show date only (no second row).
+ */
+function jobManagementScheduleSecondaryLine(job: Job): string | null {
+  const s = job.status;
+  if (s === "awaiting_payment" || s === "completed" || s === "cancelled") {
+    return null;
+  }
+  if (jobRowMatchesJobsManagementTab(job, "unassigned") || jobRowMatchesJobsManagementTab(job, "scheduled")) {
+    const startIso = job.scheduled_start_at?.trim();
+    if (!startIso) return "Arrival: —";
+    const dt = new Date(startIso);
+    if (Number.isNaN(dt.getTime())) return "Arrival: —";
+    const endIso = job.scheduled_end_at?.trim();
+    if (endIso) {
+      const range = formatArrivalTimeRange(startIso, endIso);
+      if (range) return `Arrival: ${range}`;
+    }
+    return `Arrival: ${formatHourMinuteAmPm(dt)}`;
+  }
+  if ((JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(s)) {
+    return null;
+  }
+  if (s === "on_hold") {
+    const raw = job.on_hold_at?.trim();
+    if (!raw) return "On hold";
+    const t = new Date(raw);
+    if (Number.isNaN(t.getTime())) return "On hold";
+    return `On hold ${formatRelativeTime(t)}`;
+  }
+  if (s === "final_check" || s === "need_attention") {
+    const finishedIso = job.partner_timer_ended_at?.trim();
+    if (finishedIso) {
+      const t = new Date(finishedIso);
+      if (!Number.isNaN(t.getTime())) {
+        return `Finished ${formatRelativeTime(t)}`;
+      }
+    }
+    return `In final checks ${formatRelativeTime(new Date(job.updated_at))}`;
+  }
+  return null;
+}
+
+/**
+ * Office timer (live running segment) when active; otherwise wall-clock since partner / last start —
+ * matches job detail partner-style elapsed for the list cell.
+ */
+function jobInProgressDisplayElapsedSeconds(job: Job, nowMs: number): number {
+  const office = computeOfficeTimerElapsedSeconds(job, nowMs);
+  if (office > 0 || job.timer_is_running) return office;
+  const p = job.partner_timer_started_at?.trim();
+  if (p) {
+    const t = new Date(p).getTime();
+    if (!Number.isNaN(t)) return Math.max(0, Math.floor((nowMs - t) / 1000));
+  }
+  const tl = job.timer_last_started_at?.trim();
+  if (tl) {
+    const t = new Date(tl).getTime();
+    if (!Number.isNaN(t)) return Math.max(0, Math.floor((nowMs - t) / 1000));
+  }
+  return 0;
+}
+
+function ScheduleInProgressLiveSecondary({ job }: { job: Job }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [job.id]);
+  const now = Date.now();
+  const secs = jobInProgressDisplayElapsedSeconds(job, now);
+  const startIso = job.timer_last_started_at?.trim() || job.partner_timer_started_at?.trim() || "";
+  let startedSub: string | null = null;
+  if (startIso) {
+    const t = new Date(startIso);
+    if (!Number.isNaN(t.getTime())) {
+      startedSub = `${formatRelativeTime(t)} · ${formatHourMinuteAmPm(t)}`;
+    }
+  }
+  return (
+    <div className="mt-0.5 w-full space-y-0.5 text-left">
+      <p className="text-[11px] font-semibold tabular-nums tracking-tight text-text-secondary">{formatOfficeTimer(secs)}</p>
+      {startedSub ? <p className="text-[10px] leading-snug text-text-tertiary">{startedSub}</p> : null}
+    </div>
+  );
 }
 
 const JOBS_SCHEDULE_PRESET_STORAGE_KEY = "master-os-jobs-schedule-preset-v1";
@@ -1122,18 +1211,8 @@ function JobsPageContent() {
       render: (item) => {
         const line = formatJobScheduleListLabel(item);
         const detail = formatJobScheduleLine(item);
-        const arrivalTimeLabel = (() => {
-          const startIso = item.scheduled_start_at?.trim();
-          if (!startIso) return "Arrival: —";
-          const dt = new Date(startIso);
-          if (Number.isNaN(dt.getTime())) return "Arrival: —";
-          const endIso = item.scheduled_end_at?.trim();
-          if (endIso) {
-            const range = formatArrivalTimeRange(startIso, endIso);
-            if (range) return `Arrival: ${range}`;
-          }
-          return `Arrival: ${formatHourMinuteAmPm(dt)}`;
-        })();
+        const secondaryLine = jobManagementScheduleSecondaryLine(item);
+        const isOnsiteInProgress = (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(item.status);
         const scheduleYmd = jobScheduleStartYmdUk(item) ?? "";
         const todayYmd = ukTodayYmd(new Date());
         const tomorrowYmd = addDaysYmd(todayYmd, 1);
@@ -1170,7 +1249,11 @@ function JobsPageContent() {
             ) : (
               <span className="text-xs text-text-tertiary">—</span>
             )}
-            <p className="mt-0.5 text-[11px] text-text-tertiary">{arrivalTimeLabel}</p>
+            {isOnsiteInProgress ? (
+              <ScheduleInProgressLiveSecondary job={item} />
+            ) : secondaryLine ? (
+              <p className="mt-0.5 text-[11px] text-text-tertiary">{secondaryLine}</p>
+            ) : null}
           </div>
         );
       },
@@ -1658,9 +1741,18 @@ function isHousekeepWorkLabel(value: string | null | undefined): boolean {
   return v.includes("housekeep") || v.includes("house keep");
 }
 
+function workTypeIcon(label: string) {
+  const v = label.toLowerCase();
+  if (v.includes("electric")) return Sparkles;
+  if (v.includes("plumb")) return MapPin;
+  if (v.includes("paint") || v.includes("decor")) return Building2;
+  if (v.includes("handy") || v.includes("carp") || v.includes("repair")) return Wrench;
+  return Briefcase;
+}
+
 /* ========== CREATE JOB MODAL ========== */
 function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
-  const requiredFieldClass = "border-red-300 focus:border-red-400 focus:ring-red-100 hover:border-red-300";
+  const requiredFieldClass = "border-[#d9d5cf] focus:border-[#b8b2aa] focus:ring-[#ede9e3] hover:border-[#cfcac3]";
   const [form, setForm] = useState({
     title: "",
     catalog_service_id: "",
@@ -1687,6 +1779,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const [partners, setPartners] = useState<Partner[]>([]);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const [partnerSearch, setPartnerSearch] = useState("");
+  const [workTypeSearch, setWorkTypeSearch] = useState("");
+  const [workTypeOpen, setWorkTypeOpen] = useState(false);
   const [sitePhotoFiles, setSitePhotoFiles] = useState<File[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const sitePhotosInputId = useId();
@@ -1720,6 +1814,11 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     if (aMatch !== bMatch) return aMatch ? -1 : 1;
     return (a.company_name ?? a.contact_name ?? "").localeCompare(b.company_name ?? b.contact_name ?? "");
   });
+  const filteredWorkTypes = useMemo(() => {
+    const q = workTypeSearch.trim().toLowerCase();
+    if (!q) return TYPE_OF_WORK_OPTIONS;
+    return TYPE_OF_WORK_OPTIONS.filter((name) => name.toLowerCase().includes(q));
+  }, [workTypeSearch]);
 
   useEffect(() => {
     if (!open) return;
@@ -1909,386 +2008,542 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const hourlyMarginPct = hourlyPreview.clientTotal > 0
     ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
     : 0;
-
-  const suggestedPartnerAt40 = useMemo(() => {
-    if (form.job_type === "hourly") return null;
-    const client = Number(form.client_price) || 0;
-    if (client + accessSurchargePreview <= 0) return null;
-    return suggestedPartnerCostForTargetMargin({
-      clientPrice: client,
-      extrasAmount: accessSurchargePreview,
-      materialsCost: Number(form.materials_cost) || 0,
-      targetMarginPercent: SUGGESTED_PARTNER_MARGIN_HINT_PCT,
-    });
-  }, [form.job_type, form.client_price, form.materials_cost, accessSurchargePreview]);
+  const estimatedMarginPct = useMemo(() => {
+    const clientTotal =
+      form.job_type === "hourly"
+        ? hourlyPreview.clientTotal + accessSurchargePreview
+        : (Number(form.client_price) || 0) + accessSurchargePreview;
+    if (clientTotal <= 0) return 0;
+    const partnerTotal = form.job_type === "hourly" ? hourlyPreview.partnerTotal : (Number(form.partner_cost) || 0);
+    const materialsTotal = Number(form.materials_cost) || 0;
+    return Math.round(((clientTotal - partnerTotal - materialsTotal) / clientTotal) * 1000) / 10;
+  }, [
+    form.job_type,
+    form.client_price,
+    form.partner_cost,
+    form.materials_cost,
+    hourlyPreview.clientTotal,
+    hourlyPreview.partnerTotal,
+    accessSurchargePreview,
+  ]);
 
   useEffect(() => {
     if (form.job_type === "hourly") {
       lastAutoPartnerCost.current = null;
       return;
     }
-    if (suggestedPartnerAt40 == null) return;
-    const next = String(suggestedPartnerAt40);
+    const client = Number(form.client_price) || 0;
+    const materials = Number(form.materials_cost) || 0;
+    const revenue = client + accessSurchargePreview;
+    if (revenue <= 0) return;
+    const targetPct = SUGGESTED_PARTNER_MARGIN_HINT_PCT / 100;
+    const nextNum = Math.max(0, Math.round((revenue * (1 - targetPct) - materials) * 100) / 100);
+    const next = String(nextNum);
     setForm((prev) => {
       const cur = prev.partner_cost.trim();
       const empty = cur === "";
       const unchangedFromAuto =
         lastAutoPartnerCost.current != null && cur === lastAutoPartnerCost.current;
       if (!empty && !unchangedFromAuto) return prev;
+      if (cur === next) return prev;
       lastAutoPartnerCost.current = next;
       return { ...prev, partner_cost: next };
     });
-  }, [form.job_type, suggestedPartnerAt40]);
+  }, [form.job_type, form.client_price, form.materials_cost, accessSurchargePreview]);
 
   return (
-    <Modal open={open} onClose={onClose} title="New Job" subtitle="Create a new job" size="lg">
-      <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <Select
-          label="Job type"
-          options={[
-            { value: "fixed", label: "Fixed" },
-            { value: "hourly", label: "Hourly" },
-          ]}
-          value={form.job_type}
-          onChange={(e) => update("job_type", e.target.value)}
-          className={requiredFieldClass}
-        />
-        {form.job_type === "hourly" && (
-          <ServiceCatalogSelect
-            label="Call Out type *"
-            emptyOptionLabel="Select from Services..."
-            catalog={catalogServices}
-            value={form.catalog_service_id}
-            className={requiredFieldClass}
-            onChange={(id, service) => {
-              const hrs = Math.max(1, Number(service?.default_hours) || 1);
-              const clientRate = Number(service?.hourly_rate) || 0;
-              const partnerRate = partnerHourlyRateFromCatalogBundle(service?.partner_cost, service?.default_hours);
-              const totals = computeHourlyTotals({
-                elapsedSeconds: hrs * 3600,
-                clientHourlyRate: clientRate,
-                partnerHourlyRate: partnerRate,
-              });
-              setForm((prev) => ({
-                ...prev,
-                catalog_service_id: id,
-                title: service ? (normalizeTypeOfWork(service.name) || service.name) : prev.title,
-                hourly_client_rate: String(clientRate || ""),
-                hourly_partner_rate: String(partnerRate || ""),
-                billed_hours: String(hrs),
-                client_price: String(totals.clientTotal),
-                partner_cost: String(totals.partnerTotal),
-              }));
-            }}
-          />
-        )}
-        {form.job_type !== "hourly" && (
-          <Select
-            label="Type of work *"
-            value={form.title}
-            onChange={(e) => update("title", e.target.value)}
-            className={requiredFieldClass}
-            options={[
-              { value: "", label: "Select type of work..." },
-              ...TYPE_OF_WORK_OPTIONS.map((name) => ({ value: name, label: name })),
-            ]}
-          />
-        )}
-        <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-        <JobModalScheduleFields
-          scheduledDate={form.scheduled_date}
-          arrivalFrom={form.arrival_from}
-          arrivalWindowMins={form.arrival_window_mins}
-          expectedFinishDate={form.expected_finish_date}
-          onChange={(field, v) => update(field, v)}
-          expectedFinishRequired={!!form.scheduled_date?.trim()}
-          requiredFieldClassName={requiredFieldClass}
-        />
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work {form.partner_id || form.partner_ids.length > 0 ? "*" : ""}</label>
-          <textarea
-            value={form.scope}
-            onChange={(e) => update("scope", e.target.value)}
-            rows={3}
-            placeholder="Required if you assign a partner (with schedule and address above)."
-            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Additional notes</label>
-          <textarea
-            value={form.additional_notes}
-            onChange={(e) => update("additional_notes", e.target.value)}
-            rows={2}
-            placeholder="Internal only — parking, keys, client preferences, things not in scope…"
-            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[56px]"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Report link (optional)</label>
-          <p className="text-[11px] text-text-tertiary mb-1.5">External URL (Drive, Notion, etc.) — not required.</p>
-          <Input
-            type="url"
-            value={form.report_link}
-            onChange={(e) => update("report_link", e.target.value)}
-            placeholder="https://…"
-            className="h-10"
-          />
-        </div>
-        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-2">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Site reference photos</p>
-          <p className="text-[11px] text-text-tertiary">
-            Optional — up to {JOB_SITE_PHOTOS_MAX} photos from the client or site (JPG/PNG/WebP/GIF, max 5 MB each).
-          </p>
-          <input
-            id={sitePhotosInputId}
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif"
-            multiple
-            className="sr-only"
-            onChange={(e) => {
-              const list = e.target.files;
-              if (!list?.length) return;
-              setSitePhotoFiles((prev) => {
-                const merged = [...prev, ...Array.from(list)];
-                if (merged.length > JOB_SITE_PHOTOS_MAX) {
-                  toast.message(`Keeping the first ${JOB_SITE_PHOTOS_MAX} photos (max per job).`);
-                }
-                return merged.slice(0, JOB_SITE_PHOTOS_MAX);
-              });
-              e.target.value = "";
-            }}
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] text-text-tertiary tabular-nums">
-              {sitePhotoFiles.length}/{JOB_SITE_PHOTOS_MAX}
-            </span>
-            <label
-              htmlFor={sitePhotosInputId}
-              className={sitePhotoFiles.length >= JOB_SITE_PHOTOS_MAX ? "pointer-events-none opacity-50" : undefined}
-            >
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-text-primary cursor-pointer hover:bg-surface-hover">
-                <ImagePlus className="h-4 w-4" />
-                Add photos
-              </span>
-            </label>
-            {uploadingPhotos ? <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" aria-hidden /> : null}
-          </div>
-          {sitePhotoFiles.length > 0 ? (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {sitePhotoFiles.map((f, i) => (
-                <div key={`${f.name}-${i}`} className="relative shrink-0">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={sitePhotoPreviewUrls[i]}
-                    alt=""
-                    className="h-14 w-14 rounded-md object-cover border border-border-light"
-                  />
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="New Job"
+      subtitle="Create a new job"
+      size="lg"
+      className="max-w-[580px]"
+    >
+      <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
+        <div className="max-h-[85vh] overflow-y-auto px-4 py-4 sm:px-6 space-y-3.5">
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-3">
+            <div className="flex items-center gap-2 border-b border-border-light/70 pb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Rate type</p>
+            </div>
+            <div className="grid grid-cols-1 gap-2.5 md:grid-cols-[200px_minmax(0,1fr)]">
+              <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-card border border-border text-text-tertiary hover:text-primary"
-                    onClick={() => setSitePhotoFiles((prev) => prev.filter((_, j) => j !== i))}
-                    aria-label="Remove photo"
+                    onClick={() => update("job_type", "fixed")}
+                    className={cn(
+                      "rounded-lg px-4 py-2 text-left transition-all border text-xs font-bold shadow-sm",
+                      form.job_type === "fixed"
+                        ? "bg-[#1DB87A] text-white border-[#1DB87A] shadow-[0_6px_18px_rgba(29,184,122,0.25)]"
+                        : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
+                    )}
                   >
-                    ×
+                    <span className="flex items-center gap-1.5"><Lock className="h-3.5 w-3.5" /> Fixed</span>
+                    <span className={cn("mt-0.5 block text-[10px]", form.job_type === "fixed" ? "text-white/70" : "text-[#888]")}>
+                      Set price upfront
+                    </span>
                   </button>
-                </div>
-              ))}
+                  <button
+                    type="button"
+                    onClick={() => update("job_type", "hourly")}
+                    className={cn(
+                      "rounded-lg px-4 py-2 text-left transition-all border text-xs font-bold shadow-sm",
+                      form.job_type === "hourly"
+                        ? "bg-[#7c3aed] text-white border-[#7c3aed] shadow-[0_6px_18px_rgba(124,58,237,0.25)]"
+                        : "bg-[#fafaf8] text-[#888] border-[#e0ddd8]",
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5" /> Hourly</span>
+                    <span className={cn("mt-0.5 block text-[10px]", form.job_type === "hourly" ? "text-white/70" : "text-[#888]")}>
+                      Charged per hour
+                    </span>
+                  </button>
+              </div>
+              <div className="space-y-1.5">
+                {form.job_type === "hourly" ? (
+                  <>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary inline-flex items-center gap-1.5">
+                      <Clock3 className="h-3.5 w-3.5" />
+                      Type of work rate *
+                    </p>
+                    <ServiceCatalogSelect
+                      label=""
+                      emptyOptionLabel="Select rate…"
+                      compactOptionLabels
+                      catalog={catalogServices}
+                      value={form.catalog_service_id}
+                      className={requiredFieldClass}
+                      onChange={(id, service) => {
+                        const hrs = Math.max(1, Number(service?.default_hours) || 1);
+                        const clientRate = Number(service?.hourly_rate) || 0;
+                        const partnerRate = partnerHourlyRateFromCatalogBundle(service?.partner_cost, service?.default_hours);
+                        const totals = computeHourlyTotals({
+                          elapsedSeconds: hrs * 3600,
+                          clientHourlyRate: clientRate,
+                          partnerHourlyRate: partnerRate,
+                        });
+                        setForm((prev) => ({
+                          ...prev,
+                          catalog_service_id: id,
+                          title: service ? (normalizeTypeOfWork(service.name) || service.name) : prev.title,
+                          hourly_client_rate: String(clientRate || ""),
+                          hourly_partner_rate: String(partnerRate || ""),
+                          billed_hours: String(hrs),
+                          client_price: String(totals.clientTotal),
+                          partner_cost: String(totals.partnerTotal),
+                        }));
+                      }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Type of work *</p>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setWorkTypeOpen((v) => !v)}
+                        className={cn(
+                          "h-10 w-full rounded-lg border bg-card px-3 text-left text-sm flex items-center justify-between",
+                          !form.title && "text-text-tertiary",
+                          form.title ? "border-border text-text-primary" : requiredFieldClass,
+                        )}
+                      >
+                        <span className="truncate">{form.title || "Select type of work..."}</span>
+                        <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", workTypeOpen && "rotate-180")} />
+                      </button>
+                      {workTypeOpen ? (
+                        <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-card shadow-lg p-2 space-y-2">
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-text-tertiary" />
+                            <Input
+                              value={workTypeSearch}
+                              onChange={(e) => setWorkTypeSearch(e.target.value)}
+                              placeholder="Search type of work..."
+                              className="h-8 pl-8"
+                            />
+                          </div>
+                          <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+                            {filteredWorkTypes.length > 0 ? filteredWorkTypes.map((name) => {
+                              const Icon = workTypeIcon(name);
+                              return (
+                                <button
+                                  key={name}
+                                  type="button"
+                                  onClick={() => {
+                                    update("title", name);
+                                    setWorkTypeOpen(false);
+                                    setWorkTypeSearch("");
+                                  }}
+                                  className={cn(
+                                    "w-full rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors inline-flex items-center gap-1.5",
+                                    form.title === name
+                                      ? "bg-[#1a1a1a] text-white border-[#1a1a1a]"
+                                      : "bg-[#fafaf8] border-[#e0ddd8] text-[#555] hover:bg-surface-hover",
+                                  )}
+                                >
+                                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                                  <span className="truncate">{name}</span>
+                                </button>
+                              );
+                            }) : (
+                              <p className="px-2 py-2 text-xs text-text-tertiary">No work types found.</p>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
-          ) : null}
-        </div>
-        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
-          {isHousekeepJob ? (
-            <p className="text-xs text-text-tertiary">
-              Housekeep: CCZ/Parking is included in the service price. Extra access surcharge is disabled.
-            </p>
-          ) : null}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button
-              type="button"
-              disabled={isHousekeepJob || !cczEligible}
-              onClick={() => cczEligible && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
-              className={cn(
-                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                (isHousekeepJob || !cczEligible) && "opacity-50 cursor-not-allowed",
-                form.in_ccz && cczEligible ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
-              )}
-            >
-              <p className="font-medium">
-                {!cczEligible && !isHousekeepJob
-                  ? "CCZ (Congestion Charge — central London)"
-                  : inCczPreview
-                    ? "CCZ fee applied"
-                    : "Apply CCZ"}
-              </p>
-              <p className="text-xs opacity-80">
-                {!cczEligible && !isHousekeepJob
-                  ? "Only jobs with EC1–4, WC1–2, W1, SW1 or SE1 in the address can turn CCZ on"
-                  : inCczPreview
-                    ? "+£15 applied"
-                    : "Turn on only inside the central CCZ postcode list"}
-              </p>
-            </button>
-            <button
-              type="button"
-              disabled={isHousekeepJob}
-              onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
-              className={cn(
-                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                isHousekeepJob && "opacity-50 cursor-not-allowed",
-                !form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
-              )}
-            >
-              <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-              <p className="text-xs opacity-80">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
-            </button>
-          </div>
-          <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span></p>
-        </div>
-        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner allocation</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "manual" }))}
-              className={cn(
-                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                form.assignment_mode === "manual" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
-              )}
-            >
-              <p className="font-medium">Allocate partner</p>
-              <p className="text-xs opacity-80">Pick a specific partner now</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }))}
-              className={cn(
-                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                form.assignment_mode === "auto" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
-              )}
-            >
-              <p className="font-medium">Auto assign</p>
-              <p className="text-xs opacity-80">System will assign after creation</p>
-            </button>
-          </div>
-          {form.assignment_mode === "manual" && (
-            <div className="space-y-2">
-              <Input
-                placeholder="Search partner by name, trade, or location..."
-                value={partnerSearch}
-                onChange={(e) => setPartnerSearch(e.target.value)}
+          </section>
+
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-3">
+            <div className="flex items-center gap-2 border-b border-border-light/70 pb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Client & schedule</p>
+            </div>
+            <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-text-secondary">Start date</label>
+                <Input
+                  type="date"
+                  value={form.scheduled_date}
+                  onChange={(e) => update("scheduled_date", e.target.value)}
+                  className={`h-10 ${requiredFieldClass}`}
+                />
+              </div>
+              <TimeSelect
+                label="Arrival time"
+                value={form.arrival_from}
+                onChange={(v) => update("arrival_from", v)}
+                className={requiredFieldClass}
               />
-              <div className="max-h-48 overflow-y-auto rounded-lg border border-border-light bg-card p-1.5 space-y-1.5">
-                <label
-                  className={cn(
-                    "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                    !form.partner_id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30",
-                  )}
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-text-primary">No partner</p>
-                    <p className="text-xs text-text-tertiary">Create job without assignment</p>
-                  </div>
-                  <input
-                    type="radio"
-                    name="partner-select"
-                    className="h-4 w-4"
-                    checked={!form.partner_id}
-                    onChange={() => update("partner_id", "")}
-                  />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Select
+                label="Window length"
+                value={form.arrival_window_mins}
+                onChange={(e) => update("arrival_window_mins", e.target.value)}
+                options={[...ARRIVAL_WINDOW_OPTIONS]}
+              />
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  Expected finish (date only){form.scheduled_date?.trim() ? " *" : ""}
                 </label>
-                {filteredPartners.map((p) => {
-                  const pid = p.id;
-                  const selected = form.partner_id === pid;
-                  const match = targetWorkType ? safePartnerMatchesTypeOfWork(p, targetWorkType) : false;
-                  return (
-                    <label
-                      key={pid}
-                      className={cn(
-                        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                        selected
-                          ? "border-primary bg-primary/5"
-                          : match
-                            ? "border-amber-400 bg-amber-50/90 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-primary/30"
-                            : "border-border hover:border-primary/30",
-                      )}
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-text-primary truncate">{p.company_name?.trim() || p.contact_name || "Partner"}</p>
-                        <p
-                          className={cn(
-                            "text-xs truncate",
-                            match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
-                          )}
-                        >
-                          {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {match ? <Badge variant="warning" size="sm">Match</Badge> : null}
-                        <input
-                          type="radio"
-                          name="partner-select"
-                          className="h-4 w-4"
-                          checked={selected}
-                          onChange={() => update("partner_id", pid)}
+                <Input
+                  type="date"
+                  value={form.expected_finish_date}
+                  onChange={(e) => update("expected_finish_date", e.target.value)}
+                  className={cn("h-10", form.scheduled_date?.trim() && requiredFieldClass)}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2.5">
+            <div className="flex items-center gap-2 border-b border-border-light/70 pb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Access & charges</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={isHousekeepJob || !cczEligible}
+                onClick={() => cczEligible && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-left transition-all shadow-sm",
+                  "flex items-center justify-between gap-3",
+                  (isHousekeepJob || !cczEligible) && "opacity-50 cursor-not-allowed",
+                  form.in_ccz && cczEligible
+                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
+                    : "bg-[#fafaf8] border-[#e0ddd8]",
+                )}
+              >
+                <div>
+                  <p className="text-sm font-medium text-text-primary">
+                    {!cczEligible && !isHousekeepJob ? "CCZ (central London)" : inCczPreview ? "CCZ fee applied" : "Apply CCZ"}
+                  </p>
+                  <p className="text-[11px] text-text-tertiary">
+                    {!cczEligible && !isHousekeepJob ? "Only EC/WC/W/SW1/SE1 postcodes" : inCczPreview ? "+£15 applied" : "No charge applied"}
+                  </p>
+                </div>
+                <span className={cn("h-5 w-9 rounded-full border p-0.5 transition-colors", form.in_ccz && cczEligible ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#cfcac3] bg-white")}>
+                  <span className={cn("block h-3.5 w-3.5 rounded-full bg-white transition-transform", form.in_ccz && cczEligible && "translate-x-4")} />
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={isHousekeepJob}
+                onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-left transition-all shadow-sm",
+                  "flex items-center justify-between gap-3",
+                  isHousekeepJob && "opacity-50 cursor-not-allowed",
+                  !form.has_free_parking
+                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
+                    : "bg-[#fafaf8] border-[#e0ddd8]",
+                )}
+              >
+                <div>
+                  <p className="text-sm font-medium text-text-primary">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
+                  <p className="text-[11px] text-text-tertiary">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
+                </div>
+                <span className={cn("h-5 w-9 rounded-full border p-0.5 transition-colors", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#cfcac3] bg-white")}>
+                  <span className={cn("block h-3.5 w-3.5 rounded-full bg-white transition-transform", !form.has_free_parking && "translate-x-4")} />
+                </span>
+              </button>
+            </div>
+            <p className="text-xs text-text-tertiary">
+              If the customer doesn&apos;t have free parking, click here to charge:{" "}
+              <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span>
+            </p>
+          </section>
+
+          <details className="rounded-xl border border-border-light bg-surface-hover/20 p-3" open>
+            <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-text-primary">
+              Scope & notes
+              <span className="text-[11px] font-normal text-text-tertiary">required ▾</span>
+            </summary>
+            <div className="mt-3 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work *</label>
+                <textarea
+                  value={form.scope}
+                  onChange={(e) => update("scope", e.target.value)}
+                  rows={3}
+                  placeholder="Describe exactly what should be done on this job."
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y h-[60px]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Additional notes</label>
+                <textarea
+                  value={form.additional_notes}
+                  onChange={(e) => update("additional_notes", e.target.value)}
+                  rows={2}
+                  placeholder="Internal only — parking, keys, client preferences, things not in scope…"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y h-[44px]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Report link (optional)</label>
+                <Input
+                  type="url"
+                  value={form.report_link}
+                  onChange={(e) => update("report_link", e.target.value)}
+                  placeholder="https://…"
+                  className="h-10"
+                />
+              </div>
+              <div className="rounded-lg border border-border-light bg-card p-2.5 space-y-2">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Site reference photos</p>
+                <input
+                  id={sitePhotosInputId}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  multiple
+                  className="sr-only"
+                  onChange={(e) => {
+                    const list = e.target.files;
+                    if (!list?.length) return;
+                    setSitePhotoFiles((prev) => {
+                      const merged = [...prev, ...Array.from(list)];
+                      if (merged.length > JOB_SITE_PHOTOS_MAX) {
+                        toast.message(`Keeping the first ${JOB_SITE_PHOTOS_MAX} photos (max per job).`);
+                      }
+                      return merged.slice(0, JOB_SITE_PHOTOS_MAX);
+                    });
+                    e.target.value = "";
+                  }}
+                />
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-text-tertiary tabular-nums">{sitePhotoFiles.length}/{JOB_SITE_PHOTOS_MAX}</span>
+                  <label
+                    htmlFor={sitePhotosInputId}
+                    className={sitePhotoFiles.length >= JOB_SITE_PHOTOS_MAX ? "pointer-events-none opacity-50" : undefined}
+                  >
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-text-primary cursor-pointer hover:bg-surface-hover">
+                      <ImagePlus className="h-4 w-4" />
+                      Add photos
+                    </span>
+                  </label>
+                  {uploadingPhotos ? <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" aria-hidden /> : null}
+                </div>
+                {sitePhotoFiles.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {sitePhotoFiles.map((f, i) => (
+                      <div key={`${f.name}-${i}`} className="relative shrink-0">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={sitePhotoPreviewUrls[i]}
+                          alt=""
+                          className="h-14 w-14 rounded-md object-cover border border-border-light"
                         />
+                        <button
+                          type="button"
+                          className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-card border border-border text-text-tertiary hover:text-primary"
+                          onClick={() => setSitePhotoFiles((prev) => prev.filter((_, j) => j !== i))}
+                          aria-label="Remove photo"
+                        >
+                          ×
+                        </button>
                       </div>
-                    </label>
-                  );
-                })}
-                {filteredPartners.length === 0 ? (
-                  <p className="text-xs text-text-tertiary px-2 py-2">No partners match this search.</p>
+                    ))}
+                  </div>
                 ) : null}
               </div>
             </div>
-          )}
+          </details>
+
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner allocation</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "manual" }))}
+                className={cn(
+                  "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                  form.assignment_mode === "manual"
+                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    : "border-border bg-card text-text-secondary",
+                )}
+              >
+                <p className="font-medium">Allocate partner</p>
+                <p className="text-xs opacity-80">Pick a specific partner now</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }))}
+                className={cn(
+                  "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
+                  form.assignment_mode === "auto"
+                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    : "border-border bg-card text-text-secondary",
+                )}
+              >
+                <p className="font-medium">Auto assign</p>
+                <p className="text-xs opacity-80">System will assign after creation</p>
+              </button>
+            </div>
+            {form.assignment_mode === "manual" && (
+              <div className="space-y-2">
+                <Input
+                  placeholder="Search partner by name, trade, or location..."
+                  value={partnerSearch}
+                  onChange={(e) => setPartnerSearch(e.target.value)}
+                />
+                <div className="max-h-44 overflow-y-auto rounded-lg border border-border-light bg-card p-1.5 space-y-1.5">
+                  <label
+                    className={cn(
+                      "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
+                      !form.partner_id ? "border-[#1DB87A]/40 bg-[#1DB87A]/10" : "border-border hover:border-[#1DB87A]/35",
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-text-primary">No partner</p>
+                      <p className="text-xs text-text-tertiary">Create job without assignment</p>
+                    </div>
+                    <input
+                      type="radio"
+                      name="partner-select"
+                      className="h-4 w-4"
+                      checked={!form.partner_id}
+                      onChange={() => update("partner_id", "")}
+                    />
+                  </label>
+                  {filteredPartners.map((p) => {
+                    const pid = p.id;
+                    const selected = form.partner_id === pid;
+                    const match = targetWorkType ? safePartnerMatchesTypeOfWork(p, targetWorkType) : false;
+                    return (
+                      <label
+                        key={pid}
+                        className={cn(
+                          "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
+                          selected
+                          ? "border-[#1DB87A]/40 bg-[#1DB87A]/10"
+                            : match
+                            ? "border-amber-300 bg-amber-50/70 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-[#1DB87A]/35"
+                            : "border-border hover:border-[#1DB87A]/35",
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-text-primary truncate">{p.company_name?.trim() || p.contact_name || "Partner"}</p>
+                          <p
+                            className={cn(
+                              "text-xs truncate",
+                              match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
+                            )}
+                          >
+                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {match ? <Badge variant="warning" size="sm">Match</Badge> : null}
+                          <input
+                            type="radio"
+                            name="partner-select"
+                            className="h-4 w-4"
+                            checked={selected}
+                            onChange={() => update("partner_id", pid)}
+                          />
+                        </div>
+                      </label>
+                    );
+                  })}
+                  {filteredPartners.length === 0 ? (
+                    <p className="text-xs text-text-tertiary px-2 py-2">No partners match this search.</p>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Pricing</p>
+            {form.job_type === "hourly" ? (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price £</label><Input type="number" value={String(hourlyPreview.clientTotal + accessSurchargePreview)} readOnly /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label><Input type="number" value={String(hourlyPreview.partnerTotal)} readOnly /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
+                </div>
+                <p className="text-[11px] text-text-tertiary">
+                  Client hourly rate is loaded from Call Out type: {formatCurrency(Number(form.hourly_client_rate) || 0)}/h.
+                </p>
+                <p className="text-[11px] text-text-tertiary">
+                  Billing rule: up to 1h = 1h minimum, then rounds up in 30-minute increments from timer logs.
+                </p>
+              </>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price £</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label>
+                  <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
+                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                    Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin.
+                  </p>
+                </div>
+                <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
+              </div>
+            )}
+          </section>
+
         </div>
-        {form.job_type === "hourly" ? (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Price</p>
-                <p className="text-sm font-semibold text-text-primary">{formatCurrency(hourlyPreview.clientTotal + accessSurchargePreview)}</p>
-              </div>
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Cost</p>
-                <p className="text-sm font-semibold text-text-primary">{formatCurrency(hourlyPreview.partnerTotal)}</p>
-              </div>
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Margin</p>
-                <p className="text-sm font-semibold text-text-primary">{hourlyMarginPct}%</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
-              <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
-            </div>
-            <p className="text-[11px] text-text-tertiary">Client hourly rate is loaded from Call Out type: {formatCurrency(Number(form.hourly_client_rate) || 0)}/h.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label>
-              <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
-              <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
-                Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin
-                {accessSurchargePreview > 0 ? " (client price + access add-ons − materials)" : " (client price − materials)"}; edit if needed.
-              </p>
-            </div>
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
-          </div>
-        )}
-        {form.job_type === "hourly" && (
-          <p className="text-[11px] text-text-tertiary -mt-2">
-            Billing rule: up to 1h = 1h minimum, then rounds up in 30-minute increments from timer logs.
+
+        <div className="sticky bottom-0 z-10 flex items-center justify-between gap-2 border-t border-border-light bg-card/95 px-4 py-3 backdrop-blur sm:px-6">
+          <p className="text-xs text-text-secondary">
+            Estimated margin: <span className={cn("font-semibold", estimatedMarginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>{estimatedMarginPct}%</span>
           </p>
-        )}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose} type="button" disabled={uploadingPhotos}>Cancel</Button>
-          <Button type="submit" loading={uploadingPhotos} disabled={uploadingPhotos}>Create Job</Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={onClose} type="button" disabled={uploadingPhotos}>Cancel</Button>
+            <Button type="submit" loading={uploadingPhotos} disabled={uploadingPhotos} className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]">Create Job</Button>
+          </div>
         </div>
       </form>
     </Modal>
