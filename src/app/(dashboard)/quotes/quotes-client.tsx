@@ -34,6 +34,8 @@ import { toast } from "sonner";
 import type { Quote, Partner, Job } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
+import { getClient } from "@/services/clients";
+import { getAccount } from "@/services/accounts";
 import {
   findDuplicateJobs,
   findDuplicateQuotes,
@@ -1495,6 +1497,14 @@ function QuoteDetailDrawer({
   const [startDate2, setStartDate2] = useState("");
   const [customMessage, setCustomMessage] = useState("");
   const [emailAttachRequestPhotos, setEmailAttachRequestPhotos] = useState(false);
+  /** Linked account (when client has `source_account_id`) — send confirmation only. */
+  const [linkedAccountPreview, setLinkedAccountPreview] = useState<{
+    companyName: string;
+    email: string;
+    financeEmail: string | null;
+  } | null>(null);
+  /** Scope / line items / dates / email — collapsed by default; summary + sell scale stay visible. */
+  const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
   const isAdmin = profile?.role === "admin";
   /** Earliest selectable day for proposed start dates (local calendar day). */
   const minProposalStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -1522,6 +1532,7 @@ function QuoteDetailDrawer({
       setPricingOpen(false);
       setExpandedBidIds(new Set());
       setSelectedReviewBidId(null);
+      setProposalDetailsExpanded(false);
       setQuoteClientPick({
       client_id: quote.client_id,
       client_address_id: quote.client_address_id,
@@ -1547,6 +1558,49 @@ function QuoteDetailDrawer({
     setEmailAttachRequestPhotos(Boolean(quote.email_attach_request_photos));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when server row version changes; omitting `quote` avoids wiping the editor on every silent list refresh (new object, same row)
   }, [quote.id, quote.updated_at]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const clientId = quoteClientPick.client_id ?? quote.client_id;
+    if (!clientId) {
+      setLinkedAccountPreview(null);
+      return;
+    }
+    void (async () => {
+      try {
+        const client = await getClient(clientId);
+        const sid = client?.source_account_id?.trim();
+        if (!sid) {
+          if (!cancelled) setLinkedAccountPreview(null);
+          return;
+        }
+        const acc = await getAccount(sid);
+        if (cancelled) return;
+        if (!acc) {
+          setLinkedAccountPreview(null);
+          return;
+        }
+        const mainEmail = bidPayloadTrimmedString(acc.email as unknown);
+        const feRaw = bidPayloadTrimmedString(acc.finance_email as unknown);
+        const companyName =
+          bidPayloadTrimmedString(acc.company_name as unknown) ||
+          bidPayloadTrimmedString(acc.contact_name as unknown) ||
+          "";
+        if (!cancelled) {
+          setLinkedAccountPreview({
+            companyName: companyName || "—",
+            email: mainEmail || "—",
+            financeEmail: feRaw.length > 0 ? feRaw : null,
+          });
+        }
+      } catch {
+        if (!cancelled) setLinkedAccountPreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [quote.client_id, quoteClientPick.client_id, quote.updated_at]);
 
   useEffect(() => {
     if (quote.status === "accepted" || quote.status === "converted_to_job") {
@@ -1775,6 +1829,19 @@ function QuoteDetailDrawer({
     sendDepositPercentNum <= 100 &&
     !Number.isNaN(sendDepositPercentNum) &&
     bidPayloadTrimmedString(sendEmail as unknown).includes("@");
+
+  /** Recipient shown in Move this quote — matches the field above (send email). */
+  const confirmSendEmail = useMemo(
+    () => bidPayloadTrimmedString(sendEmail as unknown) || bidPayloadTrimmedString(quote.client_email as unknown),
+    [sendEmail, quote.client_email],
+  );
+  const confirmClientName = useMemo(
+    () =>
+      bidPayloadTrimmedString(quoteClientPick.client_name as unknown) ||
+      bidPayloadTrimmedString(quote.client_name as unknown) ||
+      "",
+    [quoteClientPick.client_name, quote.client_name],
+  );
 
   const drawerTabs = [
     { id: "overview", label: "Review & Send" },
@@ -2603,6 +2670,26 @@ function QuoteDetailDrawer({
                     </div>
                   </div>
 
+                  <button
+                    type="button"
+                    onClick={() => setProposalDetailsExpanded((v) => !v)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg border border-dashed border-border-light bg-surface-hover/40 px-3 py-2.5 text-left text-xs font-medium text-text-secondary hover:bg-surface-hover/80 transition-colors"
+                    aria-expanded={proposalDetailsExpanded}
+                  >
+                    <span>
+                      {proposalDetailsExpanded ? "Hide" : "Show"} scope, line items, dates &amp; email
+                    </span>
+                    <ChevronDown
+                      className={cn(
+                        "h-4 w-4 shrink-0 text-text-tertiary transition-transform",
+                        proposalDetailsExpanded && "rotate-180",
+                      )}
+                      aria-hidden
+                    />
+                  </button>
+
+                  {proposalDetailsExpanded ? (
+                    <>
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope / line items</label>
@@ -2814,6 +2901,8 @@ function QuoteDetailDrawer({
                     <span className={cn("rounded-md px-2 py-0.5", sendStep2Ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-surface-hover text-text-tertiary")}>2 Start dates</span>
                     <span className={cn("rounded-md px-2 py-0.5", sendStep3Ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-surface-hover text-text-tertiary")}>3 Deposit & email</span>
                   </div>
+                    </>
+                  ) : null}
                 </div>
               )}
 
@@ -2875,21 +2964,41 @@ function QuoteDetailDrawer({
 
               <div className="space-y-2 pt-4 border-t border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Move this quote</p>
-                <p className="text-[11px] text-text-tertiary -mt-1 mb-1">
-                  {quote.status === "awaiting_customer" ? (
-                    <>
-                      The customer uses <strong className="text-text-secondary">Accept</strong> or <strong className="text-text-secondary">Reject</strong> in the email. Edit the quote anytime,{" "}
-                      <strong className="text-text-secondary">Save Quote</strong> if needed, then use{" "}
-                      <strong className="text-text-secondary">Resend Quote</strong> to send or update the PDF.
-                    </>
-                  ) : (
-                    <>
-                      After the proposal above is complete, use <strong className="text-text-secondary">Send to Customer</strong> to move to Awaiting Customer and email the PDF from here, or{" "}
-                      <strong className="text-text-secondary">Mark as sent</strong> if the client already received it by another channel (no app email). Then use{" "}
-                      <strong className="text-text-secondary">Resend Quote</strong> below only when you want to email the PDF from the app.
-                    </>
-                  )}
-                </p>
+                <div className="rounded-lg border border-border-light bg-card/60 px-3 py-2.5 space-y-2 -mt-0.5 mb-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                    {quote.status === "awaiting_customer" ? "PDF will go to" : "Email before you send"}
+                  </p>
+                  <div className="text-[13px] text-text-primary space-y-2.5">
+                    <div>
+                      <span className="text-[11px] text-text-tertiary block">Client</span>
+                      <p className="font-medium leading-snug">{confirmClientName || "—"}</p>
+                      <p className="text-[12px] text-text-secondary break-all mt-0.5">{confirmSendEmail || "—"}</p>
+                    </div>
+                    {linkedAccountPreview ? (
+                      <div className="pt-2 border-t border-border-light/80">
+                        <span className="text-[11px] text-text-tertiary block">Account</span>
+                        <p className="font-medium leading-snug">{linkedAccountPreview.companyName}</p>
+                        <p className="text-[12px] text-text-secondary break-all mt-0.5">{linkedAccountPreview.email}</p>
+                        {linkedAccountPreview.financeEmail &&
+                        linkedAccountPreview.financeEmail.toLowerCase() !== linkedAccountPreview.email.toLowerCase() ? (
+                          <p className="text-[12px] text-text-secondary break-all mt-1">
+                            <span className="text-[11px] text-text-tertiary">Finance · </span>
+                            {linkedAccountPreview.financeEmail}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full sm:w-auto"
+                    onClick={() => setClientOnQuoteOpen(true)}
+                  >
+                    Edit client
+                  </Button>
+                </div>
                 <div
                   className={cn(
                     "-mx-1 flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-visible px-1 py-1 scroll-smooth sm:gap-2",

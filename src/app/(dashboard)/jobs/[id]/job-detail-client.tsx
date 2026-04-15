@@ -59,6 +59,8 @@ import {
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, getJobDetailBundle, updateJob } from "@/services/jobs";
+import { getClient } from "@/services/clients";
+import { getAccount } from "@/services/accounts";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { listQuoteLineItems } from "@/services/quotes";
 import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob, syncSelfBillAfterJobChange, updateSelfBillStatus } from "@/services/self-bills";
@@ -305,6 +307,7 @@ const selfBillStatusConfig: Record<
 };
 
 function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
+  const [open, setOpen] = useState(false);
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
   const partnerFieldBill = sb.bill_origin !== "internal";
   const paymentDueYmd =
@@ -313,55 +316,100 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
     sb.week_start && sb.week_end
       ? `${sb.week_start} → ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
       : sb.week_label ?? sb.period;
+  const compactWeekLine =
+    sb.week_start && sb.week_end
+      ? `${sb.week_start} -> ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
+      : weekLine;
   const jobLabourOnBill = Math.round(partnerPaymentCap(job) * 100) / 100;
   const jobMaterialsOnBill = Math.round(Math.max(0, Number(job.materials_cost ?? 0)) * 100) / 100;
   const jobGrossOnBill = Math.round(partnerSelfBillGrossAmount(job) * 100) / 100;
   return (
-    <div className="rounded-lg border border-border-light p-3 space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-text-primary">{sb.reference}</p>
-        <Badge variant={st.variant} size="sm">{st.label}</Badge>
-      </div>
-      <p className="text-[11px] text-text-secondary truncate" title={sb.partner_name}>
-        Partner → us · {sb.partner_name}
-      </p>
-      <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
-      <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
-      <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
-        <div>
-          <p className="text-text-tertiary">Labour (this job)</p>
-          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobLabourOnBill)}</p>
-        </div>
-        <div>
-          <p className="text-text-tertiary">Materials (this job)</p>
-          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobMaterialsOnBill)}</p>
-        </div>
-      </div>
-      <p className="text-[11px] text-text-tertiary pt-0.5 leading-snug">
-        Week: {weekLine} · {sb.jobs_count} job{sb.jobs_count === 1 ? "" : "s"} on this bill
-        {sb.jobs_count > 1 ? (
-          <>
-            {" "}
-            · Whole bill total {formatCurrency(sb.net_payout)}
-          </>
-        ) : null}
-        {" "}
-        Payouts on the job reduce amount due only; extra payout on the job increases this line.
-      </p>
-      {paymentDueYmd ? (
-        <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium pt-0.5">
-          Office payment due: {formatDate(paymentDueYmd)} (Friday after the week ends)
-        </p>
-      ) : null}
-      <div className="flex items-center gap-1.5 flex-wrap pt-1">
-        <Button
-          size="sm"
-          variant="outline"
-          icon={<FileText className="h-3 w-3" />}
-          onClick={() => window.open(`/api/self-bills/${sb.id}/pdf`, "_blank", "noopener,noreferrer")}
+    <div className="rounded-lg border border-border-light p-2">
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={open ? "Hide self-bill details" : "Show self-bill details"}
+          onClick={() => setOpen((v) => !v)}
+          className="shrink-0 rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary mt-0.5"
         >
-          PDF
-        </Button>
+          <ChevronDown className={cn("h-5 w-5 transition-transform duration-200", open && "rotate-180")} />
+        </button>
+        <div className="min-w-0 flex-1 space-y-1.5">
+          {!open ? (
+            <div className="flex items-start justify-between gap-2 pt-0.5">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold text-text-primary truncate">{sb.reference}</p>
+                  <Badge variant={st.variant} size="sm">{st.label}</Badge>
+                </div>
+                <p className="text-[10px] text-text-tertiary mt-0.5 leading-tight">
+                  <span className="sm:hidden block break-words">Week {compactWeekLine}</span>
+                  <span className="hidden sm:block truncate" title={`Week ${weekLine}`}>Week {weekLine}</span>
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(jobGrossOnBill)}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<FileText className="h-3 w-3" />}
+                  onClick={() => window.open(`/api/self-bills/${sb.id}/pdf`, "_blank", "noopener,noreferrer")}
+                >
+                  PDF
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-text-primary">{sb.reference}</p>
+                <Badge variant={st.variant} size="sm">{st.label}</Badge>
+              </div>
+              <p className="text-[11px] text-text-secondary truncate" title={sb.partner_name}>
+                Partner → us · {sb.partner_name}
+              </p>
+              <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
+              <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
+              <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+                <div>
+                  <p className="text-text-tertiary">Labour (this job)</p>
+                  <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobLabourOnBill)}</p>
+                </div>
+                <div>
+                  <p className="text-text-tertiary">Materials (this job)</p>
+                  <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobMaterialsOnBill)}</p>
+                </div>
+              </div>
+              <p className="text-[11px] text-text-tertiary pt-0.5 leading-snug">
+                <span className="font-medium text-text-secondary">Week:</span> {weekLine} · {sb.jobs_count} job{sb.jobs_count === 1 ? "" : "s"} on this bill
+                {sb.jobs_count > 1 ? (
+                  <>
+                    {" "}
+                    · Whole bill total {formatCurrency(sb.net_payout)}
+                  </>
+                ) : null}
+                {" "}
+                Payouts on the job reduce amount due only; extra payout on the job increases this line.
+              </p>
+              {paymentDueYmd ? (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium pt-0.5">
+                  Office payment due: {formatDate(paymentDueYmd)} (Friday after the week ends)
+                </p>
+              ) : null}
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<FileText className="h-3 w-3" />}
+                  onClick={() => window.open(`/api/self-bills/${sb.id}/pdf`, "_blank", "noopener,noreferrer")}
+                >
+                  PDF
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -388,6 +436,27 @@ function extractReportMediaUrls(notes: string | null | undefined): string[] {
   if (!text.trim()) return [];
   const hits = text.match(/https?:\/\/[^\s)]+/g) ?? [];
   return hits.filter((u) => /\.(png|jpe?g|webp|gif)$/i.test(u));
+}
+
+/** `https://wa.me/{digits}` — same rules as partners list (UK 07… → 44…). */
+function whatsAppHrefFromPhoneForJob(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null;
+  let d = raw.replace(/\D/g, "");
+  if (!d) return null;
+  if (d.startsWith("00")) d = d.slice(2);
+  if ((d.length === 10 || d.length === 11) && d.startsWith("0")) {
+    d = `44${d.slice(1)}`;
+  }
+  if (d.length < 8 || d.length > 15) return null;
+  return `https://wa.me/${d}`;
+}
+
+function JobHeaderWhatsAppIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
+    </svg>
+  );
 }
 
 interface JobDetailClientProps {
@@ -441,6 +510,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [deletePaymentTarget, setDeletePaymentTarget] = useState<{ id: string; amount: number; type: string } | null>(null);
   const [deletingPayment, setDeletingPayment] = useState(false);
   const [propertyEdit, setPropertyEdit] = useState<ClientAndAddressValue | null>(null);
+  /** Map card: linked account (label + optional `accounts.logo_url`) + client phone/email. */
+  const [jobHeaderAccount, setJobHeaderAccount] = useState<{ label: string; logoUrl: string | null } | null>(null);
+  const [jobHeaderContact, setJobHeaderContact] = useState<{ phone?: string; email?: string } | null>(null);
   const [savingProperty, setSavingProperty] = useState(false);
   const [unlinkedAddressDraft, setUnlinkedAddressDraft] = useState("");
   const [savingUnlinkedAddress, setSavingUnlinkedAddress] = useState(false);
@@ -1064,6 +1136,53 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setUnlinkedAddressDraft(job.property_address ?? "");
     }
   }, [job?.id, job?.client_id, job?.client_address_id, job?.client_name, job?.property_address]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const cid = job?.client_id?.trim();
+    if (!cid) {
+      setJobHeaderAccount(null);
+      setJobHeaderContact(null);
+      return;
+    }
+    void (async () => {
+      try {
+        const c = await getClient(cid);
+        if (cancelled) return;
+        if (!c) {
+          setJobHeaderAccount(null);
+          setJobHeaderContact(null);
+          return;
+        }
+        const phone = c.phone?.trim() || "";
+        const email = c.email?.trim() || "";
+        setJobHeaderContact(phone || email ? { phone: phone || undefined, email: email || undefined } : null);
+        const sid = c.source_account_id?.trim();
+        if (!sid) {
+          setJobHeaderAccount(null);
+          return;
+        }
+        const acc = await getAccount(sid);
+        if (cancelled || !acc) {
+          if (!cancelled) setJobHeaderAccount(null);
+          return;
+        }
+        const label = (acc.company_name?.trim() || acc.contact_name?.trim() || "").trim();
+        const logoUrl = acc.logo_url?.trim() || null;
+        if (!cancelled) {
+          setJobHeaderAccount(label || logoUrl ? { label: label || "—", logoUrl } : null);
+        }
+      } catch {
+        if (!cancelled) {
+          setJobHeaderAccount(null);
+          setJobHeaderContact(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [job?.client_id, job?.updated_at]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -3796,8 +3915,64 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     );
                   })()}
                   <div>
-                    <p className="text-sm font-semibold leading-tight text-text-primary">{job.client_name}</p>
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <p className="text-sm font-semibold leading-tight text-text-primary">{job.client_name}</p>
+                      {jobHeaderAccount ? (
+                        <span
+                          title={`Account: ${jobHeaderAccount.label}`}
+                          className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-border-light bg-surface-hover/90 px-2 py-0.5 text-xs font-semibold text-text-primary shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]/90"
+                        >
+                          {jobHeaderAccount.logoUrl ? (
+                            <img
+                              src={jobHeaderAccount.logoUrl}
+                              alt=""
+                              width={16}
+                              height={16}
+                              className="h-3.5 w-3.5 shrink-0 rounded object-contain sm:h-4 sm:w-4"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <Building2 className="h-3 w-3 shrink-0 text-text-tertiary opacity-70" aria-hidden />
+                          )}
+                          <span className="min-w-0 truncate normal-case tracking-normal">{jobHeaderAccount.label}</span>
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="mt-1 text-xs leading-snug text-text-tertiary line-clamp-4">{job.property_address}</p>
+                    {jobHeaderContact && (jobHeaderContact.phone || jobHeaderContact.email) ? (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-snug">
+                        {jobHeaderContact.phone ? (() => {
+                          const waHref = whatsAppHrefFromPhoneForJob(jobHeaderContact.phone);
+                          return (
+                            <span className="inline-flex min-w-0 items-center gap-1 text-text-secondary">
+                              {waHref ? (
+                                <a
+                                  href={waHref}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="shrink-0 text-[#25D366] hover:opacity-90"
+                                  title="WhatsApp"
+                                  aria-label="Open WhatsApp chat"
+                                >
+                                  <JobHeaderWhatsAppIcon className="h-3 w-3" />
+                                </a>
+                              ) : null}
+                              <a href={`tel:${jobHeaderContact.phone!.replace(/\s/g, "")}`} className="font-medium hover:underline">
+                                {jobHeaderContact.phone}
+                              </a>
+                            </span>
+                          );
+                        })() : null}
+                        {jobHeaderContact.email ? (
+                          <a
+                            href={`mailto:${jobHeaderContact.email}`}
+                            className="min-w-0 max-w-[min(100%,14rem)] truncate text-text-tertiary hover:text-primary hover:underline"
+                          >
+                            {jobHeaderContact.email}
+                          </a>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                   {(() => {
                     const displayDate =
@@ -3839,10 +4014,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           <Clock className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
                           <span>
                             {agreedArrivalRange ? (
-                              <>
-                                <span className="font-medium">Arrival: {agreedArrivalRange}</span>
-                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> (earliest–latest agreed)</span>
-                              </>
+                              <span className="font-medium">Arrival: {agreedArrivalRange}</span>
                             ) : startIso ? (
                               <>
                                 {formatHourMinuteAmPm(new Date(startIso))}
@@ -5621,9 +5793,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </span>
                 ) : null}
               </div>
-              <p className="text-[11px] text-text-tertiary leading-snug">
-                The partner bills us. Amounts roll into one weekly self bill per partner (Monday–Sunday); this job shares that bill with other jobs in the same week.
-              </p>
               <p className="text-[10px] text-text-tertiary leading-snug">Assign a partner on this job to use self billing.</p>
               {!job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
