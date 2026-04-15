@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { buttonTap } from "@/lib/motion";
@@ -34,6 +35,7 @@ interface ButtonProps {
   loading?: boolean;
   disabled?: boolean;
   className?: string;
+  style?: CSSProperties;
   children?: React.ReactNode;
   onClick?: () => void;
   type?: "button" | "submit" | "reset";
@@ -56,6 +58,7 @@ export function Button({
   type = "button",
   title,
   form,
+  style,
   "aria-label": ariaLabel,
   "aria-pressed": ariaPressed,
 }: ButtonProps) {
@@ -66,6 +69,7 @@ export function Button({
       form={form}
       aria-label={ariaLabel}
       aria-pressed={ariaPressed}
+      style={style}
       whileTap={!disabled ? buttonTap : undefined}
       className={cn(
         "inline-flex items-center justify-center font-medium transition-all duration-200 cursor-pointer select-none",

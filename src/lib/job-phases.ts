@@ -74,6 +74,14 @@ export type JobStatusAction = {
 export function getJobStatusActions(job: Job): JobStatusAction[] {
   const tp = normalizeTotalPhases(job.total_phases);
   const last = lastInProgressStatusForTotal(tp);
+  const onHoldAction: JobStatusAction = {
+    label: "On Hold",
+    status: "on_hold",
+    icon: Pause,
+    primary: false,
+    tone: "hold",
+    special: "put_on_hold",
+  };
   const cancelAction: JobStatusAction = {
     label: "Cancel Job",
     status: "cancelled",
@@ -85,7 +93,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
   switch (job.status) {
     case "unassigned":
     case "auto_assigning":
-      return [cancelAction];
+      return [onHoldAction, cancelAction];
     case "scheduled":
     case "late":
       return [
@@ -95,14 +103,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           icon: Play,
           primary: true,
         },
-        {
-          label: "On Hold",
-          status: "on_hold",
-          icon: Pause,
-          primary: false,
-          tone: "hold",
-          special: "put_on_hold",
-        },
+        onHoldAction,
         cancelAction,
       ];
     case "in_progress_phase1":
@@ -116,14 +117,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           primary: true,
           tone: "success",
         },
-        {
-          label: "On Hold",
-          status: "on_hold",
-          icon: Pause,
-          primary: false,
-          tone: "hold",
-          special: "put_on_hold",
-        },
+        onHoldAction,
         cancelAction,
       ];
     }
@@ -136,6 +130,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           primary: true,
           special: "send_report_invoice",
         },
+        onHoldAction,
         { label: "Reopen Job", status: last, icon: RotateCcw, primary: false },
         cancelAction,
       ];
@@ -143,6 +138,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     case "awaiting_payment":
       return [
         { label: "Mark as Paid", status: "completed", icon: CheckCircle2, primary: true },
+        onHoldAction,
         cancelAction,
       ];
     case "need_attention":
@@ -154,6 +150,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           icon: RotateCcw,
           primary: false,
         },
+        onHoldAction,
         cancelAction,
       ];
     case "completed":
@@ -246,8 +243,10 @@ export function canAdvanceJob(
   }
 
   if (nextStatus === "on_hold") {
-    if (isJobOnSiteWorkStatus(job.status)) return { ok: true };
-    return { ok: false, message: "On hold is only available while the job is in progress on site." };
+    if (job.status === "cancelled" || job.status === "deleted" || job.status === "completed" || job.status === "on_hold") {
+      return { ok: false, message: "On hold is not available for this status." };
+    }
+    return { ok: true };
   }
 
   if (job.status === "on_hold") {

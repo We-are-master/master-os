@@ -35,6 +35,7 @@ import {
   ContactRound,
   MessageSquare,
   MailPlus,
+  MapPin,
   type LucideIcon,
 } from "lucide-react";
 
@@ -61,6 +62,7 @@ const iconMap: Record<string, LucideIcon> = {
   contact: ContactRound,
   "message-square": MessageSquare,
   "mail-plus": MailPlus,
+  "map-pin": MapPin,
 };
 
 /** Logos (SVG inline para herdar currentColor) para Clients, Partners, Accounts */

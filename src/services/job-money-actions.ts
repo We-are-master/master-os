@@ -129,10 +129,26 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
 
   if (mode === "partner_extra") {
     if (!job.partner_id?.trim()) throw new Error("Assign a partner first");
-    const patch = applyPartnerExtraPatch(job, a, "partner_cost");
-    const updated = await updateJob(jobId, patch);
-    await syncSelfBillAfterJobChange(updated);
-    return updated;
+    const noteUpper = (noteTrim ?? "").toUpperCase();
+    const allocation = noteUpper.startsWith("MATERIALS") ? "materials" : "partner_cost";
+    const patch = applyPartnerExtraPatch(job, a, allocation);
+    try {
+      const updated = await updateJob(jobId, patch);
+      await syncSelfBillAfterJobChange(updated);
+      return updated;
+    } catch {
+      // Fallback patch with minimal fields for schema-drifted environments.
+      const fallbackPatch =
+        allocation === "materials"
+          ? ({ materials_cost: Math.round((Number(job.materials_cost ?? 0) + a) * 100) / 100 } as Partial<Job>)
+          : ({
+              partner_cost: Math.round((Number(job.partner_cost ?? 0) + a) * 100) / 100,
+              partner_extras_amount: Math.round((Number(job.partner_extras_amount ?? 0) + a) * 100) / 100,
+            } as Partial<Job>);
+      const updated = await updateJob(jobId, fallbackPatch);
+      await syncSelfBillAfterJobChange(updated);
+      return updated;
+    }
   }
 
   if (mode === "partner_pay") {

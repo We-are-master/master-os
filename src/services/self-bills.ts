@@ -340,7 +340,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
       materials: 0,
       commission: 0,
       net_payout: 0,
-      status: "accumulating" as const,
+      status: "draft" as const,
       payment_cadence: "weekly",
     };
     let { data: ins, error: insErr } = await supabase.from("self_bills").insert(row).select("id").single();
@@ -363,7 +363,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
       if (isStatusCheck) {
         const { data: ins2, error: insErr2 } = await supabase
           .from("self_bills")
-          .insert({ ...row, status: "pending_review" as const })
+          .insert({ ...row, status: "accumulating" as const })
           .select("id")
           .single();
         if (!insErr2 && ins2) {
@@ -464,6 +464,31 @@ export async function listSelfBillsLinkedToJob(
   return rows;
 }
 
+/**
+ * When a job is cancelled, mark linked self-bills as payout-cancelled (void-like state).
+ * Skips paid / already voided rows and never sends anything.
+ */
+export async function cancelOpenSelfBillsForJobCancellation(options: {
+  jobReference: string;
+  primarySelfBillId?: string | null;
+}): Promise<void> {
+  const linked = await listSelfBillsLinkedToJob(options.jobReference, options.primarySelfBillId);
+  const ids = linked
+    .filter((sb) => {
+      if (sb.status === "paid") return false;
+      if (sb.status === "payout_cancelled" || sb.status === "payout_lost" || sb.status === "payout_archived") return false;
+      return true;
+    })
+    .map((sb) => sb.id);
+  if (ids.length === 0) return;
+  const supabase = getSupabase();
+  const { error } = await supabase
+    .from("self_bills")
+    .update({ status: "payout_cancelled" as const, partner_status_label: "Cancelled" })
+    .in("id", ids);
+  if (error) throw error;
+}
+
 export type CreateSelfBillFromJobOptions = {
   /** When set (e.g. Review & approve), weekly bucket follows this instant instead of scheduled/created date. */
   weekAnchorDate?: Date;
@@ -502,6 +527,18 @@ export async function getSelfBill(id: string): Promise<SelfBill | null> {
   const { data, error } = await supabase.from("self_bills").select("*").eq("id", id).maybeSingle();
   if (error) throw error;
   return (data as SelfBill) ?? null;
+}
+
+export async function updateSelfBillStatus(id: string, status: SelfBillStatus): Promise<SelfBill> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("self_bills")
+    .update({ status })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as SelfBill;
 }
 
 export async function listJobsForSelfBill(selfBillId: string): Promise<SelfBillJobLine[]> {

@@ -906,6 +906,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           title: formData.title,
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
+          property_id: quoteToConvert.property_id ?? undefined,
           client_name: formData.client_name,
           property_address: formData.property_address,
           partner_id: formData.partner_id ?? quoteToConvert.partner_id,

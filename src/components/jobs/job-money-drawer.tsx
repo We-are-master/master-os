@@ -74,6 +74,24 @@ const PARTNER_LEDGER_LABEL_OPTIONS: { value: string; label: string }[] = [
   { value: "Other", label: "Other" },
 ];
 
+/** Match Cash In — Finance Summary “CASH IN — CLIENT” extra rows. */
+const CLIENT_EXTRA_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "Extra charges", label: "Extra charges" },
+  { value: "CCZ", label: "CCZ" },
+  { value: "Parking", label: "Parking" },
+  { value: "Materials", label: "Materials" },
+  { value: "Other", label: "Other" },
+];
+
+/** Match Cash Out partner extras — same labels as Finance Summary “CASH OUT — PARTNER”. */
+const PARTNER_EXTRA_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "Extra payout", label: "Extra payout" },
+  { value: "CCZ", label: "CCZ" },
+  { value: "Parking", label: "Parking" },
+  { value: "Materials", label: "Materials" },
+  { value: "Other", label: "Other" },
+];
+
 function isClientFlow(flow: JobMoneyDrawerFlow): boolean {
   return flow === "client_pay" || flow === "client_extra";
 }
@@ -133,6 +151,7 @@ export function JobMoneyDrawer({
   const [note, setNote] = useState("");
   const [clientPayApplyAs, setClientPayApplyAs] = useState<ClientPayApplyAs>("final");
   const [paymentLedgerLabel, setPaymentLedgerLabel] = useState("");
+  const [extraType, setExtraType] = useState("");
   const amountRef = useRef<HTMLInputElement>(null);
 
   const depositRemaining = clientCashContext?.depositRemaining ?? 0;
@@ -146,6 +165,7 @@ export function JobMoneyDrawer({
     setPaymentDate(new Date().toISOString().slice(0, 10));
     setNote("");
     setPaymentLedgerLabel("");
+    setExtraType(flow === "partner_extra" ? "Extra payout" : "Extra charges");
     if (isPayFlow(flow)) {
       setMethod(readSavedMethod(flow));
     } else {
@@ -172,7 +192,9 @@ export function JobMoneyDrawer({
   const isClientStripe = flow === "client_pay" && method === "stripe";
   const n = Number(amount);
   const amountOk = amount.trim() !== "" && !Number.isNaN(n) && n > 0;
-  const canSubmit = !isClientStripe && amountOk;
+  const isOtherExtra = !isPayFlow(flow) && extraType.trim().toLowerCase() === "other";
+  const noteOk = !isOtherExtra || note.trim().length > 0;
+  const canSubmit = !isClientStripe && amountOk && noteOk;
 
   const handleMethodChange = (m: JobPaymentMethod) => {
     setMethod(m);
@@ -190,12 +212,16 @@ export function JobMoneyDrawer({
           ? "final"
           : clientPayApplyAs
         : undefined;
+    const noteWithExtraType =
+      !isPayFlow(flow) && extraType.trim()
+        ? `${extraType.trim()}${note.trim() ? ` — ${note.trim()}` : ""}`
+        : note;
     await onSubmit({
       flow,
       amount: n,
       paymentDate: pay ? paymentDate : new Date().toISOString().slice(0, 10),
       method: submitMethod,
-      note,
+      note: noteWithExtraType,
       ...(applyForSubmit != null ? { clientPayApplyAs: applyForSubmit } : {}),
       ...(pay && paymentLedgerLabel.trim()
         ? { paymentLedgerLabel: paymentLedgerLabel.trim() }
@@ -359,18 +385,32 @@ export function JobMoneyDrawer({
         ) : (
           <>
             {!isPayFlow(flow) ? helpExtra : null}
+            {!isPayFlow(flow) ? (
+              <div>
+                <Select
+                  label="Extra type"
+                  value={extraType}
+                  onChange={(e) => setExtraType(e.target.value)}
+                  options={flow === "partner_extra" ? PARTNER_EXTRA_TYPE_OPTIONS : CLIENT_EXTRA_TYPE_OPTIONS}
+                  className="h-10"
+                />
+              </div>
+            ) : null}
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
-              <Input
-                ref={amountRef}
-                type="number"
-                min={0}
-                step="0.01"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="h-11 text-base font-medium tabular-nums"
-                placeholder="0.00"
-              />
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-text-tertiary">£</span>
+                <Input
+                  ref={amountRef}
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="h-11 pl-7 text-base font-medium tabular-nums"
+                  placeholder="0.00"
+                />
+              </div>
             </div>
             {isPayFlow(flow) ? (
               <div>
@@ -378,10 +418,20 @@ export function JobMoneyDrawer({
                 <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
               </div>
             ) : null}
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Note</label>
-              <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional" className="h-10" />
-            </div>
+            {isOtherExtra ? (
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  Note <span className="text-red-500">*</span>
+                </label>
+                <Input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Describe this extra"
+                  className="h-10"
+                  required
+                />
+              </div>
+            ) : null}
           </>
         )}
       </form>

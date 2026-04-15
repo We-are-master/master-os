@@ -69,9 +69,12 @@ export function statusChangeOfficeTimerPatch(
 
 export function formatOfficeTimer(seconds: number): string {
   const totalSeconds = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
+  const d = Math.floor(totalSeconds / 86400);
+  const remAfterDays = totalSeconds % 86400;
+  const h = Math.floor(remAfterDays / 3600);
+  const m = Math.floor((remAfterDays % 3600) / 60);
+  const s = remAfterDays % 60;
+  if (d > 0) return `${d}d ${h}h ${m}m`;
   if (h > 0) return `${h}h ${m}m ${s}s`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
