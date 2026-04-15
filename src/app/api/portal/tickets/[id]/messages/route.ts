@@ -24,7 +24,7 @@ export async function POST(
 
   const [authResult, bodyResult, ticketResult] = await Promise.all([
     requirePortalUser(),
-    req.json().catch(() => null) as Promise<{ body?: unknown } | null>,
+    req.json().catch(() => null) as Promise<{ body?: unknown; attachments?: unknown } | null>,
     supabase
       .from("tickets")
       .select("id, reference, subject, status, account_id, assigned_to")
@@ -51,8 +51,29 @@ export async function POST(
   const t = ticket as { id: string; reference: string; subject: string; status: string; assigned_to: string | null };
 
   const message = typeof bodyResult?.body === "string" ? bodyResult.body.trim() : "";
-  if (!message || message.length > 5000) {
-    return NextResponse.json({ error: "Message is required (max 5000 characters)." }, { status: 400 });
+  const attachmentsInput = Array.isArray(bodyResult?.attachments) ? bodyResult.attachments : [];
+
+  // Validate attachments shape — each entry must have a storage path inside
+  // the ticket-attachments bucket (we'll resolve to a signed URL on render).
+  const attachments = attachmentsInput
+    .filter((a): a is { path: string; name: string; type?: string; size?: number } => {
+      if (!a || typeof a !== "object") return false;
+      const o = a as { path?: unknown; name?: unknown };
+      return typeof o.path === "string" && o.path.length > 0 && typeof o.name === "string";
+    })
+    .slice(0, 6) // max 6 attachments per message
+    .map((a) => ({
+      path: a.path,
+      name: a.name,
+      type: typeof a.type === "string" ? a.type : undefined,
+      size: typeof a.size === "number" ? a.size : undefined,
+    }));
+
+  if (!message && attachments.length === 0) {
+    return NextResponse.json({ error: "Message or attachments required." }, { status: 400 });
+  }
+  if (message.length > 5000) {
+    return NextResponse.json({ error: "Message too long (max 5000 characters)." }, { status: 400 });
   }
 
   // Insert message
@@ -61,7 +82,8 @@ export async function POST(
     sender_id:   portalUser.id,
     sender_type: "portal_user",
     sender_name: portalUser.full_name ?? portalUser.email,
-    body:        message,
+    body:        message || "",
+    attachments,
   });
   if (msgErr) {
     console.error("[portal/tickets/messages] insert failed:", msgErr);

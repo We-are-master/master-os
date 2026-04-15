@@ -2,6 +2,20 @@
 -- Migration 142: Portal account-scoped RLS (PR 1 — security hardening)
 -- =============================================================================
 --
+-- DEFENSIVE COLUMNS: in case older migrations (080, 098, 131) have not been
+-- applied to this environment, make sure the columns we reference in RLS
+-- policies actually exist. Each statement is idempotent and purely
+-- additive — safe to run on databases where the migrations are already in.
+-- =============================================================================
+ALTER TABLE public.invoices
+  ADD COLUMN IF NOT EXISTS source_account_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL;
+ALTER TABLE public.clients
+  ADD COLUMN IF NOT EXISTS source_account_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL;
+ALTER TABLE public.tickets
+  ADD COLUMN IF NOT EXISTS account_id uuid REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+-- =============================================================================
+--
 -- BEFORE: tickets, jobs, quotes, invoices, service_requests, job_payments all
 -- had `USING (true)` for authenticated — app-layer scoping in `requirePortalUser()`
 -- was the only isolation. A leaked token or buggy endpoint could leak
