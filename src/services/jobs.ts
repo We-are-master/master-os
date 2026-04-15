@@ -435,14 +435,10 @@ export async function createJob(
   input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Job> {
   const supabase = getSupabase();
-  const inputFromQuotePre = (() => {
-    const qid = (input as { quote_id?: string | null }).quote_id;
-    return qid != null && String(qid).trim() !== "";
-  })();
   const billablePre = Number(input.client_price ?? 0) + Number(input.extras_amount ?? 0);
   const scheduledPre = Number(input.customer_deposit ?? 0) + Number(input.customer_final_payment ?? 0);
   const invoiceTotalPre = Math.max(0, Math.max(billablePre, scheduledPre));
-  const needInvoice = invoiceTotalPre > 0.01 && !inputFromQuotePre;
+  const needInvoice = invoiceTotalPre > 0.01;
   /** Geocode in parallel with ref RPCs — same critical path, independent I/O. */
   const [jobRefRes, invRefRes, coords] = await Promise.all([
     supabase.rpc("next_job_ref"),
@@ -504,34 +500,44 @@ export async function createJob(
   if (error) throw error;
   let job = data as Job;
 
-  /** Quote → job flow creates its own invoice after insert; `quote_id` may be stripped on legacy DB retry — trust input too. */
-  const inputFromQuote = (() => {
-    const qid = (input as { quote_id?: string | null }).quote_id;
-    return qid != null && String(qid).trim() !== "";
-  })();
-  const fromQuote =
-    inputFromQuote || Boolean((job as { quote_id?: string | null }).quote_id?.toString().trim());
+  /**
+   * Invoice draft is created for every new job (quote or direct-from-modal) so Finance always has
+   * a paired draft invoice + draft self-bill to review. Invoice stays `draft` — the Finance
+   * "Review & approve" flow transitions it to `pending` (and optionally emails the PDF to the
+   * client at that point).
+   */
   const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
   const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
-  if (invoiceTotal > 0.01 && !job.invoice_id && !fromQuote) {
+  if (invoiceTotal > 0.01 && !job.invoice_id) {
     try {
       const dueDateStr = await getInvoiceDueDateIsoForClient(job.client_id ?? null);
+      const hasDeposit = Number(job.customer_deposit ?? 0) > 0.01;
       const inv = await createInvoice(
         {
           client_name: job.client_name,
           job_reference: job.reference,
           amount: invoiceTotal,
-          status: "pending",
+          status: "draft",
           due_date: dueDateStr,
-          invoice_kind: "final",
+          invoice_kind: "combined",
+          collection_stage: hasDeposit ? "awaiting_deposit" : "awaiting_final",
         },
         invoiceRefPre ? { reference: invoiceRefPre } : undefined,
       );
       await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
       job = { ...job, invoice_id: inv.id };
-    } catch {
-      /* invoice can be added manually in Finance */
+    } catch (e) {
+      /** Surface the failure — the job was persisted but the paired draft invoice wasn't. */
+      console.error(
+        "createJob: draft invoice creation failed",
+        { jobId: job.id, ref: job.reference },
+        e,
+      );
+      const msg = e instanceof Error ? e.message : "unknown error";
+      throw new Error(
+        `Job ${job.reference} was created but its draft invoice failed (${msg}). Create it manually in Finance.`,
+      );
     }
   }
 

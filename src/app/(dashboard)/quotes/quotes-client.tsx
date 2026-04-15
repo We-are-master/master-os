@@ -41,9 +41,7 @@ import {
   formatQuoteDuplicateLines,
 } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
-import { createJob, getJobByQuoteId, updateJob } from "@/services/jobs";
-import { createInvoice, listInvoicesLinkedToJob } from "@/services/invoices";
-import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
+import { createJob, getJobByQuoteId } from "@/services/jobs";
 import { listPartners } from "@/services/partners";
 import { useBuFilter } from "@/hooks/use-bu-filter";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
@@ -898,8 +896,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         const quotePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
         const quotePartnerName = (formData.partner_name ?? quoteToConvert.partner_name)?.trim();
         const hasPartner = !!(quotePartnerId?.trim() || quotePartnerName);
-        /** Pre-fetch invoice due date in parallel with dup check + image resolve — it doesn't depend on the new job. */
-        const dueDatePromise = getInvoiceDueDateIsoForClient(formData.client_id ?? null);
         const [dupJobs, siteImages] = await Promise.all([
           findDuplicateJobs({
             clientId: formData.client_id,
@@ -951,31 +947,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           images: siteImages.length ? siteImages : undefined,
         });
 
-        const totalClient = Number(formData.client_price ?? 0);
-        /** Invoice flow runs in parallel with quote-status update + audit log — they touch different rows. */
-        const invoiceFlow = (async () => {
-          if (totalClient <= 0.01) return;
-          const dueStr = await dueDatePromise;
-          const linked = await listInvoicesLinkedToJob(job.reference, job.invoice_id);
-          if (linked.length > 0) {
-            const pick = linked.find((i) => i.invoice_kind === "combined") ?? linked[linked.length - 1];
-            await updateJob(job.id, { invoice_id: pick.id });
-            return;
-          }
-          const combined = await createInvoice({
-            client_name: formData.client_name,
-            job_reference: job.reference,
-            amount: totalClient,
-            status: "pending",
-            due_date: dueStr,
-            collection_stage: scheduledDeposit > 0.01 ? "awaiting_deposit" : "awaiting_final",
-            invoice_kind: "combined",
-          });
-          await updateJob(job.id, { invoice_id: combined.id });
-        })();
-
+        /** Draft invoice is created inside `createJob` (unified for quote + modal paths). */
         await Promise.all([
-          invoiceFlow,
           updateQuote(quoteToConvert.id, { status: "converted_to_job" }),
           logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: { from_quote: quoteToConvert.reference }, userId: profile?.id, userName: profile?.full_name }),
         ]);
