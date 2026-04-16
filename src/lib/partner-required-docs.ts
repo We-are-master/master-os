@@ -85,13 +85,12 @@ export const CERT_REQUIREMENTS_BY_TRADE: Record<string, string[]> = {
   /** WRAS omitted for now (not required for small repairs). */
   Plumber: ["Water Regulations"],
   Electrician: ["NICEIC", "ECS Card", "18th Edition Wiring Regulations"],
-  "Gas Safety Certificate": ["Gas Safe Certificate", "ACS Gas Certificate"],
-  "PAT Testing": ["PAT Testing Certificate"],
-  "PAT EICR": ["PAT Testing Certificate", "EICR Qualification"],
-  EICR: ["EICR Qualification"],
+  "Gas Safety Certificate (GSC)": ["Gas Safe Certificate", "ACS Gas Certificate"],
+  "Portable Appliance Testing (PAT)": ["PAT Testing Certificate"],
+  "Electrical Installation Condition Report (EICR)": ["EICR Qualification"],
   "Fire Alarm Certificate": ["Fire Alarm Certification"],
   "Emergency Lighting Certificate": ["Emergency Lighting Certification"],
-  "Fire Extinguisher Service": ["BAFE / extinguisher servicing certificate"],
+  "Fire Extinguisher Service (FES)": ["BAFE / extinguisher servicing certificate"],
 };
 
 /** Not counted in compliance score — shown as optional upload prompts per trade. */

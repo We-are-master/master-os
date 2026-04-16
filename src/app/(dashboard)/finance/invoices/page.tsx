@@ -956,6 +956,86 @@ export default function InvoicesPage() {
     [tabCounts],
   );
 
+  const groupedInvoicesByAccount = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        key: string;
+        accountId: string | null;
+        accountName: string;
+        invoices: Invoice[];
+        totalAmount: number;
+        totalDue: number;
+        totalPaid: number;
+        paidCount: number;
+        pendingCount: number;
+        overdueCount: number;
+      }
+    >();
+    for (const inv of filteredInvoices) {
+      const accId = effectiveInvoiceSourceAccountId(inv, jobRefToSourceAccountId, clientNameToSourceAccountId);
+      const key = accId ? `acc:${accId}` : "acc:unlinked";
+      const accountName = accId
+        ? accountNameById[accId] || "Loading account..."
+        : "Unlinked account";
+      const due = invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
+      const paid = invoiceListCollectedAmount(inv, jobsByRef, customerPaidByJobId);
+      const row =
+        groups.get(key) ??
+        {
+          key,
+          accountId: accId ?? null,
+          accountName,
+          invoices: [],
+          totalAmount: 0,
+          totalDue: 0,
+          totalPaid: 0,
+          paidCount: 0,
+          pendingCount: 0,
+          overdueCount: 0,
+        };
+      row.invoices.push(inv);
+      row.totalAmount += Number(inv.amount) || 0;
+      row.totalDue += due;
+      row.totalPaid += paid;
+      if (inv.status === "paid") row.paidCount += 1;
+      else if (inv.status === "overdue") row.overdueCount += 1;
+      else row.pendingCount += 1;
+      groups.set(key, row);
+    }
+    return [...groups.values()]
+      .map((g) => ({
+        ...g,
+        invoices: [...g.invoices].sort((a, b) => {
+          const ad = String(a.due_date ?? a.created_at ?? "");
+          const bd = String(b.due_date ?? b.created_at ?? "");
+          return ad.localeCompare(bd);
+        }),
+      }))
+      .sort((a, b) => {
+        if (a.key === "acc:unlinked") return 1;
+        if (b.key === "acc:unlinked") return -1;
+        return a.accountName.localeCompare(b.accountName);
+      });
+  }, [
+    filteredInvoices,
+    jobRefToSourceAccountId,
+    clientNameToSourceAccountId,
+    accountNameById,
+    jobsByRef,
+    customerPaidByJobId,
+  ]);
+
+  const [expandedAccountGroups, setExpandedAccountGroups] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setExpandedAccountGroups((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const g of groupedInvoicesByAccount) next[g.key] = prev[g.key] ?? true;
+      return next;
+    });
+  }, [groupedInvoicesByAccount]);
+
   const columns: Column<Invoice>[] = [
     {
       key: "reference", label: "Invoice", width: "140px",
@@ -1201,32 +1281,90 @@ export default function InvoicesPage() {
             </div>
           </div>
 
-          <DataTable
-            columns={columns}
-            data={pagedData}
-            getRowId={(item) => item.id}
-            page={page}
-            totalPages={totalPages}
-            totalItems={totalItems}
-            onPageChange={setPage}
-            loading={loading}
-            onRowClick={(item) => setSelectedInvoice(item)}
-            selectable={pipelineTab !== "deleted"}
-            selectedIds={selectedIds}
-            onSelectionChange={setSelectedIds}
-            bulkActions={
-              pipelineTab === "deleted" ? undefined : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
-                  <BulkBtn label="Audit required" onClick={() => handleBulkStatusChange("audit_required")} variant="warning" />
-                  <BulkBtn label="Mark Paid" onClick={() => handleBulkStatusChange("paid")} variant="success" />
-                  <BulkBtn label="Mark Pending" onClick={() => handleBulkStatusChange("pending")} variant="warning" />
-                  <BulkBtn label="Mark Overdue" onClick={() => handleBulkStatusChange("overdue")} variant="danger" />
-                  <BulkBtn label="Cancel" onClick={() => handleBulkStatusChange("cancelled")} variant="danger" />
-                </div>
-              )
-            }
-          />
+          {loading ? (
+            <div className="rounded-xl border border-border-light bg-card px-4 py-10 text-center text-sm text-text-tertiary">
+              Loading invoices...
+            </div>
+          ) : groupedInvoicesByAccount.length === 0 ? (
+            <div className="rounded-xl border border-border-light bg-card px-4 py-10 text-center text-sm text-text-tertiary">
+              No invoices found for this tab.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {groupedInvoicesByAccount.map((group) => {
+                const open = expandedAccountGroups[group.key] ?? true;
+                return (
+                  <div key={group.key} className="rounded-xl border border-border-light bg-card overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedAccountGroups((prev) => ({ ...prev, [group.key]: !open }))}
+                      className="w-full px-4 py-3 border-b border-border-light bg-surface-hover/60 text-left"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Building2 className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+                            <p className="text-sm font-semibold text-text-primary truncate">{group.accountName}</p>
+                            <span className="text-xs text-text-tertiary">{group.invoices.length} invoice{group.invoices.length === 1 ? "" : "s"}</span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-text-tertiary">
+                            <span>Total {formatCurrency(group.totalAmount)}</span>
+                            <span>Paid {formatCurrency(group.totalPaid)}</span>
+                            <span className={group.totalDue > 0.02 ? "text-text-primary font-medium" : undefined}>Pending {formatCurrency(group.totalDue)}</span>
+                            <span>Overdue {group.overdueCount}</span>
+                          </div>
+                        </div>
+                        {open ? (
+                          <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-text-tertiary shrink-0" />
+                        )}
+                      </div>
+                    </button>
+                    {open ? (
+                      <div className="divide-y divide-border-light">
+                        {group.invoices.map((inv) => {
+                          const ref = inv.job_reference?.trim();
+                          const job = ref ? jobsByRef[ref] : undefined;
+                          const status = statusConfig[inv.status] ?? { label: inv.status, variant: "default" as const };
+                          return (
+                            <button
+                              type="button"
+                              key={inv.id}
+                              onClick={() => setSelectedInvoice(inv)}
+                              className="w-full px-4 py-3 text-left hover:bg-surface-hover/50 transition-colors"
+                            >
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-text-primary truncate">
+                                    {inv.reference}
+                                    <span className="font-normal text-text-tertiary ml-2">{inv.client_name}</span>
+                                  </p>
+                                  <p className="text-[11px] text-text-tertiary truncate mt-0.5">
+                                    {inv.job_reference ? `${inv.job_reference} · ` : ""}
+                                    {displayDateYmdForInvoiceRow(inv, job) ? formatDate(displayDateYmdForInvoiceRow(inv, job)!) : "No job date"}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+                                  <div className="text-right">
+                                    <p className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(inv.amount)}</p>
+                                    <p className="text-[11px] tabular-nums text-text-tertiary">
+                                      Due {formatCurrency(invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId))}
+                                    </p>
+                                  </div>
+                                  <Badge variant={status.variant} dot>{status.label}</Badge>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </motion.div>
       </div>
 
