@@ -16,7 +16,7 @@ import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon,
+  Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon, Download,
   ArrowRight, Briefcase, Receipt,
   MapPin, Building2, TrendingUp,
   AlertTriangle, XCircle, PoundSterling,   Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, Search,
@@ -96,6 +96,8 @@ import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { ExportCsvModal } from "@/components/shared/export-csv-modal";
+import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 const JOBS_PAGE_SIZE_OPTIONS = [10, 30, 100] as const;
@@ -1367,6 +1369,64 @@ function JobsPageContent() {
     },
   ];
 
+  const [exportOpen, setExportOpen] = useState(false);
+  const jobVisibleFields = ["reference", "title", "client_name", "property_address", "status", "partner_name", "client_price", "finance_status"];
+  const jobAllFields = useMemo(
+    () => [...new Set(data.flatMap((row) => Object.keys(row as unknown as Record<string, unknown>)))],
+    [data],
+  );
+
+  const handleExportFullCsv = useCallback(async (fields: string[]) => {
+    try {
+      const allRows: Job[] = [];
+      let p = 1;
+      const pageSize = 500;
+      while (true) {
+        const res = await listJobs({
+          page: p,
+          pageSize,
+          search: search.trim() ? search : undefined,
+          status: status !== "all" ? status : undefined,
+          ...(listParams ?? {}),
+        });
+        allRows.push(...res.data);
+        if (p >= res.totalPages) break;
+        p += 1;
+      }
+      const filtered = allRows.filter((j) => {
+        if (filterPartner === "with" && !j.partner_id && !j.partner_name) return false;
+        if (filterPartner === "without" && (j.partner_id || j.partner_name)) return false;
+        const hasDate = !!(j.scheduled_date || j.scheduled_start_at || j.scheduled_finish_date);
+        if (filterScheduled === "scheduled" && !hasDate) return false;
+        if (filterScheduled === "unscheduled" && hasDate) return false;
+        if (buFilter.selectedBuId) {
+          if (!buFilter.clientIdsInBu) return true;
+          if (!j.client_id || !buFilter.clientIdsInBu.has(j.client_id)) return false;
+        }
+        return true;
+      });
+      if (filtered.length === 0) {
+        toast.info("No jobs to export");
+        return;
+      }
+      const rows = filtered as unknown as Array<Record<string, unknown>>;
+      const finalFields = fields.length > 0 ? fields : [...new Set(rows.flatMap((r) => Object.keys(r)))];
+      const csv = buildCsvFromRows(rows, finalFields);
+      downloadCsvFile(`jobs-${status}-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+      toast.success(`Exported ${filtered.length} jobs with full fields`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to export jobs");
+    }
+  }, [
+    search,
+    status,
+    listParams,
+    filterPartner,
+    filterScheduled,
+    buFilter.selectedBuId,
+    buFilter.clientIdsInBu,
+  ]);
+
   const scheduleSubtitleText = scheduleFilterSubtitle(scheduleDatePreset, scheduleRange);
 
   return (
@@ -1475,6 +1535,9 @@ function JobsPageContent() {
                 </div>
               )}
             </div>
+            <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
+              Export
+            </Button>
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
           </div>
         </PageHeader>
@@ -1534,6 +1597,8 @@ function JobsPageContent() {
             <DataTable
               columns={columns}
               data={sortedData}
+              columnConfigKey="jobs-columns"
+              columnConfigScope={status}
               loading={loading}
               getRowId={(item) => item.id}
               onRowClick={(job) => router.push(`/jobs/${job.id}`)}
@@ -1736,6 +1801,13 @@ function JobsPageContent() {
       </Modal>
 
       <CreateJobModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
+      <ExportCsvModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        allFields={jobAllFields}
+        visibleFields={jobVisibleFields}
+        onConfirm={handleExportFullCsv}
+      />
     </PageTransition>
   );
 }

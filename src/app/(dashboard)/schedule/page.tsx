@@ -19,7 +19,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { staggerContainer, staggerItem, fadeInUp } from "@/lib/motion";
 import {
   Plus, ChevronLeft, ChevronRight, Calendar as CalIcon,
-  Briefcase, AlertTriangle, MapPin, DollarSign, User, RefreshCw, Search,
+  Briefcase, AlertTriangle, MapPin, DollarSign, User, RefreshCw, Search, Download,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
@@ -52,6 +52,8 @@ import {
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
+import { ExportCsvModal } from "@/components/shared/export-csv-modal";
+import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -144,6 +146,22 @@ export default function SchedulePage() {
   const [liveMapUpdatedAt, setLiveMapUpdatedAt] = useState<string | null>(null);
   const [liveMapSearch, setLiveMapSearch] = useState("");
   const [liveMapStatusFilter, setLiveMapStatusFilter] = useState<LiveMapStatusFilter>("all");
+  const [exportOpen, setExportOpen] = useState(false);
+  const scheduleVisibleFields = ["reference", "title", "client_name", "property_address", "status", "partner_name", "scheduled_date", "scheduled_start_at", "scheduled_finish_date"];
+  const scheduleAllFields = useMemo(
+    () => [...new Set(jobs.flatMap((row) => Object.keys(row as unknown as Record<string, unknown>)))],
+    [jobs],
+  );
+
+  const handleExportFullCsv = useCallback((fields: string[]) => {
+    if (jobs.length === 0) {
+      return;
+    }
+    const rows = jobs as unknown as Array<Record<string, unknown>>;
+    const finalFields = fields.length > 0 ? fields : [...new Set(rows.flatMap((r) => Object.keys(r)))];
+    const csv = buildCsvFromRows(rows, finalFields);
+    downloadCsvFile(`schedule-${year}-${String(month + 1).padStart(2, "0")}.csv`, csv);
+  }, [jobs, year, month]);
 
   const loadJobs = useCallback(async () => {
     setLoading(true);
@@ -405,6 +423,9 @@ export default function SchedulePage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Schedule & Dispatch" subtitle="Manage job scheduling, partner assignments and dispatch.">
+          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
+            Export
+          </Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />}>New Booking</Button>
         </PageHeader>
 
@@ -802,6 +823,15 @@ export default function SchedulePage() {
           </div>
         )}
       </Drawer>
+      <ExportCsvModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        allFields={scheduleAllFields}
+        visibleFields={scheduleVisibleFields}
+        onConfirm={async (fields) => {
+          handleExportFullCsv(fields);
+        }}
+      />
     </PageTransition>
   );
 }
