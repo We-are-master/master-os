@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { ClipboardList, FileText, Briefcase, Receipt, ArrowRight } from "lucide-react";
+import { ClipboardList, FileText, Briefcase, Receipt, ArrowRight, Sparkles } from "lucide-react";
 import { requirePortalUserOrRedirect } from "@/lib/portal-auth";
 import { fetchPortalDashboardKpis } from "@/lib/server-fetchers/portal-dashboard";
 import { formatCurrency } from "@/lib/utils";
+import { PortalPage, PortalStagger, PortalListItem } from "@/components/portal/portal-motion";
 
 export const dynamic = "force-dynamic";
 
@@ -52,121 +53,152 @@ export default async function PortalDashboardPage() {
   const firstName = auth.portalUser.full_name?.split(" ")[0] || "there";
 
   return (
-    <div className="space-y-8 max-w-6xl">
-      <div>
-        <h1 className="text-2xl font-black text-text-primary">{greeting}, {firstName}</h1>
-        <p className="text-sm text-text-secondary mt-1">
-          Here&rsquo;s what&rsquo;s happening with your account today.
-        </p>
+    <PortalPage className="max-w-6xl mx-auto space-y-8">
+      {/* Hero */}
+      <div className="relative overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-primary/10 via-card to-card p-8 sm:p-10">
+        <div className="absolute -top-20 -right-20 w-60 h-60 rounded-full bg-primary/10 blur-3xl" aria-hidden />
+        <div className="relative">
+          <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary uppercase tracking-wider mb-2">
+            <Sparkles className="w-3 h-3" />
+            Master portal
+          </div>
+          <h1 className="text-3xl sm:text-4xl font-black text-text-primary tracking-tight">
+            {greeting}, {firstName}
+          </h1>
+          <p className="text-sm text-text-secondary mt-2 max-w-xl">
+            Track requests, quotes, live jobs and invoices in one place. We&rsquo;ll let you know the moment something needs your attention.
+          </p>
+        </div>
       </div>
 
       {/* KPI tiles */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Link href="/portal/requests" className="group">
+      <PortalStagger className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <PortalListItem>
           <KpiCard
+            href="/portal/requests"
             label="Open requests"
             value={kpis.openRequests.toString()}
             icon={<ClipboardList className="w-5 h-5" />}
-            color="bg-blue-50 text-blue-700"
+            tone="sky"
           />
-        </Link>
-        <Link href="/portal/quotes" className="group">
+        </PortalListItem>
+        <PortalListItem>
           <KpiCard
-            label="Quotes awaiting response"
+            href="/portal/quotes"
+            label="Awaiting response"
             value={kpis.pendingQuotes.toString()}
             icon={<FileText className="w-5 h-5" />}
-            color="bg-amber-50 text-amber-700"
+            tone="amber"
           />
-        </Link>
-        <Link href="/portal/jobs" className="group">
+        </PortalListItem>
+        <PortalListItem>
           <KpiCard
+            href="/portal/jobs"
             label="Jobs in progress"
             value={kpis.jobsInProgress.toString()}
             icon={<Briefcase className="w-5 h-5" />}
-            color="bg-emerald-50 text-emerald-700"
+            tone="emerald"
           />
-        </Link>
-        <Link href="/portal/invoices" className="group">
+        </PortalListItem>
+        <PortalListItem>
           <KpiCard
-            label="Outstanding invoices"
+            href="/portal/invoices"
+            label="Outstanding"
             value={formatCurrency(kpis.outstandingInvoices.total)}
             sublabel={`${kpis.outstandingInvoices.count} unpaid`}
             icon={<Receipt className="w-5 h-5" />}
-            color="bg-rose-50 text-rose-700"
+            tone="rose"
           />
-        </Link>
-      </div>
+        </PortalListItem>
+      </PortalStagger>
 
       {/* Recent activity */}
       <section className="bg-card rounded-2xl border border-border p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-bold text-text-primary">Recent activity</h2>
-          <Link href="/portal/requests" className="text-xs font-semibold text-orange-600 hover:text-orange-700 flex items-center gap-1">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h2 className="text-base font-bold text-text-primary">Recent activity</h2>
+            <p className="text-xs text-text-tertiary mt-0.5">Last updates across your account.</p>
+          </div>
+          <Link
+            href="/portal/requests?new=1"
+            className="text-xs font-semibold text-primary hover:text-primary-hover inline-flex items-center gap-1"
+          >
             New request <ArrowRight className="w-3 h-3" />
           </Link>
         </div>
         {kpis.recentActivity.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-sm text-text-tertiary">No recent activity yet.</p>
+            <p className="text-sm text-text-tertiary mb-4">No recent activity yet.</p>
             <Link
-              href="/portal/requests/new"
-              className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-600 text-white text-sm font-semibold hover:bg-orange-700 transition-colors"
+              href="/portal/requests?new=1"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-hover transition-colors shadow-sm shadow-primary/20"
             >
               Create your first request
             </Link>
           </div>
         ) : (
-          <ul className="divide-y divide-border-light">
+          <PortalStagger className="divide-y divide-border-light">
             {kpis.recentActivity.map((item) => (
-              <li key={`${item.type}-${item.id}`} className="py-3 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
-                    item.type === "request" ? "bg-blue-50 text-blue-600" :
-                    item.type === "quote"   ? "bg-amber-50 text-amber-600" :
-                                              "bg-emerald-50 text-emerald-600"
-                  }`}>
-                    {item.type === "request" ? <ClipboardList className="w-4 h-4" /> :
-                     item.type === "quote"   ? <FileText className="w-4 h-4" /> :
-                                               <Briefcase className="w-4 h-4" />}
+              <PortalListItem key={`${item.type}-${item.id}`}>
+                <div className="py-3 flex items-center justify-between gap-4 -mx-2 px-2 rounded-lg hover:bg-surface-hover transition-colors">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                      item.type === "request" ? "bg-sky-50 text-sky-600 dark:bg-sky-950/30 dark:text-sky-400" :
+                      item.type === "quote"   ? "bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400" :
+                                                "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400"
+                    }`}>
+                      {item.type === "request" ? <ClipboardList className="w-4 h-4" /> :
+                       item.type === "quote"   ? <FileText className="w-4 h-4" /> :
+                                                 <Briefcase className="w-4 h-4" />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-text-primary truncate">{item.title}</p>
+                      <p className="text-xs text-text-secondary">
+                        <span className="font-mono">{item.reference}</span> · {statusLabel(item.status)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-text-primary truncate">{item.title}</p>
-                    <p className="text-xs text-text-secondary">
-                      {item.reference} &middot; {statusLabel(item.status)}
-                    </p>
-                  </div>
+                  <span className="text-xs text-text-tertiary shrink-0">{timeAgo(item.created_at)}</span>
                 </div>
-                <span className="text-xs text-text-tertiary shrink-0">{timeAgo(item.created_at)}</span>
-              </li>
+              </PortalListItem>
             ))}
-          </ul>
+          </PortalStagger>
         )}
       </section>
-    </div>
+    </PortalPage>
   );
 }
 
 interface KpiCardProps {
+  href: string;
   label:    string;
   value:    string;
   sublabel?: string;
   icon:     React.ReactNode;
-  color:    string;
+  tone: "sky" | "amber" | "emerald" | "rose";
 }
 
-function KpiCard({ label, value, sublabel, icon, color }: KpiCardProps) {
+function KpiCard({ href, label, value, sublabel, icon, tone }: KpiCardProps) {
+  const toneClass = {
+    sky: "bg-sky-50 text-sky-600 dark:bg-sky-950/30 dark:text-sky-400",
+    amber: "bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400",
+    emerald: "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400",
+    rose: "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400",
+  }[tone];
+
   return (
-    <div className="bg-card rounded-2xl border border-border p-5 hover:border-border hover:shadow-sm transition-all">
+    <Link
+      href={href}
+      className="group block bg-card rounded-2xl border border-border p-5 transition-all hover:-translate-y-0.5 hover:shadow-md hover:border-border-light"
+    >
       <div className="flex items-start justify-between mb-3">
-        <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">{label}</span>
-        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${color}`}>
+        <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider">{label}</span>
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center transition-transform group-hover:scale-105 ${toneClass}`}>
           {icon}
         </div>
       </div>
       <p className="text-2xl font-black text-text-primary tabular-nums">{value}</p>
-      {sublabel && (
-        <p className="text-xs text-text-tertiary mt-1">{sublabel}</p>
-      )}
-    </div>
+      {sublabel && <p className="text-xs text-text-tertiary mt-1">{sublabel}</p>}
+    </Link>
   );
 }

@@ -58,6 +58,17 @@ export interface PortalJobReport {
   created_at: string;
 }
 
+export interface PortalJobTicket {
+  id: string;
+  reference: string;
+  subject: string;
+  status: string;
+  priority: string;
+  type: string;
+  last_activity_at: string | null;
+  created_at: string;
+}
+
 export interface PortalJobDetailRich {
   id: string;
   reference: string;
@@ -99,6 +110,7 @@ export interface PortalJobDetailRich {
   payments: PortalCustomerPayment[];
   invoices: PortalLinkedInvoice[];
   report: PortalJobReport | null;
+  tickets: PortalJobTicket[];
 }
 
 function asNum(v: unknown): number {
@@ -161,7 +173,7 @@ export async function fetchPortalJobDetailRich(
   const partnerId = j.partner_id as string | null;
   const jobReference = j.reference as string;
 
-  const [phasesRes, paymentsRes, invoicesRes, reportRes, partnerRes] = await Promise.all([
+  const [phasesRes, paymentsRes, invoicesRes, reportRes, partnerRes, ticketsRes] = await Promise.all([
     supabase
       .from("audit_logs")
       .select("action, new_value, old_value, created_at, user_name")
@@ -197,6 +209,16 @@ export async function fetchPortalJobDetailRich(
     partnerId
       ? supabase.from("partners").select("avatar_url").eq("id", partnerId).maybeSingle()
       : Promise.resolve({ data: null } as { data: null }),
+
+    // Tickets linked to this job. RLS (migration 142) already scopes to the
+    // caller's account and we filter by job_id so we only surface the
+    // portal user's tickets attached to this exact job.
+    supabase
+      .from("tickets")
+      .select("id, reference, subject, status, priority, type, updated_at, created_at")
+      .eq("job_id", jobId)
+      .order("updated_at", { ascending: false })
+      .limit(5),
   ]);
 
   const phases: PortalPhaseEvent[] = ((phasesRes.data ?? []) as Array<{
@@ -246,6 +268,17 @@ export async function fetchPortalJobDetailRich(
     ? ((partnerRes.data as { avatar_url?: string | null }).avatar_url ?? null)
     : null;
 
+  const tickets: PortalJobTicket[] = ((ticketsRes.data ?? []) as Array<Record<string, unknown>>).map((t) => ({
+    id: t.id as string,
+    reference: (t.reference as string) ?? "",
+    subject: (t.subject as string) ?? "",
+    status: (t.status as string) ?? "open",
+    priority: (t.priority as string) ?? "medium",
+    type: (t.type as string) ?? "general",
+    last_activity_at: (t.updated_at as string | null) ?? null,
+    created_at: (t.created_at as string) ?? "",
+  }));
+
   return {
     id: j.id as string,
     reference: jobReference ?? "",
@@ -286,5 +319,6 @@ export async function fetchPortalJobDetailRich(
     payments,
     invoices,
     report,
+    tickets,
   };
 }
