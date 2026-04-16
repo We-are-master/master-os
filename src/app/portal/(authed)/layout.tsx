@@ -56,6 +56,8 @@ export default async function PortalLayout({
       accountName={accountName}
       userEmail={portalUser.email}
       userFullName={portalUser.full_name}
+      portalUserId={portalUser.id}
+      accountId={auth.accountId}
     >
       {children}
     </PortalShell>

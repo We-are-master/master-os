@@ -7,11 +7,14 @@ import {
   LayoutDashboard, FileText, ClipboardList, Briefcase, Receipt,
   MessageSquare, Settings, LogOut, Menu, X, Sun, Moon,
 } from "lucide-react";
+import { PortalNotificationBell } from "./portal-notification-bell";
 
 interface PortalShellProps {
   accountName: string;
   userEmail: string;
   userFullName: string | null;
+  portalUserId: string;
+  accountId: string;
   children: React.ReactNode;
 }
 
@@ -62,7 +65,7 @@ function usePortalTheme() {
   return { resolved, toggle };
 }
 
-export function PortalShell({ accountName, userEmail, userFullName, children }: PortalShellProps) {
+export function PortalShell({ accountName, userEmail, userFullName, portalUserId, accountId, children }: PortalShellProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { resolved, toggle } = usePortalTheme();
@@ -221,7 +224,13 @@ export function PortalShell({ accountName, userEmail, userFullName, children }: 
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="https://wearemaster.com/favicon.png" alt="Master" className="w-7 h-7 object-contain" />
-          <p className="text-sm font-bold text-text-primary truncate">{accountName || "Portal"}</p>
+          <p className="text-sm font-bold text-text-primary truncate flex-1">{accountName || "Portal"}</p>
+          <PortalNotificationBell portalUserId={portalUserId} accountId={accountId} />
+        </header>
+
+        {/* Desktop top bar — just a thin header that holds the bell */}
+        <header className="hidden lg:flex bg-card border-b border-border px-6 py-2.5 items-center justify-end gap-2 sticky top-0 z-30">
+          <PortalNotificationBell portalUserId={portalUserId} accountId={accountId} />
         </header>
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8">
