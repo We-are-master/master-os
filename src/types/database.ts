@@ -1,6 +1,6 @@
 import type { UserPermissionOverride } from "@/types/admin-config";
 
-export type RequestSource = "whatsapp" | "checkatrade" | "meta" | "website" | "b2b" | "manual";
+export type RequestSource = "whatsapp" | "checkatrade" | "meta" | "website" | "b2b" | "manual" | "portal" | "zoho_desk";
 export type CatalogPricingMode = "fixed" | "hourly";
 
 /** Price book row: defaults for requests/quotes (always editable per record). */
