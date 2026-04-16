@@ -116,30 +116,28 @@ export async function fetchPortalJobDetailRich(
 ): Promise<PortalJobDetailRich | null> {
   const supabase = await getServerSupabase();
 
-  // 1) Job row — account scoping enforced by migration 142 RLS + explicit check
-  const { data: jobRow } = await supabase
+  // 1) Job row — account scoping enforced by migration 142 RLS + explicit check.
+  // Use `*` so missing columns in older DBs don't break the whole query; we
+  // defensively read each field via asNum/asStrArr/fallbacks below.
+  const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
-    .select(`
-      id, reference, title, status, scheduled_date, scheduled_start_at,
-      scheduled_end_at, scheduled_finish_date,
-      property_address, partner_id, partner_name, current_phase, total_phases,
-      scope, client_price, deposit_required, customer_deposit_paid,
-      customer_final_payment, customer_final_paid,
-      customer_review_rating, customer_review_comment, customer_review_submitted_at,
-      latitude, longitude, images, client_id,
-      partner_timer_started_at, partner_timer_ended_at, partner_timer_accum_paused_ms,
-      partner_timer_is_paused, partner_timer_pause_began_at,
-      created_at, updated_at
-    `)
+    .select("*")
     .eq("id", jobId)
     .is("deleted_at", null)
     .maybeSingle();
 
+  if (jobErr) {
+    console.error("[fetchPortalJobDetailRich] job select error:", jobErr);
+    return null;
+  }
   if (!jobRow) return null;
   const j = jobRow as Record<string, unknown>;
 
   const clientId = j.client_id as string | null;
-  if (!clientId) return null;
+  if (!clientId) {
+    console.warn("[fetchPortalJobDetailRich] job has no client_id", { jobId });
+    return null;
+  }
 
   // Defense-in-depth: verify account ownership even though RLS should have
   // done it already. Prevents leaks if the migration rolls back.
@@ -148,7 +146,14 @@ export async function fetchPortalJobDetailRich(
     .select("source_account_id")
     .eq("id", clientId)
     .maybeSingle();
-  if (!client || (client as { source_account_id?: string }).source_account_id !== accountId) {
+  const sourceAccount = client ? (client as { source_account_id?: string }).source_account_id : null;
+  if (!client || sourceAccount !== accountId) {
+    console.warn("[fetchPortalJobDetailRich] account mismatch", {
+      jobId,
+      clientId,
+      expected: accountId,
+      actual: sourceAccount,
+    });
     return null;
   }
 
