@@ -29,6 +29,9 @@ interface DataTableProps<T> {
   page?: number;
   totalPages?: number;
   totalItems?: number;
+  pageSize?: number;
+  pageSizeOptions?: number[];
+  onPageSizeChange?: (size: number) => void;
   onPageChange?: (page: number) => void;
   className?: string;
   selectable?: boolean;
@@ -80,6 +83,9 @@ export function DataTable<T>({
   page = 1,
   totalPages,
   totalItems,
+  pageSize = 10,
+  pageSizeOptions,
+  onPageSizeChange,
   onPageChange,
   className,
   selectable = false,
@@ -268,12 +274,30 @@ export function DataTable<T>({
         </table>
       </div>
 
-      {totalPages && totalPages > 1 && (
+      {(totalPages && totalPages > 1) || (onPageSizeChange && totalItems != null) ? (
         <div className="flex items-center justify-between px-5 py-3 border-t border-border-light">
           <p className="text-xs text-text-tertiary">
-            Showing {(page - 1) * 10 + 1}-{Math.min(page * 10, totalItems ?? 0)} of {totalItems}
+            Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalItems ?? 0)} of {totalItems}
           </p>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-3">
+            {onPageSizeChange && (pageSizeOptions?.length ?? 0) > 0 ? (
+              <label className="flex items-center gap-1.5 text-xs text-text-tertiary">
+                <span>Rows</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => onPageSizeChange(Number(e.target.value))}
+                  className="h-8 rounded-lg border border-border bg-card px-2 text-xs text-text-secondary"
+                >
+                  {pageSizeOptions!.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {totalPages && totalPages > 1 ? (
+            <div className="flex items-center gap-1">
             <button
               onClick={() => onPageChange?.(page - 1)}
               disabled={page <= 1}
@@ -305,9 +329,11 @@ export function DataTable<T>({
             >
               <ChevronRight className="h-4 w-4" />
             </button>
+            </div>
+            ) : null}
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -98,6 +98,7 @@ import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-si
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
+const JOBS_PAGE_SIZE_OPTIONS = [10, 30, 100] as const;
 
 const RESTORE_ALLOWED_JOB_STATUSES = new Set<string>([...JOB_STATUSES]);
 
@@ -396,8 +397,10 @@ function JobsPageContent() {
     return { scheduleRange };
   }, [scheduleRange]);
 
+  const [jobsPageSize, setJobsPageSize] = useState<number>(10);
   const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh, refreshSilent } = useSupabaseList<Job>({
     fetcher: listJobs,
+    pageSize: jobsPageSize,
     realtimeTable: "jobs",
     listParams,
     initialStatus: "unassigned",
@@ -1537,6 +1540,12 @@ function JobsPageContent() {
               page={page}
               totalPages={totalPages}
               totalItems={totalItems}
+              pageSize={jobsPageSize}
+              pageSizeOptions={[...JOBS_PAGE_SIZE_OPTIONS]}
+              onPageSizeChange={(size) => {
+                setJobsPageSize(size);
+                setPage(1);
+              }}
               onPageChange={setPage}
               selectable
               selectedIds={selectedIds}
