@@ -67,6 +67,8 @@ import { insertQuoteLineItemsResilient } from "@/lib/quote-line-items-insert";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { ExportCsvModal } from "@/components/shared/export-csv-modal";
+import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 import {
   parseBidProposalFromNotes,
   splitBidPartnerCosts,
@@ -1026,16 +1028,42 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     setSelectedQuote(updated);
   }, []);
 
-  const handleExport = useCallback(() => {
-    const csv = ["Reference,Title,Client,Status,Amount,Owner"]
-      .concat(data.map((q) => `${q.reference},"${q.title}","${q.client_name}",${q.status},${q.total_value},${q.owner_name ?? ""}`))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "quotes_export.csv"; a.click();
-    URL.revokeObjectURL(url);
-    toast.success("Quotes exported to CSV");
-  }, [data]);
+  const [exportOpen, setExportOpen] = useState(false);
+  const quoteVisibleFields = ["reference", "title", "client_name", "service_type", "quote_type", "status", "total_value", "margin_percent"];
+  const quoteAllFields = useMemo(
+    () => [...new Set(data.flatMap((row) => Object.keys(row as unknown as Record<string, unknown>)))],
+    [data],
+  );
+
+  const handleExport = useCallback(async (fields: string[]) => {
+    try {
+      const allRows: Quote[] = [];
+      let p = 1;
+      const pageSize = 500;
+      while (true) {
+        const res = await listQuotes({
+          page: p,
+          pageSize,
+          search: search.trim() ? search : undefined,
+          status: status !== "all" ? status : undefined,
+        });
+        allRows.push(...res.data);
+        if (p >= res.totalPages) break;
+        p += 1;
+      }
+      if (allRows.length === 0) {
+        toast.info("No quotes to export");
+        return;
+      }
+      const rows = allRows as unknown as Array<Record<string, unknown>>;
+      const finalFields = fields.length > 0 ? fields : [...new Set(rows.flatMap((r) => Object.keys(r)))];
+      const csv = buildCsvFromRows(rows, finalFields);
+      downloadCsvFile(`quotes-${status}-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+      toast.success(`Exported ${allRows.length} quotes with full fields`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to export quotes");
+    }
+  }, [search, status]);
 
   const handleNewQuoteClick = () => setCreateOpen(true);
 
@@ -1136,7 +1164,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           >
             Refresh
           </Button>
-          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>Export</Button>
+          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>Export</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={handleNewQuoteClick}>New Quote</Button>
         </PageHeader>
 
@@ -1323,7 +1351,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           </div>
 
           {viewMode === "list" && (
-            <DataTable columns={columns} data={data} getRowId={(item) => item.id} loading={loading} selectedId={selectedQuote?.id} onRowClick={setSelectedQuote} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds}
+            <DataTable columns={columns} data={data} columnConfigKey="quotes-columns" columnConfigScope={status} getRowId={(item) => item.id} loading={loading} selectedId={selectedQuote?.id} onRowClick={setSelectedQuote} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds}
               bulkActions={
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
@@ -1388,6 +1416,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       >
         <CreateQuoteForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
+      <ExportCsvModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        allFields={quoteAllFields}
+        visibleFields={quoteVisibleFields}
+        onConfirm={handleExport}
+      />
     </PageTransition>
   );
 }
