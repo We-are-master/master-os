@@ -53,7 +53,7 @@ export function ResponsibilityCheck({
         <span>
           I confirm the report has also been{" "}
           <span className="font-medium" style={{ color: "#020040" }}>
-            sent to accounts
+            submitted to the customer
           </span>
           .
         </span>
