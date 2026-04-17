@@ -4235,17 +4235,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   ) : null}
                 </div>
               </div>
-              <div className="border-t border-border-light">
+              <div style={{ borderTop: "0.5px solid #E4E4E8" }}>
                 <button
                   type="button"
                   onClick={() => setClientEditAccordionOpen((o) => !o)}
-                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-text-secondary hover:bg-surface-hover/50"
+                  className="flex w-full items-center justify-between gap-2 px-[18px] py-[14px] text-left"
+                  style={{ background: "#FAFAFB" }}
                 >
-                  <span className="inline-flex items-center gap-1.5">
-                    <Pencil className="h-3 w-3 shrink-0 text-text-tertiary" aria-hidden />
+                  <span
+                    className="inline-flex items-center gap-[6px] text-[13px] font-medium"
+                    style={{ color: "#020040" }}
+                  >
+                    <Pencil className="h-[12px] w-[12px] shrink-0" aria-hidden />
                     Edit client &amp; address
                   </span>
-                  <ChevronDown className={cn("h-4 w-4 shrink-0 text-text-tertiary transition-transform", clientEditAccordionOpen && "rotate-180")} />
+                  <ChevronDown
+                    className={cn("h-4 w-4 shrink-0 transition-transform", clientEditAccordionOpen && "rotate-180")}
+                    style={{ color: "#9A9AA0" }}
+                  />
                 </button>
                 {clientEditAccordionOpen ? (
                   <div className={cn("space-y-2 border-t border-border-light px-3 py-2", job.status === "cancelled" && "pointer-events-none opacity-50")}>
@@ -4297,15 +4304,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                 ) : null}
               </div>
-              <div className="space-y-2 border-t border-border-light bg-surface-secondary p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
-                <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border-light bg-border-light">
-                  <div className="min-w-0 bg-card p-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Start date</p>
+              <div
+                className="p-[18px] space-y-[14px]"
+                style={{ background: "#FAFAFB", borderTop: "0.5px solid #E4E4E8" }}
+              >
+                <div className="grid grid-cols-2 gap-[14px]">
+                  <div
+                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                    style={{ border: "0.5px solid #E4E4E8" }}
+                  >
+                    <p
+                      className="text-[10px] font-medium uppercase"
+                      style={{ color: "#020040", letterSpacing: "0.6px" }}
+                    >
+                      Start date
+                    </p>
                     <Input
                       type="date"
                       value={scheduleDate}
                       disabled={job.status === "cancelled"}
-                      className="mt-0.5 h-7 text-[13px]"
+                      className="mt-[6px] h-8 text-[13px]"
                       onChange={(e) => {
                         const v = e.target.value;
                         setScheduleDate(v);
@@ -4314,13 +4332,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       }}
                     />
                   </div>
-                  <div className="min-w-0 bg-card p-2">
-                    <div className="flex items-center gap-0.5">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Arrival time</p>
+                  <div
+                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                    style={{ border: "0.5px solid #E4E4E8" }}
+                  >
+                    <div className="flex items-center gap-1">
+                      <p
+                        className="text-[10px] font-medium uppercase"
+                        style={{ color: "#020040", letterSpacing: "0.6px" }}
+                      >
+                        Arrival time
+                      </p>
                       <span className="group relative shrink-0">
                         <span
                           tabIndex={0}
-                          className="inline-flex cursor-help rounded p-px text-text-tertiary outline-none hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-primary/25"
+                          className="inline-flex cursor-help rounded p-px outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+                          style={{ color: "#9A9AA0" }}
                           aria-label="How arrival time is shown to clients and partners"
                         >
                           <Info className="h-3 w-3" aria-hidden />
@@ -4336,19 +4363,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <TimeSelect
                       value={scheduleTime}
                       disabled={job.status === "cancelled"}
-                      className="mt-0.5 h-7 text-[13px]"
+                      className="mt-[6px] h-8 text-[13px]"
                       onChange={(v) => {
                         setScheduleTime(v);
                         handleScheduleChange(job, scheduleDate, v, scheduleWindowMins, scheduleExpectedFinishDate);
                       }}
                     />
                   </div>
-                  <div className="min-w-0 bg-card p-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Window</p>
+                  <div
+                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                    style={{ border: "0.5px solid #E4E4E8" }}
+                  >
+                    <p
+                      className="text-[10px] font-medium uppercase"
+                      style={{ color: "#020040", letterSpacing: "0.6px" }}
+                    >
+                      Window
+                    </p>
                     <Select
                       value={scheduleWindowMins}
                       disabled={job.status === "cancelled"}
-                      className="mt-0.5 h-7 text-[13px]"
+                      className="mt-[6px] h-8 text-[13px]"
                       onChange={(e) => {
                         const v = e.target.value;
                         setScheduleWindowMins(v);
@@ -4357,15 +4392,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       options={[...ARRIVAL_WINDOW_OPTIONS]}
                     />
                   </div>
-                  <div className="min-w-0 bg-card p-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-                      Expected finish{scheduleDate.trim() ? " *" : ""}
+                  <div
+                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                    style={{ border: "0.5px solid #E4E4E8" }}
+                  >
+                    <p
+                      className="text-[10px] font-medium uppercase"
+                      style={{ color: "#020040", letterSpacing: "0.6px" }}
+                    >
+                      Expected finish
+                      {scheduleDate.trim() ? (
+                        <span className="ml-[2px]" style={{ color: "#ED4B00" }}>*</span>
+                      ) : null}
                     </p>
                     <Input
                       type="date"
                       value={scheduleExpectedFinishDate}
                       disabled={job.status === "cancelled"}
-                      className="mt-0.5 h-7 text-[13px]"
+                      className="mt-[6px] h-8 text-[13px]"
                       onChange={(e) => {
                         setScheduleExpectedFinishDate(e.target.value);
                         handleScheduleChange(job, scheduleDate, scheduleTime, scheduleWindowMins, e.target.value);
@@ -4374,21 +4418,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                 </div>
                 {!isHousekeepJobDetail ? (
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-[14px]">
                     <div
                       className={cn(
-                        "min-w-0 rounded-lg border p-2.5 shadow-sm transition-colors",
+                        "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
                         effectiveCustomerInCcz
-                          ? "border-emerald-500 bg-emerald-50 dark:border-emerald-500/70 dark:bg-emerald-950/30"
-                          : "border-border-light bg-surface-hover/80 dark:border-[#2b313d] dark:bg-[#1a202a]",
+                          ? "bg-emerald-50 dark:bg-emerald-950/30"
+                          : "bg-white",
                       )}
+                      style={{
+                        border: effectiveCustomerInCcz
+                          ? "0.5px solid #10B981"
+                          : "0.5px solid #E4E4E8",
+                      }}
                     >
-                      <div className="flex items-center gap-0.5">
+                      <div className="flex items-center gap-1">
                         <p
-                          className={cn(
-                            "text-[11px] font-semibold uppercase tracking-wide",
-                            effectiveCustomerInCcz ? "text-emerald-700 dark:text-emerald-300" : "text-text-secondary",
-                          )}
+                          className="text-[10px] font-medium uppercase"
+                          style={{
+                            color: effectiveCustomerInCcz ? "#0F6E56" : "#020040",
+                            letterSpacing: "0.6px",
+                          }}
                         >
                           CCZ
                         </p>
@@ -4445,17 +4495,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                     <div
                       className={cn(
-                        "min-w-0 rounded-lg border p-2.5 shadow-sm transition-colors",
+                        "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
                         job.has_free_parking === false
-                          ? "border-emerald-500 bg-emerald-50 dark:border-emerald-500/70 dark:bg-emerald-950/30"
-                          : "border-border-light bg-surface-hover/80 dark:border-[#2b313d] dark:bg-[#1a202a]",
+                          ? "bg-emerald-50 dark:bg-emerald-950/30"
+                          : "bg-white",
                       )}
+                      style={{
+                        border:
+                          job.has_free_parking === false
+                            ? "0.5px solid #10B981"
+                            : "0.5px solid #E4E4E8",
+                      }}
                     >
                       <p
-                        className={cn(
-                          "text-[11px] font-semibold uppercase tracking-wide",
-                          job.has_free_parking === false ? "text-emerald-700 dark:text-emerald-300" : "text-text-secondary",
-                        )}
+                        className="text-[10px] font-medium uppercase"
+                        style={{
+                          color: job.has_free_parking === false ? "#0F6E56" : "#020040",
+                          letterSpacing: "0.6px",
+                        }}
                       >
                         Parking
                       </p>
@@ -4495,11 +4552,40 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   </div>
                 ) : null}
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    {job.quote_id && <Link href="/quotes" className="inline-flex items-center gap-1 text-primary hover:underline">Quote <ExternalLink className="h-3 w-3" /></Link>}
-                    {job.self_bill_id && <Link href="/finance/selfbill" className="inline-flex items-center gap-1 text-primary hover:underline">Self-bill <ExternalLink className="h-3 w-3" /></Link>}
-                    {job.invoice_id && <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-primary hover:underline">Invoice <ExternalLink className="h-3 w-3" /></Link>}
-                  </div>
+                  {(job.quote_id || job.self_bill_id || job.invoice_id) ? (
+                    <div
+                      className="flex flex-wrap gap-[6px] pt-[12px]"
+                      style={{ borderTop: "0.5px solid #E4E4E8" }}
+                    >
+                      {job.quote_id && (
+                        <Link
+                          href="/quotes"
+                          className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
+                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                        >
+                          Quote <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
+                        </Link>
+                      )}
+                      {job.self_bill_id && (
+                        <Link
+                          href="/finance/selfbill"
+                          className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
+                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                        >
+                          Self-bill <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
+                        </Link>
+                      )}
+                      {job.invoice_id && (
+                        <Link
+                          href="/finance/invoices"
+                          className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
+                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                        >
+                          Invoice <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
+                        </Link>
+                      )}
+                    </div>
+                  ) : null}
               </div>
             </div>
 
