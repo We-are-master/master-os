@@ -18,7 +18,10 @@ export type NavGroup = {
 export const NAVIGATION: NavGroup[] = [
   {
     label: "Overview",
-    items: [{ label: "Dashboard", href: "/", icon: "grid-2x2" }],
+    items: [
+      { label: "Dashboard", href: "/", icon: "grid-2x2" },
+      { label: "Schedule", href: "/schedule", icon: "calendar" },
+    ],
   },
   {
     label: "Inbox",
@@ -33,7 +36,6 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Requests", href: "/requests", icon: "inbox", badge: 12 },
       { label: "Quotes", href: "/quotes", icon: "file-text" },
       { label: "Jobs", href: "/jobs", icon: "briefcase" },
-      { label: "Schedule", href: "/schedule", icon: "calendar" },
     ],
   },
   {

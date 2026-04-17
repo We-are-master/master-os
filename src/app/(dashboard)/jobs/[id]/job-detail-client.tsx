@@ -4426,170 +4426,142 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         size="lg"
         className="max-w-5xl"
       >
-        <div className="p-6 space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="rounded-xl border border-border-light bg-card p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total price</p>
-              <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(approvalBillableRevenue)}</p>
-              {approvalEffectiveCustomerDue > 0.02 ? (
-                <p className="text-[11px] font-semibold text-amber-600 mt-1">Amount due: {formatCurrency(approvalEffectiveCustomerDue)}</p>
-              ) : approvalInvoiceShowsPaid ? (
-                <p className="text-[11px] font-semibold text-emerald-600 mt-1">Client invoice paid — collections satisfied for close.</p>
+        <div className="p-5 space-y-4">
+          {/* Compact KPI strip: Total · Partner Cost · Margin (extras shown as chips inline) */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl border border-border-light bg-card px-3 py-2.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total</p>
+              <p className="text-xl font-bold text-text-primary tabular-nums mt-0.5">{formatCurrency(approvalBillableRevenue)}</p>
+              {approvalClientExtrasAmount > 0.02 ? (
+                <p className="text-[10px] font-medium text-emerald-600 mt-0.5">+{formatCurrency(approvalClientExtrasAmount)} extras</p>
               ) : null}
             </div>
-            <div className="rounded-xl border border-border-light bg-card p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner cost</p>
-              <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(approvalPartnerCap)}</p>
-              <p className="text-[11px] text-text-tertiary mt-1">Total partner payout cap</p>
+            <div className="rounded-xl border border-border-light bg-card px-3 py-2.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner Cost</p>
+              <p className="text-xl font-bold text-text-primary tabular-nums mt-0.5">{formatCurrency(approvalPartnerCap)}</p>
+              {approvalPartnerExtrasSplit.extra > 0.02 ? (
+                <p className="text-[10px] font-medium text-emerald-600 mt-0.5">+{formatCurrency(approvalPartnerExtrasSplit.extra)} extras</p>
+              ) : null}
             </div>
-            <div className="rounded-xl border border-border-light bg-card p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Operating margin</p>
-              <p className={cn("text-2xl font-bold mt-1", approvalProfit >= 0 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalProfit)}</p>
-              <p className="text-[11px] text-text-tertiary mt-1">{formatCurrency(approvalProfit)} / {Math.max(0, approvalMarginPct).toFixed(1)}%</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="rounded-xl border border-border-light bg-card p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client extra charges</p>
-                <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
-                  Included in total price · <span className="font-mono text-[10px] text-text-secondary">extras_amount</span>
-                  {" "}(add-ons / upsells; CCZ or parking may be folded in here).
-                </p>
-              </div>
-              <p
-                className={cn(
-                  "text-xl sm:text-2xl font-bold tabular-nums shrink-0 text-right",
-                  approvalClientExtrasAmount > 0.02 ? "text-emerald-600" : "text-text-tertiary",
-                )}
-              >
-                {approvalClientExtrasAmount > 0.02 ? `+${formatCurrency(approvalClientExtrasAmount)}` : "—"}
-              </p>
-            </div>
-            <div className="rounded-xl border border-border-light bg-card p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner extra payout</p>
-                <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
-                  On top of base labour cap · <span className="font-mono text-[10px] text-text-secondary">partner_extras_amount</span>
-                  {" "}or hourly vs cap delta (same as Cash Out breakdown).
-                </p>
-              </div>
-              <p
-                className={cn(
-                  "text-xl sm:text-2xl font-bold tabular-nums shrink-0 text-right",
-                  approvalPartnerExtrasSplit.extra > 0.02 ? "text-emerald-600" : "text-text-tertiary",
-                )}
-              >
-                {approvalPartnerExtrasSplit.extra > 0.02 ? `+${formatCurrency(approvalPartnerExtrasSplit.extra)}` : "—"}
-              </p>
+            <div className="rounded-xl border border-border-light bg-card px-3 py-2.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin</p>
+              <p className={cn("text-xl font-bold tabular-nums mt-0.5", approvalProfit >= 0 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalProfit)}</p>
+              <p className="text-[10px] text-text-tertiary mt-0.5">{Math.max(0, approvalMarginPct).toFixed(1)}%</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Finance</p>
-              <div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">Client payment: Paid</span>
-                  <span className="font-semibold text-text-primary">{formatCurrency(customerPaidTotal)}</span>
-                </div>
-                <Progress value={approvalCustomerPaidPct} className="h-2 mt-2" />
-                <div className="flex items-center justify-between text-xs mt-1">
-                  <span className="text-text-secondary">Client payment: Due</span>
-                  <span className={cn("font-semibold", approvalEffectiveCustomerDue <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalEffectiveCustomerDue)}</span>
-                </div>
+          {/* Financial Overview — 4 tiles */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Financial Overview</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] text-text-tertiary">Client Paid</p>
+                <p className="text-sm font-semibold text-text-primary tabular-nums mt-0.5">{formatCurrency(customerPaidTotal)}</p>
               </div>
-              <div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">Partner payment: Paid</span>
-                  <span className="font-semibold text-text-primary">{formatCurrency(partnerPaidTotal)}</span>
-                </div>
-                <Progress value={approvalPartnerPaidPct} className="h-2 mt-2" />
-                <div className="flex items-center justify-between text-xs mt-1">
-                  <span className="text-text-secondary">Partner payment: Due</span>
-                  <span className={cn("font-semibold", approvalPartnerPayRemaining <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalPartnerPayRemaining)}</span>
-                </div>
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] text-text-tertiary">Client Outstanding</p>
+                <p className={cn(
+                  "text-sm font-semibold tabular-nums mt-0.5",
+                  approvalEffectiveCustomerDue > 0.02 ? "text-red-600" : "text-emerald-600",
+                )}>{formatCurrency(approvalEffectiveCustomerDue)}</p>
               </div>
-              {job.job_type === "hourly" ? (
-                <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Final billed hours confirmation</p>
-                  <div className="flex items-end gap-2">
-                    <div className="flex-1">
-                      <label className="block text-[10px] text-text-tertiary mb-1">Final billed hours</label>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.5"
-                        value={approvalBilledHoursInput}
-                        onChange={(e) => setApprovalBilledHoursInput(e.target.value)}
-                        className="h-9 text-sm"
-                      />
-                    </div>
-                    <div className="text-[11px] text-text-tertiary pb-1">
-                      Confirm total hours before approve
-                    </div>
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] text-text-tertiary">Partner Paid</p>
+                <p className="text-sm font-semibold text-text-primary tabular-nums mt-0.5">{formatCurrency(partnerPaidTotal)}</p>
+              </div>
+              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
+                <p className="text-[10px] text-text-tertiary">Partner Outstanding</p>
+                <p className={cn(
+                  "text-sm font-semibold tabular-nums mt-0.5",
+                  approvalPartnerPayRemaining > 0.02 ? "text-red-600" : "text-emerald-600",
+                )}>{formatCurrency(approvalPartnerPayRemaining)}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Job Status — visual checklist with colored dots */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Job Status</p>
+            <div className="rounded-xl border border-border-light bg-card divide-y divide-border-light text-sm">
+              {[
+                { label: "Client Invoice", ok: Boolean(job.invoice_id), okLabel: "Ready", failLabel: "Not linked" },
+                { label: "Partner Self-Bill", ok: Boolean(job.self_bill_id), okLabel: "Linked", failLabel: "Not linked" },
+                { label: "Reports Uploaded", ok: reportsUploaded, okLabel: "Complete", failLabel: "Incomplete" },
+                { label: "Reports Approved", ok: reportsApproved, okLabel: "Complete", failLabel: "Incomplete" },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center justify-between px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className={cn("h-1.5 w-1.5 rounded-full", row.ok ? "bg-emerald-500" : "bg-red-500")} />
+                    <span className="text-text-secondary">{row.label}</span>
                   </div>
-                </div>
-              ) : null}
-              <p className="text-[10px] text-text-tertiary px-1 leading-snug">
-                Client invoice is created or updated on approve. Partner self-bill links when the database allows; otherwise use Finance or this job’s self-bill section. Totals use the figures stored on the job (adjust hourly/timer on the job page if needed).
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Job summary</p>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">Client invoice</span>
-                  <span className={cn("font-semibold", job.invoice_id ? "text-emerald-600" : "text-red-600")}>{job.invoice_id ? "Ready" : "Not linked"}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">Partner self-bill</span>
-                  <span className={cn("font-semibold", job.self_bill_id ? "text-emerald-600" : "text-amber-600")}>
-                    {job.self_bill_id ? "Linked (weekly Mon–Sun)" : "Not linked"}
+                  <span className={cn("font-semibold", row.ok ? "text-emerald-600" : "text-red-600")}>
+                    {row.ok ? row.okLabel : row.failLabel}
                   </span>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">All reports uploaded</span>
-                  <span className={cn("font-semibold", reportsUploaded ? "text-emerald-600" : "text-red-600")}>{reportsUploaded ? "Complete" : "Incomplete"}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">All reports approved</span>
-                  <span className={cn("font-semibold", reportsApproved ? "text-emerald-600" : "text-red-600")}>{reportsApproved ? "Complete" : "Incomplete"}</span>
-                </div>
-              </div>
-              <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs">
-                <p className="text-text-tertiary">Next status</p>
-                <p className="font-semibold text-text-primary mt-0.5">{approvalEffectiveCustomerDue > 0.02 || approvalPartnerPayRemaining > 0.02 ? "Awaiting payment" : "Completed & paid"}</p>
-              </div>
+              ))}
             </div>
           </div>
 
-          <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Reports</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {phaseIndexes.map((n) => {
-                const uploaded = Boolean(job[`report_${n}_uploaded` as keyof Job]);
-                const approved = Boolean(job[`report_${n}_approved` as keyof Job]);
-                return (
-                  <div key={n} className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs text-text-secondary">
-                    <p className="font-medium text-text-primary">Report {n}</p>
-                    <p className={cn(uploaded ? "text-emerald-600" : "text-red-600")}>{uploaded ? "Uploaded" : "Missing upload"}</p>
-                    <p className={cn(approved ? "text-emerald-600" : "text-red-600")}>{approved ? "Approved" : "Pending approval"}</p>
-                  </div>
-                );
-              })}
+          {/* Next Action — single prominent banner */}
+          <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-2.5 flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Next Action</p>
+              <p className="text-sm font-semibold text-text-primary mt-0.5">
+                {approvalEffectiveCustomerDue > 0.02 || approvalPartnerPayRemaining > 0.02 ? "Awaiting Payment" : "Completed & Paid"}
+              </p>
             </div>
-            <p className="text-xs text-text-tertiary">{reportMediaUrls.length > 0 ? `${reportMediaUrls.length} report image(s) attached.` : "No report image files found yet."}</p>
+            <CheckCircle2 className="h-5 w-5 text-primary" />
           </div>
 
-          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3">
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input type="checkbox" className="mt-0.5 h-4 w-4" checked={ownerApprovalChecked} onChange={(e) => setOwnerApprovalChecked(e.target.checked)} />
-              <span className="text-xs text-text-secondary">{ownerAttestationText}</span>
-            </label>
-          </div>
+          {/* Hourly-only: billed hours confirmation */}
+          {job.job_type === "hourly" ? (
+            <div className="rounded-xl border border-border-light bg-surface-hover/40 px-3 py-2.5 flex items-end gap-3">
+              <div className="flex-1">
+                <label className="block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">Final billed hours</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.5"
+                  value={approvalBilledHoursInput}
+                  onChange={(e) => setApprovalBilledHoursInput(e.target.value)}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <p className="text-[11px] text-text-tertiary pb-1.5">Confirm before approve</p>
+            </div>
+          ) : null}
+
+          {/* Reports phases — compact, only if any missing */}
+          {(!reportsUploaded || !reportsApproved) && phaseIndexes.length > 0 ? (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Reports Detail</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {phaseIndexes.map((n) => {
+                  const uploaded = Boolean(job[`report_${n}_uploaded` as keyof Job]);
+                  const approved = Boolean(job[`report_${n}_approved` as keyof Job]);
+                  return (
+                    <div key={n} className="rounded-lg border border-border-light bg-card px-2.5 py-2 text-[11px]">
+                      <p className="font-semibold text-text-primary mb-1">Report {n}</p>
+                      <p className={cn("flex items-center gap-1", uploaded ? "text-emerald-600" : "text-red-600")}>
+                        <span className={cn("h-1 w-1 rounded-full", uploaded ? "bg-emerald-500" : "bg-red-500")} />
+                        {uploaded ? "Uploaded" : "Missing"}
+                      </p>
+                      <p className={cn("flex items-center gap-1", approved ? "text-emerald-600" : "text-red-600")}>
+                        <span className={cn("h-1 w-1 rounded-full", approved ? "bg-emerald-500" : "bg-red-500")} />
+                        {approved ? "Approved" : "Pending"}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Attestation */}
+          <label className="flex items-start gap-2 rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2.5 cursor-pointer">
+            <input type="checkbox" className="mt-0.5 h-4 w-4" checked={ownerApprovalChecked} onChange={(e) => setOwnerApprovalChecked(e.target.checked)} />
+            <span className="text-xs text-text-secondary leading-snug">{ownerAttestationText}</span>
+          </label>
           {!mandatoryChecksOk && (
             <div className="rounded-xl border border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/10 p-3 space-y-3">
               <label className="flex items-start gap-2 cursor-pointer">
