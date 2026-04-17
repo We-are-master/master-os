@@ -2435,233 +2435,390 @@ function ConvertToJobModal({
     ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
     : 0;
 
+  const hint = (text: string) => (
+    <span className="group relative inline-flex">
+      <span
+        tabIndex={0}
+        aria-label={text}
+        className="inline-flex h-[13px] w-[13px] items-center justify-center rounded-full text-[9px] font-bold leading-none cursor-help outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+        style={{ background: "#F1F1F3", color: "#6B6B70" }}
+      >
+        !
+      </span>
+      <span
+        role="tooltip"
+        className="pointer-events-none invisible absolute top-full left-0 z-[60] mt-1 w-60 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1.5 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+      >
+        {text}
+      </span>
+    </span>
+  );
+  const labelNavy = "flex items-center gap-[6px] text-[10px] font-medium uppercase";
+  const labelStyle = { color: "#020040", letterSpacing: "0.6px" } as const;
+
   return (
-    <Modal open={!!request} onClose={onClose} title="Create Job" subtitle={`${request.reference} — Direct creation`} size="lg">
-      <form onSubmit={handleSubmit} className="p-6 space-y-4">
-        <Select
-          label="Job type"
-          value={form.job_type}
-          onChange={(e) => update("job_type", e.target.value)}
-          className={requiredFieldClass}
-          options={[
-            { value: "fixed", label: "Fixed" },
-            { value: "hourly", label: "Hourly" },
-          ]}
-        />
-        {form.job_type === "hourly" && (
-          <ServiceCatalogSelect
-            label="Call Out type *"
-            emptyOptionLabel="Select from Services..."
-            catalog={catalogServices}
-            value={form.catalog_service_id}
-            className={requiredFieldClass}
-            onChange={(id, service) => {
-              const hrs = Math.max(1, Number(service?.default_hours) || 1);
-              const clientRate = Number(service?.hourly_rate) || 0;
-              const partnerRate = partnerHourlyRateFromCatalogBundle(service?.partner_cost, service?.default_hours);
-              const totals = computeHourlyTotals({
-                elapsedSeconds: hrs * 3600,
-                clientHourlyRate: clientRate,
-                partnerHourlyRate: partnerRate,
-              });
-              setForm((prev) => ({
-                ...prev,
-                catalog_service_id: id,
-                scope: service?.default_description?.trim() || prev.scope,
-                hourly_client_rate: String(clientRate || ""),
-                hourly_partner_rate: String(partnerRate || ""),
-                billed_hours: String(hrs),
-                client_price: String(totals.clientTotal),
-                partner_cost: String(totals.partnerTotal),
-              }));
-            }}
+    <Modal open={!!request} onClose={onClose} title="Create job" subtitle={`${request.reference} · Direct creation`} size="lg">
+      <form onSubmit={handleSubmit} className="flex flex-col">
+        <div className="px-5 sm:px-6 pt-5 pb-4 space-y-[14px]">
+          {/* Job type */}
+          <div>
+            <label className={labelNavy} style={labelStyle}>Job type</label>
+            <Select
+              value={form.job_type}
+              onChange={(e) => update("job_type", e.target.value)}
+              className={cn("mt-[6px]", requiredFieldClass)}
+              options={[
+                { value: "fixed", label: "Fixed" },
+                { value: "hourly", label: "Hourly" },
+              ]}
+            />
+          </div>
+
+          {form.job_type === "hourly" && (
+            <div>
+              <label className={labelNavy} style={labelStyle}>
+                Call-out type <span style={{ color: "#ED4B00" }}>*</span>
+                {hint("Loads default hours, client rate and partner rate from the Services catalog. You can still tweak the partner rate and billed hours below.")}
+              </label>
+              <ServiceCatalogSelect
+                emptyOptionLabel="Select from Services…"
+                catalog={catalogServices}
+                value={form.catalog_service_id}
+                className={cn("mt-[6px]", requiredFieldClass)}
+                onChange={(id, service) => {
+                  const hrs = Math.max(1, Number(service?.default_hours) || 1);
+                  const clientRate = Number(service?.hourly_rate) || 0;
+                  const partnerRate = partnerHourlyRateFromCatalogBundle(service?.partner_cost, service?.default_hours);
+                  const totals = computeHourlyTotals({
+                    elapsedSeconds: hrs * 3600,
+                    clientHourlyRate: clientRate,
+                    partnerHourlyRate: partnerRate,
+                  });
+                  setForm((prev) => ({
+                    ...prev,
+                    catalog_service_id: id,
+                    scope: service?.default_description?.trim() || prev.scope,
+                    hourly_client_rate: String(clientRate || ""),
+                    hourly_partner_rate: String(partnerRate || ""),
+                    billed_hours: String(hrs),
+                    client_price: String(totals.clientTotal),
+                    partner_cost: String(totals.partnerTotal),
+                  }));
+                }}
+              />
+            </div>
+          )}
+
+          {/* Client & address */}
+          <div
+            className="rounded-[10px] p-[14px]"
+            style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+          >
+            <p className={labelNavy + " mb-[8px]"} style={labelStyle}>
+              Client &amp; address <span style={{ color: "#ED4B00" }}>*</span>
+            </p>
+            <ClientAddressPicker value={clientAddress} onChange={setClientAddress} lockClient={!!request.client_id} />
+          </div>
+
+          {/* Schedule */}
+          <JobModalScheduleFields
+            scheduledDate={form.scheduled_date}
+            arrivalFrom={form.arrival_from}
+            arrivalWindowMins={form.arrival_window_mins}
+            expectedFinishDate={form.expected_finish_date}
+            onChange={(field, v) => update(field, v)}
+            startDateRequired={form.assignment_mode === "manual" && !!form.partner_id}
+            expectedFinishRequired={!!form.scheduled_date?.trim()}
+            requiredFieldClassName={requiredFieldClass}
           />
-        )}
-        <div>
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; address *</p>
-          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} lockClient={!!request.client_id} />
-        </div>
-        <JobModalScheduleFields
-          scheduledDate={form.scheduled_date}
-          arrivalFrom={form.arrival_from}
-          arrivalWindowMins={form.arrival_window_mins}
-          expectedFinishDate={form.expected_finish_date}
-          onChange={(field, v) => update(field, v)}
-          startDateRequired={form.assignment_mode === "manual" && !!form.partner_id}
-          expectedFinishRequired={!!form.scheduled_date?.trim()}
-          requiredFieldClassName={requiredFieldClass}
-        />
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work {form.assignment_mode === "manual" && form.partner_id ? "*" : ""}</label>
-          <textarea value={form.scope} onChange={(e) => update("scope", e.target.value)} rows={3} placeholder="Required if you assign a partner (with schedule and address above)." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]" />
-        </div>
-        {request.request_kind === "work" && (
-          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+
+          {/* Scope */}
+          <div>
+            <label className={labelNavy} style={labelStyle}>
+              Scope of work
+              {form.assignment_mode === "manual" && form.partner_id ? (
+                <span style={{ color: "#ED4B00" }}>*</span>
+              ) : null}
+              {hint("Required when you assign a partner. Tells them exactly what the job covers.")}
+            </label>
+            <textarea
+              value={form.scope}
+              onChange={(e) => update("scope", e.target.value)}
+              rows={3}
+              placeholder="Describe the work the partner will do…"
+              className="mt-[6px] w-full rounded-[8px] px-3 py-[10px] text-[13px] outline-none resize-y min-h-[72px] focus:ring-[3px] focus:ring-[rgba(2,0,64,0.08)]"
+              style={{
+                border: "0.5px solid #D8D8DD",
+                background: "#FFFFFF",
+                color: "#020040",
+                fontFamily: "inherit",
+                lineHeight: 1.5,
+              }}
+            />
+          </div>
+
+          {request.request_kind === "work" && (
+            <div
+              className="rounded-[10px] p-[14px] space-y-[10px]"
+              style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+            >
+              <p className={labelNavy} style={labelStyle}>
+                Access &amp; parking
+                {hint("CCZ is only available for central London postcodes (EC1–4, WC1–2, W1, SW1, SE1). Parking fee applies when no free parking is available.")}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
+                <button
+                  type="button"
+                  disabled={!cczEligibleConvert}
+                  onClick={() => cczEligibleConvert && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                  className={cn(
+                    "text-left rounded-[8px] px-[12px] py-[10px] text-[12px] transition-colors",
+                    !cczEligibleConvert && "opacity-50 cursor-not-allowed",
+                  )}
+                  style={
+                    form.in_ccz && cczEligibleConvert
+                      ? { background: "#ECFDF5", border: "0.5px solid #10B981", color: "#0F6E56" }
+                      : { background: "#FFFFFF", border: "0.5px solid #D8D8DD", color: "#020040" }
+                  }
+                >
+                  <p className="font-medium text-[12px]">
+                    {inCczPreviewConvert ? "CCZ applied · +£15" : "Apply CCZ"}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
+                  className="text-left rounded-[8px] px-[12px] py-[10px] text-[12px] transition-colors"
+                  style={
+                    !form.has_free_parking
+                      ? { background: "#ECFDF5", border: "0.5px solid #10B981", color: "#0F6E56" }
+                      : { background: "#FFFFFF", border: "0.5px solid #D8D8DD", color: "#020040" }
+                  }
+                >
+                  <p className="font-medium text-[12px]">
+                    {form.has_free_parking ? "Add parking fee" : "Parking fee applied · +£15"}
+                  </p>
+                </button>
+              </div>
+              <p className="text-[11px]" style={{ color: "#6B6B70" }}>
+                Total access fee:{" "}
+                <span className="font-semibold" style={{ color: "#020040" }}>
+                  {formatCurrency(accessSurchargePreview)}
+                </span>
+              </p>
+            </div>
+          )}
+
+          {/* Partner allocation */}
+          <div
+            className="rounded-[10px] p-[14px] space-y-[10px]"
+            style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+          >
+            <p className={labelNavy} style={labelStyle}>Partner allocation</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
               <button
                 type="button"
-                disabled={!cczEligibleConvert}
-                onClick={() => cczEligibleConvert && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
-                className={cn(
-                  "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                  !cczEligibleConvert && "opacity-50 cursor-not-allowed",
-                  form.in_ccz && cczEligibleConvert ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
-                )}
+                onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "manual" }))}
+                className="text-left rounded-[8px] px-[12px] py-[10px] text-[12px] transition-colors"
+                style={
+                  form.assignment_mode === "manual"
+                    ? { background: "#F4F5FB", border: "0.5px solid #020040", color: "#020040" }
+                    : { background: "#FFFFFF", border: "0.5px solid #D8D8DD", color: "#020040" }
+                }
               >
-                <p className="font-medium">
-                  {!cczEligibleConvert
-                    ? "CCZ (Congestion Charge — central London)"
-                    : inCczPreviewConvert
-                      ? "CCZ fee applied"
-                      : "Apply CCZ"}
-                </p>
-                <p className="text-xs opacity-80">
-                  {!cczEligibleConvert
-                    ? "Only addresses with EC1–4, WC1–2, W1, SW1 or SE1 can turn CCZ on"
-                    : inCczPreviewConvert
-                      ? "+£15 applied"
-                      : "Turn on only inside the central CCZ postcode list"}
-                </p>
+                <p className="font-medium text-[12px]">Allocate partner</p>
+                <p className="text-[11px] mt-[2px]" style={{ color: "#6B6B70" }}>Pick a specific partner now</p>
               </button>
               <button
                 type="button"
-                onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
-                className={cn(
-                  "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                  !form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
-                )}
+                onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }))}
+                className="text-left rounded-[8px] px-[12px] py-[10px] text-[12px] transition-colors"
+                style={
+                  form.assignment_mode === "auto"
+                    ? { background: "#F4F5FB", border: "0.5px solid #020040", color: "#020040" }
+                    : { background: "#FFFFFF", border: "0.5px solid #D8D8DD", color: "#020040" }
+                }
               >
-                <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-                <p className="text-xs opacity-80">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
+                <p className="font-medium text-[12px]">Auto assign</p>
+                <p className="text-[11px] mt-[2px]" style={{ color: "#6B6B70" }}>System will assign after creation</p>
               </button>
             </div>
-            <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span></p>
-          </div>
-        )}
-        <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner allocation</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "manual" }))}
-              className={cn(
-                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                form.assignment_mode === "manual" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
-              )}
-            >
-              <p className="font-medium">Allocate partner</p>
-              <p className="text-xs opacity-80">Pick a specific partner now</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => setForm((prev) => ({ ...prev, assignment_mode: "auto", partner_id: "" }))}
-              className={cn(
-                "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                form.assignment_mode === "auto" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary",
-              )}
-            >
-              <p className="font-medium">Auto assign</p>
-              <p className="text-xs opacity-80">System will assign after creation</p>
-            </button>
-          </div>
-          {form.assignment_mode === "manual" && (
-            <div className="space-y-2">
-              <Input placeholder="Search partner by name, trade, or location..." value={partnerSearch} onChange={(e) => setPartnerSearch(e.target.value)} />
-              <div className="max-h-48 overflow-y-auto rounded-lg border border-border-light bg-card p-1.5 space-y-1.5">
-                <label
-                  className={cn(
-                    "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                    !form.partner_id ? "border-primary bg-primary/5" : "border-border hover:border-primary/30",
-                  )}
+            {form.assignment_mode === "manual" && (
+              <div className="space-y-2">
+                <Input placeholder="Search partner by name, trade, or location…" value={partnerSearch} onChange={(e) => setPartnerSearch(e.target.value)} />
+                <div
+                  className="max-h-48 overflow-y-auto rounded-[8px] p-[6px] space-y-[6px] bg-white"
+                  style={{ border: "0.5px solid #E4E4E8" }}
                 >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-text-primary">No partner</p>
-                    <p className="text-xs text-text-tertiary">Create job without assignment</p>
-                  </div>
-                  <input type="radio" name="convert-partner-select" className="h-4 w-4" checked={!form.partner_id} onChange={() => update("partner_id", "")} />
-                </label>
-                {filteredPartners.map((p) => {
-                  const pid = p.id;
-                  if (!pid) return null;
-                  const selected = form.partner_id === pid;
-                  const match = targetWorkType ? safePartnerMatchesTypeOfWork(p, targetWorkType) : false;
-                  return (
-                    <label
-                      key={pid}
-                      className={cn(
-                        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                        selected
-                          ? "border-primary bg-primary/5"
-                          : match
-                            ? "border-amber-400 bg-amber-50/90 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-primary/30"
-                            : "border-border hover:border-primary/30",
-                      )}
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-text-primary truncate">{p.company_name?.trim() || p.contact_name || "Partner"}</p>
-                        <p
-                          className={cn(
-                            "text-xs truncate",
-                            match && !selected ? "text-amber-950 dark:text-amber-100" : "text-text-secondary",
-                          )}
-                        >
-                          {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {match ? <Badge variant="warning" size="sm">Match</Badge> : null}
-                        <input type="radio" name="convert-partner-select" className="h-4 w-4" checked={selected} onChange={() => update("partner_id", pid)} />
-                      </div>
-                    </label>
-                  );
-                })}
-                {filteredPartners.length === 0 ? <p className="text-xs text-text-tertiary px-2 py-2">No partners match this search.</p> : null}
+                  <label
+                    className="flex items-center justify-between gap-3 rounded-[8px] px-3 py-2 cursor-pointer transition-colors"
+                    style={
+                      !form.partner_id
+                        ? { background: "#F4F5FB", border: "0.5px solid #020040" }
+                        : { background: "#FFFFFF", border: "0.5px solid #D8D8DD" }
+                    }
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium" style={{ color: "#020040" }}>No partner</p>
+                      <p className="text-[11px]" style={{ color: "#6B6B70" }}>Create job without assignment</p>
+                    </div>
+                    <input type="radio" name="convert-partner-select" className="h-4 w-4" checked={!form.partner_id} onChange={() => update("partner_id", "")} />
+                  </label>
+                  {filteredPartners.map((p) => {
+                    const pid = p.id;
+                    if (!pid) return null;
+                    const selected = form.partner_id === pid;
+                    const match = targetWorkType ? safePartnerMatchesTypeOfWork(p, targetWorkType) : false;
+                    const rowStyle = selected
+                      ? { background: "#F4F5FB", border: "0.5px solid #020040" }
+                      : match
+                        ? { background: "#FFF8F3", border: "0.5px solid #F5CFB8" }
+                        : { background: "#FFFFFF", border: "0.5px solid #D8D8DD" };
+                    return (
+                      <label
+                        key={pid}
+                        className="flex items-center justify-between gap-3 rounded-[8px] px-3 py-2 cursor-pointer transition-colors"
+                        style={rowStyle}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-medium truncate" style={{ color: "#020040" }}>
+                            {p.company_name?.trim() || p.contact_name || "Partner"}
+                          </p>
+                          <p
+                            className="text-[11px] truncate"
+                            style={{ color: match && !selected ? "#993C1D" : "#6B6B70" }}
+                          >
+                            {(match ? partnerMatchTypeLabel(p, targetWorkType) : (p.trade ?? "—"))} · {p.location ?? "—"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {match ? (
+                            <span
+                              className="text-[10px] font-medium px-[7px] py-[2px] rounded"
+                              style={{ background: "#FFF1EB", color: "#ED4B00" }}
+                            >
+                              Match
+                            </span>
+                          ) : null}
+                          <input type="radio" name="convert-partner-select" className="h-4 w-4" checked={selected} onChange={() => update("partner_id", pid)} />
+                        </div>
+                      </label>
+                    );
+                  })}
+                  {filteredPartners.length === 0 ? (
+                    <p className="text-[11px] px-2 py-2" style={{ color: "#6B6B70" }}>
+                      No partners match this search.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Pricing */}
+          {form.job_type === "hourly" ? (
+            <div className="space-y-[10px]">
+              <div className="grid grid-cols-3 gap-[10px]">
+                <div
+                  className="rounded-[8px] px-3 py-2 bg-white"
+                  style={{ border: "0.5px solid #E4E4E8" }}
+                >
+                  <p className="text-[10px] uppercase" style={{ color: "#020040", letterSpacing: "0.6px" }}>Price</p>
+                  <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>
+                    {formatCurrency(hourlyPreview.clientTotal + accessSurchargePreview)}
+                  </p>
+                </div>
+                <div
+                  className="rounded-[8px] px-3 py-2 bg-white"
+                  style={{ border: "0.5px solid #E4E4E8" }}
+                >
+                  <p className="text-[10px] uppercase" style={{ color: "#020040", letterSpacing: "0.6px" }}>Cost</p>
+                  <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>
+                    {formatCurrency(hourlyPreview.partnerTotal)}
+                  </p>
+                </div>
+                <div
+                  className="rounded-[8px] px-3 py-2 bg-white"
+                  style={{ border: "0.5px solid #E4E4E8" }}
+                >
+                  <p className="text-[10px] uppercase" style={{ color: "#020040", letterSpacing: "0.6px" }}>Margin</p>
+                  <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>{hourlyMarginPct}%</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={labelNavy} style={labelStyle}>
+                    Partner hourly rate
+                    {hint(`Client hourly rate is loaded from Call-out type: ${formatCurrency(Number(form.hourly_client_rate) || 0)}/h. Billing rounds up in 30-min increments from timer logs (1h minimum).`)}
+                  </label>
+                  <Input className="mt-[6px]" type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
+                </div>
+                <div>
+                  <label className={labelNavy} style={labelStyle}>Initial billed hours</label>
+                  <Input className="mt-[6px]" type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className={labelNavy} style={labelStyle}>Client price</label>
+                <Input className="mt-[6px]" type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" />
+              </div>
+              <div>
+                <label className={labelNavy} style={labelStyle}>Partner cost</label>
+                <Input className="mt-[6px]" type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
+              </div>
+              <div>
+                <label className={labelNavy} style={labelStyle}>Materials cost</label>
+                <Input className="mt-[6px]" type="number" value="0" disabled />
               </div>
             </div>
           )}
-        </div>
-        {form.job_type === "hourly" ? (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Price</p>
-                <p className="text-sm font-semibold text-text-primary">{formatCurrency(hourlyPreview.clientTotal + accessSurchargePreview)}</p>
-              </div>
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Cost</p>
-                <p className="text-sm font-semibold text-text-primary">{formatCurrency(hourlyPreview.partnerTotal)}</p>
-              </div>
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Margin</p>
-                <p className="text-sm font-semibold text-text-primary">{hourlyMarginPct}%</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
-              <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
-            </div>
-            <p className="text-[11px] text-text-tertiary">Client hourly rate is loaded from Call Out type: {formatCurrency(Number(form.hourly_client_rate) || 0)}/h.</p>
+
+          {/* Internal notes */}
+          <div>
+            <label className={labelNavy} style={labelStyle}>Internal notes</label>
+            <textarea
+              value={form.internal_notes}
+              onChange={(e) => update("internal_notes", e.target.value)}
+              rows={2}
+              placeholder="Not shown to the client"
+              className="mt-[6px] w-full rounded-[8px] px-3 py-[10px] text-[13px] outline-none resize-none focus:ring-[3px] focus:ring-[rgba(2,0,64,0.08)]"
+              style={{
+                border: "0.5px solid #D8D8DD",
+                background: "#FFFFFF",
+                color: "#020040",
+                fontFamily: "inherit",
+                lineHeight: 1.5,
+              }}
+            />
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client Price</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" /></div>
-            <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials Cost</label><Input type="number" value="0" disabled /></div>
-          </div>
-        )}
-        {form.job_type === "hourly" && (
-          <p className="text-[11px] text-text-tertiary -mt-2">
-            Billing rule: up to 1h = 1h minimum, then rounds up in 30-minute increments from timer logs.
-          </p>
-        )}
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Internal notes</label>
-          <textarea value={form.internal_notes} onChange={(e) => update("internal_notes", e.target.value)} rows={2} placeholder="Internal use only..." className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none" />
         </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit" icon={<Briefcase className="h-3.5 w-3.5" />}>Create Job</Button>
+
+        <div
+          className="flex justify-end gap-[10px] px-6 py-[14px]"
+          style={{ borderTop: "0.5px solid #E4E4E8", background: "#FFFFFF" }}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            className="bg-white rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer"
+            style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[16px] py-[7px] text-[12px] font-medium cursor-pointer"
+            style={{ background: "#020040" }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#0a0860")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
+          >
+            <Briefcase className="h-3.5 w-3.5" /> Create job
+          </button>
         </div>
       </form>
     </Modal>
