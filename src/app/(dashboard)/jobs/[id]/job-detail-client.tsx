@@ -14,6 +14,8 @@ import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { FinalReviewModal } from "@/components/job-card/FinalReviewModal/FinalReviewModal";
+import type { ReportItem } from "@/components/job-card/FinalReviewModal/types";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
 import type { LucideIcon } from "lucide-react";
@@ -559,6 +561,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   const [forceApprovalChecked, setForceApprovalChecked] = useState(false);
   const [forceApprovalReason, setForceApprovalReason] = useState("");
+  /** Second mandatory attestation on the Final review modal — separate from report + payment responsibility. */
+  const [sentToAccountsChecked, setSentToAccountsChecked] = useState(false);
   const [approvalBilledHoursInput, setApprovalBilledHoursInput] = useState("");
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
@@ -3081,6 +3085,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setOwnerApprovalChecked(false);
       setForceApprovalChecked(false);
       setForceApprovalReason("");
+      setSentToAccountsChecked(false);
       setApprovalBilledHoursInput("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to validate and complete job");
@@ -3402,9 +3407,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const attestationDisplayName = profile?.full_name?.trim() || job.owner_name?.trim() || "Victor";
   const ownerAttestationText = `I, ${attestationDisplayName}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
-  const mandatoryChecksOk = reportsUploaded && reportsApproved && ownerApprovalChecked;
+  const mandatoryChecksOk =
+    reportsUploaded && reportsApproved && ownerApprovalChecked && sentToAccountsChecked;
+  /** Either all mandatory checks pass, OR force flow (force requires both attestations + a reason ≥ 20 chars). */
   const canSubmitApproval =
-    mandatoryChecksOk || (forceApprovalChecked && forceApprovalReason.trim().length > 0);
+    mandatoryChecksOk ||
+    (forceApprovalChecked &&
+      ownerApprovalChecked &&
+      sentToAccountsChecked &&
+      forceApprovalReason.trim().length >= 20);
   const customerPaidPct = billableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / billableRevenue) * 100)) : 100;
   const partnerPaidPct = partnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / partnerCap) * 100)) : 100;
 
@@ -3669,6 +3680,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setOwnerApprovalChecked(true);
                       setForceApprovalChecked(false);
                       setForceApprovalReason("");
+                      setSentToAccountsChecked(false);
                       setValidateCompleteOpen(true);
                       return;
                     }
@@ -3677,6 +3689,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setOwnerApprovalChecked(false);
                       setForceApprovalChecked(false);
                       setForceApprovalReason("");
+                      setSentToAccountsChecked(false);
                       setValidateCompleteOpen(true);
                       return;
                     }
@@ -5873,113 +5886,72 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       </div>
       </div>
 
-      <Modal
-        open={validateCompleteOpen}
+      <FinalReviewModal
+        isOpen={validateCompleteOpen}
         onClose={() => {
           if (validatingComplete) return;
           setValidateCompleteOpen(false);
           setOwnerApprovalChecked(false);
           setForceApprovalChecked(false);
           setForceApprovalReason("");
+          setSentToAccountsChecked(false);
           setApprovalBilledHoursInput("");
         }}
-        title={approvalMode === "review_approve" ? "Review and approve" : "Validate and complete"}
-        subtitle={`${job.reference} — review before approval`}
-        size="lg"
-        className="max-w-5xl"
-      >
-        <div className="p-5 space-y-4">
-          {/* Compact KPI strip: Total · Partner Cost · Margin (extras shown as chips inline) */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="rounded-xl border border-border-light bg-card px-3 py-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total</p>
-              <p className="text-xl font-bold text-text-primary tabular-nums mt-0.5">{formatCurrency(approvalBillableRevenue)}</p>
-              {approvalClientExtrasAmount > 0.02 ? (
-                <p className="text-[10px] font-medium text-emerald-600 mt-0.5">+{formatCurrency(approvalClientExtrasAmount)} extras</p>
-              ) : null}
-            </div>
-            <div className="rounded-xl border border-border-light bg-card px-3 py-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner Cost</p>
-              <p className="text-xl font-bold text-text-primary tabular-nums mt-0.5">{formatCurrency(approvalPartnerCap)}</p>
-              {approvalPartnerExtrasSplit.extra > 0.02 ? (
-                <p className="text-[10px] font-medium text-emerald-600 mt-0.5">+{formatCurrency(approvalPartnerExtrasSplit.extra)} extras</p>
-              ) : null}
-            </div>
-            <div className="rounded-xl border border-border-light bg-card px-3 py-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin</p>
-              <p className={cn("text-xl font-bold tabular-nums mt-0.5", approvalProfit >= 0 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalProfit)}</p>
-              <p className="text-[10px] text-text-tertiary mt-0.5">{Math.max(0, approvalMarginPct).toFixed(1)}%</p>
-            </div>
-          </div>
-
-          {/* Financial Overview — 4 tiles */}
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Financial Overview</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] text-text-tertiary">Client Paid</p>
-                <p className="text-sm font-semibold text-text-primary tabular-nums mt-0.5">{formatCurrency(customerPaidTotal)}</p>
-              </div>
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] text-text-tertiary">Client Outstanding</p>
-                <p className={cn(
-                  "text-sm font-semibold tabular-nums mt-0.5",
-                  approvalEffectiveCustomerDue > 0.02 ? "text-red-600" : "text-emerald-600",
-                )}>{formatCurrency(approvalEffectiveCustomerDue)}</p>
-              </div>
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] text-text-tertiary">Partner Paid</p>
-                <p className="text-sm font-semibold text-text-primary tabular-nums mt-0.5">{formatCurrency(partnerPaidTotal)}</p>
-              </div>
-              <div className="rounded-lg border border-border-light bg-card px-3 py-2">
-                <p className="text-[10px] text-text-tertiary">Partner Outstanding</p>
-                <p className={cn(
-                  "text-sm font-semibold tabular-nums mt-0.5",
-                  approvalPartnerPayRemaining > 0.02 ? "text-red-600" : "text-emerald-600",
-                )}>{formatCurrency(approvalPartnerPayRemaining)}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Job Status — visual checklist with colored dots */}
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Job Status</p>
-            <div className="rounded-xl border border-border-light bg-card divide-y divide-border-light text-sm">
-              {[
-                { label: "Client Invoice", ok: Boolean(job.invoice_id), okLabel: "Ready", failLabel: "Not linked" },
-                { label: "Partner Self-Bill", ok: Boolean(job.self_bill_id), okLabel: "Linked", failLabel: "Not linked" },
-                { label: "Reports Uploaded", ok: reportsUploaded, okLabel: "Complete", failLabel: "Incomplete" },
-                { label: "Reports Approved", ok: reportsApproved, okLabel: "Complete", failLabel: "Incomplete" },
-              ].map((row) => (
-                <div key={row.label} className="flex items-center justify-between px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <span className={cn("h-1.5 w-1.5 rounded-full", row.ok ? "bg-emerald-500" : "bg-red-500")} />
-                    <span className="text-text-secondary">{row.label}</span>
-                  </div>
-                  <span className={cn("font-semibold", row.ok ? "text-emerald-600" : "text-red-600")}>
-                    {row.ok ? row.okLabel : row.failLabel}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Next Action — single prominent banner */}
-          <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-2.5 flex items-center justify-between">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Next Action</p>
-              <p className="text-sm font-semibold text-text-primary mt-0.5">
-                {approvalEffectiveCustomerDue > 0.02 || approvalPartnerPayRemaining > 0.02 ? "Awaiting Payment" : "Completed & Paid"}
-              </p>
-            </div>
-            <CheckCircle2 className="h-5 w-5 text-primary" />
-          </div>
-
-          {/* Hourly-only: billed hours confirmation */}
-          {job.job_type === "hourly" ? (
-            <div className="rounded-xl border border-border-light bg-surface-hover/40 px-3 py-2.5 flex items-end gap-3">
+        jobId={job.reference}
+        jobTitle={job.title ?? ""}
+        clientName={job.client_name ?? ""}
+        partnerName={job.partner_name ?? ""}
+        currentUserName={attestationDisplayName}
+        jobValue={approvalBillableRevenue}
+        partnerPayout={approvalPartnerCap}
+        margin={approvalProfit}
+        marginPct={Math.max(0, approvalMarginPct)}
+        received={customerPaidTotal}
+        paidOut={partnerPaidTotal}
+        clientOutstanding={approvalEffectiveCustomerDue}
+        partnerOutstanding={approvalPartnerPayRemaining}
+        invoiceStatus={job.invoice_id ? "issued" : "pending"}
+        selfBillStatus={job.self_bill_id ? "issued" : "pending"}
+        invoiceReference={approvalPrimaryInvoice?.reference ?? null}
+        selfBillReference={jobSelfBill?.reference ?? null}
+        reports={phaseIndexes.map<ReportItem>((n) => ({
+          id: `report-${n}`,
+          name: `Report ${n}`,
+          uploaded: Boolean(job[`report_${n}_uploaded` as keyof Job]),
+          approved: Boolean(job[`report_${n}_approved` as keyof Job]),
+        }))}
+        confirmed={ownerApprovalChecked}
+        onConfirmedChange={setOwnerApprovalChecked}
+        sentToAccounts={sentToAccountsChecked}
+        onSentToAccountsChange={setSentToAccountsChecked}
+        forceMode={forceApprovalChecked}
+        onForceModeChange={setForceApprovalChecked}
+        forceReason={forceApprovalReason}
+        onForceReasonChange={setForceApprovalReason}
+        submitting={validatingComplete}
+        onApprove={() => {
+          setForceApprovalChecked(false);
+          setForceApprovalReason("");
+          void handleValidateAndComplete();
+        }}
+        onForceApprove={() => void handleValidateAndComplete()}
+        hourlySlot={
+          job.job_type === "hourly" ? (
+            <div
+              className="rounded-[10px] flex items-end gap-3"
+              style={{
+                background: "#FAFAFB",
+                border: "0.5px solid #E4E4E7",
+                padding: "10px 12px",
+              }}
+            >
               <div className="flex-1">
-                <label className="block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1">Final billed hours</label>
+                <label
+                  className="block text-[10px] font-medium uppercase mb-1"
+                  style={{ color: "#6B6B70", letterSpacing: "0.5px" }}
+                >
+                  Final billed hours
+                </label>
                 <Input
                   type="number"
                   min={0}
@@ -5989,109 +5961,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className="h-9 text-sm"
                 />
               </div>
-              <p className="text-[11px] text-text-tertiary pb-1.5">Confirm before approve</p>
+              <p className="text-[11px] pb-[9px]" style={{ color: "#6B6B70" }}>
+                Confirm before finalise
+              </p>
             </div>
-          ) : null}
+          ) : null
+        }
+      />
 
-          {/* Reports phases — compact, only if any missing */}
-          {(!reportsUploaded || !reportsApproved) && phaseIndexes.length > 0 ? (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-2">Reports Detail</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {phaseIndexes.map((n) => {
-                  const uploaded = Boolean(job[`report_${n}_uploaded` as keyof Job]);
-                  const approved = Boolean(job[`report_${n}_approved` as keyof Job]);
-                  return (
-                    <div key={n} className="rounded-lg border border-border-light bg-card px-2.5 py-2 text-[11px]">
-                      <p className="font-semibold text-text-primary mb-1">Report {n}</p>
-                      <p className={cn("flex items-center gap-1", uploaded ? "text-emerald-600" : "text-red-600")}>
-                        <span className={cn("h-1 w-1 rounded-full", uploaded ? "bg-emerald-500" : "bg-red-500")} />
-                        {uploaded ? "Uploaded" : "Missing"}
-                      </p>
-                      <p className={cn("flex items-center gap-1", approved ? "text-emerald-600" : "text-red-600")}>
-                        <span className={cn("h-1 w-1 rounded-full", approved ? "bg-emerald-500" : "bg-red-500")} />
-                        {approved ? "Approved" : "Pending"}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          {/* Attestation */}
-          <label className="flex items-start gap-2 rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2.5 cursor-pointer">
-            <input type="checkbox" className="mt-0.5 h-4 w-4" checked={ownerApprovalChecked} onChange={(e) => setOwnerApprovalChecked(e.target.checked)} />
-            <span className="text-xs text-text-secondary leading-snug">{ownerAttestationText}</span>
-          </label>
-          {!mandatoryChecksOk && (
-            <div className="rounded-xl border border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/10 p-3 space-y-3">
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4"
-                  checked={forceApprovalChecked}
-                  onChange={(e) => {
-                    const on = e.target.checked;
-                    setForceApprovalChecked(on);
-                    if (!on) setForceApprovalReason("");
-                  }}
-                />
-                <span className="text-xs text-amber-700 dark:text-amber-300">
-                  Force approve: allow Review & approve even when mandatory checks are incomplete.
-                </span>
-              </label>
-              {forceApprovalChecked ? (
-                <div>
-                  <label className="block text-[10px] font-medium text-amber-800 dark:text-amber-200 mb-1.5">
-                    Reason (required)
-                  </label>
-                  <textarea
-                    value={forceApprovalReason}
-                    onChange={(e) => setForceApprovalReason(e.target.value)}
-                    rows={3}
-                    required
-                    placeholder="Explain why you are approving without completing all mandatory checks…"
-                    className="w-full rounded-lg border border-amber-200/80 dark:border-amber-800/60 bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400/40 resize-y min-h-[72px]"
-                  />
-                </div>
-              ) : null}
-            </div>
-          )}
-          <p className="text-xs text-text-tertiary">
-            Approve updates the client invoice first, then attempts partner self-bill linkage, then moves the job to Awaiting payment or Completed &amp; paid.
-          </p>
-          {!mandatoryChecksOk && !forceApprovalChecked ? (
-            <p className="text-xs text-red-600">
-              Mandatory before approval: all phase reports uploaded + approved, and owner authorization checked.
-            </p>
-          ) : null}
-          {!mandatoryChecksOk && forceApprovalChecked ? (
-            <p className="text-xs text-amber-600">
-              Force approve enabled: your reason is saved on the job and in command history.
-            </p>
-          ) : null}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              variant="outline"
-              type="button"
-              disabled={validatingComplete}
-              onClick={() => {
-                setValidateCompleteOpen(false);
-                setOwnerApprovalChecked(false);
-                setForceApprovalChecked(false);
-                setForceApprovalReason("");
-                setApprovalBilledHoursInput("");
-              }}
-            >
-              Cancel
-            </Button>
-            <Button type="button" loading={validatingComplete} disabled={!canSubmitApproval} onClick={() => void handleValidateAndComplete()}>
-              {approvalMode === "review_approve" ? "Review & approve" : "Approve and continue"}
-            </Button>
-          </div>
-        </div>
-      </Modal>
 
       <Modal
         open={putOnHoldOpen}
