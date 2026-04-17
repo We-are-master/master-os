@@ -3546,7 +3546,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       </div>
 
       <div className="rounded-lg border border-border-light bg-card p-3 space-y-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Profit & Loss</p>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Profit & Loss</p>
         <div className="space-y-1.5 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-text-secondary">Revenue (client)</span>
@@ -3892,16 +3892,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         {/* ── Job amount / margin (compact metrics bar) ── */}
         <div className="grid min-h-0 grid-cols-2 divide-x divide-y divide-border-light border-b border-border-light bg-surface-hover/30 px-1 py-2 dark:bg-surface-secondary/20 lg:grid-cols-4 lg:divide-y-0">
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Job amount</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Job amount</p>
             <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-primary">{formatCurrency(billableRevenue)}</p>
             <p className="mt-0.5 text-[10px] text-text-tertiary leading-none">Incl. extras</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner cost</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Partner cost</p>
             <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-secondary">{formatCurrency(Number(job.partner_cost ?? 0))}</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Margin</p>
             <p
               className={cn(
                 "text-2xl font-bold tabular-nums leading-tight tracking-tight",
@@ -3913,7 +3913,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             <p className="mt-0.5 text-[10px] text-text-tertiary leading-none">After partner + materials</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center px-3 py-3 sm:px-4">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin %</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Margin %</p>
             <p className={cn("text-2xl font-bold tabular-nums tracking-tight", marginAppearance.pctClass)}>{marginPct}%</p>
           </div>
         </div>
@@ -4288,7 +4288,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="space-y-2 border-t border-border-light bg-surface-secondary p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
                 <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border-light bg-border-light">
                   <div className="min-w-0 bg-card p-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Start date</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Start date</p>
                     <Input
                       type="date"
                       value={scheduleDate}
@@ -4304,7 +4304,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                   <div className="min-w-0 bg-card p-2">
                     <div className="flex items-center gap-0.5">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Arrival time</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Arrival time</p>
                       <span className="group relative shrink-0">
                         <span
                           tabIndex={0}
@@ -4332,7 +4332,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     />
                   </div>
                   <div className="min-w-0 bg-card p-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Window</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Window</p>
                     <Select
                       value={scheduleWindowMins}
                       disabled={job.status === "cancelled"}
@@ -4346,7 +4346,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     />
                   </div>
                   <div className="min-w-0 bg-card p-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
                       Expected finish{scheduleDate.trim() ? " *" : ""}
                     </p>
                     <Input
@@ -4365,7 +4365,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <div className="grid grid-cols-2 gap-2">
                     <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
                       <div className="flex items-center gap-0.5">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">CCZ</p>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">CCZ</p>
                           <span className="group relative shrink-0">
                             <span
                               tabIndex={0}
@@ -4418,7 +4418,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       </button>
                     </div>
                     <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Parking</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Parking</p>
                       <button
                           type="button"
                           disabled={job.status === "cancelled" || savingAccessFees}
@@ -4480,10 +4480,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     type="button"
                     onClick={() => setDetailTab(tab.index)}
                     className={cn(
-                      "min-w-0 flex-1 px-1.5 py-2 text-center text-[11px] font-medium transition-colors sm:px-2",
+                      "min-w-0 flex-1 px-1.5 py-2.5 text-center text-[12px] font-semibold transition-colors sm:px-2",
                       detailTab === tab.index
                         ? "border-b-2 border-primary text-primary"
-                        : "border-b-2 border-transparent text-text-tertiary hover:text-text-secondary",
+                        : "border-b-2 border-transparent text-text-secondary hover:text-text-primary",
                     )}
                   >
                     {tab.label}
@@ -4571,9 +4571,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               {detailTab === 0 ? (
               <div className="space-y-3">
-              <p className="text-[11px] text-text-tertiary">Scope is required before assigning a partner. Site photos are on the Site photos tab.</p>
-              <div className="space-y-1.5 border-t border-border-light pt-2">
-                <p className="text-xs font-medium text-text-secondary">Scope</p>
+              <p className="text-[11px] text-text-secondary">Scope is required before assigning a partner. Site photos are on the Site photos tab.</p>
+              <div className="space-y-1.5 border-t border-border pt-2">
+                <p className="text-xs font-semibold text-text-primary">Scope</p>
                 <textarea
                   value={scopeDraft}
                   onChange={(e) => setScopeDraft(e.target.value)}
@@ -4594,9 +4594,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               </div>
 
-              <div className="space-y-1.5 pt-2 border-t border-border-light">
-                <p className="text-xs font-medium text-text-secondary">Additional notes</p>
-                <p className="text-[11px] text-text-tertiary">Internal only — not shown to the client; use for access, keys, or context beyond the scope.</p>
+              <div className="space-y-1.5 pt-2 border-t border-border">
+                <p className="text-xs font-semibold text-text-primary">Additional notes</p>
+                <p className="text-[11px] text-text-secondary">Internal only — not shown to the client; use for access, keys, or context beyond the scope.</p>
                 <textarea
                   value={additionalNotesDraft}
                   onChange={(e) => setAdditionalNotesDraft(e.target.value)}
@@ -4623,9 +4623,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               </div>
 
-              <div className="space-y-1.5 pt-2 border-t border-border-light">
-                <p className="text-xs font-medium text-text-secondary">Report link (optional)</p>
-                <p className="text-[11px] text-text-tertiary">External URL — Google Drive, Notion, shared doc. Not shown to the client.</p>
+              <div className="space-y-1.5 pt-2 border-t border-border">
+                <p className="text-xs font-semibold text-text-primary">Report link (optional)</p>
+                <p className="text-[11px] text-text-secondary">External URL — Google Drive, Notion, shared doc. Not shown to the client.</p>
                 <Input
                   type="url"
                   value={reportLinkDraft}
@@ -5251,7 +5251,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-2 shadow-sm dark:border-emerald-500/25 dark:bg-emerald-950/20">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Cash in — client</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash in — client</span>
                     <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
                       {amountDue > 0.02 ? "Pending" : "Settled"}
                     </Badge>
@@ -5274,7 +5274,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   )}
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
                     {cashInExtraRows.map((row) => (
                       <div key={row.key} className="flex items-center justify-between gap-2 py-1 text-xs">
                         <span className="text-text-secondary">{row.label}</span>
@@ -5380,7 +5380,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="rounded-lg border border-rose-200/80 bg-rose-50/45 p-2 shadow-sm dark:border-rose-500/25 dark:bg-rose-950/20">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Cash out — partner</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash out — partner</span>
                     <Badge variant={partnerPayRemaining > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
                       {partnerPayRemaining > 0.02 ? "Pending" : "Settled"}
                     </Badge>
@@ -5394,7 +5394,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </div>
                 <div className="space-y-2 text-xs">
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
                     {cashOutExtraRows.map((row) => (
                       <div key={row.key} className="py-1">
                         <div className="flex items-center justify-between gap-2 text-xs">
@@ -5620,7 +5620,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="space-y-1.5 border-t border-border-light pt-2 dark:border-[#2f3642]">
                 <div className="flex items-end justify-between gap-2">
                   <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Net margin</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Net margin</p>
                     <p className="text-xl font-bold tabular-nums tracking-tight text-text-primary">{formatCurrency(profit)}</p>
                   </div>
                   <p className={cn("text-xl font-bold tabular-nums tracking-tight", marginAppearance.pctClass)}>{marginPct}%</p>
@@ -6246,7 +6246,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
               {fixedSwitchPreview ? (
                 <div className="rounded-lg border border-border-light bg-surface-hover/40 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Confirm fixed values</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Confirm fixed values</p>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                     <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
                       <p className="text-text-tertiary">Client value (sale)</p>
@@ -6486,7 +6486,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             )}
           </div>
           <div ref={partnerCostSectionRef} className="space-y-3 border-t border-border-light pt-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">Rate & cost</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Rate & cost</p>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
