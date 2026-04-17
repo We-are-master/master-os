@@ -4363,9 +4363,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </div>
                 {!isHousekeepJobDetail ? (
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
+                    <div
+                      className={cn(
+                        "min-w-0 rounded-lg border p-2.5 shadow-sm transition-colors",
+                        effectiveCustomerInCcz
+                          ? "border-emerald-500 bg-emerald-50 dark:border-emerald-500/70 dark:bg-emerald-950/30"
+                          : "border-border-light bg-surface-hover/80 dark:border-[#2b313d] dark:bg-[#1a202a]",
+                      )}
+                    >
                       <div className="flex items-center gap-0.5">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">CCZ</p>
+                        <p
+                          className={cn(
+                            "text-[11px] font-semibold uppercase tracking-wide",
+                            effectiveCustomerInCcz ? "text-emerald-700 dark:text-emerald-300" : "text-text-secondary",
+                          )}
+                        >
+                          CCZ
+                        </p>
                           <span className="group relative shrink-0">
                             <span
                               tabIndex={0}
@@ -4417,8 +4431,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           </span>
                       </button>
                     </div>
-                    <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Parking</p>
+                    <div
+                      className={cn(
+                        "min-w-0 rounded-lg border p-2.5 shadow-sm transition-colors",
+                        job.has_free_parking === false
+                          ? "border-emerald-500 bg-emerald-50 dark:border-emerald-500/70 dark:bg-emerald-950/30"
+                          : "border-border-light bg-surface-hover/80 dark:border-[#2b313d] dark:bg-[#1a202a]",
+                      )}
+                    >
+                      <p
+                        className={cn(
+                          "text-[11px] font-semibold uppercase tracking-wide",
+                          job.has_free_parking === false ? "text-emerald-700 dark:text-emerald-300" : "text-text-secondary",
+                        )}
+                      >
+                        Parking
+                      </p>
                       <button
                           type="button"
                           disabled={job.status === "cancelled" || savingAccessFees}
