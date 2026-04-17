@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
+import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 
 const APP_STORE_URL = "https://apps.apple.com/br/app/master-services/id6747205225";
 // TODO: add PLAY_STORE_URL once Android is published
@@ -439,12 +440,14 @@ function RegistrationForm() {
   // Step 0 — Account
   const [fullName,        setFullName]        = useState("");
   const [email,           setEmail]           = useState("");
+  const [phone,           setPhone]           = useState("");
   const [password,        setPassword]        = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword,    setShowPassword]    = useState(false);
 
   // Step 1 — Business
   const [companyName,    setCompanyName]    = useState("");
+  const [address,        setAddress]        = useState("");
   const [selectedTrades, setSelectedTrades] = useState<string[]>([]);
   const [services,       setServices]       = useState("");
   const [utr,            setUtr]            = useState("");
@@ -459,11 +462,12 @@ function RegistrationForm() {
   function validateStep(s: number): string | null {
     if (s === 0) {
       if (!fullName.trim()) return "Please enter your full name.";
-      // Permissive email check — avoid rejecting valid addresses; server validates again.
       const emailTrim = normalizeEmailInput(email);
       if (!emailTrim || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
         return "Please enter a valid email address.";
       }
+      const phoneTrim = phone.replace(/\s+/g, "");
+      if (!phoneTrim || phoneTrim.length < 7) return "Please enter a valid WhatsApp number.";
       if (password.length < 8) return "Password must be at least 8 characters.";
       if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter.";
       if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter.";
@@ -472,6 +476,7 @@ function RegistrationForm() {
     }
     if (s === 1) {
       if (selectedTrades.length === 0) return "Please select at least one service type.";
+      if (!address.trim() || address.trim().length < 10) return "Please enter your full business address (street, city and postcode).";
     }
     if (s === 2) {
       const missing = DOC_FIELDS.filter(({ key }) => !docs[key]).map(({ label }) => label);
@@ -519,8 +524,10 @@ function RegistrationForm() {
       const form = new FormData();
       form.append("fullName",         fullName.trim());
       form.append("email",            normalizeEmailInput(email).toLowerCase());
+      form.append("phone",            phone.trim());
       form.append("password",         password);
       form.append("companyName",      companyName.trim());
+      form.append("address",          address.trim());
       form.append("trades",           selectedTrades.join(","));
       form.append("servicesProvided", services.trim());
       form.append("utr",              utr.trim());
@@ -624,6 +631,7 @@ function RegistrationForm() {
           <Step0
             fullName={fullName}             setFullName={setFullName}
             email={email}                   setEmail={setEmail}
+            phone={phone}                   setPhone={setPhone}
             password={password}             setPassword={setPassword}
             confirmPassword={confirmPassword} setConfirmPassword={setConfirmPassword}
             showPassword={showPassword}     setShowPassword={setShowPassword}
@@ -632,6 +640,7 @@ function RegistrationForm() {
         {step === 1 && (
           <Step1
             companyName={companyName}       setCompanyName={setCompanyName}
+            address={address}               setAddress={setAddress}
             selectedTrades={selectedTrades} setSelectedTrades={setSelectedTrades}
             services={services}             setServices={setServices}
             utr={utr}                       setUtr={setUtr}
@@ -709,6 +718,8 @@ function Step0({
   setFullName,
   email,
   setEmail,
+  phone,
+  setPhone,
   password,
   setPassword,
   confirmPassword,
@@ -720,6 +731,8 @@ function Step0({
   setFullName: (v: string) => void;
   email: string;
   setEmail: (v: string) => void;
+  phone: string;
+  setPhone: (v: string) => void;
   password: string;
   setPassword: (v: string) => void;
   confirmPassword: string;
@@ -742,6 +755,7 @@ function Step0({
         />
       </Field>
       <Field label="Email address" required>
+        <p className="text-xs text-slate-400 mb-1.5">We&apos;ll use this email to send you job updates and important notifications — make sure it&apos;s one you check regularly.</p>
         <input
           className={inputCls}
           type="text"
@@ -753,6 +767,19 @@ function Step0({
           spellCheck={false}
           autoComplete="email"
           name="join_email"
+          {...invalidNoBubble}
+        />
+      </Field>
+      <Field label="WhatsApp number" required>
+        <p className="text-xs text-slate-400 mb-1.5">This is how our team will contact you about jobs and schedule — please use an active WhatsApp number.</p>
+        <input
+          className={inputCls}
+          type="tel"
+          placeholder="+44 7700 900000"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          autoComplete="tel"
+          name="join_phone"
           {...invalidNoBubble}
         />
       </Field>
@@ -799,6 +826,8 @@ function Step0({
 function Step1({
   companyName,
   setCompanyName,
+  address,
+  setAddress,
   selectedTrades,
   setSelectedTrades,
   services,
@@ -810,6 +839,8 @@ function Step1({
 }: {
   companyName: string;
   setCompanyName: (v: string) => void;
+  address: string;
+  setAddress: (v: string) => void;
   selectedTrades: string[];
   setSelectedTrades: Dispatch<SetStateAction<string[]>>;
   services: string;
@@ -837,6 +868,16 @@ function Step1({
           name="join_company"
           autoComplete="organization"
           {...invalidNoBubble}
+        />
+      </Field>
+      <Field label="Full address" required>
+        <p className="text-xs text-slate-400 mb-1.5">Your home or registered business address (street, city and postcode).</p>
+        <AddressAutocomplete
+          value={address}
+          onChange={(v) => setAddress(v)}
+          onSelect={(parts: AddressParts) => setAddress(parts.full_address)}
+          placeholder="Start typing your address or postcode..."
+          country="gb"
         />
       </Field>
       <Field label="Service type" required>
