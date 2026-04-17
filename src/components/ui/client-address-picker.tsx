@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 import {
@@ -131,6 +131,9 @@ export function ClientAddressPicker({
   const selectedClientRef = useRef<Client | null>(null);
   /** Job card: collapsed = single address; expanded = full list (same client). */
   const [jobAddressListExpanded, setJobAddressListExpanded] = useState(false);
+  /** Create flow: searchable dropdown — starts closed once an address is selected, opens on "Change address". */
+  const [addressPickerOpen, setAddressPickerOpen] = useState(false);
+  const [addressSearch, setAddressSearch] = useState("");
 
   useEffect(() => {
     if (jobCurrentAddressOnly) setJobAddressListExpanded(false);
@@ -363,6 +366,31 @@ export function ClientAddressPicker({
     !addressLoading &&
     addresses.length > 0 &&
     Boolean(currentPropertyDisplayLine.trim());
+
+  /** Dropdown-style picker: collapse to a summary card once an address is picked; user taps "Change" to open a search list. */
+  const selectedAddressRow = useMemo(
+    () => addresses.find((a) => a.id === value.client_address_id) ?? null,
+    [addresses, value.client_address_id],
+  );
+  const showAddressPickerCollapsed =
+    !jobCurrentAddressOnly &&
+    !!selectedClient &&
+    !addressLoading &&
+    !addingNewAddress &&
+    !addressPickerOpen &&
+    !!selectedAddressRow &&
+    addresses.length > 0;
+  const filteredAddresses = useMemo(() => {
+    const q = addressSearch.trim().toLowerCase();
+    if (!q) return addresses;
+    return addresses.filter((addr) => {
+      const hay = [addr.label, addr.address, addr.city, addr.postcode]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [addresses, addressSearch]);
 
   const handleCreateClient = useCallback(async () => {
     if (!createClientForm.full_name.trim()) {
