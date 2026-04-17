@@ -219,14 +219,26 @@ const JOB_DETAIL_MULTILINE_FIELD_CLASS =
 const JOB_DETAIL_INLINE_INPUT_FIELD_CLASS =
   "rounded-lg border border-border bg-card py-2 text-sm text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:ring-primary/35";
 
-function jobDetailMarginAppearance(marginPct: number): { pctClass: string; barClass: string } {
-  if (marginPct < 0) {
-    return { pctClass: "text-red-600 dark:text-red-400", barClass: "bg-red-500" };
+/** Healthy-margin threshold for job-card Net margin bar — below this the bar turns red and a hint badge appears. */
+export const JOB_DETAIL_HEALTHY_MARGIN_PCT = 45;
+
+function jobDetailMarginAppearance(marginPct: number): {
+  pctClass: string;
+  barClass: string;
+  low: boolean;
+} {
+  if (marginPct < JOB_DETAIL_HEALTHY_MARGIN_PCT) {
+    return {
+      pctClass: "text-red-600 dark:text-red-400",
+      barClass: "bg-red-500",
+      low: true,
+    };
   }
-  if (marginPct < 15) {
-    return { pctClass: "text-amber-600 dark:text-amber-400", barClass: "bg-amber-500" };
-  }
-  return { pctClass: "text-emerald-600 dark:text-emerald-400", barClass: "bg-primary" };
+  return {
+    pctClass: "text-emerald-600 dark:text-emerald-400",
+    barClass: "bg-emerald-500",
+    low: false,
+  };
 }
 
 function getStatusColors(status: string): {
@@ -4605,9 +4617,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <textarea
                   value={scopeDraft}
                   onChange={(e) => setScopeDraft(e.target.value)}
-                  rows={2}
+                  rows={4}
                   placeholder="Describe what the partner is expected to do…"
-                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[72px]")}
+                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[120px]")}
                 />
                 <Button type="button" variant="outline" size="sm" loading={savingScope} onClick={async () => {
                   if (!job) return;
@@ -5648,7 +5660,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="space-y-1.5 border-t border-border-light pt-2 dark:border-[#2f3642]">
                 <div className="flex items-end justify-between gap-2">
                   <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Net margin</p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Net margin</p>
+                      {marginAppearance.low ? (
+                        <span className="group relative inline-flex">
+                          <span
+                            tabIndex={0}
+                            aria-label="Margin below target — click for details"
+                            className="inline-flex h-[14px] w-[14px] items-center justify-center rounded-full bg-red-100 text-red-600 text-[10px] font-bold leading-none dark:bg-red-950/50 dark:text-red-400"
+                          >
+                            !
+                          </span>
+                          <span
+                            role="tooltip"
+                            className="pointer-events-none invisible absolute bottom-full left-1/2 z-[60] mb-1 w-52 -translate-x-1/2 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1.5 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                          >
+                            Net margin is below {JOB_DETAIL_HEALTHY_MARGIN_PCT}% — review the partner cost or raise the client price before approving.
+                          </span>
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="text-xl font-bold tabular-nums tracking-tight text-text-primary">{formatCurrency(profit)}</p>
                   </div>
                   <p className={cn("text-xl font-bold tabular-nums tracking-tight", marginAppearance.pctClass)}>{marginPct}%</p>
