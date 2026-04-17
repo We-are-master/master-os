@@ -98,6 +98,11 @@ import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-si
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
+import {
+  OFFICE_JOB_CANCELLATION_REASONS,
+  buildOfficeCancellationReasonText,
+  officeCancellationDetailRequired,
+} from "@/lib/job-office-cancellation";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 const JOBS_PAGE_SIZE_OPTIONS = [10, 30, 100] as const;
@@ -111,6 +116,7 @@ function parseRestoredJobStatus(raw: string | null | undefined): Job["status"] {
 }
 
 const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
+const BULK_MARK_PAID_NOTE_TAG = "PAID_MARKED_BY::";
 
 type ScheduleDatePreset = "all" | "today" | "tomorrow" | "week" | "month" | "custom";
 type JobsSortMode = "schedule_nearest" | "schedule_farthest" | "booking_recent" | "booking_oldest";
@@ -419,6 +425,9 @@ function JobsPageContent() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkActionModal, setBulkActionModal] = useState<null | "start_job" | "cancel" | "mark_paid" | "archive" | "recover">(null);
   const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkCancelPresetId, setBulkCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
+  const [bulkCancelDetail, setBulkCancelDetail] = useState("");
+  const [bulkMarkPaidConfirm, setBulkMarkPaidConfirm] = useState(false);
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
   const [kpiFinancialLoading, setKpiFinancialLoading] = useState(true);
   const [totalRevenue, setTotalRevenue] = useState(0);
@@ -433,6 +442,14 @@ function JobsPageContent() {
   useEffect(() => {
     if (status === "deleted") setSelectedIds(new Set());
   }, [status]);
+
+  useEffect(() => {
+    if (!bulkActionModal) {
+      setBulkCancelPresetId(OFFICE_JOB_CANCELLATION_REASONS[0].id);
+      setBulkCancelDetail("");
+      setBulkMarkPaidConfirm(false);
+    }
+  }, [bulkActionModal]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -889,7 +906,7 @@ function JobsPageContent() {
           list.push({ type: p.type as string, amount: Number(p.amount) });
           byJob.set(jid, list);
         }
-        const allowedFrom = new Set<string>(["awaiting_payment", "need_attention"]);
+        const allowedFrom = new Set<string>(["awaiting_payment"]);
         for (const j of jobRows as Job[]) {
           if (!allowedFrom.has(j.status)) {
             toast.error(`${j.reference}: only Awaiting payment or Need attention can be completed (now: ${j.status}).`);
@@ -930,11 +947,19 @@ function JobsPageContent() {
         rows = data as Job[];
       }
 
+      const nowIso = new Date().toISOString();
+      const actorName = profile?.full_name?.trim() || profile?.email?.trim() || "Admin";
       for (const j of rows) {
         const patch: Record<string, unknown> = {
           status: ns,
           ...statusChangePartnerTimerPatch(j, ns),
         };
+        if (ns === "completed") {
+          const paidMarker = `[${nowIso}] ${BULK_MARK_PAID_NOTE_TAG}${actorName}`;
+          const prevNotes = (j.internal_notes ?? "").trim();
+          patch.completed_date = nowIso.slice(0, 10);
+          patch.internal_notes = prevNotes ? `${prevNotes}\n\n${paidMarker}` : paidMarker;
+        }
         let { error: upErr } = await supabase.from("jobs").update(prepareJobRowForUpdate(patch)).eq("id", j.id);
         if (upErr && isPostgrestWriteRetryableError(upErr)) {
           const r = await supabase.from("jobs").update(applyJobDbCompat({ ...patch })).eq("id", j.id);
@@ -1011,7 +1036,11 @@ function JobsPageContent() {
     if (selectedIds.size === 0) return false;
     const supabase = getSupabase();
     const ids = Array.from(selectedIds);
-    const reason = "Cancelled in bulk from Jobs list.";
+    if (officeCancellationDetailRequired(bulkCancelPresetId) && !bulkCancelDetail.trim()) {
+      toast.error("Please add cancellation details for 'Other'.");
+      return false;
+    }
+    const reason = buildOfficeCancellationReasonText(bulkCancelPresetId, bulkCancelDetail);
     try {
       const { data: jobRows, error: jobErr } = await supabase.from("jobs").select("*").in("id", ids).is("deleted_at", null);
       if (jobErr) throw jobErr;
@@ -1078,7 +1107,15 @@ function JobsPageContent() {
       toast.error("Failed to cancel jobs");
       return false;
     }
-  }, [selectedIds, profile?.id, profile?.full_name, refresh, loadDashboardStats]);
+  }, [
+    selectedIds,
+    bulkCancelPresetId,
+    bulkCancelDetail,
+    profile?.id,
+    profile?.full_name,
+    refresh,
+    loadDashboardStats,
+  ]);
 
   const handleBulkArchive = useCallback(async (): Promise<boolean> => {
     if (selectedIds.size === 0) return false;
@@ -1622,6 +1659,10 @@ function JobsPageContent() {
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-center gap-1.5">
+                    {status === "awaiting_payment" ? (
+                      <BulkBtn label="Mark as paid" onClick={() => setBulkActionModal("mark_paid")} variant="success" />
+                    ) : null}
+                    <BulkBtn label="Cancel" onClick={() => setBulkActionModal("cancel")} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
                   </div>
                 )
@@ -1739,8 +1780,8 @@ function JobsPageContent() {
               <>
                 You are about to mark <strong className="text-text-primary">{selectedIds.size}</strong> job(s) as{" "}
                 <strong className="text-text-primary">paid and completed</strong>. Only jobs in{" "}
-                <strong className="text-text-primary">Awaiting payment</strong> or <strong className="text-text-primary">Need attention</strong>{" "}
-                with full customer and partner settlements will be updated. Are you sure?
+                <strong className="text-text-primary">Awaiting payment</strong> with full customer and partner settlements will be
+                updated. Are you sure?
               </>
             )}
             {bulkActionModal === "archive" && (
@@ -1758,6 +1799,39 @@ function JobsPageContent() {
               </>
             )}
           </p>
+          {bulkActionModal === "cancel" ? (
+            <div className="space-y-2 rounded-xl border border-border-light bg-surface-secondary p-3">
+              <Select
+                value={bulkCancelPresetId}
+                onChange={(e) => setBulkCancelPresetId(e.target.value)}
+                options={OFFICE_JOB_CANCELLATION_REASONS.map((row) => ({ value: row.id, label: row.label }))}
+              />
+              <Input
+                value={bulkCancelDetail}
+                onChange={(e) => setBulkCancelDetail(e.target.value)}
+                placeholder={officeCancellationDetailRequired(bulkCancelPresetId) ? "Required detail..." : "Optional detail..."}
+              />
+              {officeCancellationDetailRequired(bulkCancelPresetId) && !bulkCancelDetail.trim() ? (
+                <p className="text-xs text-amber-700 dark:text-amber-300">Please add details before confirming cancel.</p>
+              ) : null}
+            </div>
+          ) : null}
+          {bulkActionModal === "mark_paid" ? (
+            <div className="space-y-2 rounded-xl border border-amber-400/50 bg-amber-50 p-3 dark:border-amber-500/40 dark:bg-amber-950/20">
+              <p className="text-xs font-medium text-amber-900 dark:text-amber-100">
+                Attention: this action closes the job as paid and completed across operations and finance views.
+              </p>
+              <label className="flex items-center gap-2 text-xs text-amber-900 dark:text-amber-100">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border"
+                  checked={bulkMarkPaidConfirm}
+                  onChange={(e) => setBulkMarkPaidConfirm(e.target.checked)}
+                />
+                Yes, I confirm these jobs are really paid.
+              </label>
+            </div>
+          ) : null}
           <div className="flex flex-wrap justify-end gap-2 pt-1">
             <Button type="button" variant="outline" disabled={bulkRunning} onClick={() => setBulkActionModal(null)}>
               Go back
@@ -1766,6 +1840,12 @@ function JobsPageContent() {
               type="button"
               variant={bulkActionModal === "archive" ? "danger" : "primary"}
               loading={bulkRunning}
+              disabled={
+                (bulkActionModal === "cancel" &&
+                  officeCancellationDetailRequired(bulkCancelPresetId) &&
+                  !bulkCancelDetail.trim()) ||
+                (bulkActionModal === "mark_paid" && !bulkMarkPaidConfirm)
+              }
               onClick={() => {
                 void (async () => {
                   if (!bulkActionModal) return;

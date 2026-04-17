@@ -210,6 +210,23 @@ const PUT_ON_HOLD_REASON_OPTIONS = [
   ...PUT_ON_HOLD_PRESET_REASONS.map((r) => ({ value: r, label: r })),
 ];
 
+/** Neutral fields + brand focus ring (replaces one-off beige / mint hex pairs). */
+const JOB_DETAIL_MULTILINE_FIELD_CLASS =
+  "w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm leading-tight text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:bg-surface focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:bg-surface dark:focus:ring-primary/35";
+
+const JOB_DETAIL_INLINE_INPUT_FIELD_CLASS =
+  "rounded-lg border border-border bg-card py-2 text-sm text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:ring-primary/35";
+
+function jobDetailMarginAppearance(marginPct: number): { pctClass: string; barClass: string } {
+  if (marginPct < 0) {
+    return { pctClass: "text-red-600 dark:text-red-400", barClass: "bg-red-500" };
+  }
+  if (marginPct < 15) {
+    return { pctClass: "text-amber-600 dark:text-amber-400", barClass: "bg-amber-500" };
+  }
+  return { pctClass: "text-emerald-600 dark:text-emerald-400", barClass: "bg-primary" };
+}
+
 function getStatusColors(status: string): {
   healthBarClass: string;
   activeStepDotClass: string;
@@ -238,26 +255,26 @@ function getStatusColors(status: string): {
   }
   if (s === "cancelled") {
     return {
-      healthBarClass: "bg-[#e53935]",
-      activeStepDotClass: "bg-[#fdecea] border-[#e53935] text-[#e53935]",
-      activeStepLabelClass: "text-[#e53935] font-semibold",
-      topBadgeClass: "bg-[#fdecea] text-[#c0392b] border border-[#e53935]",
+      healthBarClass: "bg-red-600",
+      activeStepDotClass: "bg-red-50 border-red-600 text-red-600 dark:bg-red-950/40 dark:border-red-500 dark:text-red-400",
+      activeStepLabelClass: "text-red-600 dark:text-red-400 font-semibold",
+      topBadgeClass: "bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/30 dark:text-red-200 dark:border-red-800",
       completedAllSteps: false,
     };
   }
   if (s === "completed") {
     return {
-      healthBarClass: "bg-[#1DB87A]",
-      activeStepDotClass: "bg-[#1DB87A] border-[#1DB87A] text-white",
-      activeStepLabelClass: "text-[#1DB87A] font-semibold",
+      healthBarClass: "bg-emerald-600",
+      activeStepDotClass: "bg-emerald-600 border-emerald-600 text-white",
+      activeStepLabelClass: "text-emerald-700 dark:text-emerald-400 font-semibold",
       topBadgeClass: "",
       completedAllSteps: true,
     };
   }
   return {
-    healthBarClass: "bg-[#1DB87A]",
-    activeStepDotClass: "bg-[#1DB87A] border-[#1DB87A] text-white",
-    activeStepLabelClass: "text-[#1DB87A] font-semibold",
+    healthBarClass: "bg-emerald-600",
+    activeStepDotClass: "bg-emerald-600 border-emerald-600 text-white",
+    activeStepLabelClass: "text-emerald-700 dark:text-emerald-400 font-semibold",
     topBadgeClass: "",
     completedAllSteps: false,
   };
@@ -339,10 +356,7 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
           {!open ? (
             <div className="flex items-start justify-between gap-2 pt-0.5">
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-xs font-semibold text-text-primary truncate">{sb.reference}</p>
-                  <Badge variant={st.variant} size="sm">{st.label}</Badge>
-                </div>
+                <p className="text-xs font-semibold text-text-primary truncate">{sb.reference}</p>
                 <p className="text-[10px] text-text-tertiary mt-0.5 leading-tight">
                   <span className="sm:hidden block break-words">Week {compactWeekLine}</span>
                   <span className="hidden sm:block truncate" title={`Week ${weekLine}`}>Week {weekLine}</span>
@@ -457,6 +471,15 @@ function JobHeaderWhatsAppIcon({ className }: { className?: string }) {
       <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
     </svg>
   );
+}
+
+function extractLastMarkedPaidBy(internalNotes: string | null | undefined): string | null {
+  const text = (internalNotes ?? "").trim();
+  if (!text) return null;
+  const matches = [...text.matchAll(/PAID_MARKED_BY::([^\n\r]+)/g)];
+  if (!matches.length) return null;
+  const who = matches[matches.length - 1]?.[1]?.trim() ?? "";
+  return who || null;
 }
 
 interface JobDetailClientProps {
@@ -3252,6 +3275,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       : jobDirectCost(job);
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
+  const marginAppearance = jobDetailMarginAppearance(marginPct);
+  const markedPaidBy = extractLastMarkedPaidBy(job.internal_notes);
   /** Transfers to partner only — excludes legacy rows that recorded extra payout as a payment (those are cost, not cash out). */
   const partnerPaidTotal = sumPartnerRecordedPayoutsForCap(partnerPayments);
   const partnerPayRemaining = Math.max(0, partnerCashOutTotal - partnerPaidTotal);
@@ -3554,7 +3579,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   return (
     <PageTransition>
-      <div className="w-full bg-[#f0ede8] py-4 px-4 dark:bg-[#0f1115] sm:px-5">
+      <div className="w-full bg-[#fdfdfd] py-4 px-4 dark:bg-[#0f1115] sm:px-5">
         <div className="mx-auto w-full max-w-[1280px] overflow-hidden rounded-lg border border-border bg-card">
           <div className={cn("h-[3px] w-full shrink-0", healthBarColorClass)} aria-hidden />
 
@@ -3565,7 +3590,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-auto shrink-0 rounded-full border border-[#d0cdc8] bg-white px-3 py-1.5 text-xs font-medium text-[#555] hover:bg-[#f4f2ef] hover:text-[#333] dark:border-[#2f3440] dark:bg-[#171b23] dark:text-[#d3d7df] dark:hover:bg-[#202633] dark:hover:text-white"
+                  className="h-auto shrink-0 rounded-full px-3 py-1.5 text-xs font-medium"
                   icon={<ArrowLeft className="h-3.5 w-3.5" />}
                   onClick={() => router.push("/jobs")}
                 >
@@ -3576,7 +3601,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   variant="outline"
                   size="sm"
                   loading={refreshingJob}
-                  className="h-7 w-7 shrink-0 rounded-full border border-[#d0cdc8] bg-white p-0 hover:bg-[#f4f2ef] dark:border-[#2f3440] dark:bg-[#171b23] dark:text-[#d3d7df] dark:hover:bg-[#202633]"
+                  className="h-7 w-7 shrink-0 rounded-full p-0"
                   icon={<RefreshCw className="h-3.5 w-3.5" />}
                   onClick={() => void refreshJobFinance()}
                   title="Reload job, payments, and documents from the server"
@@ -3606,7 +3631,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 "border-red-950/40 bg-red-950/[0.08] text-red-950 hover:bg-red-950/12 dark:border-red-900/55 dark:bg-red-950/45 dark:text-red-50 dark:hover:bg-red-950/55";
               const cancelJobClass =
                 action.status === "cancelled"
-                  ? "h-auto border-0 bg-[#e53935] px-3 py-1.5 text-xs font-medium text-white shadow-none hover:bg-[#c62828] rounded-md"
+                  ? "h-auto border-0 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white shadow-none hover:bg-red-700"
                   : undefined;
               const variant =
                 action.destructive ? "danger" : action.primary && action.tone !== "success" ? "primary" : "outline";
@@ -3772,16 +3797,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   const onHoldStuck = isOnHoldStep && job.status === "on_hold" && onHoldCalendarDays > 2;
                   const payStepOverdue = isAwaitingPayStep && healthPaymentOverdue;
                   const dotClass = payStepOverdue
-                    ? "border-[#e53935] bg-[#e53935]/15 text-[#e53935]"
+                    ? "border-red-600 bg-red-50 text-red-700 dark:bg-red-950/35 dark:text-red-300"
                     : onHoldStuck
                       ? "border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-200"
                       : currentOrCompletedActive
                         ? statusColors.activeStepDotClass
                         : done
-                          ? "border-[#1DB87A] bg-[#1DB87A] text-white"
+                          ? "border-emerald-600 bg-emerald-600 text-white"
                           : "border-border bg-muted/60 text-text-tertiary";
                   const labelClass = payStepOverdue
-                    ? "text-[#e53935] font-semibold"
+                    ? "text-red-600 dark:text-red-400 font-semibold"
                     : onHoldStuck
                       ? "text-amber-700 dark:text-amber-300 font-semibold"
                       : currentOrCompletedActive
@@ -3805,7 +3830,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         {done && !(isAwaitingPayStep && payStepOverdue) && !onHoldStuck ? (
                           <span
                             className={cn(
-                              "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-2 border-[#1DB87A] bg-[#1DB87A] text-white shadow-sm",
+                              "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-2 border-emerald-600 bg-emerald-600 text-white shadow-sm",
                             )}
                           >
                             <Check className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
@@ -3826,7 +3851,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         {onHoldStuck ? (
                           <span className="text-[9px] font-medium text-amber-700 dark:text-amber-400">{onHoldCalendarDays}d parado</span>
                         ) : payStepOverdue ? (
-                          <span className="text-[9px] font-medium text-[#e53935]">Payment overdue</span>
+                          <span className="text-[9px] font-medium text-red-600 dark:text-red-400">Payment overdue</span>
                         ) : null}
                       </div>
                     </li>
@@ -3864,7 +3889,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           </div>
           <div className="flex min-w-0 flex-col justify-center px-3 py-3 sm:px-4">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin %</p>
-            <p className="text-2xl font-bold tabular-nums tracking-tight text-amber-600 dark:text-amber-400">{marginPct}%</p>
+            <p className={cn("text-2xl font-bold tabular-nums tracking-tight", marginAppearance.pctClass)}>{marginPct}%</p>
           </div>
         </div>
 
@@ -3897,7 +3922,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         </p>
                         <button
                           type="button"
-                          className="flex h-[22px] w-[22px] items-center justify-center rounded-full border border-[#e0ddd8] bg-[#f4f2ef] text-[#999] transition-colors hover:border-[#1DB87A] hover:bg-[#e8f9f1] hover:text-[#1DB87A] dark:border-[#2f3440] dark:bg-[#1a202a] dark:text-[#9aa3b2] dark:hover:border-[#1DB87A] dark:hover:bg-[#123126] dark:hover:text-[#42d69b]"
+                          className="flex h-[22px] w-[22px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
                           disabled={job.status === "cancelled"}
                           onClick={() => {
                             setJobTypeEditTarget(job.job_type === "hourly" ? "hourly" : "fixed");
@@ -4044,7 +4069,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         </span>
                         <button
                           type="button"
-                          className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-[#e0ddd8] bg-[#f4f2ef] text-[#999] transition-colors hover:border-[#1DB87A] hover:bg-[#e8f9f1] hover:text-[#1DB87A] dark:border-[#2f3440] dark:bg-[#1a202a] dark:text-[#9aa3b2] dark:hover:border-[#1DB87A] dark:hover:bg-[#123126] dark:hover:text-[#42d69b]"
+                          className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
                           disabled={job.status === "cancelled"}
                           onClick={() => {
                             setFixedRatesInlineOpen(false);
@@ -4068,7 +4093,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               </span>
                               <button
                                 type="button"
-                                className="text-[#aaa] transition-colors hover:text-[#1DB87A] dark:text-[#8a93a5]"
+                                className="text-text-tertiary transition-colors hover:text-primary dark:text-[#8a93a5]"
                                 onClick={() => setHourlyTimeEditOpen((v) => !v)}
                                 title="Edit time"
                               >
@@ -4119,7 +4144,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         </div>
                       ) : null}
                       {job.job_type === "fixed" && fixedRatesInlineOpen ? (
-                        <div className="mt-2 rounded-lg border border-[#e8e5e0] bg-[#fafaf8] p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
+                        <div className="mt-2 rounded-lg border border-border bg-surface-secondary p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
                           <div className="grid grid-cols-2 gap-2">
                             <div>
                               <label className="mb-1 block text-[11px] font-medium text-text-secondary">Client rate £</label>
@@ -4148,7 +4173,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             <Button
                               type="button"
                               size="sm"
-                              className="h-9 bg-[#1DB87A] text-white hover:bg-[#18a36c]"
+                              variant="primary"
+                              className="h-9"
                               loading={savingFixedInlineRates}
                               onClick={() => void handleSaveFixedInlineRates()}
                             >
@@ -4158,7 +4184,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               type="button"
                               size="sm"
                               variant="outline"
-                              className="h-9 border-[#e0ddd8] bg-[#f4f2ef] text-[#555] hover:bg-[#ece8e3] dark:border-[#2f3440] dark:bg-[#1a202a] dark:text-[#d2d8e2] dark:hover:bg-[#232b38]"
+                              className="h-9"
                               disabled={savingFixedInlineRates}
                               onClick={() => setFixedRatesInlineOpen(false)}
                             >
@@ -4194,7 +4220,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           labelClient="Client"
                           labelAddress="Property address"
                           jobCurrentAddressOnly
-                          clientNameInputClassName="rounded-lg border border-[#d8d4ce] bg-[#f7f5f1] text-sm text-[#333] placeholder:text-[#bbb] outline-none focus:border-[#1DB87A] focus:bg-white focus:ring-0 dark:border-[#2f3440] dark:bg-[#1a202a] dark:text-[#dbe2ef] dark:placeholder:text-[#7f899a] dark:focus:bg-[#121822]"
+                          clientNameInputClassName={cn(
+                            JOB_DETAIL_INLINE_INPUT_FIELD_CLASS,
+                            "px-3 text-sm outline-none",
+                          )}
                         />
                         <Button
                           type="button"
@@ -4203,7 +4232,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           loading={savingProperty}
                           disabled={job.status === "cancelled"}
                           onClick={handleSaveLinkedProperty}
-                          className="rounded-md border border-[#d0cdc8] bg-[#eceae6] px-3 py-1.5 text-xs font-medium text-[#555] hover:border-[#bbb] hover:bg-[#e0ddd8] hover:text-[#333] dark:border-[#2f3440] dark:bg-[#1c2330] dark:text-[#d2d8e2] dark:hover:border-[#3a4252] dark:hover:bg-[#242d3b] dark:hover:text-white"
                         >
                           Save client & address
                         </Button>
@@ -4216,7 +4244,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           onSelect={(p) => setUnlinkedAddressDraft(p.full_address)}
                           label="Property address"
                           placeholder="Type address or postcode…"
-                          fieldClassName="rounded-lg border-[#d8d4ce] bg-[#f7f5f1] text-[#333] placeholder:text-[#bbb] focus:border-[#1DB87A] focus:bg-white focus:ring-0 dark:border-[#2f3440] dark:bg-[#1a202a] dark:text-[#dbe2ef] dark:placeholder:text-[#7f899a] dark:focus:bg-[#121822]"
+                          fieldClassName={cn(JOB_DETAIL_INLINE_INPUT_FIELD_CLASS, "px-3")}
                         />
                         <Button
                           type="button"
@@ -4224,7 +4252,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           size="sm"
                           loading={savingUnlinkedAddress}
                           onClick={handleSaveUnlinkedProperty}
-                          className="rounded-md border border-[#d0cdc8] bg-[#eceae6] px-3 py-1.5 text-xs font-medium text-[#555] hover:border-[#bbb] hover:bg-[#e0ddd8] hover:text-[#333] dark:border-[#2f3440] dark:bg-[#1c2330] dark:text-[#d2d8e2] dark:hover:border-[#3a4252] dark:hover:bg-[#242d3b] dark:hover:text-white"
                         >
                           Save address
                         </Button>
@@ -4233,7 +4260,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                 ) : null}
               </div>
-              <div className="space-y-2 border-t border-border-light bg-[#fafaf8] p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
+              <div className="space-y-2 border-t border-border-light bg-surface-secondary p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
                 <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border-light bg-border-light">
                   <div className="min-w-0 bg-card p-2">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Start date</p>
@@ -4311,7 +4338,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </div>
                 {!isHousekeepJobDetail ? (
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="min-w-0 rounded-lg border border-border-light bg-[#faf8f4] p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
+                    <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
                       <div className="flex items-center gap-0.5">
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">CCZ</p>
                           <span className="group relative shrink-0">
@@ -4342,7 +4369,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       className={cn(
                             "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
                             effectiveCustomerInCcz
-                              ? "border-[#1DB87A]/45 bg-white shadow-sm dark:border-[#1DB87A]/50 dark:bg-[#141a24]"
+                              ? "border-emerald-500/45 bg-white shadow-sm dark:border-emerald-500/50 dark:bg-[#141a24]"
                               : "border-border bg-white/90 hover:border-border dark:border-[#2f3440] dark:bg-[#171d28] dark:hover:border-[#3a4252]",
                             !cczEligibleAddress && !job.in_ccz && "cursor-not-allowed opacity-50",
                           )}
@@ -4350,7 +4377,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           <span
                             className={cn(
                               "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors",
-                              effectiveCustomerInCcz ? "bg-[#1DB87A]" : "bg-stone-300/90 dark:bg-stone-600",
+                              effectiveCustomerInCcz ? "bg-emerald-600" : "bg-stone-300/90 dark:bg-stone-600",
                             )}
                           >
                             <span
@@ -4365,7 +4392,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           </span>
                       </button>
                     </div>
-                    <div className="min-w-0 rounded-lg border border-border-light bg-[#faf8f4] p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
+                    <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Parking</p>
                       <button
                           type="button"
@@ -4381,7 +4408,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           <span
                             className={cn(
                               "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors",
-                              job.has_free_parking === false ? "bg-[#1DB87A]" : "bg-stone-300/90 dark:bg-stone-600",
+                              job.has_free_parking === false ? "bg-emerald-600" : "bg-stone-300/90 dark:bg-stone-600",
                             )}
                           >
                             <span
@@ -4412,8 +4439,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
 
             {/* Scope / photos / reports / financial — tabbed */}
-            <div className="overflow-hidden rounded-xl border border-border-light bg-[#fafaf8] dark:border-[#2b313d] dark:bg-[#161c26]">
-              <div className="flex flex-wrap border-b border-border-light bg-[#fafaf8] dark:border-[#2b313d] dark:bg-[#161c26]">
+            <div className="overflow-hidden rounded-xl border border-border-light bg-[#fdfdfd] shadow-sm dark:border-[#2b313d] dark:bg-[#141922]">
+              <div className="flex flex-wrap border-b border-border-light bg-[#fdfdfd] dark:border-[#2b313d] dark:bg-[#141922]">
                 {(
                   [
                     { label: "Details", index: 0 as const },
@@ -4430,7 +4457,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     className={cn(
                       "min-w-0 flex-1 px-1.5 py-2 text-center text-[11px] font-medium transition-colors sm:px-2",
                       detailTab === tab.index
-                        ? "border-b-2 border-[#1DB87A] text-[#1DB87A]"
+                        ? "border-b-2 border-primary text-primary"
                         : "border-b-2 border-transparent text-text-tertiary hover:text-text-secondary",
                     )}
                   >
@@ -4438,7 +4465,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </button>
                 ))}
               </div>
-              <div className="p-3 space-y-3">
+              <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
               {detailTab === 1 ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -4527,7 +4554,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   onChange={(e) => setScopeDraft(e.target.value)}
                   rows={2}
                   placeholder="Describe what the partner is expected to do…"
-                  className="min-h-[72px] w-full resize-none rounded-lg border border-[#d8d4ce] bg-[#f7f5f1] px-3 py-2 text-sm leading-tight text-[#333] placeholder:text-[#bbb] focus:border-[#1DB87A] focus:bg-white focus:outline-none focus:ring-0 dark:border-[#2f3440] dark:bg-[#1a202a] dark:text-[#dbe2ef] dark:placeholder:text-[#7f899a] dark:focus:bg-[#121822]"
+                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[72px]")}
                 />
                 <Button type="button" variant="outline" size="sm" loading={savingScope} onClick={async () => {
                   if (!job) return;
@@ -4537,7 +4564,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   } finally {
                     setSavingScope(false);
                   }
-                }} className="rounded-md border border-[#d0cdc8] bg-[#eceae6] px-3 py-1.5 text-xs font-medium text-[#555] hover:border-[#bbb] hover:bg-[#e0ddd8] hover:text-[#333] dark:border-[#2f3440] dark:bg-[#1c2330] dark:text-[#d2d8e2] dark:hover:border-[#3a4252] dark:hover:bg-[#242d3b] dark:hover:text-white">
+                }}>
                   Save scope
                 </Button>
               </div>
@@ -4550,7 +4577,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   onChange={(e) => setAdditionalNotesDraft(e.target.value)}
                   rows={3}
                   placeholder="Parking, entry, preferences…"
-                  className="min-h-[86px] w-full resize-none rounded-lg border border-[#d8d4ce] bg-[#f7f5f1] px-3 py-2 text-sm text-[#333] placeholder:text-[#bbb] focus:border-[#1DB87A] focus:bg-white focus:outline-none focus:ring-0 dark:border-[#2f3440] dark:bg-[#1a202a] dark:text-[#dbe2ef] dark:placeholder:text-[#7f899a] dark:focus:bg-[#121822]"
+                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
                 />
                 <Button
                   type="button"
@@ -4566,7 +4593,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setSavingAdditionalNotes(false);
                     }
                   }}
-                  className="rounded-md border border-[#d0cdc8] bg-[#eceae6] px-3 py-1.5 text-xs font-medium text-[#555] hover:border-[#bbb] hover:bg-[#e0ddd8] hover:text-[#333] dark:border-[#2f3440] dark:bg-[#1c2330] dark:text-[#d2d8e2] dark:hover:border-[#3a4252] dark:hover:bg-[#242d3b] dark:hover:text-white"
                 >
                   Save additional notes
                 </Button>
@@ -4580,7 +4606,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   value={reportLinkDraft}
                   onChange={(e) => setReportLinkDraft(e.target.value)}
                   placeholder="https://…"
-                  className="h-auto min-h-0 rounded-lg border-[#d8d4ce] bg-[#f7f5f1] py-2 text-sm text-[#333] placeholder:text-[#bbb] focus:border-[#1DB87A] focus:bg-white focus:ring-0 dark:border-[#2f3440] dark:bg-[#1a202a] dark:text-[#dbe2ef] dark:placeholder:text-[#7f899a] dark:focus:bg-[#121822]"
+                  className={cn(JOB_DETAIL_INLINE_INPUT_FIELD_CLASS, "h-auto min-h-0")}
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
@@ -4597,7 +4623,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         setSavingReportLink(false);
                       }
                     }}
-                    className="rounded-md border border-[#d0cdc8] bg-[#eceae6] px-3 py-1.5 text-xs font-medium text-[#555] hover:border-[#bbb] hover:bg-[#e0ddd8] hover:text-[#333] dark:border-[#2f3440] dark:bg-[#1c2330] dark:text-[#d2d8e2] dark:hover:border-[#3a4252] dark:hover:bg-[#242d3b] dark:hover:text-white"
                   >
                     Save report link
                   </Button>
@@ -4894,7 +4919,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   onChange={(e) => setInternalNoteDraft(e.target.value)}
                   rows={3}
                   placeholder="Add an internal note…"
-                  className="min-h-[86px] w-full resize-none rounded-lg border border-[#d8d4ce] bg-[#f7f5f1] px-3 py-2 text-sm text-[#333] placeholder:text-[#bbb] focus:border-[#1DB87A] focus:bg-white focus:outline-none focus:ring-0 dark:border-[#2f3440] dark:bg-[#1a202a] dark:text-[#dbe2ef] dark:placeholder:text-[#7f899a] dark:focus:bg-[#121822]"
+                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
                 />
                 <div className="flex justify-end">
                   <Button
@@ -4933,7 +4958,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         setSavingInternalNote(false);
                       }
                     }}
-                    className="rounded-md border border-[#d0cdc8] bg-[#eceae6] px-3 py-1.5 text-xs font-medium text-[#555] hover:border-[#bbb] hover:bg-[#e0ddd8] hover:text-[#333] dark:border-[#2f3440] dark:bg-[#1c2330] dark:text-[#d2d8e2] dark:hover:border-[#3a4252] dark:hover:bg-[#242d3b] dark:hover:text-white"
                   >
                     Save note
                   </Button>
@@ -5153,7 +5177,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-auto shrink-0 rounded-md border border-[#1DB87A] bg-[#e8f9f1] px-3 py-1.5 text-xs font-medium text-[#1DB87A] hover:bg-[#d1fae5]"
+                  className="h-auto shrink-0 rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
                   onClick={() => setPartnerModalOpen(true)}
                 >
                   {job.partner_id ? "Swap" : "Assign"}
@@ -5199,7 +5223,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </p>
 
               {/* CLIENT cash in */}
-              <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/40 p-2 shadow-sm dark:border-emerald-500/30 dark:bg-emerald-950/20">
+              <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-2 shadow-sm dark:border-emerald-500/25 dark:bg-emerald-950/20">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Cash in — client</span>
@@ -5289,7 +5313,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-semibold tabular-nums text-sky-700 dark:text-sky-300" title="Reduces amount due">
+                          <span className="text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400" title="Reduces amount due">
                             {formatCurrencyPrecise(-Number(p.amount))}
                           </span>
                           {isAdmin && (
@@ -5303,10 +5327,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     })}
                   </div>
                   <div className="flex items-center justify-between border-t border-border-light pt-1.5 text-xs dark:border-[#2f3642]">
-                    <span className={`font-semibold ${amountDue > 0.02 ? "text-red-600" : "text-emerald-600"}`}>
+                    <span className={`font-semibold ${amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>
                       {amountDue > 0.02 ? "Amount due" : "Fully collected"}
                     </span>
-                    <span className={`font-bold tabular-nums ${amountDue > 0.02 ? "text-red-600" : "text-emerald-600"}`}>
+                    <span className={`font-bold tabular-nums ${amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>
                       {amountDue > 0.02 ? formatCurrency(amountDue) : formatCurrency(0)}
                     </span>
                   </div>
@@ -5314,9 +5338,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <div className="mt-2 grid w-full grid-cols-1">
                   <Button
                     size="sm"
-                    variant="ghost"
-                    className="h-10 w-full rounded-lg !border-0 !bg-[#1DB87A] px-3 text-sm font-semibold !text-white shadow-sm hover:!bg-[#18a36c]"
-                    style={{ background: "#1DB87A", color: "#fff", border: "none" }}
+                    variant="primary"
+                    className="h-10 w-full rounded-lg px-3 text-sm font-semibold shadow-sm"
                     icon={<Plus className="h-4 w-4 shrink-0" />}
                     onClick={() => {
                       setMoneyDrawerFlow("client_extra");
@@ -5329,7 +5352,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               {/* Cash out (partner payout) */}
-              <div className="rounded-lg border border-rose-200/70 bg-rose-50/35 p-2 shadow-sm dark:border-rose-500/30 dark:bg-rose-950/15">
+              <div className="rounded-lg border border-rose-200/80 bg-rose-50/45 p-2 shadow-sm dark:border-rose-500/25 dark:bg-rose-950/20">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Cash out — partner</span>
@@ -5467,7 +5490,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <span
-                                    className="text-sm font-semibold tabular-nums text-sky-700 dark:text-sky-300"
+                                    className="text-sm font-semibold tabular-nums text-rose-700 dark:text-rose-300"
                                     title="Reduces amount due only"
                                   >
                                     {formatCurrencyPrecise(-Number(p.amount))}
@@ -5555,7 +5578,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-10 w-full rounded-lg border-0 bg-[#e53935] px-3 text-sm font-semibold text-white shadow-sm hover:bg-[#c62828]"
+                    className="h-10 w-full rounded-lg border-rose-300/90 bg-rose-50 px-3 text-sm font-semibold text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45"
                     disabled={!job.partner_id?.trim()}
                     icon={<Plus className="h-4 w-4 shrink-0" />}
                     onClick={() => {
@@ -5575,11 +5598,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Net margin</p>
                     <p className="text-xl font-bold tabular-nums tracking-tight text-text-primary">{formatCurrency(profit)}</p>
                   </div>
-                  <p className="text-xl font-bold tabular-nums tracking-tight text-amber-600 dark:text-amber-400">{marginPct}%</p>
+                  <p className={cn("text-xl font-bold tabular-nums tracking-tight", marginAppearance.pctClass)}>{marginPct}%</p>
                 </div>
-                <div className="h-1 w-full overflow-hidden rounded-full bg-border">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-tertiary dark:bg-[#2a3038]">
                   <div
-                    className="h-full rounded-full bg-[#1DB87A] transition-all"
+                    className={cn("h-full rounded-full transition-all", marginAppearance.barClass)}
                     style={{ width: `${Math.max(0, Math.min(100, marginPct))}%` }}
                   />
                 </div>
@@ -5588,7 +5611,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="mt-1 h-9 w-full rounded-lg border border-[#d0cdc8] bg-white text-xs font-medium text-[#555] hover:bg-[#f4f2ef] dark:border-[#2f3440] dark:bg-[#171b23] dark:text-[#d3d7df] dark:hover:bg-[#202633]"
+                    className="mt-1 h-9 w-full rounded-lg text-xs font-medium"
                     onClick={() => setJobBillingDetailsOpen(true)}
                   >
                     View full billing details
@@ -5603,6 +5626,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <p className="text-xs font-medium text-emerald-700">Job fully paid</p>
                 </div>
               )}
+              {markedPaidBy ? (
+                <div className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1.5 dark:border-sky-500/35 dark:bg-sky-950/20">
+                  <p className="text-[11px] font-medium text-sky-800 dark:text-sky-200">Marked as paid by {markedPaidBy}</p>
+                </div>
+              ) : null}
             </div>
 
             {/* Financial documents: client invoices (us→client) */}
@@ -6703,9 +6731,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </Button>
             <Button
               size="sm"
+              variant="primary"
               loading={savingPartner || loadingPartners}
               disabled={!partnerAssignCanConfirm}
-              className="w-full rounded-lg bg-[#1DB87A] py-2.5 font-semibold text-white hover:bg-[#18a36c] disabled:opacity-50"
+              className="w-full rounded-lg py-2.5 font-semibold disabled:opacity-50"
               onClick={async () => {
                 const selected = partners.find((p) => p.id === selectedPartnerId);
                 setSavingPartner(true);
