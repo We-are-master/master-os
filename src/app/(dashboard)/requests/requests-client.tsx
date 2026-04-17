@@ -14,13 +14,13 @@ import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { motion } from "framer-motion";
-import { fadeInUp } from "@/lib/motion";
+import { motion, AnimatePresence } from "framer-motion";
+import { fadeInUp, modalTransition, overlayTransition } from "@/lib/motion";
 import {
   Plus, Filter, MapPin, Phone, Mail, CheckCircle2, XCircle,
   ArrowRight, Briefcase, FileText, Users, Send, PenLine,
   Inbox, Percent, CalendarRange, ImagePlus, X, ChevronDown, Download,
-  Check, Wrench, MessageSquarePlus,
+  Check, Wrench, MessageSquarePlus, UserPlus, Edit3,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
@@ -1258,47 +1258,130 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
         )}
       </Drawer>
 
-      {/* Convert to Quote: Choice Modal - Invite Partner or Add Manually */}
-      <Modal open={!!convertChoiceOpen} onClose={() => setConvertChoiceOpen(null)} title="Convert to Quote" subtitle="How would you like to create this quote?">
-        <div className="p-6 space-y-4">
-          <button
-            onClick={() => {
-              const req = convertChoiceOpen;
-              setConvertChoiceOpen(null);
-              setInvitePartnerOpen(req ? (data.find((r) => r.id === req.id) ?? req) : null);
-            }}
-            className="w-full p-5 rounded-xl border-2 border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-left group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-amber-50 dark:bg-amber-950/30 flex items-center justify-center">
-                <Users className="h-6 w-6 text-amber-600" />
+      {/* Convert to Quote: Choice Modal — Invite Partner or Manual Quote */}
+      <AnimatePresence>
+        {convertChoiceOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto overscroll-contain py-6 px-3">
+            <motion.div
+              variants={overlayTransition}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              onClick={() => setConvertChoiceOpen(null)}
+              className="absolute inset-0"
+              style={{ background: "rgba(15,15,20,0.08)", backdropFilter: "blur(4px)" }}
+            />
+            <motion.div
+              variants={modalTransition}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              className="relative w-full bg-white overflow-hidden my-auto"
+              style={{
+                maxWidth: "480px",
+                borderRadius: "12px",
+                border: "0.5px solid #E4E4E8",
+                boxShadow: "0 20px 50px -20px rgba(2,0,64,0.12), 0 4px 12px -4px rgba(0,0,0,0.04)",
+              }}
+            >
+              {/* Header */}
+              <div
+                className="flex items-start justify-between gap-3 px-[20px] py-[16px]"
+                style={{ background: "#FAFAFB", borderBottom: "0.5px solid #E4E4E8" }}
+              >
+                <div className="min-w-0">
+                  <h2 className="text-[16px] font-semibold leading-tight" style={{ color: "#020040" }}>
+                    Convert to Quote
+                  </h2>
+                  <p className="text-[12px] mt-[2px]" style={{ color: "#6B6B70" }}>
+                    Pick how you want to create this quote
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setConvertChoiceOpen(null)}
+                  className="p-1 leading-none bg-transparent border-none cursor-pointer shrink-0"
+                  style={{ color: "#9A9AA0" }}
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-              <div>
-                <p className="text-sm font-bold text-text-primary group-hover:text-primary">Invite Partner</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Partners matching the type of work are pre-selected. Send invite via email, app, or both.</p>
+
+              {/* Body: 2 option cards */}
+              <div className="p-[16px] space-y-[10px]">
+                {/* Invite Partner — navy avatar, Recommended pill */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const req = convertChoiceOpen;
+                    setConvertChoiceOpen(null);
+                    setInvitePartnerOpen(req ? (data.find((r) => r.id === req.id) ?? req) : null);
+                  }}
+                  className="w-full text-left rounded-[10px] bg-white flex items-center gap-[14px] transition-colors"
+                  style={{ border: "0.5px solid #D8D8DD", padding: "12px 14px" }}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.borderColor = "#020040")}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.borderColor = "#D8D8DD")}
+                >
+                  <div
+                    className="w-[36px] h-[36px] rounded-[8px] flex items-center justify-center shrink-0"
+                    style={{ background: "#020040" }}
+                  >
+                    <UserPlus className="h-[18px] w-[18px] text-white" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-[8px] flex-wrap">
+                      <span className="text-[14px] font-semibold" style={{ color: "#020040" }}>
+                        Invite Partner
+                      </span>
+                      <span
+                        className="text-[9px] font-semibold uppercase px-[6px] py-[2px] rounded"
+                        style={{ background: "#FFF1EB", color: "#ED4B00", letterSpacing: "0.5px" }}
+                      >
+                        Recommended
+                      </span>
+                    </div>
+                    <p className="text-[12px] mt-[3px] leading-snug" style={{ color: "#6B6B70" }}>
+                      Matched partners get invited by email, app or both. Fastest path to a quote.
+                    </p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 shrink-0" style={{ color: "#9A9AA0" }} />
+                </button>
+
+                {/* Manual Quote — coral avatar */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const req = convertChoiceOpen;
+                    setConvertChoiceOpen(null);
+                    setManualQuoteOpen(req ? (data.find((r) => r.id === req.id) ?? req) : null);
+                  }}
+                  className="w-full text-left rounded-[10px] bg-white flex items-center gap-[14px] transition-colors"
+                  style={{ border: "0.5px solid #D8D8DD", padding: "12px 14px" }}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.borderColor = "#020040")}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.borderColor = "#D8D8DD")}
+                >
+                  <div
+                    className="w-[36px] h-[36px] rounded-[8px] flex items-center justify-center shrink-0"
+                    style={{ background: "#FFF1EB" }}
+                  >
+                    <Edit3 className="h-[18px] w-[18px]" style={{ color: "#ED4B00" }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>
+                      Manual Quote
+                    </p>
+                    <p className="text-[12px] mt-[3px] leading-snug" style={{ color: "#6B6B70" }}>
+                      Enter quote lines (service, qty, unit price, VAT). Opens Review &amp; send.
+                    </p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 shrink-0" style={{ color: "#9A9AA0" }} />
+                </button>
               </div>
-            </div>
-          </button>
-          <button
-            onClick={() => {
-              const req = convertChoiceOpen;
-              setConvertChoiceOpen(null);
-              setManualQuoteOpen(req ? (data.find((r) => r.id === req.id) ?? req) : null);
-            }}
-            className="w-full p-5 rounded-xl border-2 border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-left group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-xl bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center">
-                <PenLine className="h-6 w-6 text-blue-600" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-text-primary group-hover:text-primary">Manual Quote</p>
-                <p className="text-xs text-text-tertiary mt-0.5">Enter quote lines (service, quantity, unit price, VAT). Opens the quote on Review &amp; send.</p>
-              </div>
-            </div>
-          </button>
-        </div>
-      </Modal>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Invite Partner Modal */}
       <InvitePartnerToQuote
