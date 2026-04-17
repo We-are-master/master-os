@@ -29,6 +29,24 @@ export function officePartnerTimerEndPatch(): Pick<Job, "partner_timer_ended_at"
   };
 }
 
+/** Full timer reset — used when the job goes back to unassigned (partner removed / re-queued for auto-assign). */
+export function officePartnerTimerResetPatch(): Pick<
+  Job,
+  | "partner_timer_started_at"
+  | "partner_timer_ended_at"
+  | "partner_timer_accum_paused_ms"
+  | "partner_timer_is_paused"
+  | "partner_timer_pause_began_at"
+> {
+  return {
+    partner_timer_started_at: null,
+    partner_timer_ended_at: null,
+    partner_timer_accum_paused_ms: 0,
+    partner_timer_is_paused: false,
+    partner_timer_pause_began_at: null,
+  };
+}
+
 type TimerFields = Pick<
   Job,
   | "partner_timer_started_at"
@@ -72,6 +90,11 @@ export function statusChangePartnerTimerPatch(
   const patch: Partial<Job> = {};
   const wasOnSite = isJobOnSiteWorkStatus(job.status);
   const running = isPartnerLiveTimerRunning(job);
+
+  /** Back to unassigned / auto-assign — full reset so re-assigning a partner starts from 0. */
+  if (newStatus === "unassigned" || newStatus === "auto_assigning") {
+    return officePartnerTimerResetPatch();
+  }
 
   /** Reopen from final check — resume without resetting partner start / accum. */
   if (newStatus === "in_progress_phase1" && job.status === "final_check") {

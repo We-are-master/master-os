@@ -712,6 +712,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerLiveActiveMs = useMemo(() => {
     void partnerTimerTick;
     if (!job?.partner_timer_started_at) return null;
+    /** Unassigned / auto-assigning → hide the live counter immediately (backend also wipes the timer fields on the next update). */
+    if (job.status === "unassigned" || job.status === "auto_assigning") return null;
     return computePartnerLiveTimerActiveMs(job);
   }, [job, partnerTimerTick]);
 

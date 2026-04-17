@@ -27,6 +27,7 @@ import {
   jobIsBookedPipelineWithoutPartner,
 } from "@/lib/job-partner-assign";
 import { resolveJobGeocode } from "@/lib/job-geocode-client";
+import { officePartnerTimerResetPatch } from "@/lib/partner-live-timer";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
@@ -778,6 +779,8 @@ export async function updateJob(
       JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED.includes(beforeGates.status)
     ) {
       effectivePatch.status = "unassigned";
+      /** Partner cleared → wipe on-site timer so the next assigned partner starts fresh from 0. */
+      Object.assign(effectivePatch, officePartnerTimerResetPatch());
     }
   }
   const patch = prepareJobRowForUpdate(effectivePatch);
