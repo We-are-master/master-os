@@ -531,6 +531,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [moneySubmitting, setMoneySubmitting] = useState(false);
   /** Layout-only: job detail tabs and accordions (money actions use drawer modal). */
   const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4>(0);
+  /** One-shot: when a job lands in `final_check`, open the Reports tab by default (only on first paint for this job). */
+  const detailTabInitialisedForJobRef = useRef<string | null>(null);
   const [clientEditAccordionOpen, setClientEditAccordionOpen] = useState(false);
   const [deletePaymentTarget, setDeletePaymentTarget] = useState<{ id: string; amount: number; type: string } | null>(null);
   const [deletingPayment, setDeletingPayment] = useState(false);
@@ -1423,6 +1425,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setDetailTab(0);
     }
   }, [isAdmin, detailTab]);
+
+  /** Jobs in Final checks default to the Reports tab (office usually opens the card to review reports). */
+  useEffect(() => {
+    if (!job?.id) return;
+    if (detailTabInitialisedForJobRef.current === job.id) return;
+    detailTabInitialisedForJobRef.current = job.id;
+    if (job.status === "final_check") setDetailTab(2);
+  }, [job?.id, job?.status]);
 
   useEffect(() => {
     if (!job) return;
@@ -4384,7 +4394,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       className={cn(
                             "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
                             effectiveCustomerInCcz
-                              ? "border-emerald-500/45 bg-white shadow-sm dark:border-emerald-500/50 dark:bg-[#141a24]"
+                              ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
                               : "border-border bg-white/90 hover:border-border dark:border-[#2f3440] dark:bg-[#171d28] dark:hover:border-[#3a4252]",
                             !cczEligibleAddress && !job.in_ccz && "cursor-not-allowed opacity-50",
                           )}
@@ -4402,7 +4412,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               )}
                             />
                           </span>
-                          <span className={cn("text-[10px] font-medium", effectiveCustomerInCcz ? "text-amber-600" : "text-text-tertiary")}>
+                          <span className={cn("text-[10px] font-medium", effectiveCustomerInCcz ? "text-emerald-700 dark:text-emerald-300" : "text-text-tertiary")}>
                             {effectiveCustomerInCcz ? `+£${ACCESS_CCZ_FEE_GBP}` : "No fee"}
                           </span>
                       </button>
@@ -4416,7 +4426,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           className={cn(
                             "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
                             job.has_free_parking === false
-                              ? "border-amber-500/40 bg-white shadow-sm dark:border-amber-500/45 dark:bg-[#141a24]"
+                              ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
                               : "border-border bg-white/90 hover:border-border dark:border-[#2f3440] dark:bg-[#171d28] dark:hover:border-[#3a4252]",
                           )}
                       >
@@ -4436,7 +4446,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           <span
                             className={cn(
                               "text-[10px] font-medium",
-                              job.has_free_parking === false ? "text-amber-600" : "text-text-tertiary",
+                              job.has_free_parking === false ? "text-emerald-700 dark:text-emerald-300" : "text-text-tertiary",
                             )}
                           >
                             {job.has_free_parking === false ? `+£${ACCESS_PARKING_FEE_GBP}` : "No fee"}

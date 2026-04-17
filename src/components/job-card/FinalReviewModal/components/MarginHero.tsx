@@ -27,19 +27,19 @@ export function MarginHero({ margin, marginPct, partnerPayout, jobValue }: Props
   return (
     <div className="px-6 pt-6 pb-5" style={{ background: "#FAFAFB" }}>
       <div
-        className="text-[11px] uppercase mb-[6px]"
-        style={{ color: "#6B6B70", letterSpacing: "0.6px" }}
+        className="text-[13px] font-semibold uppercase mb-[8px]"
+        style={{ color: "#020040", letterSpacing: "0.8px" }}
       >
-        Fixfy margin on this job
+        Margin
       </div>
-      <div className="flex items-baseline gap-[10px] mb-4">
+      <div className="flex items-baseline gap-[12px] mb-4">
         <div
-          className="text-[34px] font-medium"
-          style={{ color: "#020040", letterSpacing: "-0.5px" }}
+          className="text-[40px] font-semibold leading-none"
+          style={{ color: "#020040", letterSpacing: "-0.8px" }}
         >
           {fmtGBP(margin)}
         </div>
-        <div className="text-[14px] font-medium" style={{ color: "#ED4B00" }}>
+        <div className="text-[16px] font-semibold" style={{ color: "#ED4B00" }}>
           {(Number.isFinite(marginPct) ? marginPct : 0).toFixed(1)}%
         </div>
       </div>
