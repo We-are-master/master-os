@@ -2827,225 +2827,383 @@ function CreateRequestModal({
   const cczEligibleCreate = form.request_kind === "work" && isLikelyCczAddress(clientAddress.property_address);
   const inCczPreviewCreate = cczEligibleCreate && form.in_ccz;
 
+  /** Small `!` hint — used to collapse explanatory copy into a tooltip beside labels. */
+  const hint = (text: string) => (
+    <span className="group relative inline-flex">
+      <span
+        tabIndex={0}
+        aria-label={text}
+        className="inline-flex h-[13px] w-[13px] items-center justify-center rounded-full text-[9px] font-bold leading-none cursor-help outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+        style={{ background: "#F1F1F3", color: "#6B6B70" }}
+      >
+        !
+      </span>
+      <span
+        role="tooltip"
+        className="pointer-events-none invisible absolute top-full left-0 z-[60] mt-1 w-56 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1.5 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+      >
+        {text}
+      </span>
+    </span>
+  );
+
+  const labelNavy = "flex items-center gap-[6px] text-[10px] font-medium uppercase";
+  const labelStyle = { color: "#020040", letterSpacing: "0.6px" } as const;
+  const inputBoxStyle = {
+    border: "0.5px solid #D8D8DD",
+    borderRadius: "8px",
+    background: "#FFFFFF",
+    color: "#020040",
+  } as const;
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="New Service Request"
-      subtitle="Create a new incoming request"
+      title="New service request"
       size="lg"
       scrollBody
     >
       <form onSubmit={handleSubmit} className="flex flex-col">
-        <div className="space-y-4 px-4 sm:px-6 pt-4 sm:pt-6 pb-4">
-        <Select
-          label="Request type *"
-          value={form.request_kind}
-          onChange={(e) => {
-            const next = e.target.value as "" | "quote" | "work";
-            setForm((prev) => ({
-              ...prev,
-              request_kind: next,
-              catalog_service_id: "",
-              service_type: "",
-            }));
-          }}
-          options={[
-            { value: "", label: "Select request type…" },
-            ...REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-          ]}
-        />
-        <p className="text-xs text-text-tertiary">
-          <span className="font-medium text-text-secondary">Quote Request:</span> used for pricing/quotation flow first.
-          {" "}
-          <span className="font-medium text-text-secondary">Work Request:</span> used for call-out execution flow (Services template).
-        </p>
-        <div>
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Client &amp; property *</p>
-          <p className="text-xs text-text-tertiary mb-3">Search for an existing client or create a new one. This link is kept when you convert to quote or job.</p>
-          <ClientAddressPicker value={clientAddress} onChange={setClientAddress} labelClient="Client *" labelAddress="Property address *" />
-          {!clientAddress.client_id && (
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2">
-              First pick or create a client in the field above, then choose or add the property address. Both are required.
-            </p>
-          )}
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="px-5 sm:px-6 pt-5 pb-4 space-y-[14px]">
+          {/* Request type */}
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Name (on-site)</label>
-            <Input
-              value={form.onsite_contact_name}
-              onChange={(e) => update("onsite_contact_name", e.target.value)}
-              placeholder="Optional — who will be on site"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Mobile (on-site)</label>
-            <Input
-              value={form.client_phone}
-              onChange={(e) => update("client_phone", e.target.value)}
-              placeholder="Optional — contact for who will be on site"
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Postcode *</label>
-          <Input value={postcode} onChange={(e) => setPostcode(e.target.value.toUpperCase())} placeholder="e.g. SW1A 1AA — auto-filled from address" />
-        </div>
-        <div className="space-y-3">
-          {form.request_kind === "work" ? (
-            <>
-              <Select
-                label="Call Out type"
-                value={form.catalog_service_id}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  const svc = catalogServices.find((c) => c.id === id);
-                  setForm((prev) => ({
-                    ...prev,
-                    catalog_service_id: id,
-                    service_type: normalizeTypeOfWork(svc?.name ?? ""),
-                    description: svc?.default_description?.trim() || prev.description,
-                  }));
-                }}
-                options={[
-                  { value: "", label: "Select call out type..." },
-                  ...catalogServices.map((c) => ({
-                    value: c.id,
-                    label: c.name,
-                  })),
-                ]}
-              />
-              <p className="text-[10px] text-text-tertiary">Template text is loaded from Services; you can edit the issue description below.</p>
-            </>
-          ) : form.request_kind === "quote" ? (
+            <label className={labelNavy} style={labelStyle}>
+              Request type <span style={{ color: "#ED4B00" }}>*</span>
+              {hint("Quote Request — pricing / quotation flow first. Work Request — call-out execution (Services template).")}
+            </label>
             <Select
-              label="Service name *"
-              value={form.service_type}
-              onChange={(e) => update("service_type", e.target.value)}
-              options={[
-                { value: "", label: "Select type of work..." },
-                ...typeOfWorkOptions.map((name) => ({ value: name, label: name })),
-              ]}
-            />
-          ) : (
-            <p className="text-xs text-amber-600 dark:text-amber-400 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2">
-              Select Request type first.
-            </p>
-          )}
-          <Select label="Priority" value={form.priority} onChange={(e) => update("priority", e.target.value)} options={[
-            { value: "low", label: "Low" }, { value: "medium", label: "Medium" },
-            { value: "high", label: "High" }, { value: "urgent", label: "Urgent" },
-          ]} />
-          {form.request_kind === "work" && (
-            <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3 sm:p-4 space-y-3">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Access & parking</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={!cczEligibleCreate}
-                  onClick={() => cczEligibleCreate && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
-                  className={cn(
-                    "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                    !cczEligibleCreate && "opacity-50 cursor-not-allowed",
-                    form.in_ccz && cczEligibleCreate ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
-                  )}
-                >
-                  <p className="font-medium">
-                    {!cczEligibleCreate
-                      ? "CCZ (Congestion Charge — central London)"
-                      : inCczPreviewCreate
-                        ? "CCZ fee applied"
-                        : "Apply CCZ"}
-                  </p>
-                  <p className="text-xs opacity-80">
-                    {!cczEligibleCreate
-                      ? "Only addresses with EC1–4, WC1–2, W1, SW1 or SE1 can turn CCZ on"
-                      : inCczPreviewCreate
-                        ? "+£15 applied"
-                        : "Turn on only inside the central CCZ postcode list"}
-                  </p>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
-                  className={cn(
-                    "text-left rounded-lg border px-3 py-2 text-sm transition-colors",
-                    !form.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
-                  )}
-                >
-                  <p className="font-medium">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-                  <p className="text-xs opacity-80">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
-                </button>
-              </div>
-              <p className="text-xs text-text-tertiary">If the customer doesn&apos;t have free parking, click here to charge: <span className="font-semibold text-text-primary">{formatCurrency(computeAccessSurcharge({ inCcz: inCczPreviewCreate, hasFreeParking: form.has_free_parking }))}</span></p>
-            </div>
-          )}
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description</label>
-          <textarea value={form.description} onChange={(e) => update("description", e.target.value)} rows={3} placeholder="Describe the issue — what the client needs, access, urgency…" className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 hover:border-border transition-all resize-none" />
-        </div>
-        <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3 space-y-2">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos (optional)</p>
-          <p className="text-[11px] text-text-tertiary">Up to 8 images — stored on the request and carried to quotes / partner app when you convert.</p>
-          <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
-            <ImagePlus className="h-3.5 w-3.5" />
-            Add photos
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              multiple
-              className="sr-only"
-              disabled={createPhotos.length >= 8}
+              value={form.request_kind}
               onChange={(e) => {
-                const list = e.target.files;
-                if (!list?.length) return;
-                const next = [...createPhotos, ...Array.from(list)].slice(0, 8);
-                setCreatePhotos(next);
-                setCreatePhotoPreviews((prev) => {
-                  prev.forEach((u) => URL.revokeObjectURL(u));
-                  return next.map((f) => URL.createObjectURL(f));
-                });
-                e.target.value = "";
+                const next = e.target.value as "" | "quote" | "work";
+                setForm((prev) => ({
+                  ...prev,
+                  request_kind: next,
+                  catalog_service_id: "",
+                  service_type: "",
+                }));
               }}
+              options={[
+                { value: "", label: "Select request type…" },
+                ...REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+              ]}
+              className="mt-[6px]"
             />
-          </label>
-          {createPhotoPreviews.length > 0 && (
-            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
-              {createPhotoPreviews.map((src, i) => (
-                <div key={`${src}-${i}`} className="relative aspect-square rounded-lg overflow-hidden border border-border-light min-w-0">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={src} alt="" className="h-full w-full object-cover" />
+          </div>
+
+          {/* Client & property */}
+          <div
+            className="rounded-[10px] p-[14px]"
+            style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+          >
+            <p className={labelNavy + " mb-[8px]"} style={labelStyle}>
+              Client &amp; property <span style={{ color: "#ED4B00" }}>*</span>
+              {hint("Search for an existing client or create a new one. This link is kept when you convert to quote or job.")}
+            </p>
+            <ClientAddressPicker
+              value={clientAddress}
+              onChange={setClientAddress}
+              labelClient="Client *"
+              labelAddress="Property address *"
+            />
+            {!clientAddress.client_id && (
+              <p
+                className="mt-[10px] text-[11px] leading-snug rounded-[8px] px-3 py-2 flex items-start gap-2"
+                style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8", color: "#993C1D" }}
+              >
+                <span
+                  className="inline-flex h-[14px] w-[14px] items-center justify-center rounded-full text-[9px] font-medium text-white shrink-0 mt-[1px]"
+                  style={{ background: "#ED4B00" }}
+                >!</span>
+                Pick or create a client first, then choose the property address.
+              </p>
+            )}
+          </div>
+
+          {/* On-site contact */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-[12px]">
+            <div>
+              <label className={labelNavy} style={labelStyle}>
+                Name (on-site)
+              </label>
+              <Input
+                value={form.onsite_contact_name}
+                onChange={(e) => update("onsite_contact_name", e.target.value)}
+                placeholder="Optional"
+                className="mt-[6px]"
+              />
+            </div>
+            <div>
+              <label className={labelNavy} style={labelStyle}>
+                Mobile (on-site)
+              </label>
+              <Input
+                value={form.client_phone}
+                onChange={(e) => update("client_phone", e.target.value)}
+                placeholder="Optional"
+                className="mt-[6px]"
+              />
+            </div>
+          </div>
+
+          {/* Postcode */}
+          <div>
+            <label className={labelNavy} style={labelStyle}>
+              Postcode <span style={{ color: "#ED4B00" }}>*</span>
+              {hint("Auto-filled from the property address — edit if needed.")}
+            </label>
+            <Input
+              value={postcode}
+              onChange={(e) => setPostcode(e.target.value.toUpperCase())}
+              placeholder="SW1A 1AA"
+              className="mt-[6px]"
+            />
+          </div>
+
+          {/* Service / priority */}
+          <div className="space-y-[12px]">
+            {form.request_kind === "work" ? (
+              <div>
+                <label className={labelNavy} style={labelStyle}>
+                  Call-out type
+                  {hint("Template text is loaded from Services — you can still edit the issue description below.")}
+                </label>
+                <Select
+                  value={form.catalog_service_id}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const svc = catalogServices.find((c) => c.id === id);
+                    setForm((prev) => ({
+                      ...prev,
+                      catalog_service_id: id,
+                      service_type: normalizeTypeOfWork(svc?.name ?? ""),
+                      description: svc?.default_description?.trim() || prev.description,
+                    }));
+                  }}
+                  options={[
+                    { value: "", label: "Select call-out type…" },
+                    ...catalogServices.map((c) => ({ value: c.id, label: c.name })),
+                  ]}
+                  className="mt-[6px]"
+                />
+              </div>
+            ) : form.request_kind === "quote" ? (
+              <div>
+                <label className={labelNavy} style={labelStyle}>
+                  Service name <span style={{ color: "#ED4B00" }}>*</span>
+                </label>
+                <Select
+                  value={form.service_type}
+                  onChange={(e) => update("service_type", e.target.value)}
+                  options={[
+                    { value: "", label: "Select type of work…" },
+                    ...typeOfWorkOptions.map((name) => ({ value: name, label: name })),
+                  ]}
+                  className="mt-[6px]"
+                />
+              </div>
+            ) : (
+              <p
+                className="text-[11px] leading-snug rounded-[8px] px-3 py-2 flex items-start gap-2"
+                style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8", color: "#993C1D" }}
+              >
+                <span
+                  className="inline-flex h-[14px] w-[14px] items-center justify-center rounded-full text-[9px] font-medium text-white shrink-0 mt-[1px]"
+                  style={{ background: "#ED4B00" }}
+                >!</span>
+                Select request type first.
+              </p>
+            )}
+            <div>
+              <label className={labelNavy} style={labelStyle}>Priority</label>
+              <Select
+                value={form.priority}
+                onChange={(e) => update("priority", e.target.value)}
+                options={[
+                  { value: "low", label: "Low" },
+                  { value: "medium", label: "Medium" },
+                  { value: "high", label: "High" },
+                  { value: "urgent", label: "Urgent" },
+                ]}
+                className="mt-[6px]"
+              />
+            </div>
+
+            {form.request_kind === "work" && (
+              <div
+                className="rounded-[10px] p-[14px] space-y-[10px]"
+                style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+              >
+                <p className={labelNavy} style={labelStyle}>
+                  Access &amp; parking
+                  {hint("CCZ is only available for central London postcodes (EC1–4, WC1–2, W1, SW1, SE1). Parking fee applies when no free parking is available.")}
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
                   <button
                     type="button"
-                    className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white"
-                    onClick={() => {
-                      const idx = i;
-                      setCreatePhotoPreviews((prev) => {
-                        const u = prev[idx];
-                        if (u) URL.revokeObjectURL(u);
-                        return prev.filter((_, j) => j !== idx);
-                      });
-                      setCreatePhotos((prev) => prev.filter((_, j) => j !== idx));
-                    }}
-                    aria-label="Remove"
+                    disabled={!cczEligibleCreate}
+                    onClick={() => cczEligibleCreate && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                    className={cn(
+                      "text-left rounded-[8px] px-[12px] py-[10px] text-[12px] transition-colors",
+                      !cczEligibleCreate && "opacity-50 cursor-not-allowed",
+                    )}
+                    style={
+                      form.in_ccz && cczEligibleCreate
+                        ? { background: "#ECFDF5", border: "0.5px solid #10B981", color: "#0F6E56" }
+                        : { background: "#FFFFFF", border: "0.5px solid #D8D8DD", color: "#020040" }
+                    }
                   >
-                    <X className="h-3 w-3" />
+                    <p className="font-medium text-[12px]">
+                      {inCczPreviewCreate ? "CCZ applied · +£15" : "Apply CCZ"}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
+                    className="text-left rounded-[8px] px-[12px] py-[10px] text-[12px] transition-colors"
+                    style={
+                      !form.has_free_parking
+                        ? { background: "#ECFDF5", border: "0.5px solid #10B981", color: "#0F6E56" }
+                        : { background: "#FFFFFF", border: "0.5px solid #D8D8DD", color: "#020040" }
+                    }
+                  >
+                    <p className="font-medium text-[12px]">
+                      {form.has_free_parking ? "Add parking fee" : "Parking fee applied · +£15"}
+                    </p>
                   </button>
                 </div>
-              ))}
+                <p className="text-[11px]" style={{ color: "#6B6B70" }}>
+                  Total access fee:{" "}
+                  <span className="font-semibold" style={{ color: "#020040" }}>
+                    {formatCurrency(computeAccessSurcharge({ inCcz: inCczPreviewCreate, hasFreeParking: form.has_free_parking }))}
+                  </span>
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className={labelNavy} style={labelStyle}>
+              Service description
+            </label>
+            <textarea
+              value={form.description}
+              onChange={(e) => update("description", e.target.value)}
+              rows={3}
+              placeholder="Describe the issue — what the client needs, access, urgency…"
+              className="mt-[6px] w-full rounded-[8px] px-3 py-[10px] text-[13px] outline-none resize-none focus:ring-[3px] focus:ring-[rgba(2,0,64,0.08)]"
+              style={{
+                ...inputBoxStyle,
+                fontFamily: "inherit",
+                lineHeight: 1.5,
+              }}
+            />
+          </div>
+
+          {/* Photos */}
+          <div
+            className="rounded-[10px] p-[14px] space-y-[10px]"
+            style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className={labelNavy} style={labelStyle}>
+                Photos
+                {hint("Up to 8 images — stored on the request and carried to quotes / partner app when you convert.")}
+              </p>
+              <span className="text-[10px]" style={{ color: "#6B6B70" }}>
+                {createPhotos.length}/8
+              </span>
             </div>
-          )}
+            <label
+              className="inline-flex items-center gap-[6px] rounded-[6px] bg-white px-3 py-[7px] text-[12px] font-medium cursor-pointer"
+              style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+            >
+              <ImagePlus className="h-3.5 w-3.5" />
+              Add photos
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple
+                className="sr-only"
+                disabled={createPhotos.length >= 8}
+                onChange={(e) => {
+                  const list = e.target.files;
+                  if (!list?.length) return;
+                  const next = [...createPhotos, ...Array.from(list)].slice(0, 8);
+                  setCreatePhotos(next);
+                  setCreatePhotoPreviews((prev) => {
+                    prev.forEach((u) => URL.revokeObjectURL(u));
+                    return next.map((f) => URL.createObjectURL(f));
+                  });
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {createPhotoPreviews.length > 0 && (
+              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+                {createPhotoPreviews.map((src, i) => (
+                  <div
+                    key={`${src}-${i}`}
+                    className="relative aspect-square rounded-[6px] overflow-hidden min-w-0"
+                    style={{ border: "0.5px solid #D8D8DD" }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={src} alt="" className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white"
+                      onClick={() => {
+                        const idx = i;
+                        setCreatePhotoPreviews((prev) => {
+                          const u = prev[idx];
+                          if (u) URL.revokeObjectURL(u);
+                          return prev.filter((_, j) => j !== idx);
+                        });
+                        setCreatePhotos((prev) => prev.filter((_, j) => j !== idx));
+                      }}
+                      aria-label="Remove"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-        </div>
-        <div className="flex justify-end gap-2 border-t border-border-light px-6 py-4">
-          <Button variant="outline" onClick={onClose} type="button" disabled={createSubmitting}>
+
+        <div
+          className="flex justify-end gap-[10px] px-6 py-[14px]"
+          style={{ borderTop: "0.5px solid #E4E4E8", background: "#FFFFFF" }}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={createSubmitting}
+            className="bg-white rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+            onMouseEnter={(e) => {
+              if (!(e.currentTarget as HTMLButtonElement).disabled)
+                (e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB";
+            }}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
+          >
             Cancel
-          </Button>
-          <Button type="submit" loading={createSubmitting}>
-            Create Request
-          </Button>
+          </button>
+          <button
+            type="submit"
+            disabled={createSubmitting}
+            className="text-white border-none rounded-[6px] px-[16px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: "#020040" }}
+            onMouseEnter={(e) => {
+              if (!(e.currentTarget as HTMLButtonElement).disabled)
+                (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+            }}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
+          >
+            {createSubmitting ? "Creating…" : "Create request"}
+          </button>
         </div>
       </form>
     </Modal>
