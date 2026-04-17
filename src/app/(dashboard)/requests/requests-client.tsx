@@ -20,6 +20,7 @@ import {
   Plus, Filter, MapPin, Phone, Mail, CheckCircle2, XCircle,
   ArrowRight, Briefcase, FileText, Users, Send, PenLine,
   Inbox, Percent, CalendarRange, ImagePlus, X, ChevronDown, Download,
+  Check, Wrench, MessageSquarePlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
@@ -3023,37 +3024,67 @@ function CreateRequestModal({
     >
       <form onSubmit={handleSubmit} className="flex flex-col">
         <div className="px-5 sm:px-6 pt-5 pb-4 space-y-[14px]">
-          {/* Request type */}
+          {/* 1. Request type — segmented card picker */}
           <div>
             <label className={labelNavy} style={labelStyle}>
               Request type <span style={{ color: "#ED4B00" }}>*</span>
-              {hint("Quote Request — pricing / quotation flow first. Work Request — call-out execution (Services template).")}
+              {hint("Work Request — fixed price / 60s confirm. Quote — survey first, same-day.")}
             </label>
-            <Select
-              value={form.request_kind}
-              onChange={(e) => {
-                const next = e.target.value as "" | "quote" | "work";
-                setForm((prev) => ({
-                  ...prev,
-                  request_kind: next,
-                  catalog_service_id: "",
-                  service_type: "",
-                }));
-              }}
-              options={[
-                { value: "", label: "Select request type…" },
-                ...REQUEST_KIND_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-              ]}
-              className="mt-[6px]"
-            />
+            <div className="mt-[6px] grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
+              {([
+                { value: "work", title: "Work Request", sub: "Fixed price · 60s confirm", Icon: Wrench, accent: "#020040", bg: "#020040" },
+                { value: "quote", title: "Quote", sub: "Survey first · same-day", Icon: MessageSquarePlus, accent: "#ED4B00", bg: "#FFF1EB" },
+              ] as const).map(({ value, title, sub, Icon, accent, bg }) => {
+                const active = form.request_kind === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => {
+                      setForm((prev) => ({
+                        ...prev,
+                        request_kind: value,
+                        catalog_service_id: "",
+                        service_type: "",
+                      }));
+                    }}
+                    className="text-left rounded-[10px] px-[14px] py-[12px] flex items-center gap-[12px] transition-colors"
+                    style={
+                      active
+                        ? { background: "#FFFFFF", border: "1.5px solid #020040" }
+                        : { background: "#FFFFFF", border: "0.5px solid #D8D8DD" }
+                    }
+                  >
+                    <div
+                      className="w-[36px] h-[36px] rounded-[8px] flex items-center justify-center shrink-0"
+                      style={{ background: value === "work" ? bg : bg, color: value === "work" ? "#FFFFFF" : accent }}
+                    >
+                      <Icon className="h-[18px] w-[18px]" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] font-medium" style={{ color: "#020040" }}>{title}</p>
+                      <p className="text-[11px]" style={{ color: "#6B6B70" }}>{sub}</p>
+                    </div>
+                    {active ? (
+                      <span
+                        className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full shrink-0"
+                        style={{ background: "#020040", color: "#FFFFFF" }}
+                      >
+                        <Check className="h-3 w-3" />
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Client & property */}
+          {/* 2. Client & property — 2x2 grid inside inset */}
           <div
             className="rounded-[10px] p-[14px]"
             style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
           >
-            <p className={labelNavy + " mb-[8px]"} style={labelStyle}>
+            <p className={labelNavy + " mb-[10px]"} style={labelStyle}>
               Client &amp; property <span style={{ color: "#ED4B00" }}>*</span>
               {hint("Search for an existing client or create a new one. This link is kept when you convert to quote or job.")}
             </p>
@@ -3062,27 +3093,42 @@ function CreateRequestModal({
               onChange={setClientAddress}
               labelClient="Client *"
               labelAddress="Property address *"
+              layout="grid-2"
             />
-            {!clientAddress.client_id && (
-              <p
-                className="mt-[10px] text-[11px] leading-snug rounded-[8px] px-3 py-2 flex items-start gap-2"
-                style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8", color: "#993C1D" }}
-              >
-                <span
-                  className="inline-flex h-[14px] w-[14px] items-center justify-center rounded-full text-[9px] font-medium text-white shrink-0 mt-[1px]"
-                  style={{ background: "#ED4B00" }}
-                >!</span>
-                Pick or create a client first, then choose the property address.
-              </p>
-            )}
+            <div className="mt-[10px] grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
+              <div>
+                <label className={labelNavy} style={labelStyle}>
+                  Postcode <span style={{ color: "#ED4B00" }}>*</span>
+                  {hint("Auto-filled from the property address — edit if needed.")}
+                </label>
+                <Input
+                  value={postcode}
+                  onChange={(e) => setPostcode(e.target.value.toUpperCase())}
+                  placeholder="SW1A 1AA"
+                  className="mt-[6px]"
+                />
+              </div>
+              <div>
+                <label className={labelNavy} style={labelStyle}>Priority</label>
+                <Select
+                  value={form.priority}
+                  onChange={(e) => update("priority", e.target.value)}
+                  options={[
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                    { value: "urgent", label: "Urgent" },
+                  ]}
+                  className="mt-[6px]"
+                />
+              </div>
+            </div>
           </div>
 
-          {/* On-site contact */}
+          {/* 3. On-site contact */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-[12px]">
             <div>
-              <label className={labelNavy} style={labelStyle}>
-                Name (on-site)
-              </label>
+              <label className={labelNavy} style={labelStyle}>Name (on-site)</label>
               <Input
                 value={form.onsite_contact_name}
                 onChange={(e) => update("onsite_contact_name", e.target.value)}
@@ -3091,9 +3137,7 @@ function CreateRequestModal({
               />
             </div>
             <div>
-              <label className={labelNavy} style={labelStyle}>
-                Mobile (on-site)
-              </label>
+              <label className={labelNavy} style={labelStyle}>Mobile (on-site)</label>
               <Input
                 value={form.client_phone}
                 onChange={(e) => update("client_phone", e.target.value)}
@@ -3103,147 +3147,68 @@ function CreateRequestModal({
             </div>
           </div>
 
-          {/* Postcode */}
-          <div>
-            <label className={labelNavy} style={labelStyle}>
-              Postcode <span style={{ color: "#ED4B00" }}>*</span>
-              {hint("Auto-filled from the property address — edit if needed.")}
-            </label>
-            <Input
-              value={postcode}
-              onChange={(e) => setPostcode(e.target.value.toUpperCase())}
-              placeholder="SW1A 1AA"
-              className="mt-[6px]"
-            />
-          </div>
-
-          {/* Service / priority */}
-          <div className="space-y-[12px]">
-            {form.request_kind === "work" ? (
-              <div>
-                <label className={labelNavy} style={labelStyle}>
-                  Call-out type
-                  {hint("Template text is loaded from Services — you can still edit the issue description below.")}
-                </label>
-                <Select
-                  value={form.catalog_service_id}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    const svc = catalogServices.find((c) => c.id === id);
-                    setForm((prev) => ({
-                      ...prev,
-                      catalog_service_id: id,
-                      service_type: normalizeTypeOfWork(svc?.name ?? ""),
-                      description: svc?.default_description?.trim() || prev.description,
-                    }));
-                  }}
-                  options={[
-                    { value: "", label: "Select call-out type…" },
-                    ...catalogServices.map((c) => ({ value: c.id, label: c.name })),
-                  ]}
-                  className="mt-[6px]"
-                />
-              </div>
-            ) : form.request_kind === "quote" ? (
-              <div>
-                <label className={labelNavy} style={labelStyle}>
-                  Service name <span style={{ color: "#ED4B00" }}>*</span>
-                </label>
-                <Select
-                  value={form.service_type}
-                  onChange={(e) => update("service_type", e.target.value)}
-                  options={[
-                    { value: "", label: "Select type of work…" },
-                    ...typeOfWorkOptions.map((name) => ({ value: name, label: name })),
-                  ]}
-                  className="mt-[6px]"
-                />
-              </div>
-            ) : (
-              <p
-                className="text-[11px] leading-snug rounded-[8px] px-3 py-2 flex items-start gap-2"
-                style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8", color: "#993C1D" }}
-              >
-                <span
-                  className="inline-flex h-[14px] w-[14px] items-center justify-center rounded-full text-[9px] font-medium text-white shrink-0 mt-[1px]"
-                  style={{ background: "#ED4B00" }}
-                >!</span>
-                Select request type first.
-              </p>
-            )}
+          {/* 4. Call-out type / Service name */}
+          {form.request_kind === "work" ? (
             <div>
-              <label className={labelNavy} style={labelStyle}>Priority</label>
+              <label className={labelNavy} style={labelStyle}>
+                Call-out type
+                {hint("Template text is loaded from Services — you can still edit the issue description below.")}
+              </label>
               <Select
-                value={form.priority}
-                onChange={(e) => update("priority", e.target.value)}
+                value={form.catalog_service_id}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const svc = catalogServices.find((c) => c.id === id);
+                  setForm((prev) => ({
+                    ...prev,
+                    catalog_service_id: id,
+                    service_type: normalizeTypeOfWork(svc?.name ?? ""),
+                    description: svc?.default_description?.trim() || prev.description,
+                  }));
+                }}
                 options={[
-                  { value: "low", label: "Low" },
-                  { value: "medium", label: "Medium" },
-                  { value: "high", label: "High" },
-                  { value: "urgent", label: "Urgent" },
+                  { value: "", label: "Select call-out type…" },
+                  ...catalogServices.map((c) => ({ value: c.id, label: c.name })),
                 ]}
                 className="mt-[6px]"
               />
             </div>
+          ) : form.request_kind === "quote" ? (
+            <div>
+              <label className={labelNavy} style={labelStyle}>
+                Service name <span style={{ color: "#ED4B00" }}>*</span>
+              </label>
+              <Select
+                value={form.service_type}
+                onChange={(e) => update("service_type", e.target.value)}
+                options={[
+                  { value: "", label: "Select type of work…" },
+                  ...typeOfWorkOptions.map((name) => ({ value: name, label: name })),
+                ]}
+                className="mt-[6px]"
+              />
+            </div>
+          ) : (
+            <p
+              className="text-[11px] leading-snug rounded-[8px] px-3 py-2 flex items-start gap-2"
+              style={{ background: "#FFF8F3", border: "0.5px solid #F5CFB8", color: "#993C1D" }}
+            >
+              <span
+                className="inline-flex h-[14px] w-[14px] items-center justify-center rounded-full text-[9px] font-medium text-white shrink-0 mt-[1px]"
+                style={{ background: "#ED4B00" }}
+              >!</span>
+              Select request type first.
+            </p>
+          )}
 
-            {form.request_kind === "work" && (
-              <div
-                className="rounded-[10px] p-[14px] space-y-[10px]"
-                style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
-              >
-                <p className={labelNavy} style={labelStyle}>
-                  Access &amp; parking
-                  {hint("CCZ is only available for central London postcodes (EC1–4, WC1–2, W1, SW1, SE1). Parking fee applies when no free parking is available.")}
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
-                  <button
-                    type="button"
-                    disabled={!cczEligibleCreate}
-                    onClick={() => cczEligibleCreate && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
-                    className={cn(
-                      "text-left rounded-[8px] px-[12px] py-[10px] text-[12px] transition-colors",
-                      !cczEligibleCreate && "opacity-50 cursor-not-allowed",
-                    )}
-                    style={
-                      form.in_ccz && cczEligibleCreate
-                        ? { background: "#ECFDF5", border: "0.5px solid #10B981", color: "#0F6E56" }
-                        : { background: "#FFFFFF", border: "0.5px solid #D8D8DD", color: "#020040" }
-                    }
-                  >
-                    <p className="font-medium text-[12px]">
-                      {inCczPreviewCreate ? "CCZ applied · +£15" : "Apply CCZ"}
-                    </p>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
-                    className="text-left rounded-[8px] px-[12px] py-[10px] text-[12px] transition-colors"
-                    style={
-                      !form.has_free_parking
-                        ? { background: "#ECFDF5", border: "0.5px solid #10B981", color: "#0F6E56" }
-                        : { background: "#FFFFFF", border: "0.5px solid #D8D8DD", color: "#020040" }
-                    }
-                  >
-                    <p className="font-medium text-[12px]">
-                      {form.has_free_parking ? "Add parking fee" : "Parking fee applied · +£15"}
-                    </p>
-                  </button>
-                </div>
-                <p className="text-[11px]" style={{ color: "#6B6B70" }}>
-                  Total access fee:{" "}
-                  <span className="font-semibold" style={{ color: "#020040" }}>
-                    {formatCurrency(computeAccessSurcharge({ inCcz: inCczPreviewCreate, hasFreeParking: form.has_free_parking }))}
-                  </span>
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Description */}
+          {/* 5. Service description */}
           <div>
-            <label className={labelNavy} style={labelStyle}>
-              Service description
-            </label>
+            <div className="flex items-baseline justify-between gap-2">
+              <label className={labelNavy} style={labelStyle}>
+                Service description <span style={{ color: "#ED4B00" }}>*</span>
+              </label>
+              <span className="text-[10px]" style={{ color: "#6B6B70" }}>Visible to partner</span>
+            </div>
             <textarea
               value={form.description}
               onChange={(e) => update("description", e.target.value)}
@@ -3258,45 +3223,102 @@ function CreateRequestModal({
             />
           </div>
 
-          {/* Photos */}
+          {/* 6. Access & Parking — inline toggles with running total */}
+          {form.request_kind === "work" && (
+            <div
+              className="rounded-[10px] p-[14px] flex flex-wrap items-center gap-x-[24px] gap-y-[10px]"
+              style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+            >
+              <button
+                type="button"
+                disabled={!cczEligibleCreate}
+                onClick={() => cczEligibleCreate && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                className={cn(
+                  "inline-flex items-center gap-[10px] text-[11px] font-medium uppercase",
+                  !cczEligibleCreate && "opacity-50 cursor-not-allowed",
+                )}
+                style={{ color: "#020040", letterSpacing: "0.6px" }}
+              >
+                <span>CCZ</span>
+                <span
+                  className="relative inline-flex h-[18px] w-8 items-center rounded-full transition-colors"
+                  style={{ background: form.in_ccz && cczEligibleCreate ? "#10B981" : "#D8D8DD" }}
+                >
+                  <span
+                    className="absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-transform"
+                    style={{ transform: form.in_ccz && cczEligibleCreate ? "translateX(14px)" : "translateX(2px)" }}
+                  />
+                </span>
+                {hint("CCZ is only available for central London postcodes (EC1–4, WC1–2, W1, SW1, SE1).")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
+                className="inline-flex items-center gap-[10px] text-[11px] font-medium uppercase"
+                style={{ color: "#020040", letterSpacing: "0.6px" }}
+              >
+                <span>Parking</span>
+                <span
+                  className="relative inline-flex h-[18px] w-8 items-center rounded-full transition-colors"
+                  style={{ background: !form.has_free_parking ? "#10B981" : "#D8D8DD" }}
+                >
+                  <span
+                    className="absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-transform"
+                    style={{ transform: !form.has_free_parking ? "translateX(14px)" : "translateX(2px)" }}
+                  />
+                </span>
+                {hint("Parking fee applies when the customer can't offer free parking.")}
+              </button>
+              <div className="ml-auto text-right">
+                <p className="text-[10px] uppercase" style={{ color: "#6B6B70", letterSpacing: "0.6px" }}>
+                  Total access fee
+                </p>
+                <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>
+                  {formatCurrency(computeAccessSurcharge({ inCcz: inCczPreviewCreate, hasFreeParking: form.has_free_parking }))}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* 7. Photos — single-line header */}
           <div
             className="rounded-[10px] p-[14px] space-y-[10px]"
             style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
           >
-            <div className="flex items-center justify-between gap-2">
-              <p className={labelNavy} style={labelStyle}>
+            <div className="flex items-center gap-[12px] flex-wrap">
+              <p className={labelNavy + " flex-shrink-0"} style={labelStyle}>
                 Photos
                 {hint("Up to 8 images — stored on the request and carried to quotes / partner app when you convert.")}
               </p>
-              <span className="text-[10px]" style={{ color: "#6B6B70" }}>
+              <label
+                className="inline-flex items-center gap-[6px] rounded-[6px] bg-white px-3 py-[6px] text-[12px] font-medium cursor-pointer"
+                style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+              >
+                <ImagePlus className="h-3.5 w-3.5" />
+                Add photos
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  multiple
+                  className="sr-only"
+                  disabled={createPhotos.length >= 8}
+                  onChange={(e) => {
+                    const list = e.target.files;
+                    if (!list?.length) return;
+                    const next = [...createPhotos, ...Array.from(list)].slice(0, 8);
+                    setCreatePhotos(next);
+                    setCreatePhotoPreviews((prev) => {
+                      prev.forEach((u) => URL.revokeObjectURL(u));
+                      return next.map((f) => URL.createObjectURL(f));
+                    });
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              <span className="ml-auto text-[11px] tabular-nums" style={{ color: "#6B6B70" }}>
                 {createPhotos.length}/8
               </span>
             </div>
-            <label
-              className="inline-flex items-center gap-[6px] rounded-[6px] bg-white px-3 py-[7px] text-[12px] font-medium cursor-pointer"
-              style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
-            >
-              <ImagePlus className="h-3.5 w-3.5" />
-              Add photos
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                multiple
-                className="sr-only"
-                disabled={createPhotos.length >= 8}
-                onChange={(e) => {
-                  const list = e.target.files;
-                  if (!list?.length) return;
-                  const next = [...createPhotos, ...Array.from(list)].slice(0, 8);
-                  setCreatePhotos(next);
-                  setCreatePhotoPreviews((prev) => {
-                    prev.forEach((u) => URL.revokeObjectURL(u));
-                    return next.map((f) => URL.createObjectURL(f));
-                  });
-                  e.target.value = "";
-                }}
-              />
-            </label>
             {createPhotoPreviews.length > 0 && (
               <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
                 {createPhotoPreviews.map((src, i) => (
