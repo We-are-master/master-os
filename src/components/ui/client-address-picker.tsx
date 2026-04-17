@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 import {
@@ -72,6 +72,8 @@ interface ClientAddressPickerProps {
   jobCurrentAddressOnly?: boolean;
   /** Optional classes merged onto the client name search input. */
   clientNameInputClassName?: string;
+  /** `stack` (default) keeps the historic Client-on-top / Address-below layout. `grid-2` renders them side-by-side. */
+  layout?: "stack" | "grid-2";
 }
 
 export function ClientAddressPicker({
@@ -85,6 +87,7 @@ export function ClientAddressPicker({
   loadAllClientsOnOpen = false,
   jobCurrentAddressOnly = false,
   clientNameInputClassName,
+  layout = "stack",
 }: ClientAddressPickerProps) {
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const clientSectionLocked = lockClient && !!value.client_id;
@@ -128,6 +131,9 @@ export function ClientAddressPicker({
   const selectedClientRef = useRef<Client | null>(null);
   /** Job card: collapsed = single address; expanded = full list (same client). */
   const [jobAddressListExpanded, setJobAddressListExpanded] = useState(false);
+  /** Create flow: searchable dropdown — starts closed once an address is selected, opens on "Change address". */
+  const [addressPickerOpen, setAddressPickerOpen] = useState(false);
+  const [addressSearch, setAddressSearch] = useState("");
 
   useEffect(() => {
     if (jobCurrentAddressOnly) setJobAddressListExpanded(false);
@@ -361,6 +367,31 @@ export function ClientAddressPicker({
     addresses.length > 0 &&
     Boolean(currentPropertyDisplayLine.trim());
 
+  /** Dropdown-style picker: collapse to a summary card once an address is picked; user taps "Change" to open a search list. */
+  const selectedAddressRow = useMemo(
+    () => addresses.find((a) => a.id === value.client_address_id) ?? null,
+    [addresses, value.client_address_id],
+  );
+  const showAddressPickerCollapsed =
+    !jobCurrentAddressOnly &&
+    !!selectedClient &&
+    !addressLoading &&
+    !addingNewAddress &&
+    !addressPickerOpen &&
+    !!selectedAddressRow &&
+    addresses.length > 0;
+  const filteredAddresses = useMemo(() => {
+    const q = addressSearch.trim().toLowerCase();
+    if (!q) return addresses;
+    return addresses.filter((addr) => {
+      const hay = [addr.label, addr.address, addr.city, addr.postcode]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [addresses, addressSearch]);
+
   const handleCreateClient = useCallback(async () => {
     if (!createClientForm.full_name.trim()) {
       toast.error("Full name is required");
@@ -510,8 +541,9 @@ export function ClientAddressPicker({
     }
   }, [selectedClient, clientSearch, selectClient]);
 
+  const outerLayoutClass = layout === "grid-2" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : "";
   return (
-    <div className={className} ref={containerRef}>
+    <div className={cn(outerLayoutClass, className)} ref={containerRef}>
       {!clientSectionLocked ? (
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">{labelClient}</label>
@@ -625,7 +657,7 @@ export function ClientAddressPicker({
       )}
 
       {showAddressSection && (
-        <div className="mt-3">
+        <div className={layout === "grid-2" ? "" : "mt-3"}>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">{labelAddress}</label>
           {!selectedClient && value.client_id ? (
             <div className="flex items-center gap-2 text-text-tertiary text-sm py-2">

@@ -14,6 +14,8 @@ import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { FinalReviewModal } from "@/components/job-card/FinalReviewModal/FinalReviewModal";
+import type { ReportItem } from "@/components/job-card/FinalReviewModal/types";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
 import type { LucideIcon } from "lucide-react";
@@ -217,14 +219,26 @@ const JOB_DETAIL_MULTILINE_FIELD_CLASS =
 const JOB_DETAIL_INLINE_INPUT_FIELD_CLASS =
   "rounded-lg border border-border bg-card py-2 text-sm text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:ring-primary/35";
 
-function jobDetailMarginAppearance(marginPct: number): { pctClass: string; barClass: string } {
-  if (marginPct < 0) {
-    return { pctClass: "text-red-600 dark:text-red-400", barClass: "bg-red-500" };
+/** Healthy-margin threshold for job-card Net margin bar — below this the bar turns red and a hint badge appears. */
+export const JOB_DETAIL_HEALTHY_MARGIN_PCT = 45;
+
+function jobDetailMarginAppearance(marginPct: number): {
+  pctClass: string;
+  barClass: string;
+  low: boolean;
+} {
+  if (marginPct < JOB_DETAIL_HEALTHY_MARGIN_PCT) {
+    return {
+      pctClass: "text-red-600 dark:text-red-400",
+      barClass: "bg-red-500",
+      low: true,
+    };
   }
-  if (marginPct < 15) {
-    return { pctClass: "text-amber-600 dark:text-amber-400", barClass: "bg-amber-500" };
-  }
-  return { pctClass: "text-emerald-600 dark:text-emerald-400", barClass: "bg-primary" };
+  return {
+    pctClass: "text-emerald-600 dark:text-emerald-400",
+    barClass: "bg-emerald-500",
+    low: false,
+  };
 }
 
 function getStatusColors(status: string): {
@@ -529,6 +543,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [moneySubmitting, setMoneySubmitting] = useState(false);
   /** Layout-only: job detail tabs and accordions (money actions use drawer modal). */
   const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4>(0);
+  /** One-shot: when a job lands in `final_check`, open the Reports tab by default (only on first paint for this job). */
+  const detailTabInitialisedForJobRef = useRef<string | null>(null);
   const [clientEditAccordionOpen, setClientEditAccordionOpen] = useState(false);
   const [deletePaymentTarget, setDeletePaymentTarget] = useState<{ id: string; amount: number; type: string } | null>(null);
   const [deletingPayment, setDeletingPayment] = useState(false);
@@ -559,6 +575,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   const [forceApprovalChecked, setForceApprovalChecked] = useState(false);
   const [forceApprovalReason, setForceApprovalReason] = useState("");
+  /** Second mandatory attestation on the Final review modal — separate from report + payment responsibility. */
+  const [sentToAccountsChecked, setSentToAccountsChecked] = useState(false);
   const [approvalBilledHoursInput, setApprovalBilledHoursInput] = useState("");
   const [cancelPresetId, setCancelPresetId] = useState<string>(OFFICE_JOB_CANCELLATION_REASONS[0].id);
   const [cancelDetail, setCancelDetail] = useState("");
@@ -712,6 +730,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerLiveActiveMs = useMemo(() => {
     void partnerTimerTick;
     if (!job?.partner_timer_started_at) return null;
+    /** Unassigned / auto-assigning → hide the live counter immediately (backend also wipes the timer fields on the next update). */
+    if (job.status === "unassigned" || job.status === "auto_assigning") return null;
     return computePartnerLiveTimerActiveMs(job);
   }, [job, partnerTimerTick]);
 
@@ -1417,6 +1437,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setDetailTab(0);
     }
   }, [isAdmin, detailTab]);
+
+  /** Jobs in Final checks default to the Reports tab (office usually opens the card to review reports). */
+  useEffect(() => {
+    if (!job?.id) return;
+    if (detailTabInitialisedForJobRef.current === job.id) return;
+    detailTabInitialisedForJobRef.current = job.id;
+    if (job.status === "final_check") setDetailTab(2);
+  }, [job?.id, job?.status]);
 
   useEffect(() => {
     if (!job) return;
@@ -3079,6 +3107,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setOwnerApprovalChecked(false);
       setForceApprovalChecked(false);
       setForceApprovalReason("");
+      setSentToAccountsChecked(false);
       setApprovalBilledHoursInput("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to validate and complete job");
@@ -3400,9 +3429,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const attestationDisplayName = profile?.full_name?.trim() || job.owner_name?.trim() || "Victor";
   const ownerAttestationText = `I, ${attestationDisplayName}, confirm I checked this report and I take full responsibility for report and payment approval for this job.`;
   const forcedPaidBySystemOwner = isJobForcePaid(job.internal_notes);
-  const mandatoryChecksOk = reportsUploaded && reportsApproved && ownerApprovalChecked;
+  const mandatoryChecksOk =
+    reportsUploaded && reportsApproved && ownerApprovalChecked && sentToAccountsChecked;
+  /** Either all mandatory checks pass, OR force flow (force requires both attestations + a reason ≥ 20 chars). */
   const canSubmitApproval =
-    mandatoryChecksOk || (forceApprovalChecked && forceApprovalReason.trim().length > 0);
+    mandatoryChecksOk ||
+    (forceApprovalChecked &&
+      ownerApprovalChecked &&
+      sentToAccountsChecked &&
+      forceApprovalReason.trim().length >= 20);
   const customerPaidPct = billableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / billableRevenue) * 100)) : 100;
   const partnerPaidPct = partnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / partnerCap) * 100)) : 100;
 
@@ -3523,7 +3558,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       </div>
 
       <div className="rounded-lg border border-border-light bg-card p-3 space-y-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Profit & Loss</p>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Profit & Loss</p>
         <div className="space-y-1.5 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-text-secondary">Revenue (client)</span>
@@ -3667,6 +3702,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setOwnerApprovalChecked(true);
                       setForceApprovalChecked(false);
                       setForceApprovalReason("");
+                      setSentToAccountsChecked(false);
                       setValidateCompleteOpen(true);
                       return;
                     }
@@ -3675,6 +3711,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setOwnerApprovalChecked(false);
                       setForceApprovalChecked(false);
                       setForceApprovalReason("");
+                      setSentToAccountsChecked(false);
                       setValidateCompleteOpen(true);
                       return;
                     }
@@ -3867,16 +3904,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         {/* ── Job amount / margin (compact metrics bar) ── */}
         <div className="grid min-h-0 grid-cols-2 divide-x divide-y divide-border-light border-b border-border-light bg-surface-hover/30 px-1 py-2 dark:bg-surface-secondary/20 lg:grid-cols-4 lg:divide-y-0">
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Job amount</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Job amount</p>
             <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-primary">{formatCurrency(billableRevenue)}</p>
             <p className="mt-0.5 text-[10px] text-text-tertiary leading-none">Incl. extras</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner cost</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Partner cost</p>
             <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-secondary">{formatCurrency(Number(job.partner_cost ?? 0))}</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Margin</p>
             <p
               className={cn(
                 "text-2xl font-bold tabular-nums leading-tight tracking-tight",
@@ -3888,7 +3925,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             <p className="mt-0.5 text-[10px] text-text-tertiary leading-none">After partner + materials</p>
           </div>
           <div className="flex min-w-0 flex-col justify-center px-3 py-3 sm:px-4">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin %</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Margin %</p>
             <p className={cn("text-2xl font-bold tabular-nums tracking-tight", marginAppearance.pctClass)}>{marginPct}%</p>
           </div>
         </div>
@@ -4198,17 +4235,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   ) : null}
                 </div>
               </div>
-              <div className="border-t border-border-light">
+              <div style={{ borderTop: "0.5px solid #E4E4E8" }}>
                 <button
                   type="button"
                   onClick={() => setClientEditAccordionOpen((o) => !o)}
-                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-text-secondary hover:bg-surface-hover/50"
+                  className="flex w-full items-center justify-between gap-2 px-[18px] py-[14px] text-left"
+                  style={{ background: "#FAFAFB" }}
                 >
-                  <span className="inline-flex items-center gap-1.5">
-                    <Pencil className="h-3 w-3 shrink-0 text-text-tertiary" aria-hidden />
+                  <span
+                    className="inline-flex items-center gap-[6px] text-[13px] font-medium"
+                    style={{ color: "#020040" }}
+                  >
+                    <Pencil className="h-[12px] w-[12px] shrink-0" aria-hidden />
                     Edit client &amp; address
                   </span>
-                  <ChevronDown className={cn("h-4 w-4 shrink-0 text-text-tertiary transition-transform", clientEditAccordionOpen && "rotate-180")} />
+                  <ChevronDown
+                    className={cn("h-4 w-4 shrink-0 transition-transform", clientEditAccordionOpen && "rotate-180")}
+                    style={{ color: "#9A9AA0" }}
+                  />
                 </button>
                 {clientEditAccordionOpen ? (
                   <div className={cn("space-y-2 border-t border-border-light px-3 py-2", job.status === "cancelled" && "pointer-events-none opacity-50")}>
@@ -4260,15 +4304,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                 ) : null}
               </div>
-              <div className="space-y-2 border-t border-border-light bg-surface-secondary p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
-                <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border-light bg-border-light">
-                  <div className="min-w-0 bg-card p-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Start date</p>
+              <div
+                className="p-[18px] space-y-[14px]"
+                style={{ background: "#FAFAFB", borderTop: "0.5px solid #E4E4E8" }}
+              >
+                <div className="grid grid-cols-2 gap-[14px]">
+                  <div
+                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                    style={{ border: "0.5px solid #E4E4E8" }}
+                  >
+                    <p
+                      className="text-[10px] font-medium uppercase"
+                      style={{ color: "#020040", letterSpacing: "0.6px" }}
+                    >
+                      Start date
+                    </p>
                     <Input
                       type="date"
                       value={scheduleDate}
                       disabled={job.status === "cancelled"}
-                      className="mt-0.5 h-7 text-[13px]"
+                      className="mt-[6px] h-8 text-[13px]"
                       onChange={(e) => {
                         const v = e.target.value;
                         setScheduleDate(v);
@@ -4277,13 +4332,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       }}
                     />
                   </div>
-                  <div className="min-w-0 bg-card p-2">
-                    <div className="flex items-center gap-0.5">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Arrival time</p>
+                  <div
+                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                    style={{ border: "0.5px solid #E4E4E8" }}
+                  >
+                    <div className="flex items-center gap-1">
+                      <p
+                        className="text-[10px] font-medium uppercase"
+                        style={{ color: "#020040", letterSpacing: "0.6px" }}
+                      >
+                        Arrival time
+                      </p>
                       <span className="group relative shrink-0">
                         <span
                           tabIndex={0}
-                          className="inline-flex cursor-help rounded p-px text-text-tertiary outline-none hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-primary/25"
+                          className="inline-flex cursor-help rounded p-px outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+                          style={{ color: "#9A9AA0" }}
                           aria-label="How arrival time is shown to clients and partners"
                         >
                           <Info className="h-3 w-3" aria-hidden />
@@ -4299,19 +4363,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <TimeSelect
                       value={scheduleTime}
                       disabled={job.status === "cancelled"}
-                      className="mt-0.5 h-7 text-[13px]"
+                      className="mt-[6px] h-8 text-[13px]"
                       onChange={(v) => {
                         setScheduleTime(v);
                         handleScheduleChange(job, scheduleDate, v, scheduleWindowMins, scheduleExpectedFinishDate);
                       }}
                     />
                   </div>
-                  <div className="min-w-0 bg-card p-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Window</p>
+                  <div
+                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                    style={{ border: "0.5px solid #E4E4E8" }}
+                  >
+                    <p
+                      className="text-[10px] font-medium uppercase"
+                      style={{ color: "#020040", letterSpacing: "0.6px" }}
+                    >
+                      Window
+                    </p>
                     <Select
                       value={scheduleWindowMins}
                       disabled={job.status === "cancelled"}
-                      className="mt-0.5 h-7 text-[13px]"
+                      className="mt-[6px] h-8 text-[13px]"
                       onChange={(e) => {
                         const v = e.target.value;
                         setScheduleWindowMins(v);
@@ -4320,15 +4392,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       options={[...ARRIVAL_WINDOW_OPTIONS]}
                     />
                   </div>
-                  <div className="min-w-0 bg-card p-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
-                      Expected finish{scheduleDate.trim() ? " *" : ""}
+                  <div
+                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
+                    style={{ border: "0.5px solid #E4E4E8" }}
+                  >
+                    <p
+                      className="text-[10px] font-medium uppercase"
+                      style={{ color: "#020040", letterSpacing: "0.6px" }}
+                    >
+                      Expected finish
+                      {scheduleDate.trim() ? (
+                        <span className="ml-[2px]" style={{ color: "#ED4B00" }}>*</span>
+                      ) : null}
                     </p>
                     <Input
                       type="date"
                       value={scheduleExpectedFinishDate}
                       disabled={job.status === "cancelled"}
-                      className="mt-0.5 h-7 text-[13px]"
+                      className="mt-[6px] h-8 text-[13px]"
                       onChange={(e) => {
                         setScheduleExpectedFinishDate(e.target.value);
                         handleScheduleChange(job, scheduleDate, scheduleTime, scheduleWindowMins, e.target.value);
@@ -4337,10 +4418,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                 </div>
                 {!isHousekeepJobDetail ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
-                      <div className="flex items-center gap-0.5">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">CCZ</p>
+                  <div className="grid grid-cols-2 gap-[14px]">
+                    <div
+                      className={cn(
+                        "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
+                        effectiveCustomerInCcz
+                          ? "bg-emerald-50 dark:bg-emerald-950/30"
+                          : "bg-white",
+                      )}
+                      style={{
+                        border: effectiveCustomerInCcz
+                          ? "0.5px solid #10B981"
+                          : "0.5px solid #E4E4E8",
+                      }}
+                    >
+                      <div className="flex items-center gap-1">
+                        <p
+                          className="text-[10px] font-medium uppercase"
+                          style={{
+                            color: effectiveCustomerInCcz ? "#0F6E56" : "#020040",
+                            letterSpacing: "0.6px",
+                          }}
+                        >
+                          CCZ
+                        </p>
                           <span className="group relative shrink-0">
                             <span
                               tabIndex={0}
@@ -4369,7 +4470,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       className={cn(
                             "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
                             effectiveCustomerInCcz
-                              ? "border-emerald-500/45 bg-white shadow-sm dark:border-emerald-500/50 dark:bg-[#141a24]"
+                              ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
                               : "border-border bg-white/90 hover:border-border dark:border-[#2f3440] dark:bg-[#171d28] dark:hover:border-[#3a4252]",
                             !cczEligibleAddress && !job.in_ccz && "cursor-not-allowed opacity-50",
                           )}
@@ -4387,13 +4488,34 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               )}
                             />
                           </span>
-                          <span className={cn("text-[10px] font-medium", effectiveCustomerInCcz ? "text-amber-600" : "text-text-tertiary")}>
+                          <span className={cn("text-[10px] font-medium", effectiveCustomerInCcz ? "text-emerald-700 dark:text-emerald-300" : "text-text-tertiary")}>
                             {effectiveCustomerInCcz ? `+£${ACCESS_CCZ_FEE_GBP}` : "No fee"}
                           </span>
                       </button>
                     </div>
-                    <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Parking</p>
+                    <div
+                      className={cn(
+                        "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
+                        job.has_free_parking === false
+                          ? "bg-emerald-50 dark:bg-emerald-950/30"
+                          : "bg-white",
+                      )}
+                      style={{
+                        border:
+                          job.has_free_parking === false
+                            ? "0.5px solid #10B981"
+                            : "0.5px solid #E4E4E8",
+                      }}
+                    >
+                      <p
+                        className="text-[10px] font-medium uppercase"
+                        style={{
+                          color: job.has_free_parking === false ? "#0F6E56" : "#020040",
+                          letterSpacing: "0.6px",
+                        }}
+                      >
+                        Parking
+                      </p>
                       <button
                           type="button"
                           disabled={job.status === "cancelled" || savingAccessFees}
@@ -4401,7 +4523,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           className={cn(
                             "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
                             job.has_free_parking === false
-                              ? "border-amber-500/40 bg-white shadow-sm dark:border-amber-500/45 dark:bg-[#141a24]"
+                              ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
                               : "border-border bg-white/90 hover:border-border dark:border-[#2f3440] dark:bg-[#171d28] dark:hover:border-[#3a4252]",
                           )}
                       >
@@ -4421,7 +4543,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           <span
                             className={cn(
                               "text-[10px] font-medium",
-                              job.has_free_parking === false ? "text-amber-600" : "text-text-tertiary",
+                              job.has_free_parking === false ? "text-emerald-700 dark:text-emerald-300" : "text-text-tertiary",
                             )}
                           >
                             {job.has_free_parking === false ? `+£${ACCESS_PARKING_FEE_GBP}` : "No fee"}
@@ -4430,11 +4552,40 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   </div>
                 ) : null}
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    {job.quote_id && <Link href="/quotes" className="inline-flex items-center gap-1 text-primary hover:underline">Quote <ExternalLink className="h-3 w-3" /></Link>}
-                    {job.self_bill_id && <Link href="/finance/selfbill" className="inline-flex items-center gap-1 text-primary hover:underline">Self-bill <ExternalLink className="h-3 w-3" /></Link>}
-                    {job.invoice_id && <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-primary hover:underline">Invoice <ExternalLink className="h-3 w-3" /></Link>}
-                  </div>
+                  {(job.quote_id || job.self_bill_id || job.invoice_id) ? (
+                    <div
+                      className="flex flex-wrap gap-[6px] pt-[12px]"
+                      style={{ borderTop: "0.5px solid #E4E4E8" }}
+                    >
+                      {job.quote_id && (
+                        <Link
+                          href="/quotes"
+                          className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
+                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                        >
+                          Quote <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
+                        </Link>
+                      )}
+                      {job.self_bill_id && (
+                        <Link
+                          href="/finance/selfbill"
+                          className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
+                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                        >
+                          Self-bill <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
+                        </Link>
+                      )}
+                      {job.invoice_id && (
+                        <Link
+                          href="/finance/invoices"
+                          className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium"
+                          style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                        >
+                          Invoice <ExternalLink className="h-[10px] w-[10px]" style={{ color: "#6B6B70" }} />
+                        </Link>
+                      )}
+                    </div>
+                  ) : null}
               </div>
             </div>
 
@@ -4455,10 +4606,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     type="button"
                     onClick={() => setDetailTab(tab.index)}
                     className={cn(
-                      "min-w-0 flex-1 px-1.5 py-2 text-center text-[11px] font-medium transition-colors sm:px-2",
+                      "min-w-0 flex-1 px-1.5 py-2.5 text-center text-[12px] font-semibold transition-colors sm:px-2",
                       detailTab === tab.index
                         ? "border-b-2 border-primary text-primary"
-                        : "border-b-2 border-transparent text-text-tertiary hover:text-text-secondary",
+                        : "border-b-2 border-transparent text-text-secondary hover:text-text-primary",
                     )}
                   >
                     {tab.label}
@@ -4546,15 +4697,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               {detailTab === 0 ? (
               <div className="space-y-3">
-              <p className="text-[11px] text-text-tertiary">Scope is required before assigning a partner. Site photos are on the Site photos tab.</p>
-              <div className="space-y-1.5 border-t border-border-light pt-2">
-                <p className="text-xs font-medium text-text-secondary">Scope</p>
+              <p className="text-[11px] text-text-secondary">Scope is required before assigning a partner. Site photos are on the Site photos tab.</p>
+              <div className="space-y-1.5 border-t border-border pt-2">
+                <p className="text-xs font-semibold text-text-primary">Scope</p>
                 <textarea
                   value={scopeDraft}
                   onChange={(e) => setScopeDraft(e.target.value)}
-                  rows={2}
+                  rows={4}
                   placeholder="Describe what the partner is expected to do…"
-                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[72px]")}
+                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[120px]")}
                 />
                 <Button type="button" variant="outline" size="sm" loading={savingScope} onClick={async () => {
                   if (!job) return;
@@ -4569,9 +4720,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               </div>
 
-              <div className="space-y-1.5 pt-2 border-t border-border-light">
-                <p className="text-xs font-medium text-text-secondary">Additional notes</p>
-                <p className="text-[11px] text-text-tertiary">Internal only — not shown to the client; use for access, keys, or context beyond the scope.</p>
+              <div className="space-y-1.5 pt-2 border-t border-border">
+                <p className="text-xs font-semibold text-text-primary">Additional notes</p>
+                <p className="text-[11px] text-text-secondary">Internal only — not shown to the client; use for access, keys, or context beyond the scope.</p>
                 <textarea
                   value={additionalNotesDraft}
                   onChange={(e) => setAdditionalNotesDraft(e.target.value)}
@@ -4598,9 +4749,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               </div>
 
-              <div className="space-y-1.5 pt-2 border-t border-border-light">
-                <p className="text-xs font-medium text-text-secondary">Report link (optional)</p>
-                <p className="text-[11px] text-text-tertiary">External URL — Google Drive, Notion, shared doc. Not shown to the client.</p>
+              <div className="space-y-1.5 pt-2 border-t border-border">
+                <p className="text-xs font-semibold text-text-primary">Report link (optional)</p>
+                <p className="text-[11px] text-text-secondary">External URL — Google Drive, Notion, shared doc. Not shown to the client.</p>
                 <Input
                   type="url"
                   value={reportLinkDraft}
@@ -4647,9 +4798,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               {detailTab === 2 ? (
             <>
-            <div className="rounded-xl border border-border-light bg-card p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
+            {/* Fixfy visual system: navy labels, inset card, coral for pending, emerald for validated success feedback. */}
+            <div
+              className="rounded-[12px] overflow-hidden bg-white"
+              style={{ border: "0.5px solid #E4E4E8", boxShadow: "0 1px 3px rgba(2,0,64,0.04)" }}
+            >
+              <div
+                className="flex flex-wrap items-center justify-between gap-3 px-[18px] py-[14px]"
+                style={{ background: "#FAFAFB", borderBottom: "0.5px solid #E4E4E8" }}
+              >
+                <p
+                  className="text-[11px] font-medium uppercase flex items-center gap-1.5"
+                  style={{ color: "#020040", letterSpacing: "0.6px" }}
+                >
                   <FileText className="h-3.5 w-3.5" /> Reports
                 </p>
                 <div className="flex items-center gap-2 shrink-0">
@@ -4659,10 +4820,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     color={reportsProgressPercent === 100 ? "emerald" : "primary"}
                     className="w-24 min-w-[6rem]"
                   />
-                  <span className="text-[11px] font-semibold text-text-primary tabular-nums">{reportsProgressPercent}%</span>
+                  <span
+                    className="text-[11px] font-semibold tabular-nums"
+                    style={{ color: "#020040" }}
+                  >
+                    {reportsProgressPercent}%
+                  </span>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+
+              <div className="p-[18px] space-y-[14px]">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[14px]">
                 {reportPhaseIndices(job.total_phases).map((n) => {
                   const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
                   const approved = job[`report_${n}_approved` as keyof Job] as boolean;
@@ -4677,29 +4845,75 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     ...(appReport?.before_images ?? []),
                     ...(appReport?.after_images ?? []),
                   ].filter(Boolean);
+                  const reportCardStyle = approved
+                    ? { background: "#F0FBF7", border: "0.5px solid #B5E3D1" } /* success feedback */
+                    : uploaded
+                      ? { background: "#FFF8F3", border: "0.5px solid #F5CFB8" } /* coral — pending review */
+                      : { background: "#FAFAFB", border: "0.5px solid #E4E4E8" }; /* neutral inset */
                   return (
-                    <div key={n} className={`rounded-xl border p-3 space-y-2 ${approved ? "border-emerald-200 bg-emerald-50/30 dark:bg-emerald-950/20" : uploaded ? "border-amber-200 bg-amber-50/30 dark:bg-amber-950/10" : "border-border-light bg-surface-hover/40"}`}>
+                    <div
+                      key={n}
+                      className="rounded-[10px] p-[14px] space-y-2"
+                      style={reportCardStyle}
+                    >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          {approved ? <ShieldCheck className="h-4 w-4 text-emerald-600" /> : uploaded ? <Upload className="h-4 w-4 text-amber-500" /> : <FileText className="h-4 w-4 text-text-tertiary" />}
-                          <p className="text-sm font-semibold text-text-primary">{phaseLabel}</p>
+                        <div className="flex items-center gap-2 min-w-0">
+                          {approved ? (
+                            <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "#0F6E56" }} />
+                          ) : uploaded ? (
+                            <Upload className="h-4 w-4 shrink-0" style={{ color: "#ED4B00" }} />
+                          ) : (
+                            <FileText className="h-4 w-4 shrink-0" style={{ color: "#9A9AA0" }} />
+                          )}
+                          <p
+                            className="text-[13px] font-medium truncate"
+                            style={{ color: "#020040" }}
+                          >
+                            {phaseLabel}
+                          </p>
                         </div>
-                        <Badge variant={approved ? "success" : uploaded ? "warning" : "default"} size="sm">
+                        <span
+                          className="text-[10px] font-medium px-[7px] py-[2px] rounded shrink-0"
+                          style={
+                            approved
+                              ? { background: "#E4F5EE", color: "#0F6E56" }
+                              : uploaded
+                                ? { background: "#FFF1EB", color: "#ED4B00" }
+                                : { background: "#F1F1F3", color: "#6B6B70" }
+                          }
+                        >
                           {approved ? "Validated" : uploaded ? "Pending review" : "Not uploaded"}
-                        </Badge>
+                        </span>
                       </div>
-                      {approvedAt && <p className="text-xs text-emerald-600">Approved {new Date(approvedAt).toLocaleDateString()}</p>}
-                      {uploadedAt && !approvedAt && <p className="text-xs text-amber-600">Uploaded {new Date(uploadedAt).toLocaleDateString()}</p>}
+                      {approvedAt && (
+                        <p className="text-[11px]" style={{ color: "#0F6E56" }}>
+                          Approved {new Date(approvedAt).toLocaleDateString("en-GB")}
+                        </p>
+                      )}
+                      {uploadedAt && !approvedAt && (
+                        <p className="text-[11px]" style={{ color: "#ED4B00" }}>
+                          Uploaded {new Date(uploadedAt).toLocaleDateString("en-GB")}
+                        </p>
+                      )}
                       {appReport && (
-                        <div className="rounded-lg border border-border-light bg-card/70 p-3 space-y-2">
+                        <div
+                          className="rounded-[8px] p-3 space-y-2 bg-white"
+                          style={{ border: "0.5px solid #E4E4E8" }}
+                        >
                           {appReport.description?.trim() ? (
-                            <p className="text-xs text-text-secondary">
-                              <span className="font-semibold text-text-primary">Notes:</span> {appReport.description.trim()}
+                            <p className="text-[12px]" style={{ color: "#6B6B70" }}>
+                              <span className="font-semibold" style={{ color: "#020040" }}>
+                                Notes:
+                              </span>{" "}
+                              {appReport.description.trim()}
                             </p>
                           ) : null}
                           {appReport.materials?.trim() ? (
-                            <p className="text-xs text-text-secondary">
-                              <span className="font-semibold text-text-primary">Materials:</span> {appReport.materials.trim()}
+                            <p className="text-[12px]" style={{ color: "#6B6B70" }}>
+                              <span className="font-semibold" style={{ color: "#020040" }}>
+                                Materials:
+                              </span>{" "}
+                              {appReport.materials.trim()}
                             </p>
                           ) : null}
                           {reportImages.length > 0 && (
@@ -4709,26 +4923,34 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   key={`${appReport.id}-${idx}`}
                                   type="button"
                                   onClick={() => void openPartnerReportImage(url, `${appReport.id}-${idx}`)}
-                                  className="text-[11px] underline text-primary hover:opacity-80"
+                                  className="text-[11px] underline hover:opacity-80"
+                                  style={{ color: "#020040" }}
                                 >
                                   {openingReportImageKey === `${appReport.id}-${idx}` ? "Opening..." : `Image ${idx + 1}`}
                                 </button>
                               ))}
                               {reportImages.length > 4 && (
-                                <span className="text-[11px] text-text-tertiary">+{reportImages.length - 4} more</span>
+                                <span className="text-[11px]" style={{ color: "#6B6B70" }}>
+                                  +{reportImages.length - 4} more
+                                </span>
                               )}
                             </div>
                           )}
                           {appReport.pdf_url ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              icon={<ExternalLink className="h-3.5 w-3.5" />}
-                              loading={openingReportId === appReport.id}
+                            <button
+                              type="button"
                               onClick={() => void openPartnerReportPdf(appReport)}
+                              disabled={openingReportId === appReport.id}
+                              className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                              style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                              onMouseEnter={(e) => {
+                                if (!(e.currentTarget as HTMLButtonElement).disabled)
+                                  (e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB";
+                              }}
+                              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
                             >
-                              Open PDF
-                            </Button>
+                              <ExternalLink className="h-3 w-3" /> Open PDF
+                            </button>
                           ) : null}
                         </div>
                       )}
@@ -4742,11 +4964,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               className="sr-only"
                               onChange={(e) => setPhaseReportFiles((prev) => ({ ...prev, [n]: e.target.files?.[0] ?? null }))}
                             />
-                            <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/40 p-3">
-                              <div className="flex items-center gap-2">
+                            <div
+                              className="rounded-[8px] p-3 bg-white"
+                              style={{ border: "0.5px dashed #D8D8DD" }}
+                            >
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <label
                                   htmlFor={`phase-report-file-${n}`}
-                                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30 hover:bg-surface-hover transition-colors"
+                                  className="inline-flex items-center gap-2 rounded-[6px] bg-white px-3 py-[6px] text-[12px] font-medium cursor-pointer"
+                                  style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                                  onMouseEnter={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FAFAFB")}
+                                  onMouseLeave={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FFFFFF")}
                                 >
                                   <Upload className="h-3.5 w-3.5" />
                                   {phaseReportFiles[n] ? "Change file" : "Choose file"}
@@ -4755,23 +4983,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   <button
                                     type="button"
                                     onClick={() => setPhaseReportFiles((prev) => ({ ...prev, [n]: null }))}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+                                    className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-[11px]"
+                                    style={{ color: "#6B6B70", border: "0.5px solid #D8D8DD" }}
                                   >
                                     <X className="h-3 w-3" /> Remove
                                   </button>
                                 )}
                               </div>
-                              <p className="mt-2 text-xs text-text-tertiary truncate">
+                              <p
+                                className="mt-2 text-[11px] truncate"
+                                style={{ color: "#6B6B70" }}
+                              >
                                 {phaseReportFiles[n]?.name ?? "No file selected"}
                               </p>
                             </div>
                             <div className="flex gap-2 flex-wrap">
-                              <Button
-                                size="sm"
-                                variant="primary"
-                                icon={<Upload className="h-3.5 w-3.5" />}
-                                disabled={!uploadCheck.ok || !phaseReportFiles[n]}
-                                loading={analyzingPhase === n}
+                              <button
+                                type="button"
+                                disabled={!uploadCheck.ok || !phaseReportFiles[n] || analyzingPhase === n}
                                 title={uploadCheck.message}
                                 onClick={() => {
                                   if (!uploadCheck.ok) {
@@ -4780,32 +5009,62 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   }
                                   void handlePhaseReportUploadAnalyze(n);
                                 }}
+                                className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                style={{ background: "#020040" }}
+                                onMouseEnter={(e) => {
+                                  if (!(e.currentTarget as HTMLButtonElement).disabled)
+                                    (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+                                }}
+                                onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
                               >
-                                Upload & analyze
-                              </Button>
+                                <Upload className="h-3.5 w-3.5" />
+                                {analyzingPhase === n ? "Analyzing…" : "Upload & analyze"}
+                              </button>
                             </div>
                           </>
                         )}
                         {uploaded && !approved && (
-                          <Button size="sm" variant="primary" icon={<ShieldCheck className="h-3.5 w-3.5" />} disabled={!approveCheck.ok} title={approveCheck.message}
-                            onClick={() => { if (!approveCheck.ok) { toast.error(approveCheck.message ?? "Cannot approve yet"); return; } handleJobUpdate(job.id, { [`report_${n}_approved`]: true, [`report_${n}_approved_at`]: new Date().toISOString() } as Partial<Job>); }}>
-                            Validate now
-                          </Button>
+                          <button
+                            type="button"
+                            disabled={!approveCheck.ok}
+                            title={approveCheck.message}
+                            onClick={() => {
+                              if (!approveCheck.ok) {
+                                toast.error(approveCheck.message ?? "Cannot approve yet");
+                                return;
+                              }
+                              handleJobUpdate(job.id, { [`report_${n}_approved`]: true, [`report_${n}_approved_at`]: new Date().toISOString() } as Partial<Job>);
+                            }}
+                            className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            style={{ background: "#020040" }}
+                            onMouseEnter={(e) => {
+                              if (!(e.currentTarget as HTMLButtonElement).disabled)
+                                (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+                            }}
+                            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5" /> Validate now
+                          </button>
                         )}
                       </div>
-                      {!uploadCheck.ok && !uploaded && uploadCheck.message && <p className="text-[11px] text-amber-600 dark:text-amber-400">{uploadCheck.message}</p>}
+                      {!uploadCheck.ok && !uploaded && uploadCheck.message && (
+                        <p className="text-[11px] font-medium" style={{ color: "#ED4B00" }}>
+                          {uploadCheck.message}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
               </div>
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <p className="text-xs text-text-tertiary">
+              <div
+                className="flex items-center justify-between gap-2 pt-[12px]"
+                style={{ borderTop: "0.5px solid #E4E4E8" }}
+              >
+                <p className="text-[11px]" style={{ color: "#6B6B70" }}>
                   {loadingAppJobReports ? "Loading partner reports..." : `${appJobReports.length} report record(s) from partner app`}
                 </p>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  icon={<RefreshCw className="h-3.5 w-3.5" />}
+                <button
+                  type="button"
                   onClick={async () => {
                     if (!job?.id) return;
                     setLoadingAppJobReports(true);
@@ -4816,37 +5075,77 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setLoadingAppJobReports(false);
                     }
                   }}
+                  className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[10px] py-[5px] text-[11px] font-medium cursor-pointer"
+                  style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB")}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
                 >
-                  Refresh reports
-                </Button>
+                  <RefreshCw className="h-3 w-3" /> Refresh reports
+                </button>
               </div>
               {allConfiguredReportsApproved(job) && (
-                <div className="mt-2 p-2.5 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center gap-2">
-                  <p className="flex-1 text-sm font-medium text-text-primary">All reports validated — ready to send report & request final payment.</p>
-                  <Button
-                    size="sm"
-                    icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                <div
+                  className="rounded-[10px] p-[14px] flex flex-col sm:flex-row sm:items-center gap-3"
+                  style={{ background: "#F4F5FB", border: "0.5px solid #D8DBEE" }}
+                >
+                  <p
+                    className="flex-1 text-[13px] font-medium"
+                    style={{ color: "#020040" }}
+                  >
+                    All reports validated — ready to send report &amp; request final payment.
+                  </p>
+                  <button
+                    type="button"
                     disabled={!sendReportFinalCheck.ok}
                     title={sendReportFinalCheck.message}
                     onClick={() => void handleSendReportAndInvoice()}
+                    className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ background: "#020040" }}
+                    onMouseEnter={(e) => {
+                      if (!(e.currentTarget as HTMLButtonElement).disabled)
+                        (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+                    }}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
                   >
-                    Review & Approve
-                  </Button>
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Review &amp; approve
+                  </button>
                 </div>
               )}
+              </div>
             </div>
 
             {/* MANUAL REPORT + AI ANALYSIS */}
-            <details className="group rounded-xl border border-border-light bg-card overflow-hidden">
-              <summary className="flex list-none items-center justify-between gap-2 p-3 cursor-pointer select-none [&::-webkit-details-marker]:hidden">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5 min-w-0">
+            <details
+              className="group rounded-[12px] overflow-hidden bg-white"
+              style={{ border: "0.5px solid #E4E4E8", boxShadow: "0 1px 3px rgba(2,0,64,0.04)" }}
+            >
+              <summary
+                className="flex list-none items-center justify-between gap-2 px-[18px] py-[14px] cursor-pointer select-none [&::-webkit-details-marker]:hidden"
+                style={{ background: "#FAFAFB" }}
+              >
+                <p
+                  className="text-[11px] font-medium uppercase flex items-center gap-1.5 min-w-0"
+                  style={{ color: "#020040", letterSpacing: "0.6px" }}
+                >
                   <FileText className="h-3.5 w-3.5 shrink-0" /> Manual report analysis (AI)
                 </p>
-                <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" aria-hidden />
+                <ChevronDown
+                  className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
+                  style={{ color: "#9A9AA0" }}
+                  aria-hidden
+                />
               </summary>
-              <div className="space-y-2.5 border-t border-border-light px-3 pb-3 pt-3">
+              <div
+                className="space-y-3 px-[18px] py-[18px]"
+                style={{ borderTop: "0.5px solid #E4E4E8" }}
+              >
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Report file</label>
+                  <label
+                    className="block text-[11px] font-medium uppercase mb-[6px]"
+                    style={{ color: "#020040", letterSpacing: "0.6px" }}
+                  >
+                    Report file
+                  </label>
                   <input
                     id="manual-report-file"
                     type="file"
@@ -4854,11 +5153,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     className="sr-only"
                     onChange={(e) => setManualReportFile(e.target.files?.[0] ?? null)}
                   />
-                  <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/40 p-3">
-                    <div className="flex items-center gap-2">
+                  <div
+                    className="rounded-[8px] p-3 bg-white"
+                    style={{ border: "0.5px dashed #D8D8DD" }}
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
                       <label
                         htmlFor="manual-report-file"
-                        className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30 hover:bg-surface-hover transition-colors"
+                        className="inline-flex items-center gap-2 rounded-[6px] bg-white px-3 py-[6px] text-[12px] font-medium cursor-pointer"
+                        style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                        onMouseEnter={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FAFAFB")}
+                        onMouseLeave={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FFFFFF")}
                       >
                         <Upload className="h-3.5 w-3.5" />
                         {manualReportFile ? "Change file" : "Choose file"}
@@ -4867,42 +5172,78 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <button
                           type="button"
                           onClick={() => setManualReportFile(null)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+                          className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-[11px]"
+                          style={{ color: "#6B6B70", border: "0.5px solid #D8D8DD" }}
                         >
                           <X className="h-3 w-3" /> Remove
                         </button>
                       )}
                     </div>
-                    <p className="mt-2 text-xs text-text-tertiary truncate">{manualReportFile?.name ?? "No file selected"}</p>
+                    <p className="mt-2 text-[11px] truncate" style={{ color: "#6B6B70" }}>
+                      {manualReportFile?.name ?? "No file selected"}
+                    </p>
                   </div>
-                  <p className="text-[11px] text-text-tertiary mt-1">Supported: PDF, DOC, DOCX or images (max 10MB).</p>
+                  <p className="text-[11px] mt-[6px]" style={{ color: "#6B6B70" }}>
+                    Supported: PDF, DOC, DOCX or images (max 10MB).
+                  </p>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Ops notes (recommended)</label>
+                  <label
+                    className="block text-[11px] font-medium uppercase mb-[6px]"
+                    style={{ color: "#020040", letterSpacing: "0.6px" }}
+                  >
+                    Ops notes (recommended)
+                  </label>
                   <textarea
                     value={manualReportNotes}
                     onChange={(e) => setManualReportNotes(e.target.value)}
                     rows={3}
                     placeholder="Add context, what was done, issues found, materials used, safety notes..."
-                    className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    className="w-full rounded-[8px] px-3 py-[10px] text-[13px] outline-none bg-white"
+                    style={{
+                      border: "0.5px solid #D8D8DD",
+                      color: "#020040",
+                      fontFamily: "inherit",
+                      lineHeight: 1.5,
+                    }}
                   />
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    loading={analyzingManualReport}
-                    disabled={!manualReportFile}
-                    icon={<Upload className="h-3.5 w-3.5" />}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    disabled={!manualReportFile || analyzingManualReport}
                     onClick={() => void handleManualReportAnalyze()}
+                    className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ background: "#020040" }}
+                    onMouseEnter={(e) => {
+                      if (!(e.currentTarget as HTMLButtonElement).disabled)
+                        (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+                    }}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
                   >
-                    Upload & Analyze
-                  </Button>
-                  {manualReportFile && <span className="text-xs text-text-tertiary truncate">{manualReportFile.name}</span>}
+                    <Upload className="h-3.5 w-3.5" />
+                    {analyzingManualReport ? "Analyzing…" : "Upload & analyze"}
+                  </button>
+                  {manualReportFile && (
+                    <span className="text-[11px] truncate" style={{ color: "#6B6B70" }}>
+                      {manualReportFile.name}
+                    </span>
+                  )}
                 </div>
                 {manualReportResult && (
-                  <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
-                    <p className="text-xs font-semibold text-text-secondary mb-1">AI response</p>
-                    <pre className="text-xs whitespace-pre-wrap text-text-primary">{manualReportResult}</pre>
+                  <div
+                    className="rounded-[8px] p-3"
+                    style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+                  >
+                    <p
+                      className="text-[11px] font-medium uppercase mb-[6px]"
+                      style={{ color: "#020040", letterSpacing: "0.6px" }}
+                    >
+                      AI response
+                    </p>
+                    <pre className="text-[12px] whitespace-pre-wrap" style={{ color: "#020040" }}>
+                      {manualReportResult}
+                    </pre>
                   </div>
                 )}
               </div>
@@ -5226,7 +5567,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-2 shadow-sm dark:border-emerald-500/25 dark:bg-emerald-950/20">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Cash in — client</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash in — client</span>
                     <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
                       {amountDue > 0.02 ? "Pending" : "Settled"}
                     </Badge>
@@ -5249,7 +5590,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   )}
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
                     {cashInExtraRows.map((row) => (
                       <div key={row.key} className="flex items-center justify-between gap-2 py-1 text-xs">
                         <span className="text-text-secondary">{row.label}</span>
@@ -5355,7 +5696,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="rounded-lg border border-rose-200/80 bg-rose-50/45 p-2 shadow-sm dark:border-rose-500/25 dark:bg-rose-950/20">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Cash out — partner</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash out — partner</span>
                     <Badge variant={partnerPayRemaining > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
                       {partnerPayRemaining > 0.02 ? "Pending" : "Settled"}
                     </Badge>
@@ -5369,7 +5710,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </div>
                 <div className="space-y-2 text-xs">
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
                     {cashOutExtraRows.map((row) => (
                       <div key={row.key} className="py-1">
                         <div className="flex items-center justify-between gap-2 text-xs">
@@ -5595,7 +5936,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="space-y-1.5 border-t border-border-light pt-2 dark:border-[#2f3642]">
                 <div className="flex items-end justify-between gap-2">
                   <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Net margin</p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Net margin</p>
+                      {marginAppearance.low ? (
+                        <span className="group relative inline-flex">
+                          <span
+                            tabIndex={0}
+                            aria-label="Margin below target — click for details"
+                            className="inline-flex h-[14px] w-[14px] items-center justify-center rounded-full bg-red-100 text-red-600 text-[10px] font-bold leading-none dark:bg-red-950/50 dark:text-red-400"
+                          >
+                            !
+                          </span>
+                          <span
+                            role="tooltip"
+                            className="pointer-events-none invisible absolute bottom-full left-1/2 z-[60] mb-1 w-52 -translate-x-1/2 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1.5 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                          >
+                            Net margin is below {JOB_DETAIL_HEALTHY_MARGIN_PCT}% — review the partner cost or raise the client price before approving.
+                          </span>
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="text-xl font-bold tabular-nums tracking-tight text-text-primary">{formatCurrency(profit)}</p>
                   </div>
                   <p className={cn("text-xl font-bold tabular-nums tracking-tight", marginAppearance.pctClass)}>{marginPct}%</p>
@@ -5871,253 +6231,89 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       </div>
       </div>
 
-      <Modal
-        open={validateCompleteOpen}
+      <FinalReviewModal
+        isOpen={validateCompleteOpen}
         onClose={() => {
           if (validatingComplete) return;
           setValidateCompleteOpen(false);
           setOwnerApprovalChecked(false);
           setForceApprovalChecked(false);
           setForceApprovalReason("");
+          setSentToAccountsChecked(false);
           setApprovalBilledHoursInput("");
         }}
-        title={approvalMode === "review_approve" ? "Review and approve" : "Validate and complete"}
-        subtitle={`${job.reference} — review before approval`}
-        size="lg"
-        className="max-w-5xl"
-      >
-        <div className="p-4 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="rounded-xl border border-border-light bg-card p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total price</p>
-              <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(approvalBillableRevenue)}</p>
-              {approvalEffectiveCustomerDue > 0.02 ? (
-                <p className="text-[11px] font-semibold text-amber-600 mt-1">Amount due: {formatCurrency(approvalEffectiveCustomerDue)}</p>
-              ) : approvalInvoiceShowsPaid ? (
-                <p className="text-[11px] font-semibold text-emerald-600 mt-1">Client invoice paid — collections satisfied for close.</p>
-              ) : null}
-            </div>
-            <div className="rounded-xl border border-border-light bg-card p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner cost</p>
-              <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(approvalPartnerCap)}</p>
-              <p className="text-[11px] text-text-tertiary mt-1">Total partner payout cap</p>
-            </div>
-            <div className="rounded-xl border border-border-light bg-card p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Operating margin</p>
-              <p className={cn("text-2xl font-bold mt-1", approvalProfit >= 0 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalProfit)}</p>
-              <p className="text-[11px] text-text-tertiary mt-1">{formatCurrency(approvalProfit)} / {Math.max(0, approvalMarginPct).toFixed(1)}%</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="rounded-xl border border-border-light bg-card p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client extra charges</p>
-                <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
-                  Included in total price · <span className="font-mono text-[10px] text-text-secondary">extras_amount</span>
-                  {" "}(add-ons / upsells; CCZ or parking may be folded in here).
-                </p>
-              </div>
-              <p
-                className={cn(
-                  "text-xl sm:text-2xl font-bold tabular-nums shrink-0 text-right",
-                  approvalClientExtrasAmount > 0.02 ? "text-emerald-600" : "text-text-tertiary",
-                )}
-              >
-                {approvalClientExtrasAmount > 0.02 ? `+${formatCurrency(approvalClientExtrasAmount)}` : "—"}
-              </p>
-            </div>
-            <div className="rounded-xl border border-border-light bg-card p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner extra payout</p>
-                <p className="text-[11px] text-text-tertiary mt-1 leading-snug">
-                  On top of base labour cap · <span className="font-mono text-[10px] text-text-secondary">partner_extras_amount</span>
-                  {" "}or hourly vs cap delta (same as Cash Out breakdown).
-                </p>
-              </div>
-              <p
-                className={cn(
-                  "text-xl sm:text-2xl font-bold tabular-nums shrink-0 text-right",
-                  approvalPartnerExtrasSplit.extra > 0.02 ? "text-emerald-600" : "text-text-tertiary",
-                )}
-              >
-                {approvalPartnerExtrasSplit.extra > 0.02 ? `+${formatCurrency(approvalPartnerExtrasSplit.extra)}` : "—"}
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Finance</p>
-              <div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">Client payment: Paid</span>
-                  <span className="font-semibold text-text-primary">{formatCurrency(customerPaidTotal)}</span>
-                </div>
-                <Progress value={approvalCustomerPaidPct} className="h-2 mt-2" />
-                <div className="flex items-center justify-between text-xs mt-1">
-                  <span className="text-text-secondary">Client payment: Due</span>
-                  <span className={cn("font-semibold", approvalEffectiveCustomerDue <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalEffectiveCustomerDue)}</span>
-                </div>
-              </div>
-              <div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">Partner payment: Paid</span>
-                  <span className="font-semibold text-text-primary">{formatCurrency(partnerPaidTotal)}</span>
-                </div>
-                <Progress value={approvalPartnerPaidPct} className="h-2 mt-2" />
-                <div className="flex items-center justify-between text-xs mt-1">
-                  <span className="text-text-secondary">Partner payment: Due</span>
-                  <span className={cn("font-semibold", approvalPartnerPayRemaining <= 0.02 ? "text-emerald-600" : "text-red-600")}>{formatCurrency(approvalPartnerPayRemaining)}</span>
-                </div>
-              </div>
-              {job.job_type === "hourly" ? (
-                <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 space-y-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Final billed hours confirmation</p>
-                  <div className="flex items-end gap-2">
-                    <div className="flex-1">
-                      <label className="block text-[10px] text-text-tertiary mb-1">Final billed hours</label>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.5"
-                        value={approvalBilledHoursInput}
-                        onChange={(e) => setApprovalBilledHoursInput(e.target.value)}
-                        className="h-9 text-sm"
-                      />
-                    </div>
-                    <div className="text-[11px] text-text-tertiary pb-1">
-                      Confirm total hours before approve
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              <p className="text-[10px] text-text-tertiary px-1 leading-snug">
-                Client invoice is created or updated on approve. Partner self-bill links when the database allows; otherwise use Finance or this job’s self-bill section. Totals use the figures stored on the job (adjust hourly/timer on the job page if needed).
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Job summary</p>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">Client invoice</span>
-                  <span className={cn("font-semibold", job.invoice_id ? "text-emerald-600" : "text-red-600")}>{job.invoice_id ? "Ready" : "Not linked"}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">Partner self-bill</span>
-                  <span className={cn("font-semibold", job.self_bill_id ? "text-emerald-600" : "text-amber-600")}>
-                    {job.self_bill_id ? "Linked (weekly Mon–Sun)" : "Not linked"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">All reports uploaded</span>
-                  <span className={cn("font-semibold", reportsUploaded ? "text-emerald-600" : "text-red-600")}>{reportsUploaded ? "Complete" : "Incomplete"}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">All reports approved</span>
-                  <span className={cn("font-semibold", reportsApproved ? "text-emerald-600" : "text-red-600")}>{reportsApproved ? "Complete" : "Incomplete"}</span>
-                </div>
-              </div>
-              <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs">
-                <p className="text-text-tertiary">Next status</p>
-                <p className="font-semibold text-text-primary mt-0.5">{approvalEffectiveCustomerDue > 0.02 || approvalPartnerPayRemaining > 0.02 ? "Awaiting payment" : "Completed & paid"}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Reports</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {phaseIndexes.map((n) => {
-                const uploaded = Boolean(job[`report_${n}_uploaded` as keyof Job]);
-                const approved = Boolean(job[`report_${n}_approved` as keyof Job]);
-                return (
-                  <div key={n} className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs text-text-secondary">
-                    <p className="font-medium text-text-primary">Report {n}</p>
-                    <p className={cn(uploaded ? "text-emerald-600" : "text-red-600")}>{uploaded ? "Uploaded" : "Missing upload"}</p>
-                    <p className={cn(approved ? "text-emerald-600" : "text-red-600")}>{approved ? "Approved" : "Pending approval"}</p>
-                  </div>
-                );
-              })}
-            </div>
-            <p className="text-xs text-text-tertiary">{reportMediaUrls.length > 0 ? `${reportMediaUrls.length} report image(s) attached.` : "No report image files found yet."}</p>
-          </div>
-
-          <div className="rounded-xl border border-border-light bg-surface-hover/30 p-3">
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input type="checkbox" className="mt-0.5 h-4 w-4" checked={ownerApprovalChecked} onChange={(e) => setOwnerApprovalChecked(e.target.checked)} />
-              <span className="text-xs text-text-secondary">{ownerAttestationText}</span>
-            </label>
-          </div>
-          {!mandatoryChecksOk && (
-            <div className="rounded-xl border border-amber-300/60 bg-amber-50/40 dark:bg-amber-950/10 p-3 space-y-3">
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4"
-                  checked={forceApprovalChecked}
-                  onChange={(e) => {
-                    const on = e.target.checked;
-                    setForceApprovalChecked(on);
-                    if (!on) setForceApprovalReason("");
-                  }}
-                />
-                <span className="text-xs text-amber-700 dark:text-amber-300">
-                  Force approve: allow Review & approve even when mandatory checks are incomplete.
-                </span>
-              </label>
-              {forceApprovalChecked ? (
-                <div>
-                  <label className="block text-[10px] font-medium text-amber-800 dark:text-amber-200 mb-1.5">
-                    Reason (required)
-                  </label>
-                  <textarea
-                    value={forceApprovalReason}
-                    onChange={(e) => setForceApprovalReason(e.target.value)}
-                    rows={3}
-                    required
-                    placeholder="Explain why you are approving without completing all mandatory checks…"
-                    className="w-full rounded-lg border border-amber-200/80 dark:border-amber-800/60 bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400/40 resize-y min-h-[72px]"
-                  />
-                </div>
-              ) : null}
-            </div>
-          )}
-          <p className="text-xs text-text-tertiary">
-            Approve updates the client invoice first, then attempts partner self-bill linkage, then moves the job to Awaiting payment or Completed &amp; paid.
-          </p>
-          {!mandatoryChecksOk && !forceApprovalChecked ? (
-            <p className="text-xs text-red-600">
-              Mandatory before approval: all phase reports uploaded + approved, and owner authorization checked.
-            </p>
-          ) : null}
-          {!mandatoryChecksOk && forceApprovalChecked ? (
-            <p className="text-xs text-amber-600">
-              Force approve enabled: your reason is saved on the job and in command history.
-            </p>
-          ) : null}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              variant="outline"
-              type="button"
-              disabled={validatingComplete}
-              onClick={() => {
-                setValidateCompleteOpen(false);
-                setOwnerApprovalChecked(false);
-                setForceApprovalChecked(false);
-                setForceApprovalReason("");
-                setApprovalBilledHoursInput("");
+        jobId={job.reference}
+        jobTitle={job.title ?? ""}
+        clientName={job.client_name ?? ""}
+        partnerName={job.partner_name ?? ""}
+        currentUserName={attestationDisplayName}
+        jobValue={approvalBillableRevenue}
+        partnerPayout={approvalPartnerCap}
+        margin={approvalProfit}
+        marginPct={Math.max(0, approvalMarginPct)}
+        received={customerPaidTotal}
+        paidOut={partnerPaidTotal}
+        clientOutstanding={approvalEffectiveCustomerDue}
+        partnerOutstanding={approvalPartnerPayRemaining}
+        invoiceStatus={job.invoice_id ? "issued" : "pending"}
+        selfBillStatus={job.self_bill_id ? "issued" : "pending"}
+        invoiceReference={approvalPrimaryInvoice?.reference ?? null}
+        selfBillReference={jobSelfBill?.reference ?? null}
+        reports={phaseIndexes.map<ReportItem>((n) => ({
+          id: `report-${n}`,
+          name: `Report ${n}`,
+          uploaded: Boolean(job[`report_${n}_uploaded` as keyof Job]),
+          approved: Boolean(job[`report_${n}_approved` as keyof Job]),
+        }))}
+        confirmed={ownerApprovalChecked}
+        onConfirmedChange={setOwnerApprovalChecked}
+        sentToAccounts={sentToAccountsChecked}
+        onSentToAccountsChange={setSentToAccountsChecked}
+        forceMode={forceApprovalChecked}
+        onForceModeChange={setForceApprovalChecked}
+        forceReason={forceApprovalReason}
+        onForceReasonChange={setForceApprovalReason}
+        submitting={validatingComplete}
+        onApprove={() => {
+          setForceApprovalChecked(false);
+          setForceApprovalReason("");
+          void handleValidateAndComplete();
+        }}
+        onForceApprove={() => void handleValidateAndComplete()}
+        hourlySlot={
+          job.job_type === "hourly" ? (
+            <div
+              className="rounded-[10px] flex items-end gap-3"
+              style={{
+                background: "#FAFAFB",
+                border: "0.5px solid #E4E4E7",
+                padding: "10px 12px",
               }}
             >
-              Cancel
-            </Button>
-            <Button type="button" loading={validatingComplete} disabled={!canSubmitApproval} onClick={() => void handleValidateAndComplete()}>
-              {approvalMode === "review_approve" ? "Review & approve" : "Approve and continue"}
-            </Button>
-          </div>
-        </div>
-      </Modal>
+              <div className="flex-1">
+                <label
+                  className="block text-[10px] font-medium uppercase mb-1"
+                  style={{ color: "#6B6B70", letterSpacing: "0.5px" }}
+                >
+                  Final billed hours
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.5"
+                  value={approvalBilledHoursInput}
+                  onChange={(e) => setApprovalBilledHoursInput(e.target.value)}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <p className="text-[11px] pb-[9px]" style={{ color: "#6B6B70" }}>
+                Confirm before finalise
+              </p>
+            </div>
+          ) : null
+        }
+      />
+
 
       <Modal
         open={putOnHoldOpen}
@@ -6385,7 +6581,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
               {fixedSwitchPreview ? (
                 <div className="rounded-lg border border-border-light bg-surface-hover/40 p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Confirm fixed values</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Confirm fixed values</p>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                     <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
                       <p className="text-text-tertiary">Client value (sale)</p>
@@ -6625,7 +6821,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             )}
           </div>
           <div ref={partnerCostSectionRef} className="space-y-3 border-t border-border-light pt-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">Rate & cost</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Rate & cost</p>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
