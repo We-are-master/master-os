@@ -8,6 +8,8 @@ export interface PortalUserRow {
   email: string;
   full_name: string | null;
   is_active: boolean;
+  /** Optional link to a contact (`clients` row) for this account — drives request contact when set. */
+  contact_id?: string | null;
 }
 
 export interface PortalAuthResult {
@@ -47,7 +49,7 @@ export async function requirePortalUser(): Promise<PortalAuthResult | NextRespon
 
   const { data: row, error: rowErr } = await supabase
     .from("account_portal_users")
-    .select("id, account_id, email, full_name, is_active")
+    .select("id, account_id, email, full_name, is_active, contact_id")
     .eq("id", user.id)
     .maybeSingle();
 

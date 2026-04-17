@@ -1,9 +1,10 @@
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { staggerContainer, tableRowVariant } from "@/lib/motion";
-import { ChevronLeft, ChevronRight, Minus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Minus, SlidersHorizontal } from "lucide-react";
 
 export interface Column<T> {
   key: string;
@@ -29,6 +30,9 @@ interface DataTableProps<T> {
   page?: number;
   totalPages?: number;
   totalItems?: number;
+  pageSize?: number;
+  pageSizeOptions?: number[];
+  onPageSizeChange?: (size: number) => void;
   onPageChange?: (page: number) => void;
   className?: string;
   selectable?: boolean;
@@ -37,6 +41,10 @@ interface DataTableProps<T> {
   bulkActions?: React.ReactNode;
   /** Applied to the inner `<table>` so wide tables scroll horizontally instead of crushing cells. */
   tableClassName?: string;
+  /** Enables per-table column picker (saved in localStorage by key + scope). */
+  columnConfigKey?: string;
+  /** Optional scope (e.g. active tab id) appended to storage key. */
+  columnConfigScope?: string;
 }
 
 function Checkbox({ checked, indeterminate, onChange, className }: {
@@ -80,6 +88,9 @@ export function DataTable<T>({
   page = 1,
   totalPages,
   totalItems,
+  pageSize = 10,
+  pageSizeOptions,
+  onPageSizeChange,
   onPageChange,
   className,
   selectable = false,
@@ -87,7 +98,67 @@ export function DataTable<T>({
   onSelectionChange,
   bulkActions,
   tableClassName,
+  columnConfigKey,
+  columnConfigScope,
 }: DataTableProps<T>) {
+  const configStorageKey = columnConfigKey
+    ? `${columnConfigKey}:${columnConfigScope ?? "default"}`
+    : null;
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const columnMenuRef = useRef<HTMLDivElement | null>(null);
+  const supportsColumnConfig = Boolean(configStorageKey) && columns.length > 1;
+
+  useEffect(() => {
+    if (!configStorageKey) {
+      setHiddenColumns(new Set());
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(configStorageKey);
+      if (!raw) {
+        setHiddenColumns(new Set());
+        return;
+      }
+      const parsed = JSON.parse(raw) as string[];
+      const allowed = new Set(columns.map((c) => c.key));
+      const next = new Set((parsed ?? []).filter((k) => allowed.has(k)));
+      if (next.size >= columns.length) {
+        setHiddenColumns(new Set());
+      } else {
+        setHiddenColumns(next);
+      }
+    } catch {
+      setHiddenColumns(new Set());
+    }
+  }, [configStorageKey, columns]);
+
+  useEffect(() => {
+    if (!columnMenuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!columnMenuRef.current) return;
+      if (!columnMenuRef.current.contains(e.target as Node)) setColumnMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [columnMenuOpen]);
+
+  const visibleColumns = useMemo(() => {
+    if (!supportsColumnConfig) return columns;
+    const next = columns.filter((c) => !hiddenColumns.has(c.key));
+    return next.length > 0 ? next : columns;
+  }, [columns, hiddenColumns, supportsColumnConfig]);
+
+  const setHiddenAndPersist = (next: Set<string>) => {
+    setHiddenColumns(next);
+    if (!configStorageKey) return;
+    try {
+      localStorage.setItem(configStorageKey, JSON.stringify([...next]));
+    } catch {
+      // ignore
+    }
+  };
+
   const allIds = data.map((item, i) => getRowId?.(item) ?? String(i));
   const allSelected = selectable && allIds.length > 0 && allIds.every((id) => selectedIds?.has(id));
   const someSelected = selectable && allIds.some((id) => selectedIds?.has(id));
@@ -145,7 +216,7 @@ export function DataTable<T>({
         )}
       </AnimatePresence>
 
-      <div className="overflow-x-auto -mx-px sm:mx-0">
+      <div className="overflow-x-auto -mx-px sm:mx-0 relative">
         <table className={cn("w-full min-w-[1080px]", tableClassName)}>
           <thead>
             <tr className="border-b border-border-light">
@@ -158,7 +229,7 @@ export function DataTable<T>({
                   />
                 </th>
               )}
-              {columns.map((col) => (
+              {visibleColumns.map((col) => (
                 <th
                   key={col.key}
                   style={{
@@ -174,6 +245,51 @@ export function DataTable<T>({
                   {col.label}
                 </th>
               ))}
+              {supportsColumnConfig ? (
+                <th className="w-10 px-2 py-3 text-right relative">
+                  <div className="inline-block" ref={columnMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setColumnMenuOpen((v) => !v)}
+                      className="h-7 w-7 rounded-md inline-flex items-center justify-center text-text-tertiary hover:text-text-secondary hover:bg-surface-hover"
+                      title="Choose columns"
+                      aria-label="Choose table columns"
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                    </button>
+                    {columnMenuOpen ? (
+                      <div className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-border-light bg-card shadow-lg p-3 space-y-2">
+                        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Columns</p>
+                        <div className="max-h-56 overflow-auto space-y-1.5">
+                          {columns.map((col) => {
+                            const checked = !hiddenColumns.has(col.key);
+                            const visibleCount = columns.length - hiddenColumns.size;
+                            const disableUncheck = checked && visibleCount <= 1;
+                            return (
+                              <label key={col.key} className="flex items-center gap-2 text-xs text-text-secondary">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={disableUncheck}
+                                  onChange={() => {
+                                    const next = new Set(hiddenColumns);
+                                    if (checked) next.add(col.key);
+                                    else next.delete(col.key);
+                                    if (next.size >= columns.length) return;
+                                    setHiddenAndPersist(next);
+                                  }}
+                                  className="h-4 w-4 rounded border-border"
+                                />
+                                <span className="truncate" title={col.label}>{col.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </th>
+              ) : null}
             </tr>
           </thead>
           <AnimatePresence mode="wait">
@@ -186,7 +302,7 @@ export function DataTable<T>({
                         <div className="h-4 w-4 bg-surface-tertiary rounded animate-shimmer" />
                       </td>
                     )}
-                    {columns.map((col, j) => (
+                    {visibleColumns.map((col, j) => (
                       <td key={col.key} className="px-3 sm:px-5 py-4">
                         {/* Deterministic width: Math.random() breaks SSR/client hydration */}
                         <div
@@ -201,7 +317,7 @@ export function DataTable<T>({
             ) : data.length === 0 ? (
               <tbody>
                 <tr>
-                  <td colSpan={columns.length + (selectable ? 1 : 0)} className="px-5 py-16 text-center">
+                  <td colSpan={visibleColumns.length + (selectable ? 1 : 0) + (supportsColumnConfig ? 1 : 0)} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-2">
                       <div className="h-12 w-12 rounded-xl bg-surface-tertiary flex items-center justify-center">
                         <svg className="h-6 w-6 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -244,7 +360,7 @@ export function DataTable<T>({
                           <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
                         </td>
                       )}
-                      {columns.map((col) => (
+                      {visibleColumns.map((col) => (
                         <td
                           key={col.key}
                           style={{ minWidth: col.minWidth ?? col.width }}
@@ -268,12 +384,30 @@ export function DataTable<T>({
         </table>
       </div>
 
-      {totalPages && totalPages > 1 && (
+      {(totalPages && totalPages > 1) || (onPageSizeChange && totalItems != null) ? (
         <div className="flex items-center justify-between px-5 py-3 border-t border-border-light">
           <p className="text-xs text-text-tertiary">
-            Showing {(page - 1) * 10 + 1}-{Math.min(page * 10, totalItems ?? 0)} of {totalItems}
+            Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalItems ?? 0)} of {totalItems}
           </p>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-3">
+            {onPageSizeChange && (pageSizeOptions?.length ?? 0) > 0 ? (
+              <label className="flex items-center gap-1.5 text-xs text-text-tertiary">
+                <span>Rows</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => onPageSizeChange(Number(e.target.value))}
+                  className="h-8 rounded-lg border border-border bg-card px-2 text-xs text-text-secondary"
+                >
+                  {pageSizeOptions!.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {totalPages && totalPages > 1 ? (
+            <div className="flex items-center gap-1">
             <button
               onClick={() => onPageChange?.(page - 1)}
               disabled={page <= 1}
@@ -305,9 +439,11 @@ export function DataTable<T>({
             >
               <ChevronRight className="h-4 w-4" />
             </button>
+            </div>
+            ) : null}
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

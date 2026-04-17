@@ -81,9 +81,11 @@ export async function POST(req: NextRequest) {
   }
 
   const email            = String(form.get("email")            ?? "").trim().toLowerCase();
+  const phone            = String(form.get("phone")            ?? "").trim();
   const password         = String(form.get("password")         ?? "").trim();
   const fullName         = String(form.get("fullName")         ?? "").trim();
   const companyName      = String(form.get("companyName")      ?? "").trim();
+  const address          = String(form.get("address")          ?? "").trim();
   const tradesRaw        = String(form.get("trades")           ?? "").trim();
   const trades           = tradesRaw ? tradesRaw.split(",").map((t) => t.trim()).filter(Boolean) : [];
   const servicesProvided = String(form.get("servicesProvided") ?? "").trim();
@@ -94,6 +96,12 @@ export async function POST(req: NextRequest) {
 
   if (!email || !password || !fullName) {
     return NextResponse.json({ error: "Name, email and password are required." }, { status: 400 });
+  }
+  if (!phone || phone.replace(/\s+/g, "").length < 7) {
+    return NextResponse.json({ error: "A valid WhatsApp number is required." }, { status: 400 });
+  }
+  if (!address || address.length < 10) {
+    return NextResponse.json({ error: "A full address (street, city and postcode) is required." }, { status: 400 });
   }
   if (password.length < 8) {
     return NextResponse.json(
@@ -219,17 +227,18 @@ export async function POST(req: NextRequest) {
   const { data: partnerRow, error: partnerErr } = await supabase
     .from("partners")
     .insert({
-      company_name: companyName || fullName,
-      contact_name: fullName,
+      company_name:    companyName || fullName,
+      contact_name:    fullName,
       email,
-      phone:        null,
-      trade:        trades[0] || "General",
-      trades:       trades.length > 0 ? trades : null,
-      status:       "onboarding",
-      location:     "UK",
-      auth_user_id: userId,
-      utr:          utr || null,
-      verified:     false,
+      phone:           phone || null,
+      partner_address: address || null,
+      trade:           trades[0] || "General",
+      trades:          trades.length > 0 ? trades : null,
+      status:          "onboarding",
+      location:        "UK",
+      auth_user_id:    userId,
+      utr:             utr || null,
+      verified:        false,
     })
     .select("id")
     .single();

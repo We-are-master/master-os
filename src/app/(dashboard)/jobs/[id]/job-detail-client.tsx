@@ -5,6 +5,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { formatDistanceStrict } from "date-fns/formatDistanceStrict";
+import { differenceInCalendarDays } from "date-fns/differenceInCalendarDays";
 import { parseISO } from "date-fns/parseISO";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  ChevronLeft,
   ChevronDown,
   ClipboardCheck,
   Search,
@@ -29,14 +31,27 @@ import {
   CreditCard,
   FileText,
   HardHat,
+  Hammer,
+  Zap,
+  Droplets,
+  Paintbrush,
+  Sparkles,
+  Wrench,
+  Leaf,
+  KeyRound,
+  Grid3x3,
+  Briefcase,
   Upload,
   ShieldCheck,
   Plus,
   ImagePlus,
   ExternalLink,
+  Info,
   AlertTriangle,
   PauseCircle,
   RefreshCw,
+  Clock,
+  Lock,
   Timer,
   X,
   Pencil,
@@ -44,9 +59,11 @@ import {
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import { getJob, getJobDetailBundle, updateJob } from "@/services/jobs";
+import { getClient } from "@/services/clients";
+import { getAccount } from "@/services/accounts";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { listQuoteLineItems } from "@/services/quotes";
-import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob, syncSelfBillAfterJobChange } from "@/services/self-bills";
+import { createSelfBillFromJob, getSelfBill, listSelfBillsLinkedToJob, syncSelfBillAfterJobChange, updateSelfBillStatus } from "@/services/self-bills";
 import { listJobPayments, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { listPartners } from "@/services/partners";
@@ -66,7 +83,7 @@ import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
-import type { CatalogService, Invoice, Job, JobPayment, Partner, QuoteLineItem, SelfBill } from "@/types/database";
+import type { CatalogService, Invoice, Job, JobPayment, JobPaymentMethod, Partner, QuoteLineItem, SelfBill } from "@/types/database";
 import { listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
@@ -75,6 +92,7 @@ import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-pa
 import {
   allConfiguredReportsApproved,
   canAdvanceJob,
+  getPreviousJobStatus,
   canApproveReport,
   canMarkReportUploaded,
   canSendReportAndRequestFinalPayment,
@@ -152,6 +170,7 @@ import {
   type JobMoneySubmitPayload,
 } from "@/components/jobs/job-money-drawer";
 import { executeJobMoneyAction } from "@/services/job-money-actions";
+import { reverseCustomerExtraPatch, reversePartnerExtraPatch } from "@/lib/job-extra-charges";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
@@ -177,10 +196,123 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
 };
 
+const PUT_ON_HOLD_PRESET_REASONS = [
+  "Waiting for materials",
+  "Client rescheduled",
+  "Access issue",
+  "Partner unavailable",
+  "Awaiting confirmation",
+  "Other",
+] as const;
+
+const PUT_ON_HOLD_REASON_OPTIONS = [
+  { value: "", label: "Select a reason..." },
+  ...PUT_ON_HOLD_PRESET_REASONS.map((r) => ({ value: r, label: r })),
+];
+
+/** Neutral fields + brand focus ring (replaces one-off beige / mint hex pairs). */
+const JOB_DETAIL_MULTILINE_FIELD_CLASS =
+  "w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm leading-tight text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:bg-surface focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:bg-surface dark:focus:ring-primary/35";
+
+const JOB_DETAIL_INLINE_INPUT_FIELD_CLASS =
+  "rounded-lg border border-border bg-card py-2 text-sm text-text-primary placeholder:text-text-tertiary shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-surface-secondary dark:focus:ring-primary/35";
+
+function jobDetailMarginAppearance(marginPct: number): { pctClass: string; barClass: string } {
+  if (marginPct < 0) {
+    return { pctClass: "text-red-600 dark:text-red-400", barClass: "bg-red-500" };
+  }
+  if (marginPct < 15) {
+    return { pctClass: "text-amber-600 dark:text-amber-400", barClass: "bg-amber-500" };
+  }
+  return { pctClass: "text-emerald-600 dark:text-emerald-400", barClass: "bg-primary" };
+}
+
+function getStatusColors(status: string): {
+  healthBarClass: string;
+  activeStepDotClass: string;
+  activeStepLabelClass: string;
+  topBadgeClass: string;
+  completedAllSteps: boolean;
+} {
+  const s = status.trim().toLowerCase();
+  if (s === "on_hold") {
+    return {
+      healthBarClass: "bg-[#d97706]",
+      activeStepDotClass: "bg-[#fef3c7] border-[#d97706] text-[#d97706]",
+      activeStepLabelClass: "text-[#d97706] font-semibold",
+      topBadgeClass: "bg-[#fef3c7] text-[#92400e] border border-[#d97706]",
+      completedAllSteps: false,
+    };
+  }
+  if (s === "awaiting_payment") {
+    return {
+      healthBarClass: "bg-[#d97706]",
+      activeStepDotClass: "bg-[#fef3c7] border-[#d97706] text-[#d97706]",
+      activeStepLabelClass: "text-[#d97706] font-semibold",
+      topBadgeClass: "",
+      completedAllSteps: false,
+    };
+  }
+  if (s === "cancelled") {
+    return {
+      healthBarClass: "bg-red-600",
+      activeStepDotClass: "bg-red-50 border-red-600 text-red-600 dark:bg-red-950/40 dark:border-red-500 dark:text-red-400",
+      activeStepLabelClass: "text-red-600 dark:text-red-400 font-semibold",
+      topBadgeClass: "bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/30 dark:text-red-200 dark:border-red-800",
+      completedAllSteps: false,
+    };
+  }
+  if (s === "completed") {
+    return {
+      healthBarClass: "bg-emerald-600",
+      activeStepDotClass: "bg-emerald-600 border-emerald-600 text-white",
+      activeStepLabelClass: "text-emerald-700 dark:text-emerald-400 font-semibold",
+      topBadgeClass: "",
+      completedAllSteps: true,
+    };
+  }
+  return {
+    healthBarClass: "bg-emerald-600",
+    activeStepDotClass: "bg-emerald-600 border-emerald-600 text-white",
+    activeStepLabelClass: "text-emerald-700 dark:text-emerald-400 font-semibold",
+    topBadgeClass: "",
+    completedAllSteps: false,
+  };
+}
+
+function getJobTypeIcon(jobType: string): LucideIcon {
+  const t = jobType.toLowerCase();
+  if (t.includes("carpenter") || t.includes("carpentry")) return Hammer;
+  if (t.includes("electrician") || t.includes("electrical")) return Zap;
+  if (t.includes("plumber") || t.includes("plumbing")) return Droplets;
+  if (t.includes("painter") || t.includes("painting")) return Paintbrush;
+  if (t.includes("cleaner") || t.includes("cleaning")) return Sparkles;
+  if (t.includes("general maintenance") || t.includes("maintenance")) return Wrench;
+  if (t.includes("gardener") || t.includes("gardening")) return Leaf;
+  if (t.includes("locksmith")) return KeyRound;
+  if (t.includes("tiler") || t.includes("tiling")) return Grid3x3;
+  return Briefcase;
+}
+
+function getJobTypePillClass(jobType: string): string {
+  const t = jobType.toLowerCase();
+  if (t.includes("carpenter") || t.includes("carpentry")) return "bg-[#5b3a1a] text-white";
+  if (t.includes("electrician") || t.includes("electrical")) return "bg-[#3a2a00] text-[#ffd86b]";
+  if (t.includes("plumber") || t.includes("plumbing")) return "bg-[#0f3b66] text-[#d9ecff]";
+  if (t.includes("painter") || t.includes("painting")) return "bg-[#4f2d63] text-[#f3ddff]";
+  if (t.includes("cleaner") || t.includes("cleaning")) return "bg-[#0f4d3a] text-[#d5ffe8]";
+  if (t.includes("general maintenance") || t.includes("maintenance")) return "bg-[#1f2937] text-white";
+  if (t.includes("gardener") || t.includes("gardening")) return "bg-[#1f4d1f] text-[#dcffd9]";
+  if (t.includes("locksmith")) return "bg-[#3a3a3a] text-[#f5f5f5]";
+  if (t.includes("tiler") || t.includes("tiling")) return "bg-[#0f3e3e] text-[#d7ffff]";
+  return "bg-[#1a1a1a] text-white";
+}
+
 const selfBillStatusConfig: Record<
   string,
   { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
 > = {
+  draft: { label: "Draft", variant: "default" },
   accumulating: { label: "Open week", variant: "default" },
   pending_review: { label: "Review & approve", variant: "primary" },
   needs_attention: { label: "Needs attention", variant: "danger" },
@@ -192,6 +324,7 @@ const selfBillStatusConfig: Record<
 };
 
 function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
+  const [open, setOpen] = useState(false);
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
   const partnerFieldBill = sb.bill_origin !== "internal";
   const paymentDueYmd =
@@ -200,55 +333,97 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
     sb.week_start && sb.week_end
       ? `${sb.week_start} → ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
       : sb.week_label ?? sb.period;
+  const compactWeekLine =
+    sb.week_start && sb.week_end
+      ? `${sb.week_start} -> ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
+      : weekLine;
   const jobLabourOnBill = Math.round(partnerPaymentCap(job) * 100) / 100;
   const jobMaterialsOnBill = Math.round(Math.max(0, Number(job.materials_cost ?? 0)) * 100) / 100;
   const jobGrossOnBill = Math.round(partnerSelfBillGrossAmount(job) * 100) / 100;
   return (
-    <div className="rounded-lg border border-border-light p-3 space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-text-primary">{sb.reference}</p>
-        <Badge variant={st.variant} size="sm">{st.label}</Badge>
-      </div>
-      <p className="text-[11px] text-text-secondary truncate" title={sb.partner_name}>
-        Partner → us · {sb.partner_name}
-      </p>
-      <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
-      <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
-      <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
-        <div>
-          <p className="text-text-tertiary">Labour (this job)</p>
-          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobLabourOnBill)}</p>
-        </div>
-        <div>
-          <p className="text-text-tertiary">Materials (this job)</p>
-          <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobMaterialsOnBill)}</p>
-        </div>
-      </div>
-      <p className="text-[11px] text-text-tertiary pt-0.5 leading-snug">
-        Week: {weekLine} · {sb.jobs_count} job{sb.jobs_count === 1 ? "" : "s"} on this bill
-        {sb.jobs_count > 1 ? (
-          <>
-            {" "}
-            · Whole bill total {formatCurrency(sb.net_payout)}
-          </>
-        ) : null}
-        {" "}
-        Payouts on the job reduce amount due only; extra payout on the job increases this line.
-      </p>
-      {paymentDueYmd ? (
-        <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium pt-0.5">
-          Office payment due: {formatDate(paymentDueYmd)} (Friday after the week ends)
-        </p>
-      ) : null}
-      <div className="flex items-center gap-1.5 flex-wrap pt-1">
-        <Button
-          size="sm"
-          variant="outline"
-          icon={<FileText className="h-3 w-3" />}
-          onClick={() => window.open(`/api/self-bills/${sb.id}/pdf`, "_blank", "noopener,noreferrer")}
+    <div className="rounded-lg border border-border-light p-2">
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={open ? "Hide self-bill details" : "Show self-bill details"}
+          onClick={() => setOpen((v) => !v)}
+          className="shrink-0 rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary mt-0.5"
         >
-          PDF
-        </Button>
+          <ChevronDown className={cn("h-5 w-5 transition-transform duration-200", open && "rotate-180")} />
+        </button>
+        <div className="min-w-0 flex-1 space-y-1.5">
+          {!open ? (
+            <div className="flex items-start justify-between gap-2 pt-0.5">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-text-primary truncate">{sb.reference}</p>
+                <p className="text-[10px] text-text-tertiary mt-0.5 leading-tight">
+                  <span className="sm:hidden block break-words">Week {compactWeekLine}</span>
+                  <span className="hidden sm:block truncate" title={`Week ${weekLine}`}>Week {weekLine}</span>
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(jobGrossOnBill)}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<FileText className="h-3 w-3" />}
+                  onClick={() => window.open(`/api/self-bills/${sb.id}/pdf`, "_blank", "noopener,noreferrer")}
+                >
+                  PDF
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-text-primary">{sb.reference}</p>
+                <Badge variant={st.variant} size="sm">{st.label}</Badge>
+              </div>
+              <p className="text-[11px] text-text-secondary truncate" title={sb.partner_name}>
+                Partner → us · {sb.partner_name}
+              </p>
+              <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
+              <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
+              <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+                <div>
+                  <p className="text-text-tertiary">Labour (this job)</p>
+                  <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobLabourOnBill)}</p>
+                </div>
+                <div>
+                  <p className="text-text-tertiary">Materials (this job)</p>
+                  <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobMaterialsOnBill)}</p>
+                </div>
+              </div>
+              <p className="text-[11px] text-text-tertiary pt-0.5 leading-snug">
+                <span className="font-medium text-text-secondary">Week:</span> {weekLine} · {sb.jobs_count} job{sb.jobs_count === 1 ? "" : "s"} on this bill
+                {sb.jobs_count > 1 ? (
+                  <>
+                    {" "}
+                    · Whole bill total {formatCurrency(sb.net_payout)}
+                  </>
+                ) : null}
+                {" "}
+                Payouts on the job reduce amount due only; extra payout on the job increases this line.
+              </p>
+              {paymentDueYmd ? (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium pt-0.5">
+                  Office payment due: {formatDate(paymentDueYmd)} (Friday after the week ends)
+                </p>
+              ) : null}
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<FileText className="h-3 w-3" />}
+                  onClick={() => window.open(`/api/self-bills/${sb.id}/pdf`, "_blank", "noopener,noreferrer")}
+                >
+                  PDF
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -277,6 +452,36 @@ function extractReportMediaUrls(notes: string | null | undefined): string[] {
   return hits.filter((u) => /\.(png|jpe?g|webp|gif)$/i.test(u));
 }
 
+/** `https://wa.me/{digits}` — same rules as partners list (UK 07… → 44…). */
+function whatsAppHrefFromPhoneForJob(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null;
+  let d = raw.replace(/\D/g, "");
+  if (!d) return null;
+  if (d.startsWith("00")) d = d.slice(2);
+  if ((d.length === 10 || d.length === 11) && d.startsWith("0")) {
+    d = `44${d.slice(1)}`;
+  }
+  if (d.length < 8 || d.length > 15) return null;
+  return `https://wa.me/${d}`;
+}
+
+function JobHeaderWhatsAppIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
+    </svg>
+  );
+}
+
+function extractLastMarkedPaidBy(internalNotes: string | null | undefined): string | null {
+  const text = (internalNotes ?? "").trim();
+  if (!text) return null;
+  const matches = [...text.matchAll(/PAID_MARKED_BY::([^\n\r]+)/g)];
+  if (!matches.length) return null;
+  const who = matches[matches.length - 1]?.[1]?.trim() ?? "";
+  return who || null;
+}
+
 interface JobDetailClientProps {
   /**
    * Server-rendered job bundle (Phase 3 server-shell). When present, the
@@ -285,6 +490,12 @@ interface JobDetailClientProps {
    */
   initialBundle?: JobDetailBundle | null;
 }
+
+type InternalJobNote = {
+  iso: string;
+  author: string;
+  text: string;
+};
 
 export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const params = useParams();
@@ -316,9 +527,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [moneyDrawerOpen, setMoneyDrawerOpen] = useState(false);
   const [moneyDrawerFlow, setMoneyDrawerFlow] = useState<JobMoneyDrawerFlow | null>(null);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
+  /** Layout-only: job detail tabs and accordions (money actions use drawer modal). */
+  const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4>(0);
+  const [clientEditAccordionOpen, setClientEditAccordionOpen] = useState(false);
   const [deletePaymentTarget, setDeletePaymentTarget] = useState<{ id: string; amount: number; type: string } | null>(null);
   const [deletingPayment, setDeletingPayment] = useState(false);
   const [propertyEdit, setPropertyEdit] = useState<ClientAndAddressValue | null>(null);
+  /** Map card: linked account (label + optional `accounts.logo_url`) + client phone/email. */
+  const [jobHeaderAccount, setJobHeaderAccount] = useState<{ label: string; logoUrl: string | null } | null>(null);
+  const [jobHeaderContact, setJobHeaderContact] = useState<{ phone?: string; email?: string } | null>(null);
   const [savingProperty, setSavingProperty] = useState(false);
   const [unlinkedAddressDraft, setUnlinkedAddressDraft] = useState("");
   const [savingUnlinkedAddress, setSavingUnlinkedAddress] = useState(false);
@@ -329,7 +546,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [cancelJobOpen, setCancelJobOpen] = useState(false);
   const [putOnHoldOpen, setPutOnHoldOpen] = useState(false);
   const [putOnHoldReason, setPutOnHoldReason] = useState("");
+  const [putOnHoldPreset, setPutOnHoldPreset] = useState<string | null>(null);
   const [putOnHoldSaving, setPutOnHoldSaving] = useState(false);
+  const putOnHoldReasonRef = useRef<HTMLTextAreaElement>(null);
   const [resumeJobOpen, setResumeJobOpen] = useState(false);
   const [resumeArrivalDate, setResumeArrivalDate] = useState("");
   const [resumeArrivalTime, setResumeArrivalTime] = useState("");
@@ -352,6 +571,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [partnerPickerSearch, setPartnerPickerSearch] = useState("");
   const partnerPickerRef = useRef<HTMLDivElement>(null);
   const partnerPickerSearchInputRef = useRef<HTMLInputElement>(null);
+  const partnerCostSectionRef = useRef<HTMLDivElement>(null);
+  const [partnerAssignRateType, setPartnerAssignRateType] = useState<"fixed" | "hourly">("fixed");
+  const [partnerAssignServiceId, setPartnerAssignServiceId] = useState("");
+  const [partnerAssignFixedCost, setPartnerAssignFixedCost] = useState("");
+  const [partnerAssignExtraInputs, setPartnerAssignExtraInputs] = useState<{
+    extra: string;
+    ccz: string;
+    parking: string;
+    materials: string;
+  }>({
+    extra: "",
+    ccz: "",
+    parking: "",
+    materials: "",
+  });
   const [finForm, setFinForm] = useState({
     client_price: "",
     extras_amount: "",
@@ -369,6 +603,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [catalogServicesJobType, setCatalogServicesJobType] = useState<CatalogService[]>([]);
   const [loadingJobTypeCatalog, setLoadingJobTypeCatalog] = useState(false);
   const [savingJobTypeEdit, setSavingJobTypeEdit] = useState(false);
+  const [jobBillingDetailsOpen, setJobBillingDetailsOpen] = useState(false);
   const [jobInvoices, setJobInvoices] = useState<Invoice[]>([]);
   const [quoteLineItems, setQuoteLineItems] = useState<QuoteLineItem[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
@@ -396,7 +631,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingAdditionalNotes, setSavingAdditionalNotes] = useState(false);
   const [reportLinkDraft, setReportLinkDraft] = useState("");
   const [savingReportLink, setSavingReportLink] = useState(false);
+  const [internalNoteDraft, setInternalNoteDraft] = useState("");
+  const [savingInternalNote, setSavingInternalNote] = useState(false);
   const [sitePhotoUploading, setSitePhotoUploading] = useState(false);
+  const [clientExtrasUiValue, setClientExtrasUiValue] = useState(0);
+  const [partnerExtrasUiValue, setPartnerExtrasUiValue] = useState(0);
+  const [cashOutExtraExpanded, setCashOutExtraExpanded] = useState<string | null>(null);
+  const [hourlyTimeEditOpen, setHourlyTimeEditOpen] = useState(false);
+  const [hourlyEditHours, setHourlyEditHours] = useState("");
+  const [hourlyEditMinutes, setHourlyEditMinutes] = useState("");
+  const [savingHourlyTimeEdit, setSavingHourlyTimeEdit] = useState(false);
+  const [fixedRatesInlineOpen, setFixedRatesInlineOpen] = useState(false);
+  const [fixedInlineClientRate, setFixedInlineClientRate] = useState("");
+  const [fixedInlinePartnerCost, setFixedInlinePartnerCost] = useState("");
+  const [savingFixedInlineRates, setSavingFixedInlineRates] = useState(false);
+  const [partnerExtraBreakdownUi, setPartnerExtraBreakdownUi] = useState<{ extra: number; ccz: number; parking: number }>({
+    extra: 0,
+    ccz: 0,
+    parking: 0,
+  });
   const isAdmin = profile?.role === "admin";
   const jobRef = useRef<Job | null>(null);
   const autoOwnerFillRef = useRef<Set<string>>(new Set());
@@ -404,6 +657,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   useEffect(() => {
     jobRef.current = job;
   }, [job]);
+  useEffect(() => {
+    if (!job?.id) return;
+    setClientExtrasUiValue(Math.max(0, Number(job.extras_amount ?? 0)));
+    setPartnerExtrasUiValue(Math.max(0, Number(job.partner_extras_amount ?? 0)));
+    setPartnerExtraBreakdownUi({
+      extra: Math.max(0, Number(job.partner_extras_amount ?? 0)),
+      ccz: 0,
+      parking: 0,
+    });
+  }, [job?.id]);
 
   useEffect(() => {
     if (!validateCompleteOpen || !job || job.job_type !== "hourly") return;
@@ -488,6 +751,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     };
   }, [job, officeTimerDisplaySeconds]);
 
+  useEffect(() => {
+    if (!job || job.job_type !== "hourly") {
+      setHourlyTimeEditOpen(false);
+      return;
+    }
+    const secs = officeTimerDisplaySeconds ?? (Number(job.timer_elapsed_seconds ?? 0) || 0);
+    const totalMins = Math.floor(Math.max(0, secs) / 60);
+    setHourlyEditHours(String(Math.floor(totalMins / 60)));
+    setHourlyEditMinutes(String(totalMins % 60));
+  }, [job?.id, job?.job_type, job?.timer_elapsed_seconds, officeTimerDisplaySeconds]);
+
+  useEffect(() => {
+    if (!job || job.job_type !== "fixed") {
+      setFixedRatesInlineOpen(false);
+      return;
+    }
+    setFixedInlineClientRate(String(Math.max(0, Number(job.client_price ?? 0))));
+    setFixedInlinePartnerCost(String(Math.max(0, Number(job.partner_cost ?? 0))));
+  }, [job?.id, job?.job_type, job?.client_price, job?.partner_cost]);
+
   const isHousekeepJobDetail = useMemo(() => {
     if (!job) return false;
     const v = (job.title ?? "").trim().toLowerCase();
@@ -534,7 +817,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             const inv = await createOrAppendJobInvoice(j, {
               client_name: j.client_name ?? "Client",
               amount,
-              status: "pending",
+              status: "draft",
               invoice_kind: "final",
             });
             const updated = await updateJob(j.id, { invoice_id: inv.id });
@@ -568,6 +851,58 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setJobSelfBill(null);
     } finally {
       setLoadingSelfBill(false);
+    }
+  }, []);
+
+  const createDocumentAsDraft = useCallback(async (
+    type: "invoice" | "selfbill",
+    j: Job,
+    opts?: { amount?: number; financeAnchorDate?: Date; dueDate?: string; selfBillIdHint?: string | null },
+  ): Promise<string | null> => {
+    if (type === "invoice") {
+      if (j.invoice_id) return j.invoice_id;
+      const amount = Math.max(0, Number(opts?.amount ?? 0));
+      if (amount <= 0.01) return null;
+      const inv = await createOrAppendJobInvoice(
+        j,
+        {
+          client_name: j.client_name ?? "Client",
+          amount,
+          status: "draft",
+          invoice_kind: "combined",
+          collection_stage: "awaiting_final",
+        },
+        { financeAnchorDate: opts?.financeAnchorDate },
+      );
+      return inv.id;
+    }
+    if (opts?.selfBillIdHint) return opts.selfBillIdHint;
+    if (j.self_bill_id) return j.self_bill_id;
+    if (!j.partner_id?.trim()) return null;
+    const selfBill = await createSelfBillFromJob(
+      {
+        id: j.id,
+        reference: j.reference,
+        partner_name: j.partner_name ?? "Unassigned",
+        partner_cost: j.partner_cost,
+        materials_cost: j.materials_cost,
+      },
+      { weekAnchorDate: opts?.financeAnchorDate },
+    );
+    return selfBill.id;
+  }, []);
+
+  const finalizeDocument = useCallback(async (
+    type: "invoice" | "selfbill",
+    documentId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> => {
+    if (type === "invoice") {
+      await updateInvoice(documentId, payload as Partial<Invoice>);
+      return;
+    }
+    if (typeof payload.status === "string") {
+      await updateSelfBillStatus(documentId, payload.status as SelfBill["status"]);
     }
   }, []);
 
@@ -826,6 +1161,53 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [job?.id, job?.client_id, job?.client_address_id, job?.client_name, job?.property_address]);
 
   useEffect(() => {
+    let cancelled = false;
+    const cid = job?.client_id?.trim();
+    if (!cid) {
+      setJobHeaderAccount(null);
+      setJobHeaderContact(null);
+      return;
+    }
+    void (async () => {
+      try {
+        const c = await getClient(cid);
+        if (cancelled) return;
+        if (!c) {
+          setJobHeaderAccount(null);
+          setJobHeaderContact(null);
+          return;
+        }
+        const phone = c.phone?.trim() || "";
+        const email = c.email?.trim() || "";
+        setJobHeaderContact(phone || email ? { phone: phone || undefined, email: email || undefined } : null);
+        const sid = c.source_account_id?.trim();
+        if (!sid) {
+          setJobHeaderAccount(null);
+          return;
+        }
+        const acc = await getAccount(sid);
+        if (cancelled || !acc) {
+          if (!cancelled) setJobHeaderAccount(null);
+          return;
+        }
+        const label = (acc.company_name?.trim() || acc.contact_name?.trim() || "").trim();
+        const logoUrl = acc.logo_url?.trim() || null;
+        if (!cancelled) {
+          setJobHeaderAccount(label || logoUrl ? { label: label || "—", logoUrl } : null);
+        }
+      } catch {
+        if (!cancelled) {
+          setJobHeaderAccount(null);
+          setJobHeaderContact(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [job?.client_id, job?.updated_at]);
+
+  useEffect(() => {
     if (!isAdmin) return;
     listAssignableUsers().then(setAssignableUsers).catch(() => {});
   }, [isAdmin]);
@@ -840,6 +1222,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         toast.error("Failed to load partners");
       })
       .finally(() => setLoadingPartners(false));
+    if (catalogServicesJobType.length === 0) {
+      setLoadingJobTypeCatalog(true);
+      listCatalogServicesForPicker()
+        .then(setCatalogServicesJobType)
+        .catch(() => {
+          setCatalogServicesJobType([]);
+        })
+        .finally(() => setLoadingJobTypeCatalog(false));
+    }
   }, [partnerModalOpen]);
 
   useEffect(() => {
@@ -858,6 +1249,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!job) return;
     setSelectedPartnerId(job.partner_id ?? "");
   }, [job?.id, job?.partner_id]);
+
+  useEffect(() => {
+    if (!partnerModalOpen || !job) return;
+    setPartnerAssignRateType(job.job_type === "hourly" ? "hourly" : "fixed");
+    setPartnerAssignServiceId(job.catalog_service_id ?? "");
+    const existingPartnerExtras = Math.max(0, Number(job.partner_extras_amount ?? 0));
+    const existingMaterials = Math.max(0, Number(job.materials_cost ?? 0));
+    setPartnerAssignFixedCost(
+      String(Math.max(0, Number(job.partner_cost ?? 0) - existingPartnerExtras)),
+    );
+    setPartnerAssignExtraInputs({
+      extra: existingPartnerExtras > 0 ? String(existingPartnerExtras) : "",
+      ccz: "",
+      parking: "",
+      materials: existingMaterials > 0 ? String(existingMaterials) : "",
+    });
+  }, [partnerModalOpen, job?.id, job?.job_type, job?.catalog_service_id, job?.partner_cost, job?.partner_extras_amount, job?.materials_cost]);
 
   useEffect(() => {
     if (!partnerPickerOpen) return;
@@ -880,17 +1288,105 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [partnerPickerOpen]);
 
   const partnersFilteredForPicker = useMemo(() => {
+    const jobTypeNormalized = (normalizeTypeOfWork(job?.title ?? "") || job?.title || "").trim().toLowerCase();
+    const jobTypeTokens = jobTypeNormalized
+      .split(/[\s/-]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 4);
+    const isMatchForJob = (p: Partner) => {
+      if (!jobTypeNormalized) return false;
+      const trade = (p.trade ?? "").toLowerCase();
+      const tradesFlat = (p.trades ?? [])
+        .filter((t): t is string => typeof t === "string")
+        .join(" ")
+        .toLowerCase();
+      const haystack = `${trade} ${tradesFlat}`.trim();
+      if (!haystack) return false;
+      if (
+        haystack.includes(jobTypeNormalized) ||
+        jobTypeNormalized.includes(trade) ||
+        (trade && trade.includes(jobTypeNormalized))
+      ) {
+        return true;
+      }
+      return jobTypeTokens.some((token) => haystack.includes(token));
+    };
     const q = partnerPickerSearch.trim().toLowerCase();
     const eligible = partners.filter((p) => isPartnerEligibleForWork(p));
-    if (!q) return eligible;
-    return eligible.filter((p) => {
+    const filtered = !q
+      ? eligible
+      : eligible.filter((p) => {
       const name = (p.company_name ?? p.contact_name ?? "").toLowerCase();
       const trade = (p.trade ?? "").toLowerCase();
       const loc = (p.location ?? "").toLowerCase();
       const tradesFlat = (p.trades ?? []).filter((t): t is string => typeof t === "string").join(" ").toLowerCase();
       return name.includes(q) || trade.includes(q) || loc.includes(q) || tradesFlat.includes(q);
     });
-  }, [partners, partnerPickerSearch]);
+    return filtered
+      .map((p) => ({ partner: p, matched: isMatchForJob(p) }))
+      .sort((a, b) => {
+        if (a.matched !== b.matched) return a.matched ? -1 : 1;
+        const an = (a.partner.company_name ?? a.partner.contact_name ?? "").toLowerCase();
+        const bn = (b.partner.company_name ?? b.partner.contact_name ?? "").toLowerCase();
+        return an.localeCompare(bn);
+      });
+  }, [partners, partnerPickerSearch, job?.title]);
+
+  const partnerAssignService = useMemo(
+    () => catalogServicesJobType.find((s) => s.id === partnerAssignServiceId) ?? null,
+    [catalogServicesJobType, partnerAssignServiceId],
+  );
+  const partnerAssignHourlyPreview = useMemo(() => {
+    if (!job || !partnerAssignService) return null;
+    const elapsedSeconds = computeOfficeTimerElapsedSeconds(job);
+    const effectiveSeconds = elapsedSeconds > 0 ? elapsedSeconds : 3600;
+    const clientRate = Math.max(0, Number(partnerAssignService.hourly_rate) || 0);
+    const partnerRate = Math.max(
+      0,
+      partnerHourlyRateFromCatalogBundle(partnerAssignService.partner_cost, partnerAssignService.default_hours),
+    );
+    return computeHourlyTotals({
+      elapsedSeconds: effectiveSeconds,
+      clientHourlyRate: clientRate,
+      partnerHourlyRate: partnerRate,
+    });
+  }, [job, partnerAssignService]);
+  const partnerAssignExtraBreakdown = useMemo(() => {
+    const toAmount = (v: string) => Math.round(Math.max(0, Number(v) || 0) * 100) / 100;
+    return {
+      extra: toAmount(partnerAssignExtraInputs.extra),
+      ccz: toAmount(partnerAssignExtraInputs.ccz),
+      parking: toAmount(partnerAssignExtraInputs.parking),
+      materials: toAmount(partnerAssignExtraInputs.materials),
+    };
+  }, [partnerAssignExtraInputs]);
+  const partnerAssignExtrasTotal = useMemo(
+    () =>
+      Math.round(
+        (partnerAssignExtraBreakdown.extra +
+          partnerAssignExtraBreakdown.ccz +
+          partnerAssignExtraBreakdown.parking) *
+          100,
+      ) / 100,
+    [partnerAssignExtraBreakdown],
+  );
+  const partnerAssignMaterialsTotal = useMemo(
+    () => Math.round(partnerAssignExtraBreakdown.materials * 100) / 100,
+    [partnerAssignExtraBreakdown],
+  );
+  const partnerAssignBaseCost = useMemo(() => {
+    if (partnerAssignRateType === "hourly") {
+      return Math.round(Math.max(0, Number(partnerAssignHourlyPreview?.partnerTotal ?? 0)) * 100) / 100;
+    }
+    return Math.round(Math.max(0, Number(partnerAssignFixedCost) || 0) * 100) / 100;
+  }, [partnerAssignRateType, partnerAssignHourlyPreview, partnerAssignFixedCost]);
+  const partnerAssignTotal = useMemo(
+    () => Math.round((partnerAssignBaseCost + partnerAssignExtrasTotal + partnerAssignMaterialsTotal) * 100) / 100,
+    [partnerAssignBaseCost, partnerAssignExtrasTotal, partnerAssignMaterialsTotal],
+  );
+  const partnerAssignCanConfirm =
+    !!selectedPartnerId &&
+    (partnerAssignRateType === "hourly" ? !!partnerAssignServiceId && partnerAssignBaseCost > 0 : partnerAssignBaseCost > 0);
 
   useEffect(() => {
     if (!job) return;
@@ -915,6 +1411,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!job) return;
     setAdditionalNotesDraft(job.additional_notes ?? "");
   }, [job?.id, job?.additional_notes]);
+
+  useEffect(() => {
+    if (!isAdmin && detailTab === 4) {
+      setDetailTab(0);
+    }
+  }, [isAdmin, detailTab]);
 
   useEffect(() => {
     if (!job) return;
@@ -1073,6 +1575,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           await refreshJobFinance();
           setJobTypeEditOpen(false);
           toast.success("Job is now hourly — amounts and invoice updated.");
+          toast.success(`Rates updated to ${titleOut} pricing`, { duration: 3000 });
         }
       } finally {
         setSavingJobTypeEdit(false);
@@ -1086,13 +1589,42 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return;
     }
     const titleOut = normalizeTypeOfWork(titleTrim) || titleTrim;
+    const clientPriceConfirmed = Math.max(0, Math.round((Number(fixedInlineClientRate) || 0) * 100) / 100);
+    const partnerCostConfirmed = Math.max(0, Math.round((Number(fixedInlinePartnerCost) || 0) * 100) / 100);
+    const matchedService = catalogServicesJobType.find((s) => {
+      const a = (normalizeTypeOfWork(s.name) || s.name || "").trim().toLowerCase();
+      const b = titleOut.trim().toLowerCase();
+      return a === b || a.includes(b) || b.includes(a);
+    });
+    const defaultHours = Math.max(1, Number(matchedService?.default_hours) || 1);
+    const clientRate = Number(matchedService?.hourly_rate ?? 0) || 0;
+    const partnerRate = matchedService
+      ? partnerHourlyRateFromCatalogBundle(matchedService.partner_cost, matchedService.default_hours)
+      : 0;
+    const matchedTotals = matchedService
+      ? computeHourlyTotals({
+          elapsedSeconds: defaultHours * 3600,
+          clientHourlyRate: clientRate,
+          partnerHourlyRate: partnerRate,
+        })
+      : null;
     const patch: Partial<Job> = {
       job_type: "fixed",
-      catalog_service_id: null,
-      hourly_client_rate: null,
-      hourly_partner_rate: null,
+      catalog_service_id: matchedService?.id ?? null,
+      hourly_client_rate: matchedService ? clientRate : null,
+      hourly_partner_rate: matchedService ? partnerRate : null,
       billed_hours: null,
       title: titleOut,
+      client_price: clientPriceConfirmed > 0 ? clientPriceConfirmed : matchedTotals?.clientTotal ?? Number(job.client_price ?? 0),
+      partner_cost: partnerCostConfirmed > 0 ? partnerCostConfirmed : matchedTotals?.partnerTotal ?? Number(job.partner_cost ?? 0),
+      customer_final_payment: Math.round(
+        Math.max(
+          0,
+          (clientPriceConfirmed > 0 ? clientPriceConfirmed : matchedTotals?.clientTotal ?? Number(job.client_price ?? 0)) +
+            Number(job.extras_amount ?? 0) -
+            Number(job.customer_deposit ?? 0),
+        ) * 100,
+      ) / 100,
     };
     setSavingJobTypeEdit(true);
     try {
@@ -1117,6 +1649,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         await refreshJobFinance();
         setJobTypeEditOpen(false);
         toast.success("Job is now fixed price.");
+        if (matchedService) {
+          toast.success(`Rates updated to ${titleOut} pricing`, { duration: 3000 });
+        }
       }
     } finally {
       setSavingJobTypeEdit(false);
@@ -1126,12 +1661,77 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     jobTypeEditTarget,
     jobTypeEditCatalogId,
     jobTypeEditFixedTitle,
+    fixedInlineClientRate,
+    fixedInlinePartnerCost,
     catalogServicesJobType,
     handleJobUpdate,
     profile?.id,
     profile?.full_name,
     refreshJobFinance,
   ]);
+
+  const handleSaveHourlyTimeEdit = useCallback(async () => {
+    if (!job || job.job_type !== "hourly") return;
+    const hours = Math.max(0, Math.floor(Number(hourlyEditHours) || 0));
+    const minsRaw = Math.max(0, Math.floor(Number(hourlyEditMinutes) || 0));
+    const mins = Math.min(59, minsRaw);
+    const elapsedSeconds = Math.max(0, hours * 3600 + mins * 60);
+    const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+    const totals = computeHourlyTotals({
+      elapsedSeconds,
+      clientHourlyRate: clientRate,
+      partnerHourlyRate: partnerRate,
+    });
+    const patch: Partial<Job> = {
+      timer_elapsed_seconds: elapsedSeconds,
+      timer_last_started_at: job.timer_is_running ? new Date().toISOString() : job.timer_last_started_at,
+      billed_hours: totals.billedHours,
+      client_price: totals.clientTotal,
+      partner_cost: totals.partnerTotal,
+      customer_final_payment: Math.round(
+        Math.max(0, totals.clientTotal + Number(job.extras_amount ?? 0) - Number(job.customer_deposit ?? 0)) * 100,
+      ) / 100,
+    };
+    setSavingHourlyTimeEdit(true);
+    try {
+      const updated = await handleJobUpdate(job.id, patch, { silent: true });
+      if (updated) {
+        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        await syncSelfBillAfterJobChange(updated);
+        await refreshJobFinance();
+        setHourlyTimeEditOpen(false);
+        toast.success("Work time updated");
+      }
+    } finally {
+      setSavingHourlyTimeEdit(false);
+    }
+  }, [job, hourlyEditHours, hourlyEditMinutes, handleJobUpdate, refreshJobFinance]);
+
+  const handleSaveFixedInlineRates = useCallback(async () => {
+    if (!job || job.job_type !== "fixed") return;
+    const clientPrice = Math.max(0, Math.round((Number(fixedInlineClientRate) || 0) * 100) / 100);
+    const partnerCost = Math.max(0, Math.round((Number(fixedInlinePartnerCost) || 0) * 100) / 100);
+    const patch: Partial<Job> = {
+      client_price: clientPrice,
+      partner_cost: partnerCost,
+      customer_final_payment: Math.round(
+        Math.max(0, clientPrice + Number(job.extras_amount ?? 0) - Number(job.customer_deposit ?? 0)) * 100,
+      ) / 100,
+    };
+    setSavingFixedInlineRates(true);
+    try {
+      const updated = await handleJobUpdate(job.id, patch, { silent: true });
+      if (updated) {
+        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+        await syncSelfBillAfterJobChange(updated);
+        await refreshJobFinance();
+        setFixedRatesInlineOpen(false);
+        toast.success("Fixed rates updated");
+      }
+    } finally {
+      setSavingFixedInlineRates(false);
+    }
+  }, [job, fixedInlineClientRate, fixedInlinePartnerCost, handleJobUpdate, refreshJobFinance]);
 
   const saveAccessFeeFlags = useCallback(
     async (patch: Partial<Pick<Job, "in_ccz" | "has_free_parking">>) => {
@@ -1176,6 +1776,31 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
     return map;
   }, [appJobReports]);
+
+  const internalNotesEntries = useMemo<InternalJobNote[]>(() => {
+    const raw = (job?.internal_notes ?? "").trim();
+    if (!raw) return [];
+    return raw
+      .split("\n\n")
+      .map((chunk) => chunk.trim())
+      .filter(Boolean)
+      .map((chunk) => {
+        const m = chunk.match(/^\[([^\]]+)\]\s+(.+?):\s*([\s\S]+)$/);
+        if (m) {
+          return {
+            iso: m[1].trim(),
+            author: m[2].trim(),
+            text: m[3].trim(),
+          };
+        }
+        return {
+          iso: "",
+          author: "Team",
+          text: chunk,
+        };
+      })
+      .reverse();
+  }, [job?.internal_notes]);
 
   const openPartnerReportPdf = useCallback(async (row: AppJobReportRow) => {
     if (!row.pdf_url?.trim()) {
@@ -1394,6 +2019,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         userId: profile?.id,
         userName: profile?.full_name,
       });
+      await logAudit({
+        entityType: "job",
+        entityId: job.id,
+        entityRef: job.reference,
+        action: "updated",
+        fieldName: "financial_documents",
+        newValue: "Invoice and self-bill cancelled",
+        userId: profile?.id,
+        userName: profile?.full_name,
+      });
       setJob(updated);
       setCancelJobOpen(false);
       setCancelDetail("");
@@ -1596,8 +2231,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       };
       const updated = await handleStatusChange(job, "on_hold", { extraPatch });
       if (updated) {
+        await logAudit({
+          entityType: "job",
+          entityId: job.id,
+          entityRef: job.reference,
+          action: "updated",
+          fieldName: "on_hold_reason",
+          newValue: reason,
+          userId: profile?.id,
+          userName: profile?.full_name,
+          metadata: { source: "put_on_hold_modal" },
+        });
         setPutOnHoldOpen(false);
         setPutOnHoldReason("");
+        setPutOnHoldPreset(null);
         try {
           await bumpLinkedInvoiceAmountsToJobSchedule(updated);
         } catch {
@@ -1607,7 +2254,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     } finally {
       setPutOnHoldSaving(false);
     }
-  }, [job, putOnHoldReason, handleStatusChange]);
+  }, [job, putOnHoldReason, handleStatusChange, profile?.id, profile?.full_name]);
 
   const openResumeJobModal = useCallback(() => {
     if (!job || job.status !== "on_hold") return;
@@ -1811,6 +2458,29 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     return range ? `Client & partner will see: Arrival time (${range})` : null;
   }, [scheduleDate, scheduleTime, scheduleWindowMins]);
 
+  const SCHEDULE_HELP_TOOLTIP =
+    "Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time. Expected finish is calendar-only (no time); late is still based on window end.";
+
+  const arrivalFieldTooltipText = useMemo(
+    () =>
+      [clientVisibleArrivalPreview, SCHEDULE_HELP_TOOLTIP]
+        .filter((s): s is string => Boolean(s))
+        .join("\n\n"),
+    [clientVisibleArrivalPreview],
+  );
+
+  const cczParkingFieldTooltipText = useMemo(() => {
+    const lines = [
+      "CCZ is only available for central London postcodes (TfL Congestion Charge / Zone 1 core: EC1–4, WC1–2, W1, SW1, SE1). Outside that list the control stays off. Inside the list you still choose whether to apply the +£15 fee — it is not turned on automatically.",
+    ];
+    if (!cczEligibleAddress && job?.in_ccz) {
+      lines.push(
+        "This job has CCZ enabled in the database, but the current address is outside the central London postcode list — no CCZ surcharge is applied until you save an eligible address and turn CCZ on.",
+      );
+    }
+    return lines.join("\n\n");
+  }, [cczEligibleAddress, job?.in_ccz]);
+
   const handleMoneyDrawerSubmit = useCallback(
     async (payload: JobMoneySubmitPayload) => {
       if (!job) return;
@@ -1830,6 +2500,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             : {}),
           ...(payload.paymentLedgerLabel?.trim() ? { paymentLedgerLabel: payload.paymentLedgerLabel.trim() } : {}),
         });
+        if (payload.flow === "client_extra") {
+          setClientExtrasUiValue((v) => Math.round((v + payload.amount) * 100) / 100);
+        } else if (payload.flow === "partner_extra") {
+          setPartnerExtrasUiValue((v) => Math.round((v + payload.amount) * 100) / 100);
+          const noteUpper = payload.note.trim().toUpperCase();
+          /* Materials line reads from job.materials_cost after save — do not fold into extra/ccz/parking breakdown. */
+          if (!noteUpper.startsWith("MATERIALS")) {
+            const type: "ccz" | "parking" | "extra" =
+              noteUpper.startsWith("CCZ")
+                ? "ccz"
+                : noteUpper.startsWith("PARKING")
+                  ? "parking"
+                  : "extra";
+            setPartnerExtraBreakdownUi((prev) => ({
+              ...prev,
+              [type]: Math.round(((prev[type] ?? 0) + payload.amount) * 100) / 100,
+            }));
+          }
+        }
         setJob(updated);
         const fieldName =
           payload.flow === "client_pay"
@@ -2041,6 +2730,66 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       { notifyPartner: false },
     );
     if (!updated) return;
+    try {
+      const financeAnchorDate = new Date();
+      const [linked, dueForAnchor, linkedSelfBills] = await Promise.all([
+        listInvoicesLinkedToJob(updated.reference, updated.invoice_id),
+        getInvoiceDueDateIsoForClient(updated.client_id ?? null, financeAnchorDate),
+        updated.partner_id?.trim()
+          ? listSelfBillsLinkedToJob(updated.reference, updated.self_bill_id ?? null)
+          : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
+      ]);
+      const primaryInvoice =
+        (updated.invoice_id ? linked.find((i) => i.id === updated.invoice_id) : undefined) ??
+        linked.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
+        linked[0];
+      const invoiceId = await createDocumentAsDraft("invoice", updated, {
+        amount: Math.max(0, jobBillableRevenue(updated)),
+        financeAnchorDate,
+        dueDate: dueForAnchor,
+      });
+      const partnerPaid = sumPartnerRecordedPayoutsForCap(partnerPayments);
+      const partnerDue = Math.max(0, partnerPaymentCap(updated) - partnerPaid);
+      const selfBillHint =
+        updated.self_bill_id ??
+        linkedSelfBills.find((s) => s.status === "accumulating" || s.status === "pending_review" || s.status === "draft")?.id ??
+        null;
+      const selfBillId =
+        updated.partner_id?.trim() && (partnerSelfBillGrossAmount(updated) > 0 || partnerDue > 0.02)
+          ? await createDocumentAsDraft("selfbill", updated, { financeAnchorDate, selfBillIdHint: selfBillHint })
+          : selfBillHint;
+      const selfBillPrev = selfBillId ? linkedSelfBills.find((s) => s.id === selfBillId)?.status ?? "accumulating" : null;
+      const invoicePrev = primaryInvoice?.status ?? "draft";
+      let invoiceDone = false;
+      let selfBillDone = false;
+      try {
+        if (invoiceId) {
+          await finalizeDocument("invoice", invoiceId, {
+            amount: Math.max(0, jobBillableRevenue(updated)),
+            status: "pending",
+            paid_date: undefined,
+            collection_stage: "awaiting_final",
+            due_date: dueForAnchor,
+          });
+          invoiceDone = true;
+        }
+        if (selfBillId) {
+          await finalizeDocument("selfbill", selfBillId, { status: "awaiting_payment" });
+          selfBillDone = true;
+        }
+      } catch (error) {
+        if (invoiceDone && invoiceId) {
+          try { await finalizeDocument("invoice", invoiceId, { status: invoicePrev }); } catch { /* best effort */ }
+        }
+        if (selfBillDone && selfBillId && selfBillPrev) {
+          try { await finalizeDocument("selfbill", selfBillId, { status: selfBillPrev }); } catch { /* best effort */ }
+        }
+        throw error;
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not finalize draft invoice/self-bill.");
+      return;
+    }
     const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
     const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
     const paid = depositPaid + finalPaid;
@@ -2061,7 +2810,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         toast.info(completeCheck.message ?? "Moved to Awaiting payment to settle partner / admin checks.");
       }
     }
-  }, [handleJobUpdate, handleStatusChange, customerPayments, partnerPayments]);
+  }, [
+    handleJobUpdate,
+    handleStatusChange,
+    customerPayments,
+    partnerPayments,
+    createDocumentAsDraft,
+    finalizeDocument,
+  ]);
 
   const handleValidateAndComplete = useCallback(async () => {
     const j = jobRef.current;
@@ -2160,7 +2916,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const wantsSelfBill = !!current.partner_id?.trim();
       const selfBillIdBeforePartnerSection = current.self_bill_id ?? null;
 
-      /** Parallelize all reads needed before invoice/self-bill decisions — they're fully independent. */
+      /** Read all linked documents before deciding draft/final transitions. */
       const [linked, linkedSelfBills, dueForAnchor] = await Promise.all([
         listInvoicesLinkedToJob(current.reference, current.invoice_id),
         wantsSelfBill
@@ -2186,84 +2942,76 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         (invoiceForPaidCheck!.status === "paid" || isInvoiceFullyPaidByAmount(invoiceForPaidCheck!));
       const customerDueForStatus = invoiceShowsPaidInDb ? 0 : customerDue;
 
-      /** Invoice mutation and partner self-bill creation are independent — run them in parallel. */
-      const invoicePromise: Promise<{ id: string | null; markPaid: boolean }> = (async () => {
-        if (!primaryInvoiceId && customerDue > 0.02) {
-          const inv = await createOrAppendJobInvoice(
-            current,
-            {
-              client_name: current.client_name ?? "Client",
-              amount: Math.max(0, customerDue),
-              status: customerDue <= 0.02 ? "paid" : "pending",
-              paid_date: customerDue <= 0.02 ? new Date().toISOString().slice(0, 10) : undefined,
-              invoice_kind: "combined",
-              collection_stage: customerDue <= 0.02 ? "completed" : "awaiting_final",
-            },
-            { financeAnchorDate },
-          );
-          return { id: inv.id, markPaid: inv.status === "paid" };
-        }
-        if (primaryInvoiceId && customerDue > 0.02 && !invoiceShowsPaidInDb) {
-          // Keep linked invoice aligned with the latest approved totals (incl. hourly billed-hours changes).
-          await updateInvoice(primaryInvoiceId, {
+      let primarySelfBillId = current.self_bill_id ?? null;
+      if (!primarySelfBillId && linkedSelfBills.length > 0) {
+        const pick =
+          linkedSelfBills.find((s) => s.status === "accumulating" || s.status === "pending_review") ??
+          linkedSelfBills[linkedSelfBills.length - 1];
+        primarySelfBillId = pick?.id ?? null;
+      }
+      const shouldCreateSelfBill = wantsSelfBill && (partnerSelfBillGrossAmount(current) > 0 || partnerDue > 0.02);
+
+      const [draftInvoiceId, draftSelfBillId] = await Promise.all([
+        createDocumentAsDraft("invoice", current, {
+          amount: Math.max(customerDue, Math.max(0, jobBillableRevenue(current))),
+          financeAnchorDate,
+          dueDate: dueForAnchor,
+        }),
+        shouldCreateSelfBill
+          ? createDocumentAsDraft("selfbill", current, { financeAnchorDate, selfBillIdHint: primarySelfBillId })
+          : Promise.resolve(primarySelfBillId),
+      ]);
+
+      const invoiceRowForFinalize =
+        (draftInvoiceId ? linked.find((i) => i.id === draftInvoiceId) : undefined) ??
+        linked.find((i) => i.id === primaryInvoiceId) ??
+        linked.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
+        linked[0];
+      const selfBillRowForFinalize = draftSelfBillId
+        ? linkedSelfBills.find((s) => s.id === draftSelfBillId) ?? null
+        : null;
+
+      const previousInvoiceStatus = invoiceRowForFinalize?.status ?? "draft";
+      const previousSelfBillStatus = selfBillRowForFinalize?.status ?? "accumulating";
+      const finalInvoiceStatus: Invoice["status"] = customerDue <= 0.02 ? "paid" : "pending";
+      const finalSelfBillStatus: SelfBill["status"] = partnerDue > 0.02 ? "awaiting_payment" : "ready_to_pay";
+      let invoiceFinalized = false;
+      let selfBillFinalized = false;
+      try {
+        if (draftInvoiceId) {
+          await finalizeDocument("invoice", draftInvoiceId, {
             amount: Math.max(0, customerDue),
-            paid_date: undefined,
-            collection_stage: "awaiting_final",
+            status: finalInvoiceStatus,
+            paid_date: finalInvoiceStatus === "paid" ? new Date().toISOString().slice(0, 10) : undefined,
+            collection_stage: finalInvoiceStatus === "paid" ? "completed" : "awaiting_final",
             due_date: dueForAnchor,
           });
-          return { id: primaryInvoiceId, markPaid: false };
+          invoiceFinalized = true;
         }
-        if (customerDue <= 0.02 && primaryInvoiceId) {
-          await updateInvoice(primaryInvoiceId, {
-            status: "paid",
-            paid_date: new Date().toISOString().slice(0, 10),
-            collection_stage: "completed",
-          });
-          return { id: primaryInvoiceId, markPaid: true };
+        if (draftSelfBillId) {
+          await finalizeDocument("selfbill", draftSelfBillId, { status: finalSelfBillStatus });
+          selfBillFinalized = true;
         }
-        return { id: primaryInvoiceId, markPaid: false };
-      })();
-
-      /** Partner self-bill: never block approval if the insert/lookup fails — log and continue. */
-      const selfBillPromise: Promise<string | null> = (async () => {
-        if (!wantsSelfBill) return current.self_bill_id ?? null;
-        try {
-          let primarySelfBillId = current.self_bill_id ?? null;
-          if (!primarySelfBillId && linkedSelfBills.length > 0) {
-            const pick =
-              linkedSelfBills.find((s) => s.status === "accumulating") ??
-              linkedSelfBills.find((s) => s.status === "pending_review") ??
-              linkedSelfBills[linkedSelfBills.length - 1];
-            primarySelfBillId = pick.id;
+      } catch (error) {
+        if (invoiceFinalized && draftInvoiceId) {
+          try {
+            await finalizeDocument("invoice", draftInvoiceId, { status: previousInvoiceStatus });
+          } catch {
+            /* best-effort rollback */
           }
-          const shouldCreateSelfBill =
-            partnerSelfBillGrossAmount(current) > 0 || partnerDue > 0.02;
-          if (!primarySelfBillId && shouldCreateSelfBill) {
-            const selfBill = await createSelfBillFromJob(
-              {
-                id: current.id,
-                reference: current.reference,
-                partner_name: current.partner_name ?? "Unassigned",
-                partner_cost: current.partner_cost,
-                materials_cost: current.materials_cost,
-              },
-              { weekAnchorDate: financeAnchorDate },
-            );
-            primarySelfBillId = selfBill.id;
-          }
-          return primarySelfBillId;
-        } catch (e) {
-          console.error("Review & approve: self-bill link failed", e);
-          toast.warning(
-            e instanceof Error
-              ? e.message
-              : "Partner self-bill could not be linked automatically; you can attach it later from Finance or this job.",
-          );
-          return current.self_bill_id ?? null;
         }
-      })();
+        if (selfBillFinalized && draftSelfBillId) {
+          try {
+            await finalizeDocument("selfbill", draftSelfBillId, { status: previousSelfBillStatus });
+          } catch {
+            /* best-effort rollback */
+          }
+        }
+        throw error;
+      }
 
-      const [invoiceResult, resolvedSelfBillId] = await Promise.all([invoicePromise, selfBillPromise]);
+      const invoiceResult = { id: draftInvoiceId, markPaid: finalInvoiceStatus === "paid" };
+      const resolvedSelfBillId = draftSelfBillId;
 
       if (invoiceResult.markPaid && invoiceResult.id) {
         // Ledger sync is downstream; nothing below reads from it — fire-and-forget.
@@ -2350,6 +3098,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     profile?.full_name,
     officeTimerDisplaySeconds,
     refreshJobFinance,
+    createDocumentAsDraft,
+    finalizeDocument,
     finForm.extras_amount,
     finForm.materials_cost,
     finForm.customer_deposit,
@@ -2433,6 +3183,38 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     [job?.title],
   );
 
+  const fixedSwitchPreview = useMemo(() => {
+    if (!job || jobTypeEditTarget !== "fixed" || job.job_type !== "hourly") return null;
+    const titleTrim = jobTypeEditFixedTitle.trim();
+    if (!titleTrim) return null;
+    const titleOut = normalizeTypeOfWork(titleTrim) || titleTrim;
+    const matchedService = catalogServicesJobType.find((s) => {
+      const a = (normalizeTypeOfWork(s.name) || s.name || "").trim().toLowerCase();
+      const b = titleOut.trim().toLowerCase();
+      return a === b || a.includes(b) || b.includes(a);
+    });
+    if (matchedService) {
+      const hrs = Math.max(1, Number(matchedService.default_hours) || 1);
+      const clientRate = Number(matchedService.hourly_rate) || 0;
+      const partnerRate = partnerHourlyRateFromCatalogBundle(matchedService.partner_cost, matchedService.default_hours);
+      const totals = computeHourlyTotals({
+        elapsedSeconds: hrs * 3600,
+        clientHourlyRate: clientRate,
+        partnerHourlyRate: partnerRate,
+      });
+      const sale = totals.clientTotal;
+      const cost = totals.partnerTotal;
+      const margin = sale - cost;
+      const marginPct = sale > 0 ? Math.round((margin / sale) * 1000) / 10 : 0;
+      return { sale, cost, margin, marginPct };
+    }
+    const sale = Math.max(0, Number(job.client_price ?? 0));
+    const cost = Math.max(0, Number(job.partner_cost ?? 0));
+    const margin = sale - cost;
+    const marginPct = sale > 0 ? Math.round((margin / sale) * 1000) / 10 : 0;
+    return { sale, cost, margin, marginPct };
+  }, [job, jobTypeEditTarget, jobTypeEditFixedTitle, catalogServicesJobType]);
+
   if (loading || !id) {
     return (
       <PageTransition>
@@ -2454,6 +3236,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const displayStatus = effectiveJobStatusForDisplay(job);
   const config = statusConfig[displayStatus] ?? { label: displayStatus, variant: "default" as const };
+  const statusColors = getStatusColors(displayStatus);
   /** Same basis as linked invoice targets and `syncInvoicesFromJobCustomerPayments` (ticket + extras, schedule, hourly). */
   const billableRevenue = jobCustomerBillableRevenueForCollections(job);
   const partnerCap =
@@ -2467,15 +3250,36 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     partnerCap,
     hourlyPartnerLabourForCashOut,
   );
+  const partnerExtraFallback = Math.max(0, Number(job.partner_extras_amount ?? 0));
+  const partnerExtraDisplay = Math.max(partnerCashOutExtra, partnerExtraFallback, partnerExtrasUiValue);
+  const hasPartnerExtra = partnerExtraDisplay > 0.02;
+  const partnerExtraBreakdownTotal =
+    Number(partnerExtraBreakdownUi.extra ?? 0) +
+    Number(partnerExtraBreakdownUi.ccz ?? 0) +
+    Number(partnerExtraBreakdownUi.parking ?? 0);
+  const partnerExtraResidual = Math.max(0, Math.round((partnerExtraDisplay - partnerExtraBreakdownTotal) * 100) / 100);
+  const partnerExtraLine = Math.round((Number(partnerExtraBreakdownUi.extra ?? 0) + partnerExtraResidual) * 100) / 100;
+  const partnerCczLine = Math.max(0, Number(partnerExtraBreakdownUi.ccz ?? 0));
+  const partnerParkingLine = Math.max(0, Number(partnerExtraBreakdownUi.parking ?? 0));
+  const partnerMaterialsLine = Math.max(0, Number(job.materials_cost ?? 0));
+  const cashOutExtraRows = [
+    { key: "extra", label: "Extra payout", amount: partnerExtraLine, active: partnerExtraLine > 0.02, allocation: "partner_cost" as const },
+    { key: "ccz", label: "CCZ", amount: partnerCczLine, active: partnerCczLine > 0.02, allocation: "partner_cost" as const },
+    { key: "parking", label: "Parking", amount: partnerParkingLine, active: partnerParkingLine > 0.02, allocation: "partner_cost" as const },
+    { key: "materials", label: "Materials", amount: partnerMaterialsLine, active: partnerMaterialsLine > 0.02, allocation: "materials" as const },
+  ] as const;
+  const partnerCashOutTotal = Math.max(0, partnerCap + partnerMaterialsLine);
   const directCost =
     job.job_type === "hourly" && hourlyAutoBilling
       ? hourlyAutoBilling.partnerTotal + Number(job.materials_cost ?? 0)
       : jobDirectCost(job);
   const profit = billableRevenue - directCost;
   const marginPct = billableRevenue > 0 ? Math.round((profit / billableRevenue) * 1000) / 10 : 0;
+  const marginAppearance = jobDetailMarginAppearance(marginPct);
+  const markedPaidBy = extractLastMarkedPaidBy(job.internal_notes);
   /** Transfers to partner only — excludes legacy rows that recorded extra payout as a payment (those are cost, not cash out). */
   const partnerPaidTotal = sumPartnerRecordedPayoutsForCap(partnerPayments);
-  const partnerPayRemaining = Math.max(0, partnerCap - partnerPaidTotal);
+  const partnerPayRemaining = Math.max(0, partnerCashOutTotal - partnerPaidTotal);
   const partnerPayoutLedgerRows = partnerPayments.filter(
     (p) => p.type === "partner" && !isLegacyMisclassifiedPartnerPayment(p),
   );
@@ -2496,11 +3300,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const finalBalanceTotal = Math.max(0, Number(job.customer_final_payment ?? 0));
   /** `extras_amount` includes manual extras and access fees folded in by CCZ/parking toggles — split display so CCZ/parking stay positive lines, not double-counted under “Extra charges”. */
   const explicitExtras = Math.max(0, Number(job.extras_amount ?? 0));
+  const effectiveExtrasAmountForDisplay = Math.max(explicitExtras, clientExtrasUiValue);
   const cczFeeNominal = effectiveCustomerInCcz ? ACCESS_CCZ_FEE_GBP : 0;
   const parkingFeeNominal = job.has_free_parking === false ? ACCESS_PARKING_FEE_GBP : 0;
   const attributedAccessNominal = cczFeeNominal + parkingFeeNominal;
-  const attributedAccessForExtrasLine = Math.min(attributedAccessNominal, explicitExtras);
-  const extrasNetOfAccess = Math.max(0, Math.round((explicitExtras - attributedAccessForExtrasLine) * 100) / 100);
+  const attributedAccessForExtrasLine = Math.min(attributedAccessNominal, effectiveExtrasAmountForDisplay);
+  const extrasNetOfAccess = Math.max(0, Math.round((effectiveExtrasAmountForDisplay - attributedAccessForExtrasLine) * 100) / 100);
+  const cashInExtraRows = [
+    { key: "extra", label: "Extra charges", amount: extrasNetOfAccess, active: extrasNetOfAccess > 0.02 },
+    { key: "ccz", label: "CCZ", amount: effectiveCustomerInCcz ? ACCESS_CCZ_FEE_GBP : 0, active: effectiveCustomerInCcz },
+    { key: "parking", label: "Parking", amount: job.has_free_parking === false ? ACCESS_PARKING_FEE_GBP : 0, active: job.has_free_parking === false },
+    {
+      key: "materials",
+      label: "Materials",
+      amount: Math.max(0, Number(job.materials_cost ?? 0)),
+      active: Math.max(0, Number(job.materials_cost ?? 0)) > 0.02,
+    },
+  ] as const;
   let finalSplitRemain = finalBalanceTotal;
   const finalExtraCharges = Math.min(extrasNetOfAccess, finalSplitRemain);
   finalSplitRemain = Math.max(0, finalSplitRemain - finalExtraCharges);
@@ -2522,7 +3338,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     phaseCount > 0 ? Math.min(100, Math.round((reportsValidatedCount / phaseCount) * 100)) : 0;
   const displayPhase = phaseCount === 2 ? (job.report_2_uploaded ? 2 : 1) : 1;
   const sendReportFinalCheck = canSendReportAndRequestFinalPayment(job);
+  const primaryInvoiceForBadge = job.invoice_id
+    ? jobInvoices.find((inv) => inv.id === job.invoice_id) ?? jobInvoices[0]
+    : jobInvoices[0];
+  const invoiceLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = primaryInvoiceForBadge
+    ? primaryInvoiceForBadge.status === "draft"
+      ? { label: "Draft", className: "border-slate-500/35 bg-slate-500/10 text-slate-700 dark:text-slate-300" }
+      : primaryInvoiceForBadge.status === "cancelled"
+        ? { label: "Cancelled", className: "border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300" }
+      : { label: "Sent", className: "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" }
+    : null;
+  const selfBillLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = jobSelfBill
+    ? ["accumulating", "pending_review", "draft"].includes(jobSelfBill.status)
+      ? { label: "Draft", className: "border-slate-500/35 bg-slate-500/10 text-slate-700 dark:text-slate-300" }
+      : ["payout_cancelled", "payout_lost", "payout_archived", "rejected"].includes(jobSelfBill.status)
+        ? { label: "Cancelled", className: "border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300" }
+      : { label: "Sent", className: "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" }
+    : null;
   const flowStep = jobFlowActiveStepIndex(job.status);
+  const previousStageStatus = getPreviousJobStatus(job);
+  const canReverseStage =
+    Boolean(previousStageStatus) &&
+    flowStep > 0 &&
+    job.status !== "cancelled" &&
+    job.status !== "completed";
   const reportsApproved = allConfiguredReportsApproved(job);
   const phaseIndexes = reportPhaseIndices(phaseCount);
   const reportsUploaded = phaseIndexes.every((n) => Boolean(job[`report_${n}_uploaded` as keyof Job]));
@@ -2567,6 +3406,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const customerPaidPct = billableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / billableRevenue) * 100)) : 100;
   const partnerPaidPct = partnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / partnerCap) * 100)) : 100;
 
+  const invoicePastDueUnpaid = jobInvoices.some(
+    (inv) =>
+      inv.status !== "paid" &&
+      inv.status !== "cancelled" &&
+      inv.due_date &&
+      invoiceBalanceDue(inv) > 0.02 &&
+      new Date(String(inv.due_date).slice(0, 10)) < new Date(new Date().toISOString().slice(0, 10)),
+  );
+  const healthPaymentOverdue = amountDue > 0.02 && (invoicePastDueUnpaid || job.status === "awaiting_payment");
+  const healthMissingPartner = !job.partner_id?.trim();
+  const healthMissingScope = !(job.scope?.trim());
+  const healthBarColorClass = statusColors.healthBarClass;
+  const onHoldCalendarDays =
+    job.status === "on_hold" && job.on_hold_at
+      ? Math.max(0, differenceInCalendarDays(new Date(), parseISO(job.on_hold_at)))
+      : 0;
+
   const approvalMaterialsCost = Number(job.materials_cost ?? 0);
   const approvalProfit = approvalBillableRevenue - approvalPartnerCostForDirect - approvalMaterialsCost;
   const approvalMarginPct = approvalBillableRevenue > 0 ? Math.round((approvalProfit / approvalBillableRevenue) * 10000) / 100 : 0;
@@ -2587,88 +3443,196 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     approvalBillableRevenue > 0 ? Math.max(0, Math.min(100, (customerPaidTotal / approvalBillableRevenue) * 100)) : 100;
   const approvalPartnerPaidPct =
     approvalPartnerCap > 0 ? Math.max(0, Math.min(100, (partnerPaidTotal / approvalPartnerCap) * 100)) : 100;
-  return (
-    <PageTransition>
-      <div className="space-y-5 pb-12">
 
-        {/* ── HEADER ── */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <Button variant="ghost" size="sm" icon={<ArrowLeft className="h-4 w-4" />} onClick={() => router.push("/jobs")}>
-            Back to Jobs
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            loading={refreshingJob}
-            icon={<RefreshCw className="h-4 w-4" />}
-            onClick={() => void refreshJobFinance()}
-            title="Reload job, payments, and documents from the server"
-          >
-            Refresh
-          </Button>
+  const jobBillingDetailsBody = (
+    <div className="max-h-[min(72vh,620px)] space-y-4 overflow-y-auto pr-1 text-sm">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/30 p-3 space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Client (money in)</p>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Total billable</span>
+              <span className="font-semibold tabular-nums text-emerald-700">{formatCurrency(billableRevenue)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Deposit scheduled</span>
+              <span className="font-semibold tabular-nums">{formatCurrency(Number(job.customer_deposit ?? 0))}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Final balance scheduled</span>
+              <span className="font-semibold tabular-nums">{formatCurrency(Number(job.customer_final_payment ?? 0))}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Extras (manual)</span>
+              <span className={cn("font-semibold tabular-nums", extrasNetOfAccess > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                {extrasNetOfAccess > 0.02 ? `+${formatCurrency(extrasNetOfAccess)}` : formatCurrency(0)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">CCZ + Parking</span>
+              <span className={cn("font-semibold tabular-nums", attributedAccessNominal > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                {attributedAccessNominal > 0.02 ? `+${formatCurrency(attributedAccessNominal)}` : formatCurrency(0)}
+              </span>
+            </div>
+            <div className="border-t border-emerald-200/70 pt-1.5 flex items-center justify-between">
+              <span className="text-text-secondary">Collected</span>
+              <span className="font-semibold tabular-nums">{formatCurrency(customerPaidTotal)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Still due</span>
+              <span className={cn("font-bold tabular-nums", amountDue > 0.02 ? "text-red-600" : "text-emerald-700")}>
+                {formatCurrency(amountDue)}
+              </span>
+            </div>
+          </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-bold text-text-primary">{job.reference}</h1>
-              <Badge variant={config.variant} dot={config.dot} size="md">{config.label}</Badge>
-              <JobOverdueBadge job={job} size="md" />
+        <div className="rounded-lg border border-rose-200/70 bg-rose-50/30 p-3 space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-700">Partner (money out)</p>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Partner total (incl. materials)</span>
+              <span className="font-semibold tabular-nums text-rose-700">{formatCurrency(partnerCashOutTotal)}</span>
             </div>
-            <p className="text-sm text-text-tertiary mt-0.5">{job.title}</p>
-            {job.status === "cancelled" && job.partner_cancelled_at ? (
-              <div className="mt-3 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-text-secondary max-w-xl">
-                <p className="font-semibold text-text-primary">Partner cancellation</p>
-                <p>
-                  Fee recorded: £{Number(job.partner_cancellation_fee ?? 0).toFixed(2)}
-                  {job.partner_cancellation_reason?.trim()
-                    ? ` · Reason: ${job.partner_cancellation_reason.trim()}`
-                    : ""}
-                </p>
-              </div>
-            ) : null}
-            {job.status === "cancelled" && !job.partner_cancelled_at && job.cancellation_reason?.trim() ? (
-              <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/8 px-3 py-2 text-xs text-text-secondary max-w-xl">
-                <p className="font-semibold text-text-primary">Office cancellation</p>
-                <p className="text-text-secondary mt-0.5">{job.cancellation_reason.trim()}</p>
-                {job.cancelled_at ? (
-                  <p className="text-[10px] text-text-tertiary mt-1">
-                    Recorded {new Date(job.cancelled_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            {job.status === "completed" ? (
-              <div className="mt-3 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-text-secondary max-w-xl">
-                <p className="font-semibold text-text-primary">Job approval</p>
-                <p>
-                  Approved by:{" "}
-                  <span className="font-medium text-text-primary">
-                    {(job.owner_name?.trim() || "Job owner")}
-                  </span>
-                </p>
-                <p className="text-[10px] text-text-tertiary mt-1">
-                  Recorded{" "}
-                  {new Date(job.report_submitted_at ?? job.updated_at ?? new Date().toISOString()).toLocaleString(
-                    undefined,
-                    { dateStyle: "medium", timeStyle: "short" },
-                  )}
-                </p>
-                {forcedPaidBySystemOwner ? (
-                  <p className="mt-1 text-[11px] font-semibold text-red-600">
-                    Forced and guaranteed by system owner.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Base labour</span>
+              <span className="font-semibold tabular-nums">-{formatCurrency(partnerCashOutBase)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Extra payout</span>
+              <span className={cn("font-semibold tabular-nums", hasPartnerExtra ? "text-rose-700" : "text-text-tertiary")}>
+                {hasPartnerExtra ? `-${formatCurrency(partnerExtraDisplay)}` : formatCurrency(0)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Materials</span>
+              <span className="font-semibold tabular-nums">-{formatCurrency(Math.max(0, Number(job.materials_cost ?? 0)))}</span>
+            </div>
+            <div className="border-t border-rose-200/70 pt-1.5 flex items-center justify-between">
+              <span className="text-text-secondary">Paid out</span>
+              <span className="font-semibold tabular-nums">{formatCurrency(partnerPaidTotal)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-text-secondary">Still due</span>
+              <span className={cn("font-bold tabular-nums", partnerPayRemaining > 0.02 ? "text-amber-700" : "text-emerald-700")}>
+                {formatCurrency(partnerPayRemaining)}
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap justify-end sm:justify-start">
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-border-light bg-card p-3 space-y-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Profit & Loss</p>
+        <div className="space-y-1.5 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-text-secondary">Revenue (client)</span>
+            <span className="font-semibold tabular-nums text-emerald-700">{formatCurrency(billableRevenue)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-text-secondary">Direct costs (partner + materials)</span>
+            <span className="font-semibold tabular-nums text-red-600">-{formatCurrency(directCost)}</span>
+          </div>
+          <div className="border-t border-border-light pt-1.5 flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Net profit / margin</span>
+            <span className={cn("text-base font-bold tabular-nums", profit >= 0 ? "text-emerald-700" : "text-red-600")}>
+              {formatCurrency(profit)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-text-tertiary">Margin %</span>
+            <span className={cn("font-semibold tabular-nums", marginPct >= 0 ? "text-amber-700" : "text-red-600")}>
+              {marginPct}%
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {quoteLineBreakdown && (
+        <div className="rounded-md border border-border-light bg-surface-hover/30 p-3 space-y-2">
+          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client quote lines</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="rounded-md border border-border bg-card px-2 py-2">
+              <p className="text-[10px] text-text-tertiary uppercase">Labour</p>
+              <p className="text-sm font-semibold tabular-nums">{formatCurrency(quoteLineBreakdown.totals.labour)}</p>
+            </div>
+            <div className="rounded-md border border-border bg-card px-2 py-2">
+              <p className="text-[10px] text-text-tertiary uppercase">Materials</p>
+              <p className="text-sm font-semibold tabular-nums">{formatCurrency(quoteLineBreakdown.totals.materials)}</p>
+            </div>
+            <div className="rounded-md border border-border bg-card px-2 py-2">
+              <p className="text-[10px] text-text-tertiary uppercase">Other</p>
+              <p className="text-sm font-semibold tabular-nums">{formatCurrency(quoteLineBreakdown.totals.other)}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {customerScheduleMismatch ? (
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          Scheduled deposit + final ({formatCurrency(scheduledCustomerTotal)}) differs from billable total (
+          {formatCurrency(billableRevenue)}). Adjust deposit/final on the Financial setup tab if needed.
+        </p>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <PageTransition>
+      <div className="w-full bg-[#fdfdfd] py-4 px-4 dark:bg-[#0f1115] sm:px-5">
+        <div className="mx-auto w-full max-w-[1280px] overflow-hidden rounded-lg border border-border bg-card">
+          <div className={cn("h-[3px] w-full shrink-0", healthBarColorClass)} aria-hidden />
+
+          {/* ── TOP BAR ── */}
+          <div className="border-b border-border-light px-4 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-auto shrink-0 rounded-full px-3 py-1.5 text-xs font-medium"
+                  icon={<ArrowLeft className="h-3.5 w-3.5" />}
+                  onClick={() => router.push("/jobs")}
+                >
+                  Back
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  loading={refreshingJob}
+                  className="h-7 w-7 shrink-0 rounded-full p-0"
+                  icon={<RefreshCw className="h-3.5 w-3.5" />}
+                  onClick={() => void refreshJobFinance()}
+                  title="Reload job, payments, and documents from the server"
+                  aria-label="Refresh job"
+                />
+                <h1 className="text-lg font-bold text-text-primary tabular-nums">{job.reference}</h1>
+                <Badge variant={config.variant} dot={config.dot} size="sm" className={statusColors.topBadgeClass || undefined}>
+                  {config.label}
+                </Badge>
+                <JobOverdueBadge job={job} size="sm" />
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                {healthMissingPartner ? (
+                  <span className="text-[10px] font-medium rounded-full px-2 py-0.5 border border-amber-500/45 bg-amber-500/10 text-amber-900 dark:text-amber-100">
+                    ⚠ No partner
+                  </span>
+                ) : null}
+                {healthMissingScope ? (
+                  <span className="text-[10px] font-medium rounded-full px-2 py-0.5 border border-amber-500/45 bg-amber-500/10 text-amber-900 dark:text-amber-100">
+                    ⚠ No scope
+                  </span>
+                ) : null}
             {statusActions.map((action, idx) => {
               const completeGreenClass =
                 "border-emerald-600/45 bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm dark:border-emerald-700/55 dark:bg-emerald-600 dark:hover:bg-emerald-500";
               const holdDarkRedClass =
                 "border-red-950/40 bg-red-950/[0.08] text-red-950 hover:bg-red-950/12 dark:border-red-900/55 dark:bg-red-950/45 dark:text-red-50 dark:hover:bg-red-950/55";
+              const cancelJobClass =
+                action.status === "cancelled"
+                  ? "h-auto border-0 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white shadow-none hover:bg-red-700"
+                  : undefined;
               const variant =
                 action.destructive ? "danger" : action.primary && action.tone !== "success" ? "primary" : "outline";
               const toneClass = action.tone === "success" ? completeGreenClass : action.tone === "hold" ? holdDarkRedClass : undefined;
@@ -2676,7 +3640,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <Button
                   key={`${action.special ?? action.status}-${idx}`}
                   variant={variant}
-                  className={cn(toneClass)}
+                  className={cn(toneClass, "h-8 px-2.5 text-xs", cancelJobClass)}
                   size="sm"
                   icon={<action.icon className="h-3.5 w-3.5" />}
                   disabled={action.special === "send_report_invoice" ? !sendReportFinalCheck.ok : false}
@@ -2690,6 +3654,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     }
                     if (action.special === "put_on_hold") {
                       setPutOnHoldReason("");
+                      setPutOnHoldPreset(null);
                       setPutOnHoldOpen(true);
                       return;
                     }
@@ -2720,208 +3685,244 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               );
             })}
+              </div>
+            </div>
           </div>
-        </div>
+
+        <div className="space-y-0">
+        {job.status === "cancelled" && job.partner_cancelled_at ? (
+          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-text-secondary mx-3 mt-3">
+            <p className="font-semibold text-text-primary">Partner cancellation</p>
+            <p>
+              Fee recorded: £{Number(job.partner_cancellation_fee ?? 0).toFixed(2)}
+              {job.partner_cancellation_reason?.trim()
+                ? ` · Reason: ${job.partner_cancellation_reason.trim()}`
+                : ""}
+            </p>
+          </div>
+        ) : null}
+        {job.status === "cancelled" && !job.partner_cancelled_at && job.cancellation_reason?.trim() ? (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/8 px-3 py-2 text-xs text-text-secondary">
+            <p className="font-semibold text-text-primary">Office cancellation</p>
+            <p className="text-text-secondary mt-0.5">{job.cancellation_reason.trim()}</p>
+            {job.cancelled_at ? (
+              <p className="text-[10px] text-text-tertiary mt-1">
+                Recorded {new Date(job.cancelled_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {job.status === "completed" ? (
+          <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-text-secondary">
+            <p className="font-semibold text-text-primary">Job approval</p>
+            <p>
+              Approved by:{" "}
+              <span className="font-medium text-text-primary">
+                {(job.owner_name?.trim() || "Job owner")}
+              </span>
+            </p>
+            <p className="text-[10px] text-text-tertiary mt-1">
+              Recorded{" "}
+              {new Date(job.report_submitted_at ?? job.updated_at ?? new Date().toISOString()).toLocaleString(
+                undefined,
+                { dateStyle: "medium", timeStyle: "short" },
+              )}
+            </p>
+            {forcedPaidBySystemOwner ? (
+              <p className="mt-1 text-[11px] font-semibold text-red-600">
+                Forced and guaranteed by system owner.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {job.status !== "cancelled" && job.status !== "deleted" ? (
-          <section
-            className="rounded-2xl border border-border-light bg-gradient-to-br from-card via-card to-emerald-500/[0.04] dark:to-emerald-950/20 overflow-hidden shadow-[0_2px_16px_-6px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-6px_rgba(0,0,0,0.45)]"
-            aria-label="Work time and job progress"
-          >
-            <div className="px-3 py-2.5 sm:px-4 sm:py-3">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
-                <div className="min-w-0 flex-1 flex flex-col gap-2 lg:pr-4">
-                  <div className="flex flex-wrap items-end justify-between gap-2">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        Job pipeline
-                      </p>
-                      <p className="text-sm font-semibold text-text-primary mt-0.5">
-                        {JOB_FLOW_STEPS[flowStep]?.label ?? "Progress"}
-                        <span className="ml-2 text-xs font-normal text-text-secondary tabular-nums">
-                          Step {Math.min(flowStep + 1, JOB_FLOW_STEPS.length)} of {JOB_FLOW_STEPS.length}
-                        </span>
-                      </p>
-                    </div>
-                    <span className="text-xs font-medium tabular-nums text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                      {Math.round(((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}% complete
-                    </span>
-                  </div>
-
-                  <div className="relative h-1.5 rounded-full bg-surface-tertiary/70 dark:bg-surface-tertiary/50 overflow-hidden ring-1 ring-black/[0.04] dark:ring-white/[0.06]">
-                    <div
-                      className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 dark:from-emerald-400 dark:to-teal-400 transition-[width] duration-500 ease-out shadow-sm"
-                      style={{ width: `${Math.min(100, ((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}%` }}
-                    />
-                  </div>
-
-                  <ol
-                    className="flex gap-0 overflow-x-auto overscroll-x-contain pb-0.5 -mx-1 px-1 snap-x snap-mandatory [scrollbar-width:thin] sm:mx-0 sm:px-0 sm:overflow-visible sm:grid sm:grid-cols-6 sm:gap-2"
-                    role="list"
-                  >
-                    {JOB_FLOW_STEPS.map((step, idx) => {
-                      const done = flowStep > idx;
-                      const current = flowStep === idx;
-                      const Icon = step.icon;
-                      return (
-                        <li
-                          key={step.label}
-                          className={cn(
-                            "snap-center shrink-0 flex flex-col items-center text-center min-w-[5.25rem] sm:min-w-0 rounded-xl px-1.5 py-2 sm:py-2.5 transition-all duration-200",
-                            current &&
-                              "bg-emerald-500/[0.12] dark:bg-emerald-500/15 ring-2 ring-emerald-500/25 shadow-[0_0_0_1px_rgba(16,185,129,0.08)] scale-[1.02]",
-                            done && !current && "opacity-95",
-                            !done && !current && "opacity-70",
-                          )}
-                          aria-current={current ? "step" : undefined}
-                        >
-                          <div className="relative flex flex-col items-center gap-1.5 w-full">
-                            {done ? (
-                              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md shadow-emerald-500/25">
-                                <Check className="h-4 w-4" strokeWidth={2.5} aria-hidden />
-                              </span>
-                            ) : (
-                              <span
-                                className={cn(
-                                  "flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors",
-                                  current
-                                    ? "border-emerald-500 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200 shadow-[0_0_12px_-2px_rgba(16,185,129,0.35)]"
-                                    : "border-border/80 bg-card/80 text-text-tertiary dark:bg-surface-secondary/80",
-                                )}
-                              >
-                                <Icon className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
-                              </span>
-                            )}
-                            <span
-                              className={cn(
-                                "text-[9px] sm:text-[10px] font-semibold leading-snug max-w-[5.5rem] sm:max-w-none text-balance",
-                                current && "text-text-primary",
-                                done && !current && "text-emerald-800 dark:text-emerald-300/90",
-                                !done && !current && "text-text-tertiary",
-                              )}
-                            >
-                              {step.label}
-                            </span>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                </div>
-
-                <div className="flex flex-row lg:flex-col items-center justify-between gap-3 lg:justify-center shrink-0 rounded-xl lg:rounded-none border border-border/60 lg:border-0 lg:border-l border-border-light bg-card/70 dark:bg-card/40 lg:bg-transparent px-3 py-2 lg:py-1 lg:pl-4 lg:pr-1 lg:min-w-[7rem]">
-                  <div className="flex items-center gap-2.5 min-w-0 lg:flex-col lg:items-center lg:gap-1 lg:text-center">
-                    <div
-                      className={cn(
-                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent",
-                        progressTimerActiveVisual
-                          ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/20 dark:text-emerald-400"
-                          : "bg-surface-tertiary/50 text-text-secondary dark:bg-surface-tertiary/40",
-                      )}
-                      aria-hidden
+          <section className="border-b border-border-light bg-card/30" aria-label="Work time and job progress">
+            <div className="px-4 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 flex items-baseline gap-2">
+                  <p className="truncate text-sm font-semibold text-text-primary">
+                    {JOB_FLOW_STEPS[flowStep]?.label ?? "Progress"}
+                  </p>
+                  <span className="shrink-0 text-[10px] font-medium tabular-nums text-text-tertiary">
+                    Step {Math.min(flowStep + 1, JOB_FLOW_STEPS.length)} of {JOB_FLOW_STEPS.length}
+                  </span>
+                  {canReverseStage ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#ddd] bg-transparent px-2.5 py-1 text-xs text-[#888] transition-colors hover:border-[#d97706] hover:bg-[#fef3c7] hover:text-[#d97706]"
+                      onClick={() => {
+                        if (!previousStageStatus) return;
+                        void handleStatusChange(job, previousStageStatus);
+                      }}
+                      title="Go back one stage"
                     >
-                      <Timer className="h-4 w-4" strokeWidth={2} />
-                    </div>
-                    <div className="min-w-0 lg:w-full">
-                      <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
-                        Work time
-                      </p>
-                      <p className="text-[11px] text-text-secondary leading-snug mt-0.5 line-clamp-2">
-                        {progressTimerSubline}
-                      </p>
-                    </div>
+                      <ChevronLeft className="h-[11px] w-[11px]" />
+                      Back stage
+                    </button>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <div
+                    className={cn(
+                      "inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-border-light bg-card/80 px-1.5 py-0.5",
+                      progressTimerActiveVisual && "border-emerald-500/25 bg-emerald-500/10",
+                    )}
+                  >
+                    <Timer className="h-3 w-3 shrink-0 text-text-tertiary" strokeWidth={2} aria-hidden />
+                    <span className="truncate text-[10px] text-text-secondary">{progressTimerSubline}</span>
+                    <span className="text-[11px] font-bold tabular-nums text-text-primary">{timeSpentLabel}</span>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {progressTimerPausedBadge ? (
-                      <Badge variant="warning" size="sm" className="text-[9px] px-1.5 py-0 h-5">
-                        Paused
-                      </Badge>
-                    ) : null}
-                    <span className="text-lg font-bold tabular-nums tracking-tight text-text-primary">
-                      {timeSpentLabel}
-                    </span>
-                  </div>
+                  {progressTimerPausedBadge ? (
+                    <Badge variant="warning" size="sm" className="h-5 px-1 text-[9px]">
+                      Paused
+                    </Badge>
+                  ) : null}
+                  <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                    {Math.round(((flowStep + 1) / JOB_FLOW_STEPS.length) * 100)}% complete
+                  </span>
                 </div>
               </div>
+              <ol
+                className="mt-1.5 flex w-full items-start gap-0 overflow-x-auto pb-1 [scrollbar-width:thin] md:grid md:grid-cols-6 md:overflow-visible"
+                role="list"
+              >
+                {JOB_FLOW_STEPS.map((step, idx) => {
+                  const done = statusColors.completedAllSteps || flowStep > idx;
+                  const current = flowStep === idx;
+                  const currentOrCompletedActive = statusColors.completedAllSteps || current;
+                  const Icon = step.icon;
+                  const isOnHoldStep = (step.statuses as readonly string[]).includes("on_hold");
+                  const isAwaitingPayStep = (step.statuses as readonly string[]).includes("awaiting_payment");
+                  const onHoldStuck = isOnHoldStep && job.status === "on_hold" && onHoldCalendarDays > 2;
+                  const payStepOverdue = isAwaitingPayStep && healthPaymentOverdue;
+                  const dotClass = payStepOverdue
+                    ? "border-red-600 bg-red-50 text-red-700 dark:bg-red-950/35 dark:text-red-300"
+                    : onHoldStuck
+                      ? "border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-200"
+                      : currentOrCompletedActive
+                        ? statusColors.activeStepDotClass
+                        : done
+                          ? "border-emerald-600 bg-emerald-600 text-white"
+                          : "border-border bg-muted/60 text-text-tertiary";
+                  const labelClass = payStepOverdue
+                    ? "text-red-600 dark:text-red-400 font-semibold"
+                    : onHoldStuck
+                      ? "text-amber-700 dark:text-amber-300 font-semibold"
+                      : currentOrCompletedActive
+                        ? statusColors.activeStepLabelClass
+                        : done
+                          ? "text-emerald-800 dark:text-emerald-300/90 font-medium"
+                          : "text-text-tertiary font-medium";
+                  return (
+                    <li
+                      key={step.label}
+                      className="relative flex min-w-[3.5rem] flex-1 flex-col items-center px-0.5 text-center md:min-w-0"
+                      aria-current={current ? "step" : undefined}
+                    >
+                      {idx > 0 ? (
+                        <div
+                          className="absolute left-0 top-[11px] hidden h-px w-1/2 -translate-x-1/2 bg-border md:block"
+                          aria-hidden
+                        />
+                      ) : null}
+                      <div className="relative z-[1] flex flex-col items-center gap-0.5">
+                        {done && !(isAwaitingPayStep && payStepOverdue) && !onHoldStuck ? (
+                          <span
+                            className={cn(
+                              "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-2 border-emerald-600 bg-emerald-600 text-white shadow-sm",
+                            )}
+                          >
+                            <Check className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+                          </span>
+                        ) : (
+                          <span
+                            className={cn(
+                              "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-2 transition-colors",
+                              dotClass,
+                            )}
+                          >
+                            <Icon className="h-2.5 w-2.5 shrink-0" strokeWidth={2} aria-hidden />
+                          </span>
+                        )}
+                        <span className={cn("max-w-[5.5rem] text-[10px] leading-tight text-balance sm:max-w-none", labelClass)}>
+                          {step.label}
+                        </span>
+                        {onHoldStuck ? (
+                          <span className="text-[9px] font-medium text-amber-700 dark:text-amber-400">{onHoldCalendarDays}d parado</span>
+                        ) : payStepOverdue ? (
+                          <span className="text-[9px] font-medium text-red-600 dark:text-red-400">Payment overdue</span>
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
             </div>
           </section>
         ) : (
-          <p className="text-sm text-text-tertiary">This job was cancelled — workflow stopped.</p>
+          <p className="mx-3 mb-3 text-sm text-text-tertiary">This job was cancelled — workflow stopped.</p>
         )}
 
-        {/* ── Job amount / margin (same metrics as jobs board cards) ── */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-3">
-          <div className="min-w-0 rounded-xl bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-[0_2px_16px_-4px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-4px_rgba(0,0,0,0.4)]">
-            <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Job amount</p>
-            <p className="mt-1 text-base sm:text-lg font-bold text-text-primary tabular-nums leading-tight break-words">{formatCurrency(billableRevenue)}</p>
-            <p className="text-[10px] text-text-tertiary mt-1 leading-snug">Incl. extras</p>
+        {/* ── Job amount / margin (compact metrics bar) ── */}
+        <div className="grid min-h-0 grid-cols-2 divide-x divide-y divide-border-light border-b border-border-light bg-surface-hover/30 px-1 py-2 dark:bg-surface-secondary/20 lg:grid-cols-4 lg:divide-y-0">
+          <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Job amount</p>
+            <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-primary">{formatCurrency(billableRevenue)}</p>
+            <p className="mt-0.5 text-[10px] text-text-tertiary leading-none">Incl. extras</p>
           </div>
-          <div className="min-w-0 rounded-xl bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-[0_2px_16px_-4px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-4px_rgba(0,0,0,0.4)]">
-            <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Partner cost</p>
-            <p className="mt-1 text-base sm:text-lg font-bold text-text-secondary tabular-nums leading-tight break-words">{formatCurrency(Number(job.partner_cost ?? 0))}</p>
+          <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner cost</p>
+            <p className="text-2xl font-bold tabular-nums leading-tight tracking-tight text-text-secondary">{formatCurrency(Number(job.partner_cost ?? 0))}</p>
           </div>
-          <div className="min-w-0 rounded-xl bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-[0_2px_16px_-4px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-4px_rgba(0,0,0,0.4)]">
-            <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin</p>
+          <div className="flex min-w-0 flex-col justify-center border-border-light px-3 py-3 sm:px-4 lg:border-r">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin</p>
             <p
               className={cn(
-                "mt-1 text-base sm:text-lg font-bold tabular-nums leading-tight break-words",
+                "text-2xl font-bold tabular-nums leading-tight tracking-tight",
                 profit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
               )}
             >
               {formatCurrency(profit)}
             </p>
-            <p className="text-[10px] text-text-tertiary mt-1 leading-snug">After partner + materials</p>
+            <p className="mt-0.5 text-[10px] text-text-tertiary leading-none">After partner + materials</p>
           </div>
-          <div className="min-w-0 rounded-xl bg-surface-hover/60 dark:bg-surface-secondary/40 p-3 sm:p-4 shadow-[0_2px_16px_-4px_rgba(0,0,0,0.1)] dark:shadow-[0_2px_18px_-4px_rgba(0,0,0,0.4)]">
-            <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Margin %</p>
-            <p
-              className={cn(
-                "mt-1 text-base sm:text-lg font-bold tabular-nums",
-                marginPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
-              )}
-            >
-              {marginPct}%
-            </p>
+          <div className="flex min-w-0 flex-col justify-center px-3 py-3 sm:px-4">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Margin %</p>
+            <p className={cn("text-2xl font-bold tabular-nums tracking-tight", marginAppearance.pctClass)}>{marginPct}%</p>
           </div>
         </div>
 
-        {/* ── MAIN GRID ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
+        {/* ── MAIN GRID (sidebar stacks below main until lg) ── */}
+        <div className="grid min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-stretch">
           {/* ═══ LEFT — operational column ═══ */}
-          <div className="lg:col-span-2 space-y-5">
+          <div className="min-h-0 min-w-0 space-y-3 border-border-light p-3 sm:p-4 lg:border-r">
 
-            {/* MAP + CLIENT IDENTITY */}
-            <div className="rounded-xl border border-border-light bg-card overflow-hidden">
-              <div className="flex flex-col">
-                <div className="relative w-full aspect-[5/2] min-h-[160px] max-h-[min(260px,42vw)] bg-surface-hover/30 border-b border-border-light">
+            {/* MAP + CLIENT + SCHEDULE */}
+            <div className="overflow-hidden rounded-xl border border-border-light bg-white shadow-sm ring-1 ring-black/[0.04] dark:border-[#2b313d] dark:bg-[#141922] dark:ring-white/[0.03]">
+              <div className="grid min-h-0 grid-cols-1 bg-white dark:bg-[#141922] sm:grid-cols-2 sm:divide-x sm:divide-border-light dark:sm:divide-[#2b313d]">
+                <div className="relative min-h-[200px] w-full min-w-0 border-b border-border-light bg-gradient-to-b from-sky-50/50 to-surface-hover/40 sm:min-h-[240px] sm:border-b-0">
                   <LocationMiniMap
                     address={job.property_address}
-                    className="h-full w-full min-h-[160px]"
+                    className="flex h-full min-h-[200px] w-full min-w-0 flex-col sm:min-h-[240px]"
                     mapHeight="100%"
                     showAddressBelowMap={false}
                     lazy
                   />
                 </div>
-                <div className="p-4 sm:p-5 space-y-3">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
-                    <Building2 className="h-3.5 w-3.5" /> Client identity
-                  </p>
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-base font-bold text-text-primary">{job.client_name}</p>
-                      <p className="text-xs text-text-tertiary mt-0.5 leading-snug">{job.property_address}</p>
-                    </div>
-                    {!isHousekeepJobDetail ? (
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <Badge variant="outline" size="sm" className="font-medium">
-                          {job.job_type === "hourly" ? "Hourly" : "Fixed"}
-                        </Badge>
-                        <Button
+                <div className="flex min-w-0 flex-col gap-3 p-4">
+                  {(() => {
+                    const JobTypeIcon = getJobTypeIcon(job.title ?? "");
+                    const typePillClass = getJobTypePillClass(job.title ?? "");
+                    return job.title?.trim() ? (
+                      <div className="mb-3 inline-flex self-start items-center gap-1.5">
+                        <p className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold", typePillClass)}>
+                          <JobTypeIcon className="h-[11px] w-[11px] shrink-0" />
+                          {job.title.trim()}
+                        </p>
+                        <button
                           type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 px-2 text-text-secondary"
+                          className="flex h-[22px] w-[22px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
                           disabled={job.status === "cancelled"}
                           onClick={() => {
                             setJobTypeEditTarget(job.job_type === "hourly" ? "hourly" : "fixed");
@@ -2929,77 +3930,300 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             setJobTypeEditFixedTitle(job.title ?? "");
                             setJobTypeEditOpen(true);
                           }}
+                          title="Edit type of work"
                         >
-                          <Pencil className="h-3.5 w-3.5 mr-1" aria-hidden />
-                          Edit
-                        </Button>
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-sm font-medium text-text-tertiary">No service title</p>
+                    );
+                  })()}
+                  <div>
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <p className="text-sm font-semibold leading-tight text-text-primary">{job.client_name}</p>
+                      {jobHeaderAccount ? (
+                        <span
+                          title={`Account: ${jobHeaderAccount.label}`}
+                          className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-border-light bg-surface-hover/90 px-2 py-0.5 text-xs font-semibold text-text-primary shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]/90"
+                        >
+                          {jobHeaderAccount.logoUrl ? (
+                            <img
+                              src={jobHeaderAccount.logoUrl}
+                              alt=""
+                              width={16}
+                              height={16}
+                              className="h-3.5 w-3.5 shrink-0 rounded object-contain sm:h-4 sm:w-4"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <Building2 className="h-3 w-3 shrink-0 text-text-tertiary opacity-70" aria-hidden />
+                          )}
+                          <span className="min-w-0 truncate normal-case tracking-normal">{jobHeaderAccount.label}</span>
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-xs leading-snug text-text-tertiary line-clamp-4">{job.property_address}</p>
+                    {jobHeaderContact && (jobHeaderContact.phone || jobHeaderContact.email) ? (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-snug">
+                        {jobHeaderContact.phone ? (() => {
+                          const waHref = whatsAppHrefFromPhoneForJob(jobHeaderContact.phone);
+                          return (
+                            <span className="inline-flex min-w-0 items-center gap-1 text-text-secondary">
+                              {waHref ? (
+                                <a
+                                  href={waHref}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="shrink-0 text-[#25D366] hover:opacity-90"
+                                  title="WhatsApp"
+                                  aria-label="Open WhatsApp chat"
+                                >
+                                  <JobHeaderWhatsAppIcon className="h-3 w-3" />
+                                </a>
+                              ) : null}
+                              <a href={`tel:${jobHeaderContact.phone!.replace(/\s/g, "")}`} className="font-medium hover:underline">
+                                {jobHeaderContact.phone}
+                              </a>
+                            </span>
+                          );
+                        })() : null}
+                        {jobHeaderContact.email ? (
+                          <a
+                            href={`mailto:${jobHeaderContact.email}`}
+                            className="min-w-0 max-w-[min(100%,14rem)] truncate text-text-tertiary hover:text-primary hover:underline"
+                          >
+                            {jobHeaderContact.email}
+                          </a>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border-light">
-                    <div>
-                      <p className="text-[10px] text-text-tertiary">Start date</p>
-                      <Input
-                        type="date"
-                        value={scheduleDate}
-                        disabled={job.status === "cancelled"}
-                        className="mt-0.5 h-9 text-sm"
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setScheduleDate(v);
-                          if (!v.trim()) setScheduleExpectedFinishDate("");
-                          handleScheduleChange(job, v, scheduleTime, scheduleWindowMins, v.trim() ? scheduleExpectedFinishDate : "");
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <TimeSelect
-                        label="Arrival time (from)"
-                        value={scheduleTime}
-                        disabled={job.status === "cancelled"}
-                        className="mt-0.5"
-                        onChange={(v) => { setScheduleTime(v); handleScheduleChange(job, scheduleDate, v, scheduleWindowMins, scheduleExpectedFinishDate); }}
-                      />
-                    </div>
-                    <Select
-                      label="Arrival window length"
-                      value={scheduleWindowMins}
-                      disabled={job.status === "cancelled"}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setScheduleWindowMins(v);
-                        handleScheduleChange(job, scheduleDate, scheduleTime, v, scheduleExpectedFinishDate);
-                      }}
-                      options={[...ARRIVAL_WINDOW_OPTIONS]}
-                    />
-                    <div>
-                      <p className="text-[10px] text-text-tertiary">
-                        Expected finish (date only){scheduleDate.trim() ? " *" : ""}
-                      </p>
-                      <Input
-                        type="date"
-                        value={scheduleExpectedFinishDate}
-                        disabled={job.status === "cancelled"}
-                        className="mt-0.5 h-9 text-sm"
-                        onChange={(e) => { setScheduleExpectedFinishDate(e.target.value); handleScheduleChange(job, scheduleDate, scheduleTime, scheduleWindowMins, e.target.value); }}
-                      />
-                    </div>
-                  </div>
-                  {clientVisibleArrivalPreview ? (
-                    <p className="text-[11px] font-medium text-text-secondary -mt-1">{clientVisibleArrivalPreview}</p>
+                  {(() => {
+                    const displayDate =
+                      scheduleDate.trim() ||
+                      job.scheduled_date?.slice(0, 10) ||
+                      job.scheduled_start_at?.slice(0, 10) ||
+                      "";
+                    const startIso =
+                      displayDate && scheduleTime.trim()
+                        ? `${displayDate}T${scheduleTime.trim()}:00`
+                        : job.scheduled_start_at?.trim() || "";
+                    const windowValue = Number(scheduleWindowMins);
+                    const hasWindow = Number.isFinite(windowValue) && windowValue > 0;
+                    const windowLabel =
+                      ARRIVAL_WINDOW_OPTIONS.find((opt) => opt.value === scheduleWindowMins)?.label ??
+                      (hasWindow ? `${Math.round(windowValue / 60)}h` : "No");
+                    const rangeFromStored =
+                      job.scheduled_start_at && job.scheduled_end_at
+                        ? formatArrivalTimeRange(job.scheduled_start_at, job.scheduled_end_at)
+                        : null;
+                    const rangeFromUi =
+                      hasWindow && displayDate && scheduleTime.trim()
+                        ? formatArrivalTimeRange(
+                            `${displayDate}T${scheduleTime.trim()}:00`,
+                            scheduledEndFromWindow(displayDate, scheduleTime.trim(), windowValue),
+                          )
+                        : null;
+                    const agreedArrivalRange = rangeFromStored || rangeFromUi;
+                    return (
+                      <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
+                        <div className="mt-1.5 flex items-center gap-2 text-sm text-[#444] dark:text-[#d2d8e2]">
+                          <Calendar className="h-[13px] w-[13px] text-[#aaa] dark:text-[#7f899a]" />
+                          <span>
+                            {displayDate ? formatDate(displayDate) : "Not set"}{" "}
+                            <span className="text-[#9a9a9a] dark:text-[#909aac]">visit date</span>
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-[#444] dark:text-[#d2d8e2]">
+                          <Clock className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
+                          <span>
+                            {agreedArrivalRange ? (
+                              <span className="font-medium">Arrival: {agreedArrivalRange}</span>
+                            ) : startIso ? (
+                              <>
+                                {formatHourMinuteAmPm(new Date(startIso))}
+                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {windowLabel} window</span>
+                              </>
+                            ) : (
+                              "Not set"
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {!isHousekeepJobDetail ? (
+                    <>
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full border-[1.5px] px-3 py-1 text-xs font-bold",
+                            job.job_type === "hourly"
+                              ? "border-[#7c3aed] bg-[#f5f3ff] text-[#5b21b6]"
+                              : "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]",
+                          )}
+                        >
+                          {job.job_type === "hourly" ? <Clock className="h-[11px] w-[11px]" /> : <Lock className="h-[11px] w-[11px]" />}
+                          {job.job_type === "hourly" ? "Hourly" : "Fixed"}
+                        </span>
+                        <button
+                          type="button"
+                          className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
+                          disabled={job.status === "cancelled"}
+                          onClick={() => {
+                            setFixedRatesInlineOpen(false);
+                            setFixedInlineClientRate(String(Math.max(0, Number(job.client_price ?? 0))));
+                            setFixedInlinePartnerCost(String(Math.max(0, Number(job.partner_cost ?? 0))));
+                            setJobTypeEditTarget(job.job_type === "hourly" ? "hourly" : "fixed");
+                            setJobTypeEditCatalogId(job.catalog_service_id ?? "");
+                            setJobTypeEditFixedTitle(job.title ?? "");
+                            setJobTypeEditOpen(true);
+                          }}
+                          title="Edit pricing"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        {job.job_type === "hourly" ? (
+                          <>
+                            <span className="mx-1 h-4 border-l border-[#e8e5e0] dark:border-[#2f3440]" />
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-[#333] tabular-nums dark:text-[#d8dee9]">
+                                {formatOfficeTimer(officeTimerDisplaySeconds ?? (Number(job.timer_elapsed_seconds ?? 0) || 0))}
+                              </span>
+                              <button
+                                type="button"
+                                className="text-text-tertiary transition-colors hover:text-primary dark:text-[#8a93a5]"
+                                onClick={() => setHourlyTimeEditOpen((v) => !v)}
+                                title="Edit time"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                      {job.job_type === "hourly" && hourlyTimeEditOpen ? (
+                        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                          <Input
+                            type="number"
+                            min={0}
+                            value={hourlyEditHours}
+                            onChange={(e) => setHourlyEditHours(e.target.value)}
+                            className="h-8 w-14 text-center text-sm"
+                          />
+                          <span className="text-xs text-text-secondary">h</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={59}
+                            value={hourlyEditMinutes}
+                            onChange={(e) => setHourlyEditMinutes(e.target.value)}
+                            className="h-8 w-14 text-center text-sm"
+                          />
+                          <span className="text-xs text-text-secondary">m</span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-8 px-3 text-xs"
+                            loading={savingHourlyTimeEdit}
+                            onClick={() => void handleSaveHourlyTimeEdit()}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 px-3 text-xs"
+                            disabled={savingHourlyTimeEdit}
+                            onClick={() => setHourlyTimeEditOpen(false)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : null}
+                      {job.job_type === "fixed" && fixedRatesInlineOpen ? (
+                        <div className="mt-2 rounded-lg border border-border bg-surface-secondary p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="mb-1 block text-[11px] font-medium text-text-secondary">Client rate £</label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={fixedInlineClientRate}
+                                onChange={(e) => setFixedInlineClientRate(e.target.value)}
+                                className="h-9 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-[11px] font-medium text-text-secondary">Partner cost £</label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={fixedInlinePartnerCost}
+                                onChange={(e) => setFixedInlinePartnerCost(e.target.value)}
+                                className="h-9 text-sm"
+                              />
+                            </div>
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="primary"
+                              className="h-9"
+                              loading={savingFixedInlineRates}
+                              onClick={() => void handleSaveFixedInlineRates()}
+                            >
+                              Update rates
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-9"
+                              disabled={savingFixedInlineRates}
+                              onClick={() => setFixedRatesInlineOpen(false)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                          <p className="mt-2 text-[10px] text-text-tertiary">This will update the invoice amount</p>
+                        </div>
+                      ) : null}
+                    </>
                   ) : null}
-                  <p className="text-[10px] text-text-tertiary -mt-1">
-                    Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time. Expected finish is calendar-only (no time); late is still based on window end.
-                  </p>
-                  <div className="pt-1 border-t border-border-light">
+                </div>
+              </div>
+              <div className="border-t border-border-light">
+                <button
+                  type="button"
+                  onClick={() => setClientEditAccordionOpen((o) => !o)}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-text-secondary hover:bg-surface-hover/50"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Pencil className="h-3 w-3 shrink-0 text-text-tertiary" aria-hidden />
+                    Edit client &amp; address
+                  </span>
+                  <ChevronDown className={cn("h-4 w-4 shrink-0 text-text-tertiary transition-transform", clientEditAccordionOpen && "rotate-180")} />
+                </button>
+                {clientEditAccordionOpen ? (
+                  <div className={cn("space-y-2 border-t border-border-light px-3 py-2", job.status === "cancelled" && "pointer-events-none opacity-50")}>
                     {job.client_id && propertyEdit ? (
-                      <div className={cn("space-y-2", job.status === "cancelled" && "pointer-events-none opacity-50")}>
+                      <>
                         <ClientAddressPicker
                           value={propertyEdit}
                           onChange={setPropertyEdit}
                           labelClient="Client"
                           labelAddress="Property address"
                           jobCurrentAddressOnly
+                          clientNameInputClassName={cn(
+                            JOB_DETAIL_INLINE_INPUT_FIELD_CLASS,
+                            "px-3 text-sm outline-none",
+                          )}
                         />
                         <Button
                           type="button"
@@ -3011,91 +4235,238 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         >
                           Save client & address
                         </Button>
-                      </div>
+                      </>
                     ) : (
                       <div className="space-y-2">
-                        <AddressAutocomplete value={unlinkedAddressDraft} onChange={setUnlinkedAddressDraft} onSelect={(p) => setUnlinkedAddressDraft(p.full_address)} label="Property address" placeholder="Type address or postcode…" />
-                        <Button type="button" variant="outline" size="sm" loading={savingUnlinkedAddress} onClick={handleSaveUnlinkedProperty}>Save address</Button>
+                        <AddressAutocomplete
+                          value={unlinkedAddressDraft}
+                          onChange={setUnlinkedAddressDraft}
+                          onSelect={(p) => setUnlinkedAddressDraft(p.full_address)}
+                          label="Property address"
+                          placeholder="Type address or postcode…"
+                          fieldClassName={cn(JOB_DETAIL_INLINE_INPUT_FIELD_CLASS, "px-3")}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          loading={savingUnlinkedAddress}
+                          onClick={handleSaveUnlinkedProperty}
+                        >
+                          Save address
+                        </Button>
                       </div>
                     )}
                   </div>
-                  {!isHousekeepJobDetail && (
-                    <div className="pt-3 border-t border-border-light space-y-2">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Congestion charge (CCZ)</p>
-                      <p className="text-[11px] text-text-tertiary leading-snug">
-                        CCZ is only available for central London postcodes (TfL Congestion Charge / Zone&nbsp;1 core: EC1–4, WC1–2, W1, SW1, SE1). Outside that list the control stays off. Inside the list you still choose whether to apply the +£15 fee — it is not turned on automatically.
-                      </p>
-                      {!cczEligibleAddress && job.in_ccz ? (
-                        <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                          This job has CCZ enabled in the database, but the current address is outside the central London postcode list — no CCZ surcharge is applied until you save an eligible address and turn CCZ on.
-                        </p>
-                      ) : null}
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
+                ) : null}
+              </div>
+              <div className="space-y-2 border-t border-border-light bg-surface-secondary p-3 dark:border-[#2b313d] dark:bg-[#161c26]">
+                <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border-light bg-border-light">
+                  <div className="min-w-0 bg-card p-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Start date</p>
+                    <Input
+                      type="date"
+                      value={scheduleDate}
+                      disabled={job.status === "cancelled"}
+                      className="mt-0.5 h-7 text-[13px]"
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setScheduleDate(v);
+                        if (!v.trim()) setScheduleExpectedFinishDate("");
+                        handleScheduleChange(job, v, scheduleTime, scheduleWindowMins, v.trim() ? scheduleExpectedFinishDate : "");
+                      }}
+                    />
+                  </div>
+                  <div className="min-w-0 bg-card p-2">
+                    <div className="flex items-center gap-0.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Arrival time</p>
+                      <span className="group relative shrink-0">
+                        <span
+                          tabIndex={0}
+                          className="inline-flex cursor-help rounded p-px text-text-tertiary outline-none hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-primary/25"
+                          aria-label="How arrival time is shown to clients and partners"
+                        >
+                          <Info className="h-3 w-3" aria-hidden />
+                        </span>
+                        <span
+                          role="tooltip"
+                          className="pointer-events-none invisible absolute bottom-full left-0 z-[60] mb-1 w-44 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                        >
+                          {arrivalFieldTooltipText}
+                        </span>
+                      </span>
+                    </div>
+                    <TimeSelect
+                      value={scheduleTime}
+                      disabled={job.status === "cancelled"}
+                      className="mt-0.5 h-7 text-[13px]"
+                      onChange={(v) => {
+                        setScheduleTime(v);
+                        handleScheduleChange(job, scheduleDate, v, scheduleWindowMins, scheduleExpectedFinishDate);
+                      }}
+                    />
+                  </div>
+                  <div className="min-w-0 bg-card p-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Window</p>
+                    <Select
+                      value={scheduleWindowMins}
+                      disabled={job.status === "cancelled"}
+                      className="mt-0.5 h-7 text-[13px]"
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setScheduleWindowMins(v);
+                        handleScheduleChange(job, scheduleDate, scheduleTime, v, scheduleExpectedFinishDate);
+                      }}
+                      options={[...ARRIVAL_WINDOW_OPTIONS]}
+                    />
+                  </div>
+                  <div className="min-w-0 bg-card p-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
+                      Expected finish{scheduleDate.trim() ? " *" : ""}
+                    </p>
+                    <Input
+                      type="date"
+                      value={scheduleExpectedFinishDate}
+                      disabled={job.status === "cancelled"}
+                      className="mt-0.5 h-7 text-[13px]"
+                      onChange={(e) => {
+                        setScheduleExpectedFinishDate(e.target.value);
+                        handleScheduleChange(job, scheduleDate, scheduleTime, scheduleWindowMins, e.target.value);
+                      }}
+                    />
+                  </div>
+                </div>
+                {!isHousekeepJobDetail ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
+                      <div className="flex items-center gap-0.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">CCZ</p>
+                          <span className="group relative shrink-0">
+                            <span
+                              tabIndex={0}
+                              className="inline-flex cursor-help rounded p-px text-text-tertiary outline-none hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-primary/25"
+                              aria-label="Congestion charge zone details"
+                            >
+                              <Info className="h-3 w-3" aria-hidden />
+                            </span>
+                            <span
+                              role="tooltip"
+                              className="pointer-events-none invisible absolute bottom-full left-0 z-[60] mb-1 w-44 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                            >
+                              {cczParkingFieldTooltipText}
+                            </span>
+                          </span>
+                      </div>
+                      <button
                           type="button"
                           disabled={
-                            job.status === "cancelled" ||
-                            savingAccessFees ||
-                            (!cczEligibleAddress && !job.in_ccz)
+                            job.status === "cancelled" || savingAccessFees || (!cczEligibleAddress && !job.in_ccz)
                           }
                           onClick={() => {
                             if (cczEligibleAddress) void saveAccessFeeFlags({ in_ccz: !Boolean(job.in_ccz) });
                             else if (job.in_ccz) void saveAccessFeeFlags({ in_ccz: false });
                           }}
-                          className={cn(
-                            "rounded-lg border px-2.5 py-2 text-left transition-colors",
-                            !cczEligibleAddress && !job.in_ccz && "opacity-50 cursor-not-allowed",
-                            effectiveCustomerInCcz ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
+                      className={cn(
+                            "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
+                            effectiveCustomerInCcz
+                              ? "border-emerald-500/45 bg-white shadow-sm dark:border-emerald-500/50 dark:bg-[#141a24]"
+                              : "border-border bg-white/90 hover:border-border dark:border-[#2f3440] dark:bg-[#171d28] dark:hover:border-[#3a4252]",
+                            !cczEligibleAddress && !job.in_ccz && "cursor-not-allowed opacity-50",
                           )}
-                        >
-                          <p className="font-medium text-xs">
-                            {!cczEligibleAddress && job.in_ccz
-                              ? "Clear CCZ (outside zone)"
-                              : !cczEligibleAddress
-                                ? "CCZ (central London only)"
-                                : effectiveCustomerInCcz
-                                  ? "CCZ fee applied"
-                                  : "Apply CCZ"}
-                          </p>
-                          <p className="text-[10px] opacity-80 mt-0.5">
-                            {!cczEligibleAddress && !job.in_ccz
-                              ? "Postcode not in CCZ list"
-                              : !cczEligibleAddress && job.in_ccz
-                                ? "Tap to turn off stored flag"
-                                : effectiveCustomerInCcz
-                                  ? "+£15 on access bundle"
-                                  : "No CCZ charge"}
-                          </p>
-                        </button>
-                        <button
+                      >
+                          <span
+                            className={cn(
+                              "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors",
+                              effectiveCustomerInCcz ? "bg-emerald-600" : "bg-stone-300/90 dark:bg-stone-600",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-transform dark:bg-[#d8dee9]",
+                                effectiveCustomerInCcz ? "translate-x-[14px]" : "translate-x-[2px]",
+                              )}
+                            />
+                          </span>
+                          <span className={cn("text-[10px] font-medium", effectiveCustomerInCcz ? "text-amber-600" : "text-text-tertiary")}>
+                            {effectiveCustomerInCcz ? `+£${ACCESS_CCZ_FEE_GBP}` : "No fee"}
+                          </span>
+                      </button>
+                    </div>
+                    <div className="min-w-0 rounded-lg border border-border-light bg-surface-hover/80 p-2.5 shadow-sm dark:border-[#2b313d] dark:bg-[#1a202a]">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Parking</p>
+                      <button
                           type="button"
                           disabled={job.status === "cancelled" || savingAccessFees}
                           onClick={() => void saveAccessFeeFlags({ has_free_parking: !Boolean(job.has_free_parking) })}
                           className={cn(
-                            "rounded-lg border px-2.5 py-2 text-left transition-colors",
-                            !job.has_free_parking ? "border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border bg-card text-text-secondary",
+                            "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
+                            job.has_free_parking === false
+                              ? "border-amber-500/40 bg-white shadow-sm dark:border-amber-500/45 dark:bg-[#141a24]"
+                              : "border-border bg-white/90 hover:border-border dark:border-[#2f3440] dark:bg-[#171d28] dark:hover:border-[#3a4252]",
                           )}
-                        >
-                          <p className="font-medium text-xs">{job.has_free_parking ? "Free parking on site" : "Parking fee applied"}</p>
-                          <p className="text-[10px] opacity-80 mt-0.5">{job.has_free_parking ? "No parking charge" : "+£15 on access bundle"}</p>
-                        </button>
-                      </div>
+                      >
+                          <span
+                            className={cn(
+                              "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors",
+                              job.has_free_parking === false ? "bg-emerald-600" : "bg-stone-300/90 dark:bg-stone-600",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-transform dark:bg-[#d8dee9]",
+                                job.has_free_parking === false ? "translate-x-[14px]" : "translate-x-[2px]",
+                              )}
+                            />
+                          </span>
+                          <span
+                            className={cn(
+                              "text-[10px] font-medium",
+                              job.has_free_parking === false ? "text-amber-600" : "text-text-tertiary",
+                            )}
+                          >
+                            {job.has_free_parking === false ? `+£${ACCESS_PARKING_FEE_GBP}` : "No fee"}
+                          </span>
+                      </button>
                     </div>
-                  )}
+                  </div>
+                ) : null}
                   <div className="flex flex-wrap gap-2 text-xs">
                     {job.quote_id && <Link href="/quotes" className="inline-flex items-center gap-1 text-primary hover:underline">Quote <ExternalLink className="h-3 w-3" /></Link>}
                     {job.self_bill_id && <Link href="/finance/selfbill" className="inline-flex items-center gap-1 text-primary hover:underline">Self-bill <ExternalLink className="h-3 w-3" /></Link>}
                     {job.invoice_id && <Link href="/finance/invoices" className="inline-flex items-center gap-1 text-primary hover:underline">Invoice <ExternalLink className="h-3 w-3" /></Link>}
                   </div>
-                </div>
               </div>
             </div>
 
-            {/* SCOPE + SITE PHOTOS */}
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope of work & site photos</p>
-              <p className="text-[11px] text-text-tertiary">Scope is required before assigning a partner. Site photos come from the request/quote or uploads here.</p>
-
+            {/* Scope / photos / reports / financial — tabbed */}
+            <div className="overflow-hidden rounded-xl border border-border-light bg-[#fdfdfd] shadow-sm dark:border-[#2b313d] dark:bg-[#141922]">
+              <div className="flex flex-wrap border-b border-border-light bg-[#fdfdfd] dark:border-[#2b313d] dark:bg-[#141922]">
+                {(
+                  [
+                    { label: "Details", index: 0 as const },
+                    { label: "Site Photos", index: 1 as const },
+                    { label: "Reports", index: 2 as const },
+                    { label: "Notes", index: 3 as const },
+                    ...(isAdmin ? [{ label: "Financial Setup", index: 4 as const }] : []),
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.label}
+                    type="button"
+                    onClick={() => setDetailTab(tab.index)}
+                    className={cn(
+                      "min-w-0 flex-1 px-1.5 py-2 text-center text-[11px] font-medium transition-colors sm:px-2",
+                      detailTab === tab.index
+                        ? "border-b-2 border-primary text-primary"
+                        : "border-b-2 border-transparent text-text-tertiary hover:text-text-secondary",
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
+              {detailTab === 1 ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <p className="text-xs font-medium text-text-secondary">Site reference photos</p>
@@ -3171,15 +4542,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   ) : null}
                 </div>
               </div>
+              ) : null}
 
-              <div className="space-y-2 pt-1 border-t border-border-light">
+              {detailTab === 0 ? (
+              <div className="space-y-3">
+              <p className="text-[11px] text-text-tertiary">Scope is required before assigning a partner. Site photos are on the Site photos tab.</p>
+              <div className="space-y-1.5 border-t border-border-light pt-2">
                 <p className="text-xs font-medium text-text-secondary">Scope</p>
                 <textarea
                   value={scopeDraft}
                   onChange={(e) => setScopeDraft(e.target.value)}
-                  rows={5}
+                  rows={2}
                   placeholder="Describe what the partner is expected to do…"
-                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[100px]"
+                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[72px]")}
                 />
                 <Button type="button" variant="outline" size="sm" loading={savingScope} onClick={async () => {
                   if (!job) return;
@@ -3194,7 +4569,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               </div>
 
-              <div className="space-y-2 pt-3 border-t border-border-light">
+              <div className="space-y-1.5 pt-2 border-t border-border-light">
                 <p className="text-xs font-medium text-text-secondary">Additional notes</p>
                 <p className="text-[11px] text-text-tertiary">Internal only — not shown to the client; use for access, keys, or context beyond the scope.</p>
                 <textarea
@@ -3202,7 +4577,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   onChange={(e) => setAdditionalNotesDraft(e.target.value)}
                   rows={3}
                   placeholder="Parking, entry, preferences…"
-                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-y min-h-[72px]"
+                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
                 />
                 <Button
                   type="button"
@@ -3223,7 +4598,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               </div>
 
-              <div className="space-y-2 pt-3 border-t border-border-light">
+              <div className="space-y-1.5 pt-2 border-t border-border-light">
                 <p className="text-xs font-medium text-text-secondary">Report link (optional)</p>
                 <p className="text-[11px] text-text-tertiary">External URL — Google Drive, Notion, shared doc. Not shown to the client.</p>
                 <Input
@@ -3231,7 +4606,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   value={reportLinkDraft}
                   onChange={(e) => setReportLinkDraft(e.target.value)}
                   placeholder="https://…"
-                  className="h-10"
+                  className={cn(JOB_DETAIL_INLINE_INPUT_FIELD_CLASS, "h-auto min-h-0")}
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
@@ -3267,11 +4642,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   })()}
                 </div>
               </div>
-            </div>
+              </div>
+              ) : null}
 
-            {/* REPORTS */}
-            <div className="rounded-xl border border-border-light bg-card p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              {detailTab === 2 ? (
+            <>
+            <div className="rounded-xl border border-border-light bg-card p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
                   <FileText className="h-3.5 w-3.5" /> Reports
                 </p>
@@ -3285,7 +4662,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <span className="text-[11px] font-semibold text-text-primary tabular-nums">{reportsProgressPercent}%</span>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {reportPhaseIndices(job.total_phases).map((n) => {
                   const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
                   const approved = job[`report_${n}_approved` as keyof Job] as boolean;
@@ -3301,7 +4678,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     ...(appReport?.after_images ?? []),
                   ].filter(Boolean);
                   return (
-                    <div key={n} className={`rounded-xl border p-4 space-y-2 ${approved ? "border-emerald-200 bg-emerald-50/30 dark:bg-emerald-950/20" : uploaded ? "border-amber-200 bg-amber-50/30 dark:bg-amber-950/10" : "border-border-light bg-surface-hover/40"}`}>
+                    <div key={n} className={`rounded-xl border p-3 space-y-2 ${approved ? "border-emerald-200 bg-emerald-50/30 dark:bg-emerald-950/20" : uploaded ? "border-amber-200 bg-amber-50/30 dark:bg-amber-950/10" : "border-border-light bg-surface-hover/40"}`}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
                           {approved ? <ShieldCheck className="h-4 w-4 text-emerald-600" /> : uploaded ? <Upload className="h-4 w-4 text-amber-500" /> : <FileText className="h-4 w-4 text-text-tertiary" />}
@@ -3421,7 +4798,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   );
                 })}
               </div>
-              <div className="mt-3 flex items-center justify-between gap-2">
+              <div className="mt-2 flex items-center justify-between gap-2">
                 <p className="text-xs text-text-tertiary">
                   {loadingAppJobReports ? "Loading partner reports..." : `${appJobReports.length} report record(s) from partner app`}
                 </p>
@@ -3444,7 +4821,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               </div>
               {allConfiguredReportsApproved(job) && (
-                <div className="mt-3 p-3 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="mt-2 p-2.5 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center gap-2">
                   <p className="flex-1 text-sm font-medium text-text-primary">All reports validated — ready to send report & request final payment.</p>
                   <Button
                     size="sm"
@@ -3461,13 +4838,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
             {/* MANUAL REPORT + AI ANALYSIS */}
             <details className="group rounded-xl border border-border-light bg-card overflow-hidden">
-              <summary className="flex list-none items-center justify-between gap-3 p-4 cursor-pointer select-none [&::-webkit-details-marker]:hidden">
+              <summary className="flex list-none items-center justify-between gap-2 p-3 cursor-pointer select-none [&::-webkit-details-marker]:hidden">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5 min-w-0">
                   <FileText className="h-3.5 w-3.5 shrink-0" /> Manual report analysis (AI)
                 </p>
                 <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" aria-hidden />
               </summary>
-              <div className="space-y-3 border-t border-border-light px-4 pb-4 pt-4">
+              <div className="space-y-2.5 border-t border-border-light px-3 pb-3 pt-3">
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1.5">Report file</label>
                   <input
@@ -3530,14 +4907,92 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 )}
               </div>
             </details>
+            </>
+            ) : null}
 
-            {/* FINANCIAL SETUP (admin edit) */}
+            {detailTab === 3 ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-border-light bg-card p-3 space-y-2">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Notes</p>
+                <textarea
+                  value={internalNoteDraft}
+                  onChange={(e) => setInternalNoteDraft(e.target.value)}
+                  rows={3}
+                  placeholder="Add an internal note…"
+                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
+                />
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    loading={savingInternalNote}
+                    disabled={!internalNoteDraft.trim()}
+                    onClick={async () => {
+                      if (!job || !internalNoteDraft.trim()) return;
+                      const note = internalNoteDraft.trim();
+                      const stamp = new Date().toISOString();
+                      const author = profile?.full_name?.trim() || profile?.email?.trim() || "User";
+                      const line = `[${stamp}] ${author}: ${note}`;
+                      const prev = (job.internal_notes ?? "").trim();
+                      const combined = prev ? `${prev}\n\n${line}` : line;
+                      setSavingInternalNote(true);
+                      try {
+                        const updated = await handleJobUpdate(job.id, { internal_notes: combined }, { silent: true, notifyPartner: false });
+                        if (updated) {
+                          await logAudit({
+                            entityType: "job",
+                            entityId: job.id,
+                            entityRef: job.reference,
+                            action: "note",
+                            fieldName: "internal_note",
+                            newValue: note,
+                            userId: profile?.id,
+                            userName: profile?.full_name,
+                            metadata: { source: "job_notes_tab", at: stamp },
+                          });
+                          setInternalNoteDraft("");
+                          toast.success("Note saved");
+                        }
+                      } finally {
+                        setSavingInternalNote(false);
+                      }
+                    }}
+                  >
+                    Save note
+                  </Button>
+                </div>
+              </div>
+              <div className="rounded-xl border border-border-light bg-card p-3 space-y-2">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Archived notes</p>
+                {internalNotesEntries.length === 0 ? (
+                  <p className="text-xs text-text-tertiary">No internal notes yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {internalNotesEntries.map((entry, idx) => (
+                      <div key={`${entry.iso}-${idx}`} className="rounded-lg border border-border-light bg-surface-hover/30 px-2.5 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-semibold text-text-primary">{entry.author}</p>
+                          <p className="text-[10px] text-text-tertiary">
+                            {entry.iso ? new Date(entry.iso).toLocaleString() : "—"}
+                          </p>
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap text-xs text-text-secondary">{entry.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            ) : null}
+
+            {isAdmin && detailTab === 4 ? (
             <details className="group rounded-xl border border-border-light bg-card overflow-hidden">
-              <summary className="flex items-center justify-between p-4 cursor-pointer select-none">
+              <summary className="flex items-center justify-between p-3 cursor-pointer select-none">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Financial setup</p>
                 <ChevronDown className="h-4 w-4 text-text-tertiary transition-transform group-open:rotate-180" />
               </summary>
-              <div className="px-4 pb-4 space-y-4 border-t border-border-light pt-4">
+              <div className="px-3 pb-3 space-y-3 border-t border-border-light pt-3">
                 <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2.5 space-y-2">
                   <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">How this maps in code</p>
                   <ul className="text-[11px] text-text-tertiary leading-relaxed space-y-1.5 list-disc pl-4">
@@ -3685,321 +5140,305 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <Button type="button" size="sm" variant="primary" loading={savingFin} onClick={handleSaveFinancials}>Save pricing</Button>
               </div>
             </details>
-
-          </div>
-
-          {/* ═══ RIGHT — partner + financial + history ═══ */}
-          <div className="space-y-5">
-
-            {/* PRIMARY PARTNER */}
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Primary partner</p>
-                <Button size="sm" variant="outline" onClick={() => setPartnerModalOpen(true)}>
-                  {job.partner_id ? "Swap partner" : "Assign"}
-                </Button>
-              </div>
-              {job.partner_name ? (
-                <div className="flex items-center gap-3">
-                  <Avatar name={job.partner_name} size="lg" />
-                  <div>
-                    <p className="text-sm font-bold text-text-primary">{job.partner_name}</p>
-                    <p className="text-xs text-text-tertiary">{job.partner_id ? `ID: ${job.partner_id.slice(0, 8)}…` : "No partner ID"}</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-3 py-2">
-                  <div className="h-10 w-10 rounded-full bg-surface-hover border border-border-light flex items-center justify-center">
-                    <Building2 className="h-5 w-5 text-text-tertiary" />
-                  </div>
-                  <p className="text-sm text-text-tertiary italic">Unassigned</p>
-                </div>
-              )}
-              {/* job owner */}
-              <div className="pt-2 border-t border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Job owner</p>
-                {isAdmin ? (
-                  <JobOwnerSelect value={job.owner_id} fallbackName={job.owner_name} users={assignableUsers} disabled={savingOwner}
-                    onChange={async (ownerId) => { const owner = assignableUsers.find((u) => u.id === ownerId); setSavingOwner(true); try { await handleJobUpdate(job.id, { owner_id: ownerId, owner_name: owner?.full_name }); } finally { setSavingOwner(false); } }}
-                  />
-                ) : job.owner_name ? (
-                  <div className="flex items-center gap-2"><Avatar name={job.owner_name} size="sm" /><p className="text-sm font-medium text-text-primary">{job.owner_name}</p></div>
-                ) : (
-                  <p className="text-sm text-text-tertiary italic">No owner</p>
-                )}
+            ) : null}
               </div>
             </div>
 
+            <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
+              <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Command history</p>
+              <AuditTimeline entityType="job" entityId={job.id} deferUntilVisible />
+            </div>
+
+          </div>
+
+          {/* ═══ RIGHT — partner + financial (fixed width on lg) ═══ */}
+          <div className="min-h-0 min-w-0 w-full space-y-3 p-3 sm:p-4 lg:w-[352px] lg:shrink-0">
+
+            {/* PRIMARY PARTNER */}
+            <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
+              <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Primary partner</p>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Avatar
+                    src={partners.find((p) => p.id === job.partner_id)?.avatar_url}
+                    name={job.partner_name || "Partner"}
+                    size="sm"
+                    className="h-8 w-8 border border-border-light ring-0"
+                  />
+                  {job.partner_name ? (
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-bold text-text-primary">{job.partner_name}</p>
+                      <p className="text-[10px] text-text-tertiary">{job.partner_id ? `ID: ${job.partner_id.slice(0, 8)}…` : "No partner ID"}</p>
+                    </div>
+                  ) : (
+                    <p className="text-xs font-medium text-text-tertiary">Unassigned</p>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-auto shrink-0 rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
+                  onClick={() => setPartnerModalOpen(true)}
+                >
+                  {job.partner_id ? "Swap" : "Assign"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
+              <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Job owner</p>
+              {isAdmin ? (
+                <JobOwnerSelect
+                  value={job.owner_id}
+                  fallbackName={job.owner_name}
+                  users={assignableUsers}
+                  disabled={savingOwner}
+                  onChange={async (ownerId) => {
+                    const owner = assignableUsers.find((u) => u.id === ownerId);
+                    setSavingOwner(true);
+                    try {
+                      await handleJobUpdate(job.id, { owner_id: ownerId, owner_name: owner?.full_name });
+                    } finally {
+                      setSavingOwner(false);
+                    }
+                  }}
+                />
+              ) : job.owner_name ? (
+                <div className="flex items-center gap-2">
+                  <Avatar name={job.owner_name} size="sm" className="h-7 w-7 text-[9px]" />
+                  <p className="text-xs font-medium text-text-primary">{job.owner_name}</p>
+                  <Badge variant="outline" size="sm" className="h-5 text-[10px]">
+                    Owner
+                  </Badge>
+                </div>
+              ) : (
+                <p className="text-sm text-text-tertiary italic">No owner</p>
+              )}
+            </div>
+
             {/* FINANCIAL COMPLETION */}
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-4">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
-                <CreditCard className="h-3.5 w-3.5" /> Finance summary
+            <div className="rounded-lg border border-border-light bg-card p-3 shadow-sm space-y-2.5 dark:border-[#2b313d] dark:bg-[#141922]">
+              <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1">
+                <CreditCard className="h-3 w-3" /> Finance summary
               </p>
 
               {/* CLIENT cash in */}
-              <div>
-                <div className="flex items-center justify-between mb-3 gap-2">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client (cash in)</p>
-                  <div className="text-right min-w-0">
-                    <p className="text-[10px] text-text-tertiary">Total job value</p>
-                    <p
-                      className="text-base font-bold tabular-nums text-text-primary"
-                      title="Extra charge / CCZ / parking change this total and the invoice. Record Payment only reduces amount due."
-                    >
-                      {formatCurrency(billableRevenue)}
-                    </p>
+              <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-2 shadow-sm dark:border-emerald-500/25 dark:bg-emerald-950/20">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Cash in — client</span>
+                    <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
+                      {amountDue > 0.02 ? "Pending" : "Settled"}
+                    </Badge>
                   </div>
-                </div>
-                <div className="space-y-2">
-                  {quoteLineBreakdown && (
-                    <div className="rounded-lg border border-border-light bg-surface-hover/30 p-2.5 space-y-2">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
-                        From quote lines
-                      </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
-                        <div className="rounded-md border border-border bg-card px-2 py-1.5">
-                          <p className="text-[10px] text-text-tertiary uppercase">Labour</p>
-                          <p className="text-xs font-semibold tabular-nums">{formatCurrency(quoteLineBreakdown.totals.labour)}</p>
-                        </div>
-                        <div className="rounded-md border border-border bg-card px-2 py-1.5">
-                          <p className="text-[10px] text-text-tertiary uppercase">Materials</p>
-                          <p className="text-xs font-semibold tabular-nums">{formatCurrency(quoteLineBreakdown.totals.materials)}</p>
-                        </div>
-                        <div className="rounded-md border border-border bg-card px-2 py-1.5">
-                          <p className="text-[10px] text-text-tertiary uppercase">Other</p>
-                          <p className="text-xs font-semibold tabular-nums">{formatCurrency(quoteLineBreakdown.totals.other)}</p>
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        {quoteLineBreakdown.lines.slice(0, 4).map((line) => (
-                          <div key={line.id} className="flex items-center justify-between gap-2 text-xs">
-                            <span className="text-text-secondary truncate">{line.description}</span>
-                            <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(line.total)}</span>
-                          </div>
-                        ))}
-                        {quoteLineBreakdown.lines.length > 4 && (
-                          <p className="text-[10px] text-text-tertiary">+{quoteLineBreakdown.lines.length - 4} more line(s)</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {(job.customer_deposit ?? 0) > 0 && (
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-text-primary">Upfront deposit</span>
-                        <Badge variant={job.customer_deposit_paid ? "success" : "warning"} size="sm">{job.customer_deposit_paid ? "Paid" : "Pending"}</Badge>
-                      </div>
-                      <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_deposit ?? 0)}</span>
-                    </div>
-                  )}
-                  {(job.customer_final_payment ?? 0) > 0 && (
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-text-primary">Final balance</span>
-                          <Badge variant={job.customer_final_paid ? "success" : "default"} size="sm">{job.customer_final_paid ? "Paid" : "Pending"}</Badge>
-                        </div>
-                        <div className="text-[11px] text-text-tertiary space-y-1 pl-0.5">
-                          <p>Labour {formatCurrency(finalLabour)}</p>
-                          <p>Materials {formatCurrency(finalMaterials)}</p>
-                          <p
-                            className={
-                              finalExtraCharges > 0.02
-                                ? "text-emerald-700 dark:text-emerald-500/90 font-medium"
-                                : ""
-                            }
-                          >
-                            Extra charges{" "}
-                            {finalExtraCharges > 0.02 ? "+" : ""}
-                            {formatCurrency(finalExtraCharges)}
-                          </p>
-                          {effectiveCustomerInCcz ? (
-                            <div className="flex items-center justify-between gap-2">
-                              <span
-                                className={
-                                  finalCczLine > 0.02
-                                    ? "text-emerald-700 dark:text-emerald-500/90 font-medium"
-                                    : ""
-                                }
-                              >
-                                CCZ (congestion) {finalCczLine > 0.02 ? "+" : ""}
-                                {formatCurrency(finalCczLine)}
-                              </span>
-                              {job.status !== "cancelled" ? (
-                                <button
-                                  type="button"
-                                  disabled={savingAccessFees}
-                                  onClick={() => void saveAccessFeeFlags({ in_ccz: false })}
-                                  className="shrink-0 text-[10px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50"
-                                >
-                                  Remove
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : null}
-                          {job.has_free_parking === false ? (
-                            <div className="flex items-center justify-between gap-2">
-                              <span
-                                className={
-                                  finalParkingLine > 0.02
-                                    ? "text-emerald-700 dark:text-emerald-500/90 font-medium"
-                                    : ""
-                                }
-                              >
-                                Parking access {finalParkingLine > 0.02 ? "+" : ""}
-                                {formatCurrency(finalParkingLine)}
-                              </span>
-                              {job.status !== "cancelled" ? (
-                                <button
-                                  type="button"
-                                  disabled={savingAccessFees}
-                                  onClick={() => void saveAccessFeeFlags({ has_free_parking: true })}
-                                  className="shrink-0 text-[10px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50"
-                                >
-                                  Remove
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : null}
-                          {!effectiveCustomerInCcz && job.has_free_parking !== false ? (
-                            <p>CCZ / Parking {formatCurrency(0)}</p>
-                          ) : null}
-                        </div>
-                      </div>
-                      <span className="text-sm font-semibold tabular-nums">{formatCurrency(job.customer_final_payment ?? 0)}</span>
-                    </div>
-                  )}
-                  {/* Payment history */}
-                  {customerPayments.length > 0 && (
-                    <div className="mt-1 space-y-1">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
-                      {customerPayments.map((p) => {
-                        const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                        const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                        const scheduleTag = p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance";
-                        return (
-                        <div key={p.id} className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[10px] font-semibold text-text-tertiary uppercase">
-                                {ledgerTag ?? scheduleTag}
-                              </span>
-                              <Badge variant="success" size="sm">Received</Badge>
-                              {p.payment_method && (
-                                <span className="text-[10px] text-text-tertiary">
-                                  ·{" "}
-                                  {p.payment_method === "bank_transfer"
-                                    ? "Bank"
-                                    : p.payment_method === "cash"
-                                      ? "Cash"
-                                      : p.payment_method === "stripe"
-                                        ? "Stripe"
-                                        : p.payment_method}
-                                </span>
-                              )}
-                              <span className="text-[10px] text-text-tertiary">
-                                · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
-                              </span>
-                            </div>
-                            {ledgerTag ? (
-                              <p className="text-[10px] text-text-tertiary truncate pl-0.5">{scheduleTag}</p>
-                            ) : null}
-                            {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
-                            {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="text-sm font-semibold tabular-nums text-sky-700 dark:text-sky-300" title="Reduces amount due">
-                              {formatCurrencyPrecise(-Number(p.amount))}
-                            </span>
-                            {isAdmin && (
-                              <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
-                                <X className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between pt-1.5 border-t border-border-light">
-                    <span className={`text-xs font-semibold ${amountDue > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-                      {amountDue > 0 ? "Amount due" : "Fully collected"}
-                    </span>
-                    <span className={`text-sm font-bold tabular-nums ${amountDue > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-                      {amountDue > 0 ? formatCurrency(amountDue) : formatCurrency(0)}
-                    </span>
-                  </div>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full"
-                    icon={<Plus className="h-3.5 w-3.5" />}
-                    onClick={() => {
-                      setMoneyDrawerFlow("client_pay");
-                      setMoneyDrawerOpen(true);
-                    }}
+                  <span
+                    className="text-sm font-bold tabular-nums text-text-primary"
+                    title="Extra charge / CCZ / parking change this total and the invoice. Record Payment only reduces amount due."
                   >
-                    Record Payment
-                  </Button>
+                    {formatCurrency(billableRevenue)}
+                  </span>
+                </div>
+                <div className="space-y-1.5 text-xs">
+                  {(job.customer_deposit ?? 0) > 0 && (
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-text-primary">Upfront deposit</span>
+                        <Badge variant={job.customer_deposit_paid ? "success" : "warning"} size="sm" className="h-5 text-xs">{job.customer_deposit_paid ? "Paid" : "Pending"}</Badge>
+                      </div>
+                      <span className="font-semibold tabular-nums">{formatCurrency(job.customer_deposit ?? 0)}</span>
+                    </div>
+                  )}
+                  <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
+                    {cashInExtraRows.map((row) => (
+                      <div key={row.key} className="flex items-center justify-between gap-2 py-1 text-xs">
+                        <span className="text-text-secondary">{row.label}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn("font-semibold tabular-nums", row.active ? "text-emerald-700" : "text-text-tertiary")}>
+                            {row.active ? `+${formatCurrency(row.amount)}` : formatCurrency(0)}
+                          </span>
+                          <button
+                            type="button"
+                            className="text-text-tertiary transition-colors hover:text-text-primary"
+                            title={`Edit ${row.label}`}
+                            onClick={() => {
+                              setMoneyDrawerFlow("client_extra");
+                              setMoneyDrawerOpen(true);
+                            }}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Payment history: always show header so empty state is visible */}
+                  <div className="mt-1 space-y-0.5">
+                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Payment history</p>
+                    {customerPayments.length === 0 ? (
+                      <p className="text-[10px] text-text-tertiary pl-0.5">No payments recorded yet.</p>
+                    ) : null}
+                    {customerPayments.map((p) => {
+                      const ledgerTag = parseJobPaymentLedgerLabel(p.note);
+                      const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
+                      const scheduleTag = p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance";
+                      return (
+                      <div key={p.id} className="flex items-start justify-between gap-1.5 rounded-md bg-surface-hover/40 px-2 py-1.5">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-semibold text-text-tertiary uppercase">
+                              {ledgerTag ?? scheduleTag}
+                            </span>
+                            <Badge variant="success" size="sm">Received</Badge>
+                            {p.payment_method && (
+                              <span className="text-[10px] text-text-tertiary">
+                                ·{" "}
+                                {p.payment_method === "bank_transfer"
+                                  ? "Bank"
+                                  : p.payment_method === "cash"
+                                    ? "Cash"
+                                    : p.payment_method === "stripe"
+                                      ? "Stripe"
+                                      : p.payment_method}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-text-tertiary">
+                              · {new Date(p.payment_date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                            </span>
+                          </div>
+                          {ledgerTag ? (
+                            <p className="text-[10px] text-text-tertiary truncate pl-0.5">{scheduleTag}</p>
+                          ) : null}
+                          {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
+                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400" title="Reduces amount due">
+                            {formatCurrencyPrecise(-Number(p.amount))}
+                          </span>
+                          {isAdmin && (
+                            <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center justify-between border-t border-border-light pt-1.5 text-xs dark:border-[#2f3642]">
+                    <span className={`font-semibold ${amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>
+                      {amountDue > 0.02 ? "Amount due" : "Fully collected"}
+                    </span>
+                    <span className={`font-bold tabular-nums ${amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>
+                      {amountDue > 0.02 ? formatCurrency(amountDue) : formatCurrency(0)}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-2 grid w-full grid-cols-1">
                   <Button
                     size="sm"
-                    variant="outline"
-                    className="w-full"
-                    icon={<Plus className="h-3.5 w-3.5" />}
+                    variant="primary"
+                    className="h-10 w-full rounded-lg px-3 text-sm font-semibold shadow-sm"
+                    icon={<Plus className="h-4 w-4 shrink-0" />}
                     onClick={() => {
                       setMoneyDrawerFlow("client_extra");
                       setMoneyDrawerOpen(true);
                     }}
                   >
-                    Add extra charge
+                    Extra charge
                   </Button>
                 </div>
               </div>
 
               {/* Cash out (partner payout) */}
-              <div className="pt-3 border-t border-border-light">
-                <div className="flex items-center justify-between mb-3 gap-2">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Cash Out</p>
-                  <div className="text-right min-w-0">
-                    <p className="text-[10px] text-text-tertiary">Total to pay</p>
-                    <p
-                      className="text-base font-bold tabular-nums text-text-primary"
-                      title="Record Payment reduces amount due only. Add extra payout increases this total and self-bill."
-                    >
-                      {formatCurrency(partnerCap)}
-                    </p>
+              <div className="rounded-lg border border-rose-200/80 bg-rose-50/45 p-2 shadow-sm dark:border-rose-500/25 dark:bg-rose-950/20">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Cash out — partner</span>
+                    <Badge variant={partnerPayRemaining > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
+                      {partnerPayRemaining > 0.02 ? "Pending" : "Settled"}
+                    </Badge>
                   </div>
+                  <span
+                    className="text-sm font-bold tabular-nums text-text-primary"
+                    title="Partner cash out includes labour, extras, and materials cost."
+                  >
+                    {formatCurrency(partnerCashOutTotal)}
+                  </span>
                 </div>
-                <div className="space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-text-primary">
-                          {partnerCashOutExtra > 0.02 ? "Partner labour" : "Partner cost"}
-                        </span>
-                        <Badge variant={partnerPaidTotal >= partnerCap && partnerCap > 0 ? "success" : partnerPaidTotal > 0 ? "warning" : "default"} size="sm">
-                          {partnerPaidTotal >= partnerCap && partnerCap > 0 ? "Paid" : partnerPaidTotal > 0 ? "Partial" : "Pending"}
-                        </Badge>
-                      </div>
-                      {partnerCashOutExtra > 0.02 ? (
-                        <div className="text-[11px] text-text-tertiary space-y-1 pl-0.5">
-                          <p>
-                            {job.job_type === "hourly" ? "Labour (hourly)" : "Labour"}{" "}
-                            {formatCurrency(partnerCashOutBase)}
-                          </p>
-                          <p className="text-emerald-700 dark:text-emerald-500/90 font-medium">
-                            Extra payout +{formatCurrency(partnerCashOutExtra)}
-                          </p>
+                <div className="space-y-2 text-xs">
+                  <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
+                    {cashOutExtraRows.map((row) => (
+                      <div key={row.key} className="py-1">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-text-secondary">{row.label}</span>
+                          <div className="flex items-center gap-1.5">
+                            <span className={cn("font-semibold tabular-nums", row.active ? "text-rose-700" : "text-text-tertiary")}>
+                              {row.active ? `+${formatCurrency(row.amount)}` : formatCurrency(0)}
+                            </span>
+                            <button
+                              type="button"
+                              className="text-text-tertiary transition-colors hover:text-text-primary"
+                              onClick={() => setCashOutExtraExpanded((prev) => (prev === row.key ? null : row.key))}
+                              title={`Actions for ${row.label}`}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                          </div>
                         </div>
-                      ) : null}
-                    </div>
-                    <span className="text-sm font-semibold tabular-nums shrink-0 pt-0.5">{formatCurrency(partnerCap)}</span>
+                        {cashOutExtraExpanded === row.key ? (
+                          <div className="mt-1 flex items-center gap-3 pl-4">
+                            <button
+                              type="button"
+                              className="text-[10px] font-medium text-text-secondary transition-colors hover:text-text-primary"
+                              onClick={() => {
+                                setMoneyDrawerFlow("partner_extra");
+                                setMoneyDrawerOpen(true);
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="text-[10px] font-medium text-red-500 transition-colors hover:text-red-600"
+                              onClick={() => {
+                                void (async () => {
+                                  if (!job || row.amount <= 0.02) return;
+                                  try {
+                                    const patch = reversePartnerExtraPatch(job, row.amount, row.allocation);
+                                    if (Object.keys(patch).length === 0) return;
+                                    const updated = await updateJob(job.id, patch);
+                                    await syncSelfBillAfterJobChange(updated);
+                                    setJob(updated);
+                                    if (row.allocation === "materials") {
+                                      // Materials line comes from job.materials_cost; no breakdown reset needed.
+                                    } else {
+                                      setPartnerExtrasUiValue((v) => Math.max(0, Math.round((v - row.amount) * 100) / 100));
+                                      setPartnerExtraBreakdownUi((prev) => ({
+                                        ...prev,
+                                        [row.key]: Math.max(0, Math.round(((prev[row.key as "extra" | "ccz" | "parking"] ?? 0) - row.amount) * 100) / 100),
+                                      }));
+                                    }
+                                    setCashOutExtraExpanded(null);
+                                    await refreshJobFinance();
+                                    toast.success("Extra updated");
+                                  } catch {
+                                    toast.error("Could not update extra");
+                                  }
+                                })();
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
                   </div>
                   {/* Partner payment history: always show header when there is a partner cost so empty state is visible */}
-                  {partnerCap > 0.02 && (
+                  {partnerCashOutTotal > 0.02 && (
                     <div className="mt-1 space-y-2">
                       <div className="space-y-1">
                         <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
@@ -4051,7 +5490,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <span
-                                    className="text-sm font-semibold tabular-nums text-sky-700 dark:text-sky-300"
+                                    className="text-sm font-semibold tabular-nums text-rose-700 dark:text-rose-300"
                                     title="Reduces amount due only"
                                   >
                                     {formatCurrencyPrecise(-Number(p.amount))}
@@ -4124,8 +5563,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       ) : null}
                     </div>
                   )}
-                  {partnerCap > 0 && (
-                    <div className="flex items-center justify-between pt-1.5 border-t border-border-light">
+                  {partnerCashOutTotal > 0 && (
+                    <div className="flex items-center justify-between pt-1.5 border-t border-border-light dark:border-[#2f3642]">
                       <span className={`text-xs font-semibold ${partnerPayRemaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>
                         {partnerPayRemaining > 0 ? "Amount due" : "Fully paid out"}
                       </span>
@@ -4135,58 +5574,80 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   )}
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="mt-2 grid w-full grid-cols-1">
                   <Button
                     size="sm"
                     variant="outline"
-                    className="w-full"
+                    className="h-10 w-full rounded-lg border-rose-300/90 bg-rose-50 px-3 text-sm font-semibold text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45"
                     disabled={!job.partner_id?.trim()}
-                    icon={<Plus className="h-3.5 w-3.5" />}
-                    onClick={() => {
-                      setMoneyDrawerFlow("partner_pay");
-                      setMoneyDrawerOpen(true);
-                    }}
-                  >
-                    Record Payment
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full"
-                    disabled={!job.partner_id?.trim()}
-                    icon={<Plus className="h-3.5 w-3.5" />}
+                    icon={<Plus className="h-4 w-4 shrink-0" />}
                     onClick={() => {
                       setMoneyDrawerFlow("partner_extra");
                       setMoneyDrawerOpen(true);
                     }}
                   >
-                    Add extra payout
+                    Extra payout
                   </Button>
                 </div>
               </div>
 
               {/* Net margin */}
-              <div className="pt-3 border-t border-border-light flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Net margin</p>
-                  <p className="text-lg font-bold text-text-primary tabular-nums">{formatCurrency(profit)}</p>
+              <div className="space-y-1.5 border-t border-border-light pt-2 dark:border-[#2f3642]">
+                <div className="flex items-end justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Net margin</p>
+                    <p className="text-xl font-bold tabular-nums tracking-tight text-text-primary">{formatCurrency(profit)}</p>
+                  </div>
+                  <p className={cn("text-xl font-bold tabular-nums tracking-tight", marginAppearance.pctClass)}>{marginPct}%</p>
                 </div>
-                <p className={`text-xl font-bold tabular-nums ${marginPct >= 20 ? "text-emerald-600" : "text-amber-600"}`}>{marginPct}%</p>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-tertiary dark:bg-[#2a3038]">
+                  <div
+                    className={cn("h-full rounded-full transition-all", marginAppearance.barClass)}
+                    style={{ width: `${Math.max(0, Math.min(100, marginPct))}%` }}
+                  />
+                </div>
+                {(quoteLineBreakdown || (job.customer_final_payment ?? 0) > 0.02 || customerScheduleMismatch) ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-1 h-9 w-full rounded-lg text-xs font-medium"
+                    onClick={() => setJobBillingDetailsOpen(true)}
+                  >
+                    View full billing details
+                  </Button>
+                ) : null}
               </div>
 
               {/* Fully paid */}
               {job.customer_final_paid && (
-                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <p className="text-sm font-medium text-emerald-700">Job fully paid</p>
+                <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 p-2 dark:bg-emerald-950/30">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                  <p className="text-xs font-medium text-emerald-700">Job fully paid</p>
                 </div>
               )}
+              {markedPaidBy ? (
+                <div className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1.5 dark:border-sky-500/35 dark:bg-sky-950/20">
+                  <p className="text-[11px] font-medium text-sky-800 dark:text-sky-200">Marked as paid by {markedPaidBy}</p>
+                </div>
+              ) : null}
             </div>
 
-            {/* Financial documents: client invoices (us→client) + partner self-bill (partner→us, weekly Mon–Sun) */}
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-4">
+            {/* Financial documents: client invoices (us→client) */}
+            <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
+                <div className="space-y-1">
+                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
+                  {invoiceLifecycleBadge ? (
+                    <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium", invoiceLifecycleBadge.className)}>
+                      Invoice {invoiceLifecycleBadge.label}
+                    </span>
+                  ) : (
+                    <span className="inline-flex rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">
+                      Invoice not created
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] shrink-0">
                   <Link href="/finance/invoices" className="text-primary hover:underline inline-flex items-center gap-1">
                     All invoices <ExternalLink className="h-3 w-3" />
@@ -4198,7 +5659,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               <div className="space-y-2">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Client invoices</p>
+                <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client invoices</p>
                 <p className="text-[11px] text-text-tertiary leading-snug">
                   We invoice the <strong className="font-medium text-text-secondary">client</strong> for this job.
                 </p>
@@ -4218,7 +5679,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         (inv.due_date ? String(inv.due_date).slice(0, 10) : "");
                       const duePrev = inv.due_date ? String(inv.due_date).slice(0, 10) : "";
                       return (
-                        <div key={inv.id} className="rounded-lg border border-border-light p-3">
+                        <div key={inv.id} className="rounded-md border border-border-light p-2">
                           <div className="flex items-start gap-2">
                             <button
                               type="button"
@@ -4349,66 +5810,65 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     })
                 )}
               </div>
-
-              <div className="space-y-2 pt-2 border-t border-border-light">
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Partner self-bill</p>
-                  <p className="text-[11px] text-text-tertiary leading-snug">
-                    The <strong className="font-medium text-text-secondary">partner</strong> bills us. Amounts roll into one weekly self bill per partner (Monday–Sunday); this job shares that bill with other jobs in the same week.
-                  </p>
-                  {!job.partner_id?.trim() ? (
-                    <p className="text-xs text-text-tertiary">Assign a partner on this job to use self billing.</p>
-                  ) : loadingSelfBill ? (
-                    <p className="text-xs text-text-tertiary">Loading…</p>
-                  ) : jobSelfBill ? (
-                    <JobDetailSelfBillPanel sb={jobSelfBill} job={job} />
-                  ) : (
-                    <div className="space-y-2">
-                      <p className="text-xs text-text-tertiary">
-                        This job is not linked to a weekly self bill yet. New jobs with a partner usually link automatically; you can attach it now.
-                      </p>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        loading={linkingSelfBill}
-                        onClick={async () => {
-                          if (!job) return;
-                          setLinkingSelfBill(true);
-                          try {
-                            await createSelfBillFromJob({
-                              id: job.id,
-                              reference: job.reference,
-                              partner_name: job.partner_name,
-                              partner_cost: job.partner_cost,
-                              materials_cost: job.materials_cost,
-                            });
-                            const j2 = await getJob(job.id);
-                            if (j2) {
-                              setJob(j2);
-                              await loadJobSelfBill(j2);
-                            }
-                            toast.success("Linked to this week’s self bill");
-                          } catch (e) {
-                            toast.error(e instanceof Error ? e.message : "Could not link self bill");
-                          } finally {
-                            setLinkingSelfBill(false);
-                          }
-                        }}
-                      >
-                        Link weekly self bill
-                      </Button>
-                    </div>
-                  )}
-              </div>
             </div>
 
-            {/* COMMAND HISTORY */}
-            <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Command history</p>
-              <AuditTimeline entityType="job" entityId={job.id} deferUntilVisible />
+            <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
+              <div className="flex items-center gap-2">
+                <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Partner self-bill</p>
+                {selfBillLifecycleBadge ? (
+                  <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium", selfBillLifecycleBadge.className)}>
+                    {selfBillLifecycleBadge.label}
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-[10px] text-text-tertiary leading-snug">Assign a partner on this job to use self billing.</p>
+              {!job.partner_id?.trim() ? null : loadingSelfBill ? (
+                <p className="text-xs text-text-tertiary">Loading…</p>
+              ) : jobSelfBill ? (
+                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} />
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs text-text-tertiary">
+                    This job is not linked to a weekly self bill yet. New jobs with a partner usually link automatically; you can attach it now.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    loading={linkingSelfBill}
+                    onClick={async () => {
+                      if (!job) return;
+                      setLinkingSelfBill(true);
+                      try {
+                        await createSelfBillFromJob({
+                          id: job.id,
+                          reference: job.reference,
+                          partner_name: job.partner_name,
+                          partner_cost: job.partner_cost,
+                          materials_cost: job.materials_cost,
+                        });
+                        const j2 = await getJob(job.id);
+                        if (j2) {
+                          setJob(j2);
+                          await loadJobSelfBill(j2);
+                        }
+                        toast.success("Linked to this week’s self bill");
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : "Could not link self bill");
+                      } finally {
+                        setLinkingSelfBill(false);
+                      }
+                    }}
+                  >
+                    Link weekly self bill
+                  </Button>
+                </div>
+              )}
             </div>
 
           </div>
         </div>
+        </div>
+      </div>
       </div>
 
       <Modal
@@ -4637,6 +6097,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           if (!putOnHoldSaving) {
             setPutOnHoldOpen(false);
             setPutOnHoldReason("");
+            setPutOnHoldPreset(null);
           }
         }}
         title="Put job on hold"
@@ -4648,8 +6109,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             The job leaves the on-site step until you resume. Current schedule is saved for the resume flow; add a reason for your team and the audit trail.
           </p>
           <div>
+            <Select
+              label="Reason preset"
+              value={putOnHoldPreset ?? ""}
+              options={PUT_ON_HOLD_REASON_OPTIONS}
+              onChange={(e) => {
+                const preset = e.target.value;
+                setPutOnHoldPreset(preset || null);
+                if (!preset) return;
+                if (preset === "Other") {
+                  putOnHoldReasonRef.current?.focus();
+                  return;
+                }
+                setPutOnHoldReason(preset);
+              }}
+              className="mb-3 h-10"
+            />
             <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason *</label>
             <textarea
+              ref={putOnHoldReasonRef}
               value={putOnHoldReason}
               onChange={(e) => setPutOnHoldReason(e.target.value)}
               rows={3}
@@ -4658,7 +6136,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             />
           </div>
           <div className="flex flex-wrap gap-2 justify-end pt-1">
-            <Button variant="ghost" size="sm" disabled={putOnHoldSaving} onClick={() => { setPutOnHoldOpen(false); setPutOnHoldReason(""); }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={putOnHoldSaving}
+              onClick={() => {
+                setPutOnHoldOpen(false);
+                setPutOnHoldReason("");
+                setPutOnHoldPreset(null);
+              }}
+            >
               Back
             </Button>
             <Button
@@ -4782,6 +6269,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       </Modal>
 
       <Modal
+        open={jobBillingDetailsOpen}
+        onClose={() => setJobBillingDetailsOpen(false)}
+        title="Full billing details"
+        subtitle={job.reference}
+        size="lg"
+        scrollBody
+      >
+        <div className="p-4">{jobBillingDetailsBody}</div>
+      </Modal>
+
+      <Modal
         open={jobTypeEditOpen}
         onClose={() => {
           if (savingJobTypeEdit) return;
@@ -4804,6 +6302,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               setJobTypeEditTarget(v);
               if (v === "fixed") {
                 setJobTypeEditFixedTitle(job.title ?? "");
+                setFixedInlineClientRate(String(Math.max(0, Number(job.client_price ?? 0))));
+                setFixedInlinePartnerCost(String(Math.max(0, Number(job.partner_cost ?? 0))));
               }
             }}
             options={[
@@ -4823,13 +6323,96 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               />
             </div>
           ) : (
-            <Select
-              label="Type of work *"
-              value={jobTypeEditFixedTitle}
-              disabled={savingJobTypeEdit}
-              onChange={(e) => setJobTypeEditFixedTitle(e.target.value)}
-              options={jobTypeEditFixedSelectOptions}
-            />
+            <div className="space-y-3">
+              <Select
+                label="Type of work *"
+                value={jobTypeEditFixedTitle}
+                disabled={savingJobTypeEdit}
+                onChange={(e) => setJobTypeEditFixedTitle(e.target.value)}
+                options={jobTypeEditFixedSelectOptions}
+              />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">Client rate £</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={fixedInlineClientRate}
+                    onChange={(e) => setFixedInlineClientRate(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">Partner cost £</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={fixedInlinePartnerCost}
+                    onChange={(e) => setFixedInlinePartnerCost(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+              </div>
+              {fixedSwitchPreview ? (
+                <div className="rounded-lg border border-border-light bg-surface-hover/40 p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Confirm fixed values</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+                      <p className="text-text-tertiary">Client value (sale)</p>
+                      <p className="font-semibold tabular-nums text-text-primary">
+                        {formatCurrency(Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale))}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+                      <p className="text-text-tertiary">Partner cost</p>
+                      <p className="font-semibold tabular-nums text-text-primary">
+                        {formatCurrency(Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost))}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+                      <p className="text-text-tertiary">Margin</p>
+                      <p
+                        className={cn(
+                          "font-semibold tabular-nums",
+                          (Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
+                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost)) >= 0
+                            ? "text-emerald-700"
+                            : "text-red-600",
+                        )}
+                      >
+                        {formatCurrency(
+                          Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
+                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost),
+                        )}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-border-light bg-card px-2 py-1.5">
+                      <p className="text-text-tertiary">Margin %</p>
+                      <p
+                        className={cn(
+                          "font-semibold tabular-nums",
+                          ((Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
+                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost)) /
+                            Math.max(1, Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale))) >= 0
+                            ? "text-emerald-700"
+                            : "text-red-600",
+                        )}
+                      >
+                        {Math.round(
+                          ((Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale) -
+                            Math.max(0, Number(fixedInlinePartnerCost) || fixedSwitchPreview.cost)) /
+                            Math.max(1, Math.max(0, Number(fixedInlineClientRate) || fixedSwitchPreview.sale))) *
+                            1000,
+                        ) / 10}
+                        %
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           )}
           <div className="flex flex-wrap gap-2 justify-end pt-1">
             <Button
@@ -4966,6 +6549,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     onClick={() => {
                       setSelectedPartnerId("");
                       setPartnerPickerOpen(false);
+                      queueMicrotask(() => partnerCostSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
                     }}
                   >
                     <span className="flex-1 text-text-secondary font-medium">No partner</span>
@@ -4977,7 +6561,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       {partnerPickerSearch.trim() ? "No partners match your search." : "No partners loaded."}
                     </p>
                   ) : (
-                    partnersFilteredForPicker.map((p) => {
+                    partnersFilteredForPicker.map(({ partner: p, matched }) => {
                       const name = p.company_name?.trim() || p.contact_name || "Partner";
                       const isSel = selectedPartnerId === p.id;
                       return (
@@ -4988,11 +6572,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           onClick={() => {
                             setSelectedPartnerId(p.id);
                             setPartnerPickerOpen(false);
+                            queueMicrotask(() => partnerCostSectionRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
                           }}
                         >
                           <Avatar name={name} size="sm" className="shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="font-medium text-text-primary truncate">{name}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-text-primary truncate">{name}</p>
+                              {matched ? (
+                                <span className="shrink-0 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                  Matched
+                                </span>
+                              ) : null}
+                            </div>
                             {p.trade ? <p className="text-[11px] text-text-tertiary truncate">{p.trade}</p> : null}
                           </div>
                           {isSel && <Check className="h-4 w-4 text-primary shrink-0" />}
@@ -5003,6 +6595,102 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </div>
               </div>
             )}
+          </div>
+          <div ref={partnerCostSectionRef} className="space-y-3 border-t border-border-light pt-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">Rate & cost</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPartnerAssignRateType("fixed")}
+                className={cn(
+                  "inline-flex h-9 items-center justify-center rounded-full border-[1.5px] px-3 text-xs font-bold transition-colors",
+                  partnerAssignRateType === "fixed"
+                    ? "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]"
+                    : "border-border-light bg-card text-text-tertiary hover:border-[#333]/60 hover:text-text-primary",
+                )}
+              >
+                Fixed
+              </button>
+              <button
+                type="button"
+                onClick={() => setPartnerAssignRateType("hourly")}
+                className={cn(
+                  "inline-flex h-9 items-center justify-center rounded-full border-[1.5px] px-3 text-xs font-bold transition-colors",
+                  partnerAssignRateType === "hourly"
+                    ? "border-[#7c3aed] bg-[#f5f3ff] text-[#5b21b6] dark:border-[#8b5cf6] dark:bg-[#2a2148] dark:text-[#c4b5fd]"
+                    : "border-border-light bg-card text-text-tertiary hover:border-[#7c3aed]/60 hover:text-text-primary",
+                )}
+              >
+                Hourly
+              </button>
+            </div>
+            {partnerAssignRateType === "hourly" ? (
+              <div className={cn("space-y-2", loadingJobTypeCatalog && "opacity-70 pointer-events-none")}>
+                <label className="block text-xs font-medium text-text-secondary">Service</label>
+                <select
+                  value={partnerAssignServiceId}
+                  onChange={(e) => setPartnerAssignServiceId(e.target.value)}
+                  className="h-9 w-full rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                >
+                  <option value="">Select service...</option>
+                  {catalogServicesJobType.map((service) => {
+                    const perHour = Math.max(
+                      0,
+                      partnerHourlyRateFromCatalogBundle(service.partner_cost, service.default_hours),
+                    );
+                    return (
+                      <option key={service.id} value={service.id}>
+                        {`${service.name} · ${formatCurrency(perHour)}/h partner rate`}
+                      </option>
+                    );
+                  })}
+                </select>
+                {partnerAssignService ? (
+                  <p className="text-xs text-text-tertiary">
+                    Client rate: <span className="font-medium text-text-primary">{formatCurrency(Math.max(0, Number(partnerAssignService.hourly_rate) || 0))}/h</span>
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-text-secondary">Partner cost £</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={partnerAssignFixedCost}
+                  onChange={(e) => setPartnerAssignFixedCost(e.target.value)}
+                  className="h-9"
+                />
+              </div>
+            )}
+            <div className="space-y-2 rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
+              {[
+                { key: "extra", label: "Extra payout" },
+                { key: "ccz", label: "CCZ" },
+                { key: "parking", label: "Parking" },
+                { key: "materials", label: "Materials" },
+              ].map((row) => (
+                <label key={row.key} className="flex items-center justify-between gap-2 text-xs text-text-secondary">
+                  <span>{row.label}</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={partnerAssignExtraInputs[row.key as keyof typeof partnerAssignExtraInputs]}
+                    onChange={(e) =>
+                      setPartnerAssignExtraInputs((prev) => ({
+                        ...prev,
+                        [row.key]: e.target.value,
+                      }))
+                    }
+                    className="h-8 w-28 text-xs"
+                    placeholder="0.00"
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="text-right text-sm font-semibold text-text-primary">Partner total: {formatCurrency(partnerAssignTotal)}</p>
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button
@@ -5015,11 +6703,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </Button>
             <Button
               size="sm"
+              variant="primary"
               loading={savingPartner || loadingPartners}
+              disabled={!partnerAssignCanConfirm}
+              className="w-full rounded-lg py-2.5 font-semibold disabled:opacity-50"
               onClick={async () => {
                 const selected = partners.find((p) => p.id === selectedPartnerId);
                 setSavingPartner(true);
                 try {
+                  const extrasCombined = partnerAssignExtrasTotal;
+                  const materialsExtra = partnerAssignMaterialsTotal;
                   const partnerPatch: Partial<Job> = {
                     partner_id: selectedPartnerId || null,
                     partner_name: selectedPartnerId
@@ -5027,6 +6720,31 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       : null,
                     partner_ids: selectedPartnerId ? [selectedPartnerId] : [],
                   };
+                  if (selectedPartnerId) {
+                    if (partnerAssignRateType === "hourly" && partnerAssignService) {
+                      const clientRate = Math.max(0, Number(partnerAssignService.hourly_rate) || 0);
+                      const partnerRate = Math.max(
+                        0,
+                        partnerHourlyRateFromCatalogBundle(partnerAssignService.partner_cost, partnerAssignService.default_hours),
+                      );
+                      const hourlyTotals = partnerAssignHourlyPreview;
+                      partnerPatch.job_type = "hourly";
+                      partnerPatch.catalog_service_id = partnerAssignService.id;
+                      partnerPatch.hourly_client_rate = clientRate;
+                      partnerPatch.hourly_partner_rate = partnerRate;
+                      if (hourlyTotals) {
+                        partnerPatch.billed_hours = hourlyTotals.billedHours;
+                        partnerPatch.client_price = hourlyTotals.clientTotal;
+                        partnerPatch.partner_cost = hourlyTotals.partnerTotal;
+                      }
+                    } else {
+                      partnerPatch.job_type = "fixed";
+                      partnerPatch.partner_cost = partnerAssignBaseCost;
+                    }
+                    partnerPatch.partner_cost = Math.round((Number(partnerPatch.partner_cost ?? 0) + extrasCombined) * 100) / 100;
+                    partnerPatch.partner_extras_amount = extrasCombined;
+                    partnerPatch.materials_cost = materialsExtra;
+                  }
                   if (selectedPartnerId && (job.status === "unassigned" || job.status === "auto_assigning")) {
                     partnerPatch.status = "scheduled";
                   }
@@ -5037,13 +6755,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     partnerPatch.status = "unassigned";
                   }
                   await handleJobUpdate(job.id, partnerPatch);
+                  if (selectedPartnerId) {
+                    setPartnerExtrasUiValue(extrasCombined);
+                    setPartnerExtraBreakdownUi({
+                      extra: partnerAssignExtraBreakdown.extra,
+                      ccz: partnerAssignExtraBreakdown.ccz,
+                      parking: partnerAssignExtraBreakdown.parking,
+                    });
+                    toast.success(`${selected?.company_name?.trim() || selected?.contact_name || "Partner"} assigned · ${formatCurrency(partnerAssignTotal)} partner cost`);
+                  }
                   setPartnerModalOpen(false);
                 } finally {
                   setSavingPartner(false);
                 }
               }}
             >
-              Save partner
+              Assign & confirm
             </Button>
           </div>
         </div>

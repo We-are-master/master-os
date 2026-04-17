@@ -25,6 +25,8 @@ interface AddressAutocompleteProps {
   onChange?: (value: string) => void;
   placeholder?: string;
   className?: string;
+  /** Merged onto the text field (dashboard default styling). */
+  fieldClassName?: string;
   country?: string;
   label?: string;
   /** Dashboard (default) vs dark partner portal / public pages */
@@ -70,6 +72,7 @@ export function AddressAutocomplete({
   onChange,
   placeholder = "Start typing an address or postcode...",
   className = "",
+  fieldClassName,
   country = "gb",
   label,
   variant = "default",
@@ -164,6 +167,7 @@ export function AddressAutocomplete({
     isDark
       ? "border-zinc-700 bg-zinc-950 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#e93701]/35"
       : "border-border bg-card text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary",
+    fieldClassName,
   );
 
   return (

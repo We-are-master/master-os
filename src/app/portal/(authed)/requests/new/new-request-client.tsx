@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ImagePlus, X } from "lucide-react";
@@ -9,22 +9,33 @@ import { TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 
 const MAX_IMAGES = 6;
 
-export function NewRequestClient() {
+export type PortalPropertyOption = {
+  id: string;
+  name: string;
+  full_address: string;
+};
+
+export function NewRequestClient({ properties }: { properties: PortalPropertyOption[] }) {
   const router = useRouter();
-  const [serviceType,    setServiceType]    = useState("");
-  const [description,    setDescription]    = useState("");
-  const [propertyAddress, setPropertyAddress] = useState("");
-  const [desiredDate,    setDesiredDate]    = useState("");
+  const [serviceType, setServiceType] = useState("");
+  const [description, setDescription] = useState("");
+  const [propertyId, setPropertyId] = useState("");
+  const [desiredDate, setDesiredDate] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError]           = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const selectedProperty = useMemo(
+    () => properties.find((p) => p.id === propertyId) ?? null,
+    [properties, propertyId],
+  );
 
   function handleAddImages(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     if (files.length === 0) return;
     const remaining = MAX_IMAGES - images.length;
-    const accepted  = files.slice(0, remaining);
+    const accepted = files.slice(0, remaining);
     setImages((prev) => [...prev, ...accepted]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -36,18 +47,27 @@ export function NewRequestClient() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!serviceType.trim())     { setError("Please pick a service type."); return; }
-    if (!description.trim())     { setError("Please describe what you need."); return; }
-    if (!propertyAddress.trim()) { setError("Please enter the property address."); return; }
+    if (!serviceType.trim()) {
+      setError("Please pick a service type.");
+      return;
+    }
+    if (!description.trim()) {
+      setError("Please describe what you need.");
+      return;
+    }
+    if (!propertyId.trim()) {
+      setError("Please select the property (asset) where work is needed.");
+      return;
+    }
 
     setSubmitting(true);
     try {
       const compressed = await Promise.all(images.map((f) => compressImage(f)));
 
       const form = new FormData();
-      form.append("serviceType",     serviceType.trim());
-      form.append("description",     description.trim());
-      form.append("propertyAddress", propertyAddress.trim());
+      form.append("serviceType", serviceType.trim());
+      form.append("description", description.trim());
+      form.append("propertyId", propertyId.trim());
       if (desiredDate.trim()) form.append("desiredDate", desiredDate.trim());
 
       compressed.forEach((file, idx) => {
@@ -56,12 +76,16 @@ export function NewRequestClient() {
 
       const res = await fetch("/api/portal/requests", {
         method: "POST",
-        body:   form,
+        body: form,
         headers: { Accept: "application/json" },
       });
 
       let payload: { ok?: boolean; error?: unknown; reference?: string } = {};
-      try { payload = await res.json(); } catch { /* ignore */ }
+      try {
+        payload = await res.json();
+      } catch {
+        /* ignore */
+      }
 
       if (!res.ok) {
         const apiErr = typeof payload.error === "string" ? payload.error : "";
@@ -70,7 +94,6 @@ export function NewRequestClient() {
         return;
       }
 
-      // Success — bounce back to the list. The new request will appear at the top.
       router.push("/portal/requests");
       router.refresh();
     } catch (err) {
@@ -93,8 +116,21 @@ export function NewRequestClient() {
       <div className="bg-card rounded-2xl border border-border p-6 lg:p-8">
         <h1 className="text-2xl font-black text-text-primary mb-1">New service request</h1>
         <p className="text-sm text-text-secondary mb-6">
-          Tell us what you need and our team will respond with a quote.
+          Choose the asset (site) and describe the work — requests are scoped to your account and that property.
         </p>
+
+        {properties.length === 0 && (
+          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+            <p className="font-semibold mb-1">Add a property first</p>
+            <p className="text-amber-800/90 dark:text-amber-200/90 mb-3">
+              Service requests must be tied to a registered site. Create an asset under{" "}
+              <Link href="/portal/assets/new" className="font-bold underline">
+                New asset
+              </Link>{" "}
+              before submitting a request.
+            </p>
+          </div>
+        )}
 
         {error && (
           <div className="mb-5 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
@@ -103,6 +139,32 @@ export function NewRequestClient() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
+              Asset / property <span className="text-red-500">*</span>
+            </label>
+            <select
+              className="w-full px-4 py-3 rounded-xl border border-border bg-surface-secondary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
+              value={propertyId}
+              onChange={(e) => setPropertyId(e.target.value)}
+              disabled={submitting || properties.length === 0}
+              required
+            >
+              <option value="">Select a property…</option>
+              {properties.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            {selectedProperty && (
+              <p className="mt-2 text-xs text-text-tertiary leading-relaxed">
+                <span className="font-semibold text-text-secondary">Address: </span>
+                {selectedProperty.full_address}
+              </p>
+            )}
+          </div>
+
           <div>
             <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
               Service type <span className="text-red-500">*</span>
@@ -115,7 +177,9 @@ export function NewRequestClient() {
             >
               <option value="">Select a type of work...</option>
               {TYPE_OF_WORK_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>{opt}</option>
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
               ))}
             </select>
           </div>
@@ -130,20 +194,6 @@ export function NewRequestClient() {
               placeholder="Tell us what needs doing — the more detail you give, the faster we can quote."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              disabled={submitting}
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-text-secondary mb-1.5 uppercase tracking-wide">
-              Property address <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              className="w-full px-4 py-3 rounded-xl border border-border bg-surface-secondary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
-              placeholder="123 Example Street, London, SW1A 1AA"
-              value={propertyAddress}
-              onChange={(e) => setPropertyAddress(e.target.value)}
               disabled={submitting}
             />
           </div>
@@ -215,7 +265,7 @@ export function NewRequestClient() {
             </Link>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || properties.length === 0}
               className="px-6 py-2.5 rounded-xl font-bold text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60 bg-orange-600"
             >
               {submitting ? "Submitting..." : "Submit request"}

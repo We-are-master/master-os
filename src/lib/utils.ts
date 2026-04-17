@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { formatBritishDate } from "@/lib/utils/date";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -46,8 +47,8 @@ export function formatCurrency(value: number, currency?: string): string {
   return new Intl.NumberFormat(localeForCurrency(code), {
     style: "currency",
     currency: code,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(safe);
 }
 
@@ -141,11 +142,7 @@ export function getErrorMessage(err: unknown, fallback = "Something went wrong")
 }
 
 export function formatDate(date: Date | string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(new Date(date));
+  return formatBritishDate(date);
 }
 
 export function formatRelativeTime(date: Date | string): string {

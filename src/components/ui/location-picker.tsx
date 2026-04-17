@@ -308,7 +308,7 @@ function LocationMiniMapInner({
   if (loading) {
     return (
       <div
-        className={`animate-pulse bg-surface-tertiary rounded-xl w-full ${fillParent ? "h-full min-h-[140px]" : "h-32"}`}
+        className={`animate-pulse bg-surface-tertiary w-full ${fillParent ? "h-full min-h-[140px] rounded-none" : "h-32 rounded-xl"}`}
       />
     );
   }
@@ -320,7 +320,7 @@ function LocationMiniMapInner({
       <div
         className={cn(
           "w-full min-w-0 overflow-hidden",
-          fillParent ? "flex-1 min-h-[120px] h-0 rounded-xl border border-border" : "",
+          fillParent ? "flex-1 min-h-[120px] h-0 rounded-none border border-border" : "",
         )}
       >
         <LocationPicker
@@ -383,7 +383,7 @@ export function LocationMiniMap({
       className={`${className ?? ""}${fillParent ? " h-full min-h-0 flex flex-col" : ""}`}
     >
       {lazy && !visible ? (
-        <div className="flex items-start gap-2 rounded-xl border border-border bg-surface-hover p-3 min-h-[4.5rem]">
+        <div className={`flex items-start gap-2 border border-border bg-surface-hover p-3 min-h-[4.5rem] ${fillParent ? "rounded-none" : "rounded-xl"}`}>
           <MapPin className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-text-primary line-clamp-3">{address || "No address"}</p>

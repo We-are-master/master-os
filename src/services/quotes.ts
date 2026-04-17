@@ -50,6 +50,7 @@ const QUOTE_WRITABLE_KEYS = new Set<string>([
   "description",
   "deleted_at",
   "deleted_by",
+  "property_id",
 ]);
 
 function pickQuotePayload(input: Record<string, unknown>): Record<string, unknown> {
@@ -66,6 +67,15 @@ const LEGACY_OPTIONAL_QUOTE_KEYS = ["deposit_percent", "deposit_required"] as co
  * Returns a new payload with one unknown column removed, or strips legacy deposit fields when
  * PostgREST still errors (e.g. message references `quotes` but parser missed the column name).
  */
+function isQuoteOwnerFkViolation(err: unknown): boolean {
+  const e = err as { code?: string; message?: string };
+  const msg = (e.message ?? "").toLowerCase();
+  return (
+    e.code === "23503" &&
+    (msg.includes("quotes_owner_id_fkey") || (msg.includes("owner_id") && msg.includes("profiles")))
+  );
+}
+
 function tryRelaxQuoteWritePayload(
   payload: Record<string, unknown>,
   error: unknown,
@@ -181,6 +191,13 @@ export async function createQuote(
         insertPayload = relaxed;
         continue;
       }
+    }
+    if (isQuoteOwnerFkViolation(error)) {
+      const next = { ...insertPayload };
+      delete next.owner_id;
+      delete next.owner_name;
+      insertPayload = next;
+      continue;
     }
     throw error;
   }

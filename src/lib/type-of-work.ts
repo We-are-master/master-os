@@ -11,14 +11,13 @@ export const TYPE_OF_WORK_OPTIONS = [
   "Cleaning",
   "Gardener",
   "Boiler Service",
-  "EICR",
-  "PAT EICR",
-  "PAT Testing",
-  "Gas Safety Certificate",
-  "Fire Risk Assessment",
+  "Electrical Installation Condition Report (EICR)",
+  "Portable Appliance Testing (PAT)",
+  "Gas Safety Certificate (GSC)",
+  "Fire Risk Assessment (FRA)",
   "Fire Alarm Certificate",
   "Emergency Lighting Certificate",
-  "Fire Extinguisher Service",
+  "Fire Extinguisher Service (FES)",
 ] as const;
 
 /** Exact legacy labels (UI + DB) → canonical TYPE_OF_WORK string. */
@@ -29,6 +28,19 @@ const TYPE_OF_WORK_ALIASES: Record<string, string> = {
   garderner: "Gardener",
   boiler: "Boiler Service",
   "boiler service": "Boiler Service",
+  eicr: "Electrical Installation Condition Report (EICR)",
+  "electrical installation condition report": "Electrical Installation Condition Report (EICR)",
+  "electrical installation condition report (eicr)": "Electrical Installation Condition Report (EICR)",
+  "pat testing": "Portable Appliance Testing (PAT)",
+  "portable appliance testing": "Portable Appliance Testing (PAT)",
+  "portable appliance testing (pat)": "Portable Appliance Testing (PAT)",
+  "pat eicr": "Portable Appliance Testing (PAT)",
+  "gas safety certificate": "Gas Safety Certificate (GSC)",
+  "gas safety certificate (gsc)": "Gas Safety Certificate (GSC)",
+  "fire risk assessment": "Fire Risk Assessment (FRA)",
+  "fire risk assessment (fra)": "Fire Risk Assessment (FRA)",
+  "fire extinguisher service": "Fire Extinguisher Service (FES)",
+  "fire extinguisher service (fes)": "Fire Extinguisher Service (FES)",
 };
 
 /**

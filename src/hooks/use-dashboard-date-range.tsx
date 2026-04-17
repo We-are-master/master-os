@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -45,9 +46,17 @@ interface DashboardDateRangeContextValue {
 const Ctx = createContext<DashboardDateRangeContextValue | null>(null);
 
 export function DashboardDateRangeProvider({ children }: { children: ReactNode }) {
-  const [preset, setPresetState] = useState<DateRangePreset>(() => readStoredPreset());
+  /**
+   * Keep SSR/CSR first paint identical (default = all). Load persisted preset only after mount
+   * to avoid hydration mismatch in date-range labels.
+   */
+  const [preset, setPresetState] = useState<DateRangePreset>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+
+  useEffect(() => {
+    setPresetState(readStoredPreset());
+  }, []);
 
   const setPreset = useCallback((p: DateRangePreset) => {
     setPresetState(p);

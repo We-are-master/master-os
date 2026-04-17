@@ -19,7 +19,7 @@ import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, MapPin, Phone, Mail, CheckCircle2, XCircle,
   ArrowRight, Briefcase, FileText, Users, Send, PenLine,
-  Inbox, Percent, CalendarRange, ImagePlus, X, ChevronDown,
+  Inbox, Percent, CalendarRange, ImagePlus, X, ChevronDown, Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
@@ -67,6 +67,8 @@ import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partn
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
 import { mergeImageUrlLists, normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
+import { ExportCsvModal } from "@/components/shared/export-csv-modal";
+import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 import {
   DEFAULT_FINANCE_PERIOD_MODE,
   getFinancePeriodClosedBounds,
@@ -704,10 +706,69 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
     },
   ];
 
+  const [exportOpen, setExportOpen] = useState(false);
+  const requestVisibleFields = ["reference", "client_name", "service_type", "property_address", "status", "priority", "owner_name"];
+  const requestAllFields = useMemo(
+    () => [...new Set(data.flatMap((row) => Object.keys(row as unknown as Record<string, unknown>)))],
+    [data],
+  );
+
+  const handleExportFullCsv = useCallback(async (fields: string[]) => {
+    try {
+      const allRows: ServiceRequest[] = [];
+      let p = 1;
+      const pageSize = 500;
+      while (true) {
+        const res = await listRequests({
+          page: p,
+          pageSize,
+          search: search.trim() ? search : undefined,
+          status: status !== "all" ? status : undefined,
+          ...(createdAtRangeFilter ?? {}),
+        });
+        allRows.push(...res.data);
+        if (p >= res.totalPages) break;
+        p += 1;
+      }
+      const filtered = allRows.filter((r) => {
+        if (filterPriority === "high" && r.priority !== "high" && r.priority !== "urgent") return false;
+        if (filterPriority === "urgent" && r.priority !== "urgent") return false;
+        if (filterService !== "all" && normalizeTypeOfWork(r.service_type) !== normalizeTypeOfWork(filterService)) return false;
+        if (buFilter.selectedBuId) {
+          if (!buFilter.clientIdsInBu) return true;
+          if (!r.client_id || !buFilter.clientIdsInBu.has(r.client_id)) return false;
+        }
+        return true;
+      });
+      if (filtered.length === 0) {
+        toast.info("No requests to export");
+        return;
+      }
+      const rows = filtered as unknown as Array<Record<string, unknown>>;
+      const finalFields = fields.length > 0 ? fields : [...new Set(rows.flatMap((r) => Object.keys(r)))];
+      const csv = buildCsvFromRows(rows, finalFields);
+      downloadCsvFile(`requests-${status}-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+      toast.success(`Exported ${filtered.length} requests with full fields`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to export requests");
+    }
+  }, [
+    search,
+    status,
+    createdAtRangeFilter,
+    filterPriority,
+    filterService,
+    buFilter.selectedBuId,
+    buFilter.clientIdsInBu,
+  ]);
+
   return (
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Requests" subtitle="Manage incoming service requests and leads.">
+          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
+            Export
+          </Button>
           <div className="relative flex items-center gap-2" ref={filterRef}>
             <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
             {(filterPriority !== "all" || filterService !== "all" || periodMode !== DEFAULT_FINANCE_PERIOD_MODE || buFilter.selectedBuId) && (
@@ -853,6 +914,8 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
           <DataTable
             columns={columns}
             data={filteredRequests}
+            columnConfigKey="requests-columns"
+            columnConfigScope={status}
             loading={loading}
             getRowId={(item) => item.id}
             selectedId={selectedRequest?.id}
@@ -1283,6 +1346,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               client_name: resolvedAddr.client_name,
               client_email: resolvedAddr.client_email ?? req.client_email ?? "",
               request_id: req.id,
+              property_id: freshReq?.property_id ?? req.property_id ?? undefined,
               service_type: normalizeTypeOfWork(req.service_type?.trim() || "") || null,
               catalog_service_id: catalogId,
               status: "bidding",
@@ -1427,6 +1491,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               client_name: resolvedAddr.client_name,
               client_email: resolvedAddr.client_email ?? req.client_email ?? "",
               request_id: req.id,
+              property_id: freshReq?.property_id ?? req.property_id ?? undefined,
               service_type: normalizeTypeOfWork(req.service_type?.trim() || "") || null,
               catalog_service_id: manualCatalogId,
               status: "draft",
@@ -1520,6 +1585,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               has_free_parking: data.has_free_parking ?? null,
               client_id: data.client_id,
               client_address_id: data.client_address_id,
+              property_id: convertToJobOpen.property_id ?? undefined,
               client_name: data.client_name,
               property_address: data.property_address,
               partner_name: isAutoAssign ? null : data.partner_name,
@@ -1585,6 +1651,13 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
         onClose={() => setCreateOpen(false)}
         onCreate={handleCreate}
         catalogServices={catalogServices}
+      />
+      <ExportCsvModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        allFields={requestAllFields}
+        visibleFields={requestVisibleFields}
+        onConfirm={handleExportFullCsv}
       />
     </PageTransition>
   );

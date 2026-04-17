@@ -2,9 +2,16 @@ import { getSupabase, queryList, type ListParams, type ListResult, type SortDire
 import { loadAllJobsForPeriodOverlap } from "./job-period-overlap-queries";
 import { jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
 import type { Job } from "@/types/database";
-import { cancelOpenInvoicesForJobCancellation, createInvoice } from "./invoices";
+import { cancelOpenInvoicesForJobCancellation, createInvoice, listInvoicesLinkedToJob } from "./invoices";
 import { getInvoiceDueDateIsoForClient } from "./invoice-due-date";
-import { ensureWeeklySelfBillForJob, syncSelfBillAfterJobChange } from "./self-bills";
+import { createOrAppendJobInvoice } from "./weekly-account-invoice";
+import {
+  cancelOpenSelfBillsForJobCancellation,
+  createSelfBillFromJob,
+  ensureWeeklySelfBillForJob,
+  listSelfBillsLinkedToJob,
+  syncSelfBillAfterJobChange,
+} from "./self-bills";
 import { JOB_ONSITE_PROGRESS_STATUSES } from "@/lib/job-phases";
 import {
   applyJobDbCompat,
@@ -476,6 +483,18 @@ export async function createJob(
   let attemptPayload: Record<string, unknown> = { ...row };
   let { data, error } = await supabase.from("jobs").insert(attemptPayload).select().single();
   for (let attempt = 0; attempt < 32 && error; attempt++) {
+    const code = (error as { code?: string }).code;
+    const msg = (error as { message?: string }).message ?? "";
+    const ownerFkViolation =
+      code === "23503" && (msg.includes("jobs_owner_id_fkey") || msg.includes("owner_id"));
+    if (ownerFkViolation) {
+      delete attemptPayload.owner_id;
+      delete attemptPayload.owner_name;
+      const retry = await supabase.from("jobs").insert(attemptPayload).select().single();
+      data = retry.data;
+      error = retry.error;
+      continue;
+    }
     const col = parsePostgrestUnknownColumnName(error);
     if (
       (isPostgrestWriteRetryableError(error) || isSupabaseMissingColumnError(error)) &&
@@ -511,7 +530,13 @@ export async function createJob(
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
   if (invoiceTotal > 0.01 && !job.invoice_id) {
     try {
-      const dueDateStr = await getInvoiceDueDateIsoForClient(job.client_id ?? null);
+      let dueDateStr = "";
+      try {
+        dueDateStr = await getInvoiceDueDateIsoForClient(job.client_id ?? null);
+      } catch {
+        // Do not block invoice creation when payment-terms lookup fails.
+        dueDateStr = new Date().toISOString().slice(0, 10);
+      }
       const hasDeposit = Number(job.customer_deposit ?? 0) > 0.01;
       const inv = await createInvoice(
         {
@@ -525,19 +550,31 @@ export async function createJob(
         },
         invoiceRefPre ? { reference: invoiceRefPre } : undefined,
       );
-      await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
-      job = { ...job, invoice_id: inv.id };
+      const { error: linkErr } = await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
+      if (!linkErr) {
+        job = { ...job, invoice_id: inv.id };
+      } else {
+        console.error("createJob invoice link failed:", linkErr);
+      }
     } catch (e) {
-      /** Surface the failure — the job was persisted but the paired draft invoice wasn't. */
-      console.error(
-        "createJob: draft invoice creation failed",
-        { jobId: job.id, ref: job.reference },
-        e,
-      );
-      const msg = e instanceof Error ? e.message : "unknown error";
-      throw new Error(
-        `Job ${job.reference} was created but its draft invoice failed (${msg}). Create it manually in Finance.`,
-      );
+      console.error("createJob invoice auto-create failed:", e);
+      // Fallback to the same invoice helper used in approval/manual flows.
+      try {
+        const inv = await createOrAppendJobInvoice(job, {
+          client_name: job.client_name ?? "Client",
+          amount: invoiceTotal,
+          status: "draft",
+          invoice_kind: "final",
+        });
+        const { error: linkErr } = await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
+        if (!linkErr) {
+          job = { ...job, invoice_id: inv.id };
+        } else {
+          console.error("createJob invoice fallback link failed:", linkErr);
+        }
+      } catch (fallbackErr) {
+        console.error("createJob invoice fallback create failed:", fallbackErr);
+      }
     }
   }
 
@@ -557,6 +594,102 @@ export async function createJob(
         e,
       );
     }
+  }
+
+  if (!job.self_bill_id && job.partner_id?.trim()) {
+    try {
+      const sb = await createSelfBillFromJob({
+        id: job.id,
+        reference: job.reference,
+        partner_name: job.partner_name ?? "Unassigned",
+        partner_cost: job.partner_cost,
+        materials_cost: job.materials_cost,
+      });
+      await supabase.from("jobs").update({ self_bill_id: sb.id }).eq("id", job.id);
+      job = { ...job, self_bill_id: sb.id };
+    } catch {
+      /* self-bill can be linked manually from job/finance */
+    }
+  }
+
+  /**
+   * Final consistency pass:
+   * - ensure links exist when docs are expected
+   * - verify through the same sources used by Invoices/Self-bills tabs
+   * - self-heal missing job foreign keys when documents already exist
+   */
+  try {
+    // Invoice expected whenever the customer side has value.
+    if (invoiceTotal > 0.01) {
+      let invoiceId = job.invoice_id ?? null;
+      if (!invoiceId) {
+        const linked = await listInvoicesLinkedToJob(job.reference, null);
+        const pick = linked[0] ?? null;
+        if (pick?.id) {
+          const { error: linkErr } = await supabase.from("jobs").update({ invoice_id: pick.id }).eq("id", job.id);
+          if (!linkErr) {
+            invoiceId = pick.id;
+            job = { ...job, invoice_id: pick.id };
+          } else {
+            console.error("createJob invoice relink failed:", linkErr);
+          }
+        }
+      }
+      if (!invoiceId) {
+        try {
+          const inv = await createOrAppendJobInvoice(job, {
+            client_name: job.client_name ?? "Client",
+            amount: invoiceTotal,
+            status: "draft",
+            invoice_kind: "final",
+          });
+          const { error: linkErr } = await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
+          if (!linkErr) {
+            invoiceId = inv.id;
+            job = { ...job, invoice_id: inv.id };
+          } else {
+            console.error("createJob invoice verification link failed:", linkErr);
+          }
+        } catch (createErr) {
+          console.error("createJob invoice verification create failed:", createErr);
+        }
+      }
+      if (!invoiceId) {
+        console.error("createJob: expected invoice but none linked/found for job", {
+          jobId: job.id,
+          jobRef: job.reference,
+          invoiceTotal,
+        });
+      }
+    }
+
+    // Self-bill expected whenever a partner is assigned.
+    if (job.partner_id?.trim()) {
+      let selfBillId = job.self_bill_id ?? null;
+      if (!selfBillId) {
+        const linked = await listSelfBillsLinkedToJob(job.reference, null);
+        const pick = linked[0] ?? null;
+        if (pick?.id) {
+          const { error: linkErr } = await supabase.from("jobs").update({ self_bill_id: pick.id }).eq("id", job.id);
+          if (!linkErr) {
+            selfBillId = pick.id;
+            job = { ...job, self_bill_id: pick.id };
+          } else {
+            console.error("createJob self-bill relink failed:", linkErr);
+          }
+        }
+      }
+      if (!selfBillId) {
+        console.error("createJob: expected self-bill but none linked/found for job", {
+          jobId: job.id,
+          jobRef: job.reference,
+          partnerId: job.partner_id,
+        });
+      }
+    }
+  } catch (e) {
+    // Never block job creation at this stage; this pass is best-effort verification/relink.
+    console.error("createJob financial docs verification failed:", e);
   }
 
   void syncSelfBillAfterJobChange(job).catch(() => {});
@@ -707,16 +840,22 @@ export async function updateJob(
   }
   if (row.status === "cancelled") {
     try {
-      await cancelOpenInvoicesForJobCancellation({
-        jobReference: row.reference,
-        cancellationReason:
-          row.cancellation_reason?.trim() ||
-          row.partner_cancellation_reason?.trim() ||
-          "Job cancelled.",
-        primaryInvoiceId: row.invoice_id,
-      });
+      await Promise.all([
+        cancelOpenInvoicesForJobCancellation({
+          jobReference: row.reference,
+          cancellationReason:
+            row.cancellation_reason?.trim() ||
+            row.partner_cancellation_reason?.trim() ||
+            "Job cancelled.",
+          primaryInvoiceId: row.invoice_id,
+        }),
+        cancelOpenSelfBillsForJobCancellation({
+          jobReference: row.reference,
+          primarySelfBillId: row.self_bill_id ?? null,
+        }),
+      ]);
     } catch (e) {
-      console.error("cancelOpenInvoicesForJobCancellation:", e);
+      console.error("cancelOpenInvoicesForJobCancellation/selfBill:", e);
     }
   }
   return row;

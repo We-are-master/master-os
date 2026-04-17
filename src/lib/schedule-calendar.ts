@@ -1,3 +1,5 @@
+import { formatBritishDate, formatBritishHourMinuteAmPmCompact, UK_TIMEZONE } from "@/lib/utils/date";
+
 /** Local calendar YYYY-MM-DD (avoids UTC day shift from `Date#toISOString`). */
 export function formatLocalYmd(d: Date): string {
   const y = d.getFullYear();
@@ -73,7 +75,14 @@ export function jobScheduleYmd(job: {
   if (job.scheduled_start_at) {
     const dt = new Date(job.scheduled_start_at);
     if (!Number.isNaN(dt.getTime())) {
-      return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
+      const ymd = new Intl.DateTimeFormat("en-CA", {
+        timeZone: UK_TIMEZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(dt);
+      const [y, m, d] = ymd.split("-").map(Number);
+      if (y && m && d) return { y, m, d };
     }
   }
   if (job.scheduled_date) {
@@ -130,19 +139,13 @@ function scheduleLineFinishSuffix(job: { scheduled_finish_date?: string | null }
   if (!job.scheduled_finish_date) return "";
   const p = parseIsoDateOnlyPrefix(job.scheduled_finish_date);
   if (!p) return "";
-  const endLabel = new Date(p.y, p.m - 1, p.d).toLocaleDateString(undefined, { dateStyle: "medium" });
-  return ` · Expected finish ${endLabel}`;
+  const endLabel = formatBritishDate(new Date(Date.UTC(p.y, p.m - 1, p.d, 12, 0, 0)));
+  return endLabel ? ` · Expected finish ${endLabel}` : "";
 }
 
-/** Compact 12h label for client/partner-facing copy (e.g. `11AM`, `2:30PM`). */
+/** Compact 12h label for client/partner-facing copy (e.g. `11AM`, `2:30PM`) — Europe/London wall time. */
 export function formatHourMinuteAmPm(d: Date): string {
-  const h24 = d.getHours();
-  const m = d.getMinutes();
-  const isPm = h24 >= 12;
-  const h12 = h24 % 12 || 12;
-  const suf = isPm ? "PM" : "AM";
-  if (m === 0) return `${h12}${suf}`;
-  return `${h12}:${String(m).padStart(2, "0")}${suf}`;
+  return formatBritishHourMinuteAmPmCompact(d);
 }
 
 /** Arrival window as shown to client & partner, e.g. `11AM – 2PM`. */
@@ -154,10 +157,8 @@ export function formatArrivalTimeRange(startIso: string, endIso: string): string
 }
 
 function formatMediumDateFromLocalDate(d: Date): string {
-  return d.toLocaleDateString(undefined, { dateStyle: "medium" });
+  return formatBritishDate(d);
 }
-
-const UK_TIMEZONE = "Europe/London";
 
 function isoCalendarDateInUk(isoOrDate: string | Date): string | null {
   const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
@@ -246,7 +247,8 @@ export function formatJobScheduleLine(job: {
   if (job.scheduled_date) {
     const p = parseIsoDateOnlyPrefix(job.scheduled_date);
     if (!p) return null;
-    return `${new Date(p.y, p.m - 1, p.d).toLocaleDateString(undefined, { dateStyle: "medium" })}${scheduleLineFinishSuffix(job)}`;
+    const civil = formatBritishDate(new Date(Date.UTC(p.y, p.m - 1, p.d, 12, 0, 0)));
+    return civil ? `${civil}${scheduleLineFinishSuffix(job)}` : null;
   }
   return null;
 }
