@@ -20,6 +20,8 @@ interface KpiCardProps {
   iconColor?: string;
   accent?: "primary" | "emerald" | "blue" | "amber" | "purple" | "stone";
   description?: string;
+  /** When true, render the description as a hover `!` tooltip next to the title instead of a body line. */
+  descriptionAsTooltip?: boolean;
   className?: string;
 }
 
@@ -41,6 +43,7 @@ export function KpiCard({
   icon: Icon,
   accent = "primary",
   description,
+  descriptionAsTooltip = false,
   className,
 }: KpiCardProps) {
   const formattedValue = (() => {
@@ -60,9 +63,29 @@ export function KpiCard({
       <Card className={cn("relative overflow-hidden group h-full flex flex-col", className)}>
         <div className="flex items-start justify-between gap-3 flex-1 min-h-0">
           <div className="space-y-2 flex-1 min-w-0">
-            <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">
-              {title}
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+                {title}
+              </p>
+              {descriptionAsTooltip && description ? (
+                <span className="group relative inline-flex">
+                  <span
+                    tabIndex={0}
+                    aria-label={description}
+                    className="inline-flex h-[14px] w-[14px] items-center justify-center rounded-full text-[10px] font-bold leading-none cursor-help outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+                    style={{ background: "#F1F1F3", color: "#6B6B70" }}
+                  >
+                    !
+                  </span>
+                  <span
+                    role="tooltip"
+                    className="pointer-events-none invisible absolute top-full left-0 z-[60] mt-1 w-56 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1.5 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                  >
+                    {description}
+                  </span>
+                </span>
+              ) : null}
+            </div>
             <p className="text-2xl font-bold text-text-primary tracking-tight">
               {formattedValue}
             </p>
@@ -87,7 +110,7 @@ export function KpiCard({
                 )}
               </div>
             )}
-            {description ? (
+            {description && !descriptionAsTooltip ? (
               <p className="text-xs text-text-tertiary line-clamp-2">{description}</p>
             ) : null}
           </div>

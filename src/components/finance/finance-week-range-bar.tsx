@@ -37,6 +37,8 @@ export interface FinanceWeekRangeBarProps {
   onMonthAnchorChange?: (d: Date) => void;
   /** Replaces the default “Showing all periods…” line when mode is All. */
   allPeriodDescription?: string;
+  /** Hide the "Showing all periods…" text entirely — pages that replace it with an info tooltip elsewhere. */
+  hideAllDescription?: boolean;
   /** Shown under the date inputs in range mode (e.g. pay run is one week at a time). */
   rangeHelperText?: string;
 }
@@ -61,6 +63,7 @@ export function FinanceWeekRangeBar({
   monthAnchor,
   onMonthAnchorChange,
   allPeriodDescription,
+  hideAllDescription = false,
   rangeHelperText,
 }: FinanceWeekRangeBarProps) {
   const effectiveMonthAnchor = monthAnchor ?? weekAnchor;
@@ -217,7 +220,7 @@ export function FinanceWeekRangeBar({
         </div>
       )}
 
-      {mode === "all" && showAllOption && (
+      {mode === "all" && showAllOption && !hideAllDescription && (
         <p className="text-sm text-text-secondary">
           {allPeriodDescription ?? "Showing all periods (no date filter on the list)."}
         </p>

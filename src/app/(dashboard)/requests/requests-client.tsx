@@ -189,6 +189,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
     realtimeTable: "service_requests",
     listParams: createdAtRangeFilter ?? {},
     initialData,
+    initialStatus: "new",
   });
 
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
@@ -765,7 +766,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Requests" subtitle="Manage incoming service requests and leads.">
+        <PageHeader title="Requests" infoTooltip="Manage incoming service requests and leads.">
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
             Export
           </Button>
@@ -846,6 +847,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             rangeTo={periodRangeTo}
             onRangeFromChange={setPeriodRangeFrom}
             onRangeToChange={setPeriodRangeTo}
+            hideAllDescription
           />
         </div>
 
@@ -858,6 +860,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             icon={Inbox}
             accent="blue"
             description="Awaiting triage"
+            descriptionAsTooltip
           />
           <KpiCard
             className="min-h-[128px] h-full"
@@ -871,6 +874,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                 ? "No approved / declined yet"
                 : `${requestKpis.approved} approved · ${requestKpis.declined} declined`
             }
+            descriptionAsTooltip
           />
           <KpiCard
             className="min-h-[128px] h-full"
@@ -884,6 +888,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                 ? "No requests yet"
                 : `${requestKpis.toQuote} converted · ${requestKpis.total} total`
             }
+            descriptionAsTooltip
           />
           <KpiCard
             className="min-h-[128px] h-full"
@@ -897,6 +902,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                 ? "No requests yet"
                 : `${requestKpis.toJob} direct jobs · ${requestKpis.total} total`
             }
+            descriptionAsTooltip
           />
         </StaggerContainer>
 
