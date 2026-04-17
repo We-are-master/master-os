@@ -4712,9 +4712,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               {detailTab === 2 ? (
             <>
-            <div className="rounded-xl border border-border-light bg-card p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
+            {/* Fixfy visual system: navy labels, inset card, coral for pending, emerald for validated success feedback. */}
+            <div
+              className="rounded-[12px] overflow-hidden bg-white"
+              style={{ border: "0.5px solid #E4E4E8", boxShadow: "0 1px 3px rgba(2,0,64,0.04)" }}
+            >
+              <div
+                className="flex flex-wrap items-center justify-between gap-3 px-[18px] py-[14px]"
+                style={{ background: "#FAFAFB", borderBottom: "0.5px solid #E4E4E8" }}
+              >
+                <p
+                  className="text-[11px] font-medium uppercase flex items-center gap-1.5"
+                  style={{ color: "#020040", letterSpacing: "0.6px" }}
+                >
                   <FileText className="h-3.5 w-3.5" /> Reports
                 </p>
                 <div className="flex items-center gap-2 shrink-0">
@@ -4724,10 +4734,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     color={reportsProgressPercent === 100 ? "emerald" : "primary"}
                     className="w-24 min-w-[6rem]"
                   />
-                  <span className="text-[11px] font-semibold text-text-primary tabular-nums">{reportsProgressPercent}%</span>
+                  <span
+                    className="text-[11px] font-semibold tabular-nums"
+                    style={{ color: "#020040" }}
+                  >
+                    {reportsProgressPercent}%
+                  </span>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+
+              <div className="p-[18px] space-y-[14px]">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-[14px]">
                 {reportPhaseIndices(job.total_phases).map((n) => {
                   const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
                   const approved = job[`report_${n}_approved` as keyof Job] as boolean;
@@ -4742,29 +4759,75 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     ...(appReport?.before_images ?? []),
                     ...(appReport?.after_images ?? []),
                   ].filter(Boolean);
+                  const reportCardStyle = approved
+                    ? { background: "#F0FBF7", border: "0.5px solid #B5E3D1" } /* success feedback */
+                    : uploaded
+                      ? { background: "#FFF8F3", border: "0.5px solid #F5CFB8" } /* coral — pending review */
+                      : { background: "#FAFAFB", border: "0.5px solid #E4E4E8" }; /* neutral inset */
                   return (
-                    <div key={n} className={`rounded-xl border p-3 space-y-2 ${approved ? "border-emerald-200 bg-emerald-50/30 dark:bg-emerald-950/20" : uploaded ? "border-amber-200 bg-amber-50/30 dark:bg-amber-950/10" : "border-border-light bg-surface-hover/40"}`}>
+                    <div
+                      key={n}
+                      className="rounded-[10px] p-[14px] space-y-2"
+                      style={reportCardStyle}
+                    >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          {approved ? <ShieldCheck className="h-4 w-4 text-emerald-600" /> : uploaded ? <Upload className="h-4 w-4 text-amber-500" /> : <FileText className="h-4 w-4 text-text-tertiary" />}
-                          <p className="text-sm font-semibold text-text-primary">{phaseLabel}</p>
+                        <div className="flex items-center gap-2 min-w-0">
+                          {approved ? (
+                            <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "#0F6E56" }} />
+                          ) : uploaded ? (
+                            <Upload className="h-4 w-4 shrink-0" style={{ color: "#ED4B00" }} />
+                          ) : (
+                            <FileText className="h-4 w-4 shrink-0" style={{ color: "#9A9AA0" }} />
+                          )}
+                          <p
+                            className="text-[13px] font-medium truncate"
+                            style={{ color: "#020040" }}
+                          >
+                            {phaseLabel}
+                          </p>
                         </div>
-                        <Badge variant={approved ? "success" : uploaded ? "warning" : "default"} size="sm">
+                        <span
+                          className="text-[10px] font-medium px-[7px] py-[2px] rounded shrink-0"
+                          style={
+                            approved
+                              ? { background: "#E4F5EE", color: "#0F6E56" }
+                              : uploaded
+                                ? { background: "#FFF1EB", color: "#ED4B00" }
+                                : { background: "#F1F1F3", color: "#6B6B70" }
+                          }
+                        >
                           {approved ? "Validated" : uploaded ? "Pending review" : "Not uploaded"}
-                        </Badge>
+                        </span>
                       </div>
-                      {approvedAt && <p className="text-xs text-emerald-600">Approved {new Date(approvedAt).toLocaleDateString()}</p>}
-                      {uploadedAt && !approvedAt && <p className="text-xs text-amber-600">Uploaded {new Date(uploadedAt).toLocaleDateString()}</p>}
+                      {approvedAt && (
+                        <p className="text-[11px]" style={{ color: "#0F6E56" }}>
+                          Approved {new Date(approvedAt).toLocaleDateString("en-GB")}
+                        </p>
+                      )}
+                      {uploadedAt && !approvedAt && (
+                        <p className="text-[11px]" style={{ color: "#ED4B00" }}>
+                          Uploaded {new Date(uploadedAt).toLocaleDateString("en-GB")}
+                        </p>
+                      )}
                       {appReport && (
-                        <div className="rounded-lg border border-border-light bg-card/70 p-3 space-y-2">
+                        <div
+                          className="rounded-[8px] p-3 space-y-2 bg-white"
+                          style={{ border: "0.5px solid #E4E4E8" }}
+                        >
                           {appReport.description?.trim() ? (
-                            <p className="text-xs text-text-secondary">
-                              <span className="font-semibold text-text-primary">Notes:</span> {appReport.description.trim()}
+                            <p className="text-[12px]" style={{ color: "#6B6B70" }}>
+                              <span className="font-semibold" style={{ color: "#020040" }}>
+                                Notes:
+                              </span>{" "}
+                              {appReport.description.trim()}
                             </p>
                           ) : null}
                           {appReport.materials?.trim() ? (
-                            <p className="text-xs text-text-secondary">
-                              <span className="font-semibold text-text-primary">Materials:</span> {appReport.materials.trim()}
+                            <p className="text-[12px]" style={{ color: "#6B6B70" }}>
+                              <span className="font-semibold" style={{ color: "#020040" }}>
+                                Materials:
+                              </span>{" "}
+                              {appReport.materials.trim()}
                             </p>
                           ) : null}
                           {reportImages.length > 0 && (
@@ -4774,26 +4837,34 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   key={`${appReport.id}-${idx}`}
                                   type="button"
                                   onClick={() => void openPartnerReportImage(url, `${appReport.id}-${idx}`)}
-                                  className="text-[11px] underline text-primary hover:opacity-80"
+                                  className="text-[11px] underline hover:opacity-80"
+                                  style={{ color: "#020040" }}
                                 >
                                   {openingReportImageKey === `${appReport.id}-${idx}` ? "Opening..." : `Image ${idx + 1}`}
                                 </button>
                               ))}
                               {reportImages.length > 4 && (
-                                <span className="text-[11px] text-text-tertiary">+{reportImages.length - 4} more</span>
+                                <span className="text-[11px]" style={{ color: "#6B6B70" }}>
+                                  +{reportImages.length - 4} more
+                                </span>
                               )}
                             </div>
                           )}
                           {appReport.pdf_url ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              icon={<ExternalLink className="h-3.5 w-3.5" />}
-                              loading={openingReportId === appReport.id}
+                            <button
+                              type="button"
                               onClick={() => void openPartnerReportPdf(appReport)}
+                              disabled={openingReportId === appReport.id}
+                              className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                              style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                              onMouseEnter={(e) => {
+                                if (!(e.currentTarget as HTMLButtonElement).disabled)
+                                  (e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB";
+                              }}
+                              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
                             >
-                              Open PDF
-                            </Button>
+                              <ExternalLink className="h-3 w-3" /> Open PDF
+                            </button>
                           ) : null}
                         </div>
                       )}
@@ -4807,11 +4878,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               className="sr-only"
                               onChange={(e) => setPhaseReportFiles((prev) => ({ ...prev, [n]: e.target.files?.[0] ?? null }))}
                             />
-                            <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/40 p-3">
-                              <div className="flex items-center gap-2">
+                            <div
+                              className="rounded-[8px] p-3 bg-white"
+                              style={{ border: "0.5px dashed #D8D8DD" }}
+                            >
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <label
                                   htmlFor={`phase-report-file-${n}`}
-                                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30 hover:bg-surface-hover transition-colors"
+                                  className="inline-flex items-center gap-2 rounded-[6px] bg-white px-3 py-[6px] text-[12px] font-medium cursor-pointer"
+                                  style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                                  onMouseEnter={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FAFAFB")}
+                                  onMouseLeave={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FFFFFF")}
                                 >
                                   <Upload className="h-3.5 w-3.5" />
                                   {phaseReportFiles[n] ? "Change file" : "Choose file"}
@@ -4820,23 +4897,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   <button
                                     type="button"
                                     onClick={() => setPhaseReportFiles((prev) => ({ ...prev, [n]: null }))}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+                                    className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-[11px]"
+                                    style={{ color: "#6B6B70", border: "0.5px solid #D8D8DD" }}
                                   >
                                     <X className="h-3 w-3" /> Remove
                                   </button>
                                 )}
                               </div>
-                              <p className="mt-2 text-xs text-text-tertiary truncate">
+                              <p
+                                className="mt-2 text-[11px] truncate"
+                                style={{ color: "#6B6B70" }}
+                              >
                                 {phaseReportFiles[n]?.name ?? "No file selected"}
                               </p>
                             </div>
                             <div className="flex gap-2 flex-wrap">
-                              <Button
-                                size="sm"
-                                variant="primary"
-                                icon={<Upload className="h-3.5 w-3.5" />}
-                                disabled={!uploadCheck.ok || !phaseReportFiles[n]}
-                                loading={analyzingPhase === n}
+                              <button
+                                type="button"
+                                disabled={!uploadCheck.ok || !phaseReportFiles[n] || analyzingPhase === n}
                                 title={uploadCheck.message}
                                 onClick={() => {
                                   if (!uploadCheck.ok) {
@@ -4845,32 +4923,62 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   }
                                   void handlePhaseReportUploadAnalyze(n);
                                 }}
+                                className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                style={{ background: "#020040" }}
+                                onMouseEnter={(e) => {
+                                  if (!(e.currentTarget as HTMLButtonElement).disabled)
+                                    (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+                                }}
+                                onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
                               >
-                                Upload & analyze
-                              </Button>
+                                <Upload className="h-3.5 w-3.5" />
+                                {analyzingPhase === n ? "Analyzing…" : "Upload & analyze"}
+                              </button>
                             </div>
                           </>
                         )}
                         {uploaded && !approved && (
-                          <Button size="sm" variant="primary" icon={<ShieldCheck className="h-3.5 w-3.5" />} disabled={!approveCheck.ok} title={approveCheck.message}
-                            onClick={() => { if (!approveCheck.ok) { toast.error(approveCheck.message ?? "Cannot approve yet"); return; } handleJobUpdate(job.id, { [`report_${n}_approved`]: true, [`report_${n}_approved_at`]: new Date().toISOString() } as Partial<Job>); }}>
-                            Validate now
-                          </Button>
+                          <button
+                            type="button"
+                            disabled={!approveCheck.ok}
+                            title={approveCheck.message}
+                            onClick={() => {
+                              if (!approveCheck.ok) {
+                                toast.error(approveCheck.message ?? "Cannot approve yet");
+                                return;
+                              }
+                              handleJobUpdate(job.id, { [`report_${n}_approved`]: true, [`report_${n}_approved_at`]: new Date().toISOString() } as Partial<Job>);
+                            }}
+                            className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            style={{ background: "#020040" }}
+                            onMouseEnter={(e) => {
+                              if (!(e.currentTarget as HTMLButtonElement).disabled)
+                                (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+                            }}
+                            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5" /> Validate now
+                          </button>
                         )}
                       </div>
-                      {!uploadCheck.ok && !uploaded && uploadCheck.message && <p className="text-[11px] text-amber-600 dark:text-amber-400">{uploadCheck.message}</p>}
+                      {!uploadCheck.ok && !uploaded && uploadCheck.message && (
+                        <p className="text-[11px] font-medium" style={{ color: "#ED4B00" }}>
+                          {uploadCheck.message}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
               </div>
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <p className="text-xs text-text-tertiary">
+              <div
+                className="flex items-center justify-between gap-2 pt-[12px]"
+                style={{ borderTop: "0.5px solid #E4E4E8" }}
+              >
+                <p className="text-[11px]" style={{ color: "#6B6B70" }}>
                   {loadingAppJobReports ? "Loading partner reports..." : `${appJobReports.length} report record(s) from partner app`}
                 </p>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  icon={<RefreshCw className="h-3.5 w-3.5" />}
+                <button
+                  type="button"
                   onClick={async () => {
                     if (!job?.id) return;
                     setLoadingAppJobReports(true);
@@ -4881,37 +4989,77 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       setLoadingAppJobReports(false);
                     }
                   }}
+                  className="inline-flex items-center gap-[5px] bg-white rounded-[6px] px-[10px] py-[5px] text-[11px] font-medium cursor-pointer"
+                  style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                  onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB")}
+                  onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
                 >
-                  Refresh reports
-                </Button>
+                  <RefreshCw className="h-3 w-3" /> Refresh reports
+                </button>
               </div>
               {allConfiguredReportsApproved(job) && (
-                <div className="mt-2 p-2.5 rounded-xl border border-primary/20 bg-primary/5 flex flex-col sm:flex-row sm:items-center gap-2">
-                  <p className="flex-1 text-sm font-medium text-text-primary">All reports validated — ready to send report & request final payment.</p>
-                  <Button
-                    size="sm"
-                    icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                <div
+                  className="rounded-[10px] p-[14px] flex flex-col sm:flex-row sm:items-center gap-3"
+                  style={{ background: "#F4F5FB", border: "0.5px solid #D8DBEE" }}
+                >
+                  <p
+                    className="flex-1 text-[13px] font-medium"
+                    style={{ color: "#020040" }}
+                  >
+                    All reports validated — ready to send report &amp; request final payment.
+                  </p>
+                  <button
+                    type="button"
                     disabled={!sendReportFinalCheck.ok}
                     title={sendReportFinalCheck.message}
                     onClick={() => void handleSendReportAndInvoice()}
+                    className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ background: "#020040" }}
+                    onMouseEnter={(e) => {
+                      if (!(e.currentTarget as HTMLButtonElement).disabled)
+                        (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+                    }}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
                   >
-                    Review & Approve
-                  </Button>
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Review &amp; approve
+                  </button>
                 </div>
               )}
+              </div>
             </div>
 
             {/* MANUAL REPORT + AI ANALYSIS */}
-            <details className="group rounded-xl border border-border-light bg-card overflow-hidden">
-              <summary className="flex list-none items-center justify-between gap-2 p-3 cursor-pointer select-none [&::-webkit-details-marker]:hidden">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5 min-w-0">
+            <details
+              className="group rounded-[12px] overflow-hidden bg-white"
+              style={{ border: "0.5px solid #E4E4E8", boxShadow: "0 1px 3px rgba(2,0,64,0.04)" }}
+            >
+              <summary
+                className="flex list-none items-center justify-between gap-2 px-[18px] py-[14px] cursor-pointer select-none [&::-webkit-details-marker]:hidden"
+                style={{ background: "#FAFAFB" }}
+              >
+                <p
+                  className="text-[11px] font-medium uppercase flex items-center gap-1.5 min-w-0"
+                  style={{ color: "#020040", letterSpacing: "0.6px" }}
+                >
                   <FileText className="h-3.5 w-3.5 shrink-0" /> Manual report analysis (AI)
                 </p>
-                <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" aria-hidden />
+                <ChevronDown
+                  className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
+                  style={{ color: "#9A9AA0" }}
+                  aria-hidden
+                />
               </summary>
-              <div className="space-y-2.5 border-t border-border-light px-3 pb-3 pt-3">
+              <div
+                className="space-y-3 px-[18px] py-[18px]"
+                style={{ borderTop: "0.5px solid #E4E4E8" }}
+              >
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Report file</label>
+                  <label
+                    className="block text-[11px] font-medium uppercase mb-[6px]"
+                    style={{ color: "#020040", letterSpacing: "0.6px" }}
+                  >
+                    Report file
+                  </label>
                   <input
                     id="manual-report-file"
                     type="file"
@@ -4919,11 +5067,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     className="sr-only"
                     onChange={(e) => setManualReportFile(e.target.files?.[0] ?? null)}
                   />
-                  <div className="rounded-xl border border-dashed border-border-light bg-surface-hover/40 p-3">
-                    <div className="flex items-center gap-2">
+                  <div
+                    className="rounded-[8px] p-3 bg-white"
+                    style={{ border: "0.5px dashed #D8D8DD" }}
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
                       <label
                         htmlFor="manual-report-file"
-                        className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30 hover:bg-surface-hover transition-colors"
+                        className="inline-flex items-center gap-2 rounded-[6px] bg-white px-3 py-[6px] text-[12px] font-medium cursor-pointer"
+                        style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
+                        onMouseEnter={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FAFAFB")}
+                        onMouseLeave={(e) => ((e.currentTarget as HTMLLabelElement).style.background = "#FFFFFF")}
                       >
                         <Upload className="h-3.5 w-3.5" />
                         {manualReportFile ? "Change file" : "Choose file"}
@@ -4932,42 +5086,78 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         <button
                           type="button"
                           onClick={() => setManualReportFile(null)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover"
+                          className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-[11px]"
+                          style={{ color: "#6B6B70", border: "0.5px solid #D8D8DD" }}
                         >
                           <X className="h-3 w-3" /> Remove
                         </button>
                       )}
                     </div>
-                    <p className="mt-2 text-xs text-text-tertiary truncate">{manualReportFile?.name ?? "No file selected"}</p>
+                    <p className="mt-2 text-[11px] truncate" style={{ color: "#6B6B70" }}>
+                      {manualReportFile?.name ?? "No file selected"}
+                    </p>
                   </div>
-                  <p className="text-[11px] text-text-tertiary mt-1">Supported: PDF, DOC, DOCX or images (max 10MB).</p>
+                  <p className="text-[11px] mt-[6px]" style={{ color: "#6B6B70" }}>
+                    Supported: PDF, DOC, DOCX or images (max 10MB).
+                  </p>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Ops notes (recommended)</label>
+                  <label
+                    className="block text-[11px] font-medium uppercase mb-[6px]"
+                    style={{ color: "#020040", letterSpacing: "0.6px" }}
+                  >
+                    Ops notes (recommended)
+                  </label>
                   <textarea
                     value={manualReportNotes}
                     onChange={(e) => setManualReportNotes(e.target.value)}
                     rows={3}
                     placeholder="Add context, what was done, issues found, materials used, safety notes..."
-                    className="w-full rounded-xl border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    className="w-full rounded-[8px] px-3 py-[10px] text-[13px] outline-none bg-white"
+                    style={{
+                      border: "0.5px solid #D8D8DD",
+                      color: "#020040",
+                      fontFamily: "inherit",
+                      lineHeight: 1.5,
+                    }}
                   />
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    loading={analyzingManualReport}
-                    disabled={!manualReportFile}
-                    icon={<Upload className="h-3.5 w-3.5" />}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    disabled={!manualReportFile || analyzingManualReport}
                     onClick={() => void handleManualReportAnalyze()}
+                    className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ background: "#020040" }}
+                    onMouseEnter={(e) => {
+                      if (!(e.currentTarget as HTMLButtonElement).disabled)
+                        (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+                    }}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
                   >
-                    Upload & Analyze
-                  </Button>
-                  {manualReportFile && <span className="text-xs text-text-tertiary truncate">{manualReportFile.name}</span>}
+                    <Upload className="h-3.5 w-3.5" />
+                    {analyzingManualReport ? "Analyzing…" : "Upload & analyze"}
+                  </button>
+                  {manualReportFile && (
+                    <span className="text-[11px] truncate" style={{ color: "#6B6B70" }}>
+                      {manualReportFile.name}
+                    </span>
+                  )}
                 </div>
                 {manualReportResult && (
-                  <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
-                    <p className="text-xs font-semibold text-text-secondary mb-1">AI response</p>
-                    <pre className="text-xs whitespace-pre-wrap text-text-primary">{manualReportResult}</pre>
+                  <div
+                    className="rounded-[8px] p-3"
+                    style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+                  >
+                    <p
+                      className="text-[11px] font-medium uppercase mb-[6px]"
+                      style={{ color: "#020040", letterSpacing: "0.6px" }}
+                    >
+                      AI response
+                    </p>
+                    <pre className="text-[12px] whitespace-pre-wrap" style={{ color: "#020040" }}>
+                      {manualReportResult}
+                    </pre>
                   </div>
                 )}
               </div>
