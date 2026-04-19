@@ -75,18 +75,26 @@ function removeActivitySidebarNav(nav: NavGroup[]): NavGroup[] {
     .filter((g) => g.items.length > 0);
 }
 
-/** Sync item labels/icons from DEFAULT_NAVIGATION so code-side renames propagate on next load. */
+/** Sync item labels/icons AND order from DEFAULT_NAVIGATION so code-side changes propagate on next load. */
 function syncItemLabels(nav: NavGroup[]): NavGroup[] {
   const byHref = new Map<string, NavItem>(
     DEFAULT_NAVIGATION.flatMap((g) => g.items.map((i) => [i.href, i]))
   );
-  return nav.map((g) => ({
-    ...g,
-    items: g.items.map((item) => {
+  const canonicalOrder = new Map<string, number>(
+    DEFAULT_NAVIGATION.flatMap((g) => g.items.map((i, idx) => [i.href, idx]))
+  );
+  return nav.map((g) => {
+    const synced = g.items.map((item) => {
       const canonical = byHref.get(item.href);
       return canonical ? { ...item, label: canonical.label, icon: canonical.icon } : item;
-    }),
-  }));
+    });
+    synced.sort((a, b) => {
+      const ia = canonicalOrder.get(a.href) ?? 999;
+      const ib = canonicalOrder.get(b.href) ?? 999;
+      return ia - ib;
+    });
+    return { ...g, items: synced };
+  });
 }
 
 /** Move /schedule out of Operations and into Overview (below Dashboard) if stored there. */
