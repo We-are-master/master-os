@@ -352,7 +352,8 @@ export function DataTable<T>({
                           ? "bg-primary/[0.04]"
                           : isRowSelected
                             ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
-                            : "hover:bg-surface-hover border-l-[3px] border-l-transparent"
+                            : "hover:bg-surface-hover border-l-[3px] border-l-transparent",
+                        !isChecked && !isRowSelected && index % 2 === 1 && "bg-[#F8F8FA]"
                       )}
                     >
                       {selectable && (
