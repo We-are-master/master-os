@@ -90,6 +90,44 @@ function removeActivitySidebarNav(nav: NavGroup[]): NavGroup[] {
     .filter((g) => g.items.length > 0);
 }
 
+/** Sync item labels/icons from DEFAULT_NAVIGATION so code-side renames propagate on next load. */
+function syncItemLabels(nav: NavGroup[]): NavGroup[] {
+  const byHref = new Map<string, NavItem>(
+    DEFAULT_NAVIGATION.flatMap((g) => g.items.map((i) => [i.href, i]))
+  );
+  return nav.map((g) => ({
+    ...g,
+    items: g.items.map((item) => {
+      const canonical = byHref.get(item.href);
+      return canonical ? { ...item, label: canonical.label, icon: canonical.icon } : item;
+    }),
+  }));
+}
+
+/** Move /schedule out of Operations and into Overview (below Dashboard) if stored there. */
+function relocateScheduleToOverview(nav: NavGroup[]): NavGroup[] {
+  let scheduleItem: NavItem | undefined;
+  const stripped = nav.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => {
+      if (i.href === "/schedule" && g.label !== "Overview") {
+        scheduleItem = i;
+        return false;
+      }
+      return true;
+    }),
+  }));
+  if (!scheduleItem) return nav;
+  const overviewIdx = stripped.findIndex((g) => g.label === "Overview");
+  if (overviewIdx < 0) return nav;
+  const alreadyInOverview = stripped[overviewIdx].items.some((i) => i.href === "/schedule");
+  if (alreadyInOverview) return stripped;
+  const out = stripped.map((g, i) =>
+    i === overviewIdx ? { ...g, items: [...g.items, scheduleItem!] } : g
+  );
+  return out;
+}
+
 /**
  * Migrate stored navigation: Services → Admin; strip duplicates; Team → People; Payroll nav item stripped (hidden).
  */
@@ -142,7 +180,8 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     next.splice(financeIdx, 0, peopleGroup);
   }
 
-  return removePipelineSidebarNav(removeActivitySidebarNav(relocateInboxItems(next)));
+  const relocated = relocateScheduleToOverview(removePipelineSidebarNav(removeActivitySidebarNav(relocateInboxItems(next))));
+  return syncItemLabels(relocated);
 }
 
 function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByRole {
@@ -155,7 +194,13 @@ function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByR
 }
 
 const DEFAULT_NAVIGATION: NavGroup[] = [
-  { label: "Overview", items: [{ label: "Dashboard", href: "/", icon: "grid-2x2", permission: "dashboard" }] },
+  {
+    label: "Overview",
+    items: [
+      { label: "Dashboard", href: "/", icon: "grid-2x2", permission: "dashboard" },
+      { label: "Live View", href: "/schedule", icon: "calendar", permission: "jobs" },
+    ],
+  },
   {
     label: INBOX_GROUP_LABEL,
     items: [
@@ -169,15 +214,14 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
       { label: "Requests", href: "/requests", icon: "inbox", permission: "requests" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
-      { label: "Schedule", href: "/schedule", icon: "calendar", permission: "jobs" },
     ],
   },
   {
     label: "Network",
     items: [
+      { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
       { label: "Clients", href: "/clients", icon: "user-circle", permission: "partners" },
       { label: "Partners", href: "/partners", icon: "users", permission: "partners" },
-      { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
     ],
   },
   {
@@ -192,8 +236,8 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     items: [
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
-      { label: "Bills", href: "/finance/bills", icon: "file-check", permission: "finance" },
-      { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
+      { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
+      { label: "Payouts", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
     ],
   },
   {
