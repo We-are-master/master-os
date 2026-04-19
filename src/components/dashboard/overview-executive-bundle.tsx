@@ -650,13 +650,6 @@ export function OverviewExecutiveBundle() {
     [forecastWeeks],
   );
 
-  const conversionPct =
-    funnel.quotesSentInPeriod > 0
-      ? Math.min(100, Math.round((1000 * funnel.jobsFromQuotesInPeriod) / funnel.quotesSentInPeriod) / 10)
-      : funnel.jobsFromQuotesInPeriod > 0
-        ? 100
-        : 0;
-
   const rankBadgeClass = (i: number) =>
     cn(
       "h-6 w-6 rounded-md flex items-center justify-center text-[10px] font-bold shrink-0",
@@ -705,7 +698,7 @@ export function OverviewExecutiveBundle() {
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 divide-y sm:divide-y-0 divide-border-light sm:divide-x">
+        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 divide-border-light sm:divide-x">
           <div className="p-3 sm:p-4">
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
               Quotes awaiting customer
@@ -718,44 +711,27 @@ export function OverviewExecutiveBundle() {
             </p>
           </div>
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">Sales</p>
-            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-emerald-600")}>
-              {loading ? "—" : formatCurrency(funnel.salesBookedValue)}
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+              Workforce cost
+            </p>
+            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-orange-600")}>
+              {loading ? "—" : formatCurrency(payrollCost)}
             </p>
             <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              {loading ? "—" : `${funnel.salesJobCount} jobs on calendar`}
+              {loading ? "—" : `Internal payroll · due ${funnel.overheadMonthLabel || "in period"}`}
             </p>
           </div>
-          {[
-            {
-              label: "Conversion rate",
-              display: loading ? "—" : `${conversionPct}%`,
-              sub: loading
-                ? "—"
-                : `${funnel.jobsFromQuotesInPeriod} jobs from quotes ÷ ${funnel.quotesSentInPeriod} quotes sent`,
-              accent: "text-violet-600",
-            },
-            {
-              label: "Fixed overhead",
-              display: loading ? "—" : formatCurrency(funnel.fixedMonthlyOverhead),
-              sub: loading
-                ? "—"
-                : `Bills + workforce (internal payroll) · due ${funnel.overheadMonthLabel || "in period"}`,
-              accent: "text-rose-600",
-            },
-            {
-              label: "Collected",
-              display: loading ? "—" : formatCurrency(funnel.collectedCash),
-              sub: "Client payments (deposit + final) · job ledger",
-              accent: "text-amber-600",
-            },
-          ].map((cell) => (
-            <div key={cell.label} className="p-3 sm:p-4">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">{cell.label}</p>
-              <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", cell.accent)}>{cell.display}</p>
-              <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">{cell.sub}</p>
-            </div>
-          ))}
+          <div className="p-3 sm:p-4">
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+              Total bills
+            </p>
+            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-rose-600")}>
+              {loading ? "—" : formatCurrency(billsCost)}
+            </p>
+            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
+              {loading ? "—" : `Supplier bills · due ${funnel.overheadMonthLabel || "in period"}`}
+            </p>
+          </div>
         </div>
       </Card>
 
