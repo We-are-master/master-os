@@ -771,7 +771,7 @@ export function OverviewExecutiveBundle() {
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 divide-border-light sm:divide-x">
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 divide-border-light sm:divide-x">
           <div className="p-3 sm:p-4">
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
               Quotes awaiting customer
@@ -803,6 +803,17 @@ export function OverviewExecutiveBundle() {
             </p>
             <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
               Supplier bills · {currentMonthLabel}
+            </p>
+          </div>
+          <div className="p-3 sm:p-4">
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+              Total overhead
+            </p>
+            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-purple-600")}>
+              {monthlyLoading ? "—" : formatCurrency(monthlyPayroll + monthlyBills)}
+            </p>
+            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
+              Workforce + bills · {currentMonthLabel}
             </p>
           </div>
         </div>
