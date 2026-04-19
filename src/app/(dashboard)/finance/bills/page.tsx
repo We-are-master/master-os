@@ -605,7 +605,7 @@ export default function BillsPage() {
       <div className="space-y-5 px-1 sm:px-0">
         <PageHeader
           title="Bills & expenses"
-          subtitle="Filter by All, One-off, or Recurring; then by workflow. Period: All · Monthly · Week · Date range (default: current month). KPIs and the list match the bill type and the period."
+          infoTooltip="Filter by All, One-off, or Recurring; then by workflow. Period: All · Monthly · Week · Date range (default: current month). KPIs and the list match the bill type and the period."
         >
           <Button
             size="sm"
@@ -620,53 +620,51 @@ export default function BillsPage() {
         </PageHeader>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="rounded-2xl border border-border-light bg-card p-5">
-            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-red-600">{formatCurrency(headlineKpis.overdueAmount)}</p>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Overdue</p>
-            <p className="mt-3 text-sm text-text-tertiary">{headlineKpis.overdueCount} bills</p>
+          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Overdue</p>
+            <p className="mt-2 text-3xl font-bold tabular-nums text-red-600">{formatCurrency(headlineKpis.overdueAmount)}</p>
+            <p className="mt-auto pt-3 text-sm text-text-tertiary">{headlineKpis.overdueCount} bills</p>
           </div>
-          <div className="rounded-2xl border border-border-light bg-card p-5">
-            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.dueMonthAmount)}</p>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Due this month</p>
-            <p className="mt-3 text-sm text-text-tertiary">{headlineKpis.dueMonthCount} bills</p>
+          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Due this month</p>
+            <p className="mt-2 text-3xl font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.dueMonthAmount)}</p>
+            <p className="mt-auto pt-3 text-sm text-text-tertiary">{headlineKpis.dueMonthCount} bills</p>
           </div>
-          <div className="rounded-2xl border border-border-light bg-card p-5">
-            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.next30Amount)}</p>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Next 30 days</p>
-            <p className="mt-3 text-sm text-text-tertiary">Cashflow</p>
+          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Next 30 days</p>
+            <p className="mt-2 text-3xl font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.next30Amount)}</p>
+            <p className="mt-auto pt-3 text-sm text-text-tertiary">Cashflow</p>
           </div>
-          <div className="rounded-2xl border border-border-light bg-card p-5">
-            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.recurringMonthlyAmount)}</p>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Recurring / mo</p>
-            <p className="mt-3 text-sm text-text-tertiary">Base burn</p>
+          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Recurring / mo</p>
+            <p className="mt-2 text-3xl font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.recurringMonthlyAmount)}</p>
+            <p className="mt-auto pt-3 text-sm text-text-tertiary">Base burn</p>
           </div>
         </div>
 
-        <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:thin]">
-          <div className="inline-flex min-w-full gap-2 sm:flex sm:min-w-0 sm:flex-wrap">
-            {([
-              { id: "all", label: "All" },
-              { id: "one_off", label: "One-off" },
-              { id: "recurring", label: "Recurring" },
-              { id: "needs_attention", label: "Needs attention" },
-              { id: "approved", label: "Approved" },
-              { id: "archived", label: "Archived" },
-            ] as Array<{ id: BillsPreset; label: string }>).map((chip) => (
-              <button
-                key={chip.id}
-                type="button"
-                onClick={() => setBillsPreset(chip.id)}
-                className={cn(
-                  "shrink-0 whitespace-nowrap rounded-full border px-4 py-1.5 text-xs sm:text-sm font-semibold transition-colors",
-                  billsPreset === chip.id
-                    ? "border-primary bg-primary text-white"
-                    : "border-border-light bg-card text-text-secondary hover:bg-surface-hover",
-                )}
-              >
-                {chip.label}
-              </button>
-            ))}
-          </div>
+        <div className="flex flex-wrap gap-1.5">
+          {([
+            { id: "all", label: "All" },
+            { id: "one_off", label: "One-off" },
+            { id: "recurring", label: "Recurring" },
+            { id: "needs_attention", label: "Needs attention" },
+            { id: "approved", label: "Approved" },
+            { id: "archived", label: "Archived" },
+          ] as Array<{ id: BillsPreset; label: string }>).map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => setBillsPreset(chip.id)}
+              className={cn(
+                "rounded-lg px-3 py-1 text-xs font-semibold transition-colors",
+                billsPreset === chip.id
+                  ? "bg-primary text-white"
+                  : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary",
+              )}
+            >
+              {chip.label}
+            </button>
+          ))}
         </div>
 
         {loading ? (
@@ -679,8 +677,8 @@ export default function BillsPage() {
           </p>
         ) : (
           <div className="rounded-2xl border border-border-light bg-card overflow-hidden">
-            {visibleCompactRows.map((row) => (
-              <div key={row.key} className="border-b border-border-light last:border-0">
+            {visibleCompactRows.map((row, index) => (
+              <div key={row.key} className={cn("border-b border-border-light last:border-0", index % 2 === 1 && "bg-[#F5F5F7]")}>
                 <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-5">
                   <div className="min-w-0 flex items-start gap-3">
                     <button
@@ -701,12 +699,20 @@ export default function BillsPage() {
                       <p className="mt-1 truncate text-xs sm:text-sm text-text-tertiary">{row.meta}</p>
                     </div>
                   </div>
-                  <div className="shrink-0 w-full sm:w-auto flex items-center justify-start sm:justify-end gap-2 sm:gap-3">
-                    <p className="text-base font-semibold tabular-nums text-[#111827]">{formatCurrency(row.amount)}</p>
-                    <p className={cn("text-xs sm:text-sm font-medium whitespace-nowrap", row.status === "Approved" ? "text-emerald-600" : "text-text-tertiary")}>
-                      {row.status === "Approved" ? "● " : ""}
+                  <div className="shrink-0 w-full sm:w-auto flex items-center justify-start sm:justify-end gap-3">
+                    <p className="text-base font-semibold tabular-nums text-text-primary">{formatCurrency(row.amount)}</p>
+                    <Badge
+                      variant={
+                        row.status === "Approved" || row.status === "Paid" ? "success"
+                        : row.status === "Needs attention" || row.status === "Rejected" ? "danger"
+                        : row.status === "Submitted" ? "warning"
+                        : "default"
+                      }
+                      size="sm"
+                      dot
+                    >
                       {row.status}
-                    </p>
+                    </Badge>
                   </div>
                 </div>
                 {row.expandable && row.expanded ? (

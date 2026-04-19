@@ -846,17 +846,17 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
           <KpiCard
-            className="min-h-[128px] h-full"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
             title="New requests"
             value={requestKpis.newReq}
             format="number"
             icon={Inbox}
-            accent="blue"
+            accent="primary"
             description="Awaiting triage"
             descriptionAsTooltip
           />
           <KpiCard
-            className="min-h-[128px] h-full"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
             title="Approval rate"
             value={requestKpis.approvalPct ?? "—"}
             format={requestKpis.approvalPct != null ? "percent" : "none"}
@@ -870,12 +870,12 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             descriptionAsTooltip
           />
           <KpiCard
-            className="min-h-[128px] h-full"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
             title="Request → quote"
             value={requestKpis.quotePct ?? "—"}
             format={requestKpis.quotePct != null ? "percent" : "none"}
             icon={FileText}
-            accent="purple"
+            accent="amber"
             description={
               requestKpis.total === 0
                 ? "No requests yet"
@@ -884,12 +884,12 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             descriptionAsTooltip
           />
           <KpiCard
-            className="min-h-[128px] h-full"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
             title="Request → job"
             value={requestKpis.jobPct ?? "—"}
             format={requestKpis.jobPct != null ? "percent" : "none"}
             icon={Briefcase}
-            accent="amber"
+            accent="stone"
             description={
               requestKpis.total === 0
                 ? "No requests yet"
@@ -1360,7 +1360,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                     Convert to Quote
                   </h2>
                   <p className="text-[12px] mt-[2px]" style={{ color: "#6B6B70" }}>
-                    Pick how you want to create this quote
+                    How do you want to create this quote?
                   </p>
                 </div>
                 <button
@@ -1398,7 +1398,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-[8px] flex-wrap">
                       <span className="text-[14px] font-semibold" style={{ color: "#020040" }}>
-                        Invite Partner
+                        Send to matched partners
                       </span>
                       <span
                         className="text-[9px] font-semibold uppercase px-[6px] py-[2px] rounded"
@@ -1408,7 +1408,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                       </span>
                     </div>
                     <p className="text-[12px] mt-[3px] leading-snug" style={{ color: "#6B6B70" }}>
-                      Matched partners get invited by email, app or both. Fastest path to a quote.
+                      Partners matching this job type get invited by email and app. Fastest path to a quote.
                     </p>
                   </div>
                   <ArrowRight className="h-4 w-4 shrink-0" style={{ color: "#9A9AA0" }} />
@@ -1435,10 +1435,10 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>
-                      Manual Quote
+                      Build quote manually
                     </p>
                     <p className="text-[12px] mt-[3px] leading-snug" style={{ color: "#6B6B70" }}>
-                      Enter quote lines (service, qty, unit price, VAT). Opens Review &amp; send.
+                      Enter lines yourself — service, quantity, unit price, VAT. Opens Review &amp; send.
                     </p>
                   </div>
                   <ArrowRight className="h-4 w-4 shrink-0" style={{ color: "#9A9AA0" }} />

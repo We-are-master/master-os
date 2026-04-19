@@ -673,7 +673,7 @@ export function OverviewExecutiveBundle() {
 
   return (
     <div className="space-y-4">
-      <Card padding="none" className="overflow-hidden border-border-light shadow-sm ring-1 ring-border-light/20">
+      <Card padding="none" className="overflow-hidden border-border-light bg-[#FAFAFB] shadow-sm ring-1 ring-border-light/20">
         <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-border-light border-b border-border-light">
           {[
             {

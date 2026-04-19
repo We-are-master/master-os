@@ -41,30 +41,15 @@ function defaultInboxItem(href: (typeof INBOX_HREFS)[number]): NavItem {
   return { label: "Outreach", href: "/outreach", icon: "mail-plus" };
 }
 
-/** Pull Tickets + Outreach into a single Inbox group directly under Overview (migrates legacy layouts). */
+/** Strip the Inbox group (Tickets + Outreach) from stored nav — hidden from sidebar. */
 function relocateInboxItems(nav: NavGroup[]): NavGroup[] {
-  const found = new Map<string, NavItem>();
-  const rest = nav
+  return nav
     .filter((g) => g.label !== INBOX_GROUP_LABEL)
     .map((g) => ({
       ...g,
-      items: g.items.filter((i) => {
-        if (i.href === "/tickets" || i.href === "/outreach") {
-          found.set(i.href, i);
-          return false;
-        }
-        return true;
-      }),
-    }));
-  const items: NavItem[] = INBOX_HREFS.map((h) => found.get(h) ?? defaultInboxItem(h));
-  const inboxGroup: NavGroup = { label: INBOX_GROUP_LABEL, items };
-  const overviewIdx = rest.findIndex((g) => g.label === "Overview");
-  if (overviewIdx >= 0) {
-    const out = [...rest];
-    out.splice(overviewIdx + 1, 0, inboxGroup);
-    return out;
-  }
-  return [inboxGroup, ...rest];
+      items: g.items.filter((i) => i.href !== "/tickets" && i.href !== "/outreach"),
+    }))
+    .filter((g) => g.items.length > 0);
 }
 
 const PIPELINE_SIDEBAR_HREFS = new Set(["/pipelines/partners", "/pipelines/corporate"]);
@@ -90,11 +75,57 @@ function removeActivitySidebarNav(nav: NavGroup[]): NavGroup[] {
     .filter((g) => g.items.length > 0);
 }
 
+/** Sync item labels/icons AND order from DEFAULT_NAVIGATION so code-side changes propagate on next load. */
+function syncItemLabels(nav: NavGroup[]): NavGroup[] {
+  const byHref = new Map<string, NavItem>(
+    DEFAULT_NAVIGATION.flatMap((g) => g.items.map((i) => [i.href, i]))
+  );
+  const canonicalOrder = new Map<string, number>(
+    DEFAULT_NAVIGATION.flatMap((g) => g.items.map((i, idx) => [i.href, idx]))
+  );
+  return nav.map((g) => {
+    const synced = g.items.map((item) => {
+      const canonical = byHref.get(item.href);
+      return canonical ? { ...item, label: canonical.label, icon: canonical.icon } : item;
+    });
+    synced.sort((a, b) => {
+      const ia = canonicalOrder.get(a.href) ?? 999;
+      const ib = canonicalOrder.get(b.href) ?? 999;
+      return ia - ib;
+    });
+    return { ...g, items: synced };
+  });
+}
+
+/** Move /schedule out of Operations and into Overview (below Dashboard) if stored there. */
+function relocateScheduleToOverview(nav: NavGroup[]): NavGroup[] {
+  let scheduleItem: NavItem | undefined;
+  const stripped = nav.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => {
+      if (i.href === "/schedule" && g.label !== "Overview") {
+        scheduleItem = i;
+        return false;
+      }
+      return true;
+    }),
+  }));
+  if (!scheduleItem) return nav;
+  const overviewIdx = stripped.findIndex((g) => g.label === "Overview");
+  if (overviewIdx < 0) return nav;
+  const alreadyInOverview = stripped[overviewIdx].items.some((i) => i.href === "/schedule");
+  if (alreadyInOverview) return stripped;
+  const out = stripped.map((g, i) =>
+    i === overviewIdx ? { ...g, items: [...g.items, scheduleItem!] } : g
+  );
+  return out;
+}
+
 /**
  * Migrate stored navigation: Services → Admin; strip duplicates; Team → People; Payroll nav item stripped (hidden).
  */
 function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
-  const strip = new Set(["/finance/payroll", "/services"]);
+  const strip = new Set(["/finance/payroll", "/services", "/team"]);
   const next = nav.map((g) => ({
     ...g,
     label: g.label === LEGACY_TEAM_GROUP_LABEL ? PEOPLE_GROUP_LABEL : g.label,
@@ -103,22 +134,17 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
 
   const peopleIdx = next.findIndex((g) => g.label === PEOPLE_GROUP_LABEL);
   if (peopleIdx >= 0) {
-    const items = next[peopleIdx].items.map((i) =>
-      i.href === "/team" ? { ...i, ...TEAM_CORE_ITEM } : i
-    );
-    const extras = items.filter(
-      (i) => i.href !== "/people" && i.href !== "/team" && i.href !== "/finance/payroll"
-    );
+    const items = next[peopleIdx].items;
+    const extras = items.filter((i) => i.href !== "/people" && i.href !== "/finance/payroll");
     const peopleItem = items.find((i) => i.href === "/people") ?? { ...PEOPLE_DIRECTORY_ITEM };
-    const teamItem = items.find((i) => i.href === "/team") ?? { ...TEAM_CORE_ITEM };
     next[peopleIdx] = {
       ...next[peopleIdx],
-      items: [peopleItem, teamItem, ...extras],
+      items: [peopleItem, ...extras],
     };
   } else {
     next.push({
       label: PEOPLE_GROUP_LABEL,
-      items: [{ ...PEOPLE_DIRECTORY_ITEM }, { ...TEAM_CORE_ITEM }],
+      items: [{ ...PEOPLE_DIRECTORY_ITEM }],
     });
   }
 
@@ -142,7 +168,8 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     next.splice(financeIdx, 0, peopleGroup);
   }
 
-  return removePipelineSidebarNav(removeActivitySidebarNav(relocateInboxItems(next)));
+  const relocated = relocateScheduleToOverview(removePipelineSidebarNav(removeActivitySidebarNav(relocateInboxItems(next))));
+  return syncItemLabels(relocated);
 }
 
 function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByRole {
@@ -155,12 +182,11 @@ function mergePermissionsWithDefaults(stored: PermissionsByRole): PermissionsByR
 }
 
 const DEFAULT_NAVIGATION: NavGroup[] = [
-  { label: "Overview", items: [{ label: "Dashboard", href: "/", icon: "grid-2x2", permission: "dashboard" }] },
   {
-    label: INBOX_GROUP_LABEL,
+    label: "Overview",
     items: [
-      { label: "Tickets", href: "/tickets", icon: "message-square" },
-      { label: "Outreach", href: "/outreach", icon: "mail-plus" },
+      { label: "Dashboard", href: "/", icon: "grid-2x2", permission: "dashboard" },
+      { label: "Live View", href: "/schedule", icon: "calendar", permission: "jobs" },
     ],
   },
   {
@@ -169,22 +195,20 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
       { label: "Requests", href: "/requests", icon: "inbox", permission: "requests" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
-      { label: "Schedule", href: "/schedule", icon: "calendar", permission: "jobs" },
     ],
   },
   {
     label: "Network",
     items: [
+      { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
       { label: "Clients", href: "/clients", icon: "user-circle", permission: "partners" },
       { label: "Partners", href: "/partners", icon: "users", permission: "partners" },
-      { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
     ],
   },
   {
     label: PEOPLE_GROUP_LABEL,
     items: [
       { label: "Workforce", href: "/people", icon: "contact", permission: "team" },
-      { label: "Users Access", href: "/team", icon: "users-2", permission: "team" },
     ],
   },
   {
@@ -192,8 +216,8 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     items: [
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
-      { label: "Bills", href: "/finance/bills", icon: "file-check", permission: "finance" },
-      { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
+      { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
+      { label: "Payouts", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
     ],
   },
   {

@@ -12,7 +12,8 @@ import { type FinancePeriodMode, DEFAULT_FINANCE_PERIOD_MODE } from "@/lib/finan
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import { CalendarClock, DollarSign, Download, Loader2, CheckCircle2 } from "lucide-react";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { cn, formatCurrency, formatDate } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import type { PayRunItem } from "@/types/database";
 import {
@@ -243,7 +244,8 @@ export default function PayRunPage() {
       <div className="space-y-5">
         <PageHeader
           title="Pay Run"
-          subtitle={`${weekNumberLine} · Execute partner self-bills, workforce payroll, and supplier bills already approved in Finance.`}
+          subtitle={weekNumberLine}
+          infoTooltip="Execute partner self-bills, workforce payroll, and supplier bills already approved in Finance."
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>
             Export CSV
@@ -272,7 +274,8 @@ export default function PayRunPage() {
             format="currency"
             description={`${dueThisWeek.length} unpaid · ${payRunKpiDesc}`}
             icon={DollarSign}
-            accent="amber"
+            accent="primary"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
           />
           <KpiCard
             title="Overdue (before week)"
@@ -281,6 +284,7 @@ export default function PayRunPage() {
             description={`Due date before ${formatDate(week_start)} · still pending in this run`}
             icon={CalendarClock}
             accent="amber"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
           />
           <KpiCard
             title="Marked paid (this run)"
@@ -289,6 +293,7 @@ export default function PayRunPage() {
             description={`${paidThisWeek.length} item${paidThisWeek.length === 1 ? "" : "s"} · ${payRunKpiDesc}`}
             icon={CheckCircle2}
             accent="emerald"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
           />
         </StaggerContainer>
 
@@ -334,10 +339,10 @@ export default function PayRunPage() {
               <Loader2 className="h-8 w-8 animate-spin" />
             </div>
           ) : (
-            <div className="rounded-xl border border-border bg-card overflow-x-auto">
+            <div className="rounded-2xl border border-border-light bg-card overflow-x-auto">
               <table className="w-full text-sm min-w-[720px]">
                 <thead>
-                  <tr className="border-b border-border bg-surface-hover">
+                  <tr className="border-b border-border-light bg-[#FAFAFB]">
                     <th className="text-left p-3 w-10">
                       <input
                         type="checkbox"
@@ -358,24 +363,21 @@ export default function PayRunPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayRows.map((i) => {
+                  {displayRows.map((i, index) => {
                     const { name, reference } = decodePayRunLabel(i.source_label);
                     const queueBucket = payRunQueueBucket(i, selfBillStatusById[i.source_id]);
                     const statusLabel =
-                      queueBucket === "paid"
-                        ? "Paid"
-                        : queueBucket === "draft"
-                          ? "Draft"
-                          : "Approved to pay";
-                    const statusClass =
-                      queueBucket === "paid"
-                        ? "text-emerald-600 font-medium"
-                        : queueBucket === "draft"
-                          ? "text-text-secondary font-medium"
-                          : "text-amber-600 font-medium";
+                      queueBucket === "paid" ? "Paid"
+                      : queueBucket === "draft" ? "Draft"
+                      : "Approved to pay";
+                    const statusVariant =
+                      queueBucket === "paid" ? "success" as const
+                      : queueBucket === "draft" ? "default" as const
+                      : "warning" as const;
+                    const isZebra = index % 2 === 1;
                     return (
-                      <tr key={i.id} className="border-b border-border last:border-0">
-                        <td className="p-3">
+                      <tr key={i.id} className={cn("border-b border-border-light last:border-0", isZebra && "bg-[#F5F5F7]")}>
+                        <td className={cn("p-3", isZebra && "bg-[#F5F5F7]")}>
                           {i.status === "pending" ? (
                             <input
                               type="checkbox"
@@ -387,20 +389,20 @@ export default function PayRunPage() {
                             <span className="inline-block w-4" />
                           )}
                         </td>
-                        <td className="p-3 text-text-secondary whitespace-nowrap">{payRunItemTypeLabel(i.item_type)}</td>
-                        <td className="p-3 font-medium text-text-primary max-w-[200px] truncate" title={name}>
+                        <td className={cn("p-3 text-text-secondary whitespace-nowrap", isZebra && "bg-[#F5F5F7]")}>{payRunItemTypeLabel(i.item_type)}</td>
+                        <td className={cn("p-3 font-medium text-text-primary max-w-[200px] truncate", isZebra && "bg-[#F5F5F7]")} title={name}>
                           {name}
                         </td>
-                        <td className="p-3 text-text-secondary max-w-[180px] truncate font-mono text-xs" title={reference}>
+                        <td className={cn("p-3 text-text-secondary max-w-[180px] truncate font-mono text-xs", isZebra && "bg-[#F5F5F7]")} title={reference}>
                           {reference}
                         </td>
-                        <td className="p-3 text-right font-semibold tabular-nums">{formatCurrency(i.amount)}</td>
-                        <td className="p-3 text-text-tertiary text-xs whitespace-nowrap">{weekRangeShort}</td>
-                        <td className="p-3 text-text-secondary whitespace-nowrap">
+                        <td className={cn("p-3 text-right font-semibold tabular-nums", isZebra && "bg-[#F5F5F7]")}>{formatCurrency(i.amount)}</td>
+                        <td className={cn("p-3 text-text-tertiary text-xs whitespace-nowrap", isZebra && "bg-[#F5F5F7]")}>{weekRangeShort}</td>
+                        <td className={cn("p-3 text-text-secondary whitespace-nowrap", isZebra && "bg-[#F5F5F7]")}>
                           {i.due_date ? formatDate(i.due_date) : "—"}
                         </td>
-                        <td className="p-3">
-                          <span className={statusClass}>{statusLabel}</span>
+                        <td className={cn("p-3", isZebra && "bg-[#F5F5F7]")}>
+                          <Badge variant={statusVariant} size="sm" dot>{statusLabel}</Badge>
                         </td>
                       </tr>
                     );

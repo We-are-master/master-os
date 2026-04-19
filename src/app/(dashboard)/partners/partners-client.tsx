@@ -897,7 +897,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 );
               })}
             </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 border-t border-border-light/80">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-1 border-t border-border-light/80">
               <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">More</span>
               <button
                 type="button"
@@ -913,19 +913,16 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 All partners
                 <span className="text-[10px] text-text-tertiary ml-1 tabular-nums">({totalPartners})</span>
               </button>
+              <div className="ml-auto flex items-center gap-2">
+                <select value={tradeFilter} onChange={(e) => { setTradeFilter(e.target.value); setPage(1); }} className={selectClasses}>
+                  <option value="all">All Trades</option>
+                  {TRADES.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+                <SearchInput placeholder="Search partners..." className="w-48" value={search} onChange={(e) => setSearch(e.target.value)} />
+              </div>
             </div>
-          </div>
-
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-            <select value={tradeFilter} onChange={(e) => { setTradeFilter(e.target.value); setPage(1); }} className={selectClasses}>
-              <option value="all">All Trades</option>
-              {TRADES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            <SearchInput placeholder="Search partners..." className="w-56" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
 
           <DataTable

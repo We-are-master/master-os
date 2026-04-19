@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
 import { staggerItem } from "@/lib/motion";
 import { useProfile } from "@/hooks/use-profile";
@@ -15,7 +16,6 @@ import {
   DashboardDateRangeProvider,
   useDashboardDateRange,
 } from "@/hooks/use-dashboard-date-range";
-import { DashboardDateToolbar } from "@/components/dashboard/dashboard-date-toolbar";
 import { WidgetRenderer } from "@/components/dashboard/widget-renderer";
 
 // Lazy-loaded chart-heavy components — removes ~200 KB from initial bundle.
@@ -36,7 +36,7 @@ import type { DashboardView, WidgetConfig } from "@/types/dashboard-config";
 import {
   LayoutDashboard, DollarSign, Briefcase, BarChart2, PieChart,
   Activity, Users, Settings, Layers, Plus, Pencil, SlidersHorizontal,
-  ChevronDown, Crown, RefreshCw, Maximize2, Minimize2,
+  ChevronDown, Crown, RefreshCw, Maximize2, Minimize2, CalendarRange,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isLegacyJobSchema } from "@/lib/job-schema-compat";
@@ -218,7 +218,7 @@ function DashboardInner() {
   const { profile } = useProfile();
   const firstName = profile?.full_name?.split(" ")[0] || "there";
   const { visibleViews, loading: viewsLoading, canEdit } = useDashboardConfig();
-  const { bounds, rangeLabel } = useDashboardDateRange();
+  const { bounds, rangeLabel, preset, setPreset, customFrom, customTo, setCustomFrom, setCustomTo } = useDashboardDateRange();
 
   const [activeFilters, setActiveFilters] = useState<Set<DashboardFilter>>(new Set());
   const [filterCounts, setFilterCounts] = useState<Record<string, number>>({});
@@ -232,6 +232,7 @@ function DashboardInner() {
   const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
   const dashboardRootRef = useRef<HTMLDivElement>(null);
   const [dashboardFullscreen, setDashboardFullscreen] = useState(false);
+  const [periodDropdownOpen, setPeriodDropdownOpen] = useState(false);
 
   const canSeeCeoDashboard = useMemo(() => isCeoDashboardAllowedUser(profile), [profile]);
   const ceoDashboard = ceoModeUser && canSeeCeoDashboard;
@@ -376,6 +377,142 @@ function DashboardInner() {
         {/* Header */}
         <PageHeader title={`${greeting}, ${firstName}`}>
           <div className="flex items-center gap-2">
+            {/* Period picker dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setPeriodDropdownOpen((o) => !o)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium border transition-all h-8",
+                  periodDropdownOpen
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border bg-card text-text-secondary hover:bg-surface-hover",
+                )}
+                aria-expanded={periodDropdownOpen}
+                title="Select period"
+              >
+                <CalendarRange className="h-3.5 w-3.5" />
+                <span className="max-w-[100px] truncate text-xs">{rangeLabel}</span>
+                <ChevronDown className={cn("h-3.5 w-3.5 text-text-tertiary transition-transform", periodDropdownOpen && "rotate-180")} />
+              </button>
+              {periodDropdownOpen && (
+                <>
+                  <button type="button" className="fixed inset-0 z-40 cursor-default" aria-label="Close period picker" onClick={() => setPeriodDropdownOpen(false)} />
+                  <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-border-light bg-card shadow-lg p-3 space-y-3">
+                    <div className="flex flex-wrap gap-1.5">
+                      {(["1d", "wtd", "mtd", "qtd", "ytd", "all", "custom"] as const).map((p) => {
+                        const labels: Record<string, string> = { "1d": "Today", wtd: "Week", mtd: "Month", qtd: "Quarter", ytd: "Year", all: "All", custom: "Custom" };
+                        return (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => { setPreset(p); if (p !== "custom") setPeriodDropdownOpen(false); }}
+                            className={cn(
+                              "rounded-lg px-3 py-1 text-xs font-semibold transition-colors",
+                              preset === p ? "bg-primary text-white" : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary",
+                            )}
+                          >
+                            {labels[p]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {preset === "custom" && (
+                      <div className="space-y-2">
+                        <div>
+                          <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">From</label>
+                          <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="w-full h-8 text-xs" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">To</label>
+                          <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="w-full h-8 text-xs" />
+                        </div>
+                        {(!customFrom || !customTo) && (
+                          <p className="text-[11px] text-amber-600">Pick both dates</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Job filters (operations views only) */}
+            {!ceoDashboard && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setFilterMenuOpen((o) => !o)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium border transition-all h-8",
+                    activeFilters.size > 0
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border bg-card text-text-secondary hover:bg-surface-hover",
+                  )}
+                  aria-expanded={filterMenuOpen}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  <span className="text-xs">Filters</span>
+                  {activeFilters.size > 0 && (
+                    <span className="text-xs font-semibold tabular-nums bg-primary/15 px-1.5 py-0.5 rounded-md">{activeFilters.size}</span>
+                  )}
+                  <ChevronDown className={cn("h-3.5 w-3.5 text-text-tertiary transition-transform", filterMenuOpen && "rotate-180")} />
+                </button>
+                {filterMenuOpen && (
+                  <>
+                    <button type="button" className="fixed inset-0 z-40 cursor-default" aria-label="Close filters" onClick={() => setFilterMenuOpen(false)} />
+                    <div className="absolute right-0 top-full z-50 mt-1 w-[min(100vw-2rem,22rem)] rounded-xl border border-border-light bg-card shadow-lg py-2 max-h-[min(70vh,420px)] overflow-y-auto">
+                      <div className="px-3 pb-2 flex items-center justify-between gap-2 border-b border-border-light mb-1">
+                        <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Highlight jobs</span>
+                        {activeFilters.size > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveFilters(new Set())}
+                            className="text-[11px] font-medium text-primary hover:underline"
+                          >
+                            Clear all
+                          </button>
+                        )}
+                      </div>
+                      <div className="px-1">
+                        {FILTER_CHIPS.map((chip) => {
+                          const isActive = activeFilters.has(chip.id);
+                          const count = filterCounts[chip.id] ?? 0;
+                          return (
+                            <button
+                              key={chip.id}
+                              type="button"
+                              onClick={() => toggleFilter(chip.id)}
+                              className={cn(
+                                "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-sm transition-colors",
+                                isActive ? "bg-primary/10 text-primary" : "hover:bg-surface-hover text-text-primary",
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "h-4 w-4 rounded border flex-shrink-0 flex items-center justify-center text-[10px]",
+                                  isActive ? "border-primary bg-primary text-white" : "border-border",
+                                )}
+                              >
+                                {isActive ? "✓" : ""}
+                              </span>
+                              <span className="flex-1 min-w-0">{chip.label}</span>
+                              {count > 0 && (
+                                <span className="text-xs font-bold tabular-nums text-text-tertiary">{count}</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="px-3 pt-2 pb-1 text-[10px] text-text-tertiary leading-snug border-t border-border-light mt-1">
+                        Counts follow the selected date range.
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             <Button
               type="button"
               variant="outline"
@@ -495,96 +632,6 @@ function DashboardInner() {
           <p className="text-xs text-text-tertiary -mt-1">{activeView.description}</p>
         )}
 
-        {(!isOperationsView(activeView) || ceoDashboard) && (
-          <DashboardDateToolbar
-            footnote={
-              ceoDashboard ? (
-                <>
-                  CEO dashboard: <strong className="text-text-secondary">{rangeLabel}</strong>
-                  <span className="block mt-1 text-text-tertiary">
-                    Presets include today, week-to-date, month-to-date, quarter-to-date, year-to-date, and custom range
-                  </span>
-                </>
-              ) : undefined
-            }
-            trailing={
-              ceoDashboard ? null : (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setFilterMenuOpen((o) => !o)}
-                  className={cn(
-                    "inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium border transition-all",
-                    activeFilters.size > 0
-                      ? "border-primary bg-primary/5 text-primary"
-                      : "border-border bg-card/80 text-text-secondary hover:bg-surface-hover",
-                  )}
-                  aria-expanded={filterMenuOpen}
-                >
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
-                  Job filters
-                  {activeFilters.size > 0 && (
-                    <span className="text-xs font-semibold tabular-nums bg-primary/15 px-1.5 py-0.5 rounded-md">{activeFilters.size}</span>
-                  )}
-                  <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", filterMenuOpen && "rotate-180")} />
-                </button>
-                {filterMenuOpen && (
-                  <>
-                    <button type="button" className="fixed inset-0 z-40 cursor-default" aria-label="Close filters" onClick={() => setFilterMenuOpen(false)} />
-                    <div className="absolute right-0 top-full z-50 mt-1 w-[min(100vw-2rem,22rem)] rounded-xl border border-border-light bg-card shadow-lg py-2 max-h-[min(70vh,420px)] overflow-y-auto">
-                      <div className="px-3 pb-2 flex items-center justify-between gap-2 border-b border-border-light mb-1">
-                        <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Highlight jobs</span>
-                        {activeFilters.size > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setActiveFilters(new Set())}
-                            className="text-[11px] font-medium text-primary hover:underline"
-                          >
-                            Clear all
-                          </button>
-                        )}
-                      </div>
-                      <div className="px-1">
-                        {FILTER_CHIPS.map((chip) => {
-                          const isActive = activeFilters.has(chip.id);
-                          const count = filterCounts[chip.id] ?? 0;
-                          return (
-                            <button
-                              key={chip.id}
-                              type="button"
-                              onClick={() => toggleFilter(chip.id)}
-                              className={cn(
-                                "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-sm transition-colors",
-                                isActive ? "bg-primary/10 text-primary" : "hover:bg-surface-hover text-text-primary",
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  "h-4 w-4 rounded border flex-shrink-0 flex items-center justify-center text-[10px]",
-                                  isActive ? "border-primary bg-primary text-white" : "border-border",
-                                )}
-                              >
-                                {isActive ? "✓" : ""}
-                              </span>
-                              <span className="flex-1 min-w-0">{chip.label}</span>
-                              {count > 0 && (
-                                <span className="text-xs font-bold tabular-nums text-text-tertiary">{count}</span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <p className="px-3 pt-2 pb-1 text-[10px] text-text-tertiary leading-snug border-t border-border-light mt-1">
-                        Counts follow the selected date range.
-                      </p>
-                    </div>
-                  </>
-                )}
-              </div>
-              )
-            }
-          />
-        )}
 
         {/* ── Modular widget grid ───────────────────────────────────────── */}
         {viewsLoading ? (

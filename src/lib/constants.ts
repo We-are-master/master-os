@@ -20,14 +20,7 @@ export const NAVIGATION: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/", icon: "grid-2x2" },
-      { label: "Schedule", href: "/schedule", icon: "calendar" },
-    ],
-  },
-  {
-    label: "Inbox",
-    items: [
-      { label: "Tickets", href: "/tickets", icon: "message-square" },
-      { label: "Outreach", href: "/outreach", icon: "mail-plus" },
+      { label: "Live View", href: "/schedule", icon: "calendar" },
     ],
   },
   {
@@ -41,9 +34,9 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Network",
     items: [
+      { label: "Accounts", href: "/accounts", icon: "building" },
       { label: "Clients", href: "/clients", icon: "user-circle" },
       { label: "Partners", href: "/partners", icon: "users" },
-      { label: "Accounts", href: "/accounts", icon: "building" },
     ],
   },
   {
@@ -52,13 +45,14 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Workforce", href: "/people", icon: "contact", permission: "team" },
     ],
   },
+  // Users Access (/team) intentionally hidden from sidebar (accessible via settings)
   {
     label: "Finance",
     items: [
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
-      { label: "Bills", href: "/finance/bills", icon: "file-check", permission: "finance" },
-      { label: "Pay Run", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
+      { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
+      { label: "Payouts", href: "/finance/pay-run", icon: "calendar-clock", permission: "finance" },
     ],
   },
   {

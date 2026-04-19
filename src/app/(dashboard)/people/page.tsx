@@ -14,7 +14,7 @@ import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
 import { Plus, Loader2, FileText, Wallet, Building2, Pencil, Trash2, Users, HardHat } from "lucide-react";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { InternalCost, InternalCostStatus, PayrollInternalEmploymentType, BusinessUnit } from "@/types/database";
 import { getSupabase } from "@/services/base";
@@ -71,6 +71,7 @@ function mapCostRows(
 
 export default function PeoplePage() {
   const [section, setSection] = useState<PeopleTab>("internal");
+  const [stageFilter, setStageFilter] = useState<"all" | "onboarding" | "active" | "offboard">("all");
   const [rows, setRows] = useState<PeopleRow[]>([]);
   const [bus, setBus] = useState<BusinessUnit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -154,9 +155,13 @@ export default function PeoplePage() {
         return name.includes(q) || desc.includes(q) || sq.includes(q);
       });
     }
-    list = list.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard");
+    if (stageFilter === "all") {
+      list = list.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard");
+    } else {
+      list = list.filter((r) => (r.lifecycle_stage ?? "active") === stageFilter);
+    }
     return list;
-  }, [rows, section, search, buFilter]);
+  }, [rows, section, search, buFilter, stageFilter]);
 
   const rosterCounts = useMemo(() => {
     const base = rows.filter((r) => (r.lifecycle_stage ?? "active") !== "offboard");
@@ -432,7 +437,7 @@ export default function PeoplePage() {
       <div className="space-y-6">
         <PageHeader
           title="Workforce"
-          subtitle="Working roster — internal employees and self-employed contractors. Open a card for profile photo, contact details, compliance documents, and pay. Business Units group people the same way as the field teams."
+          infoTooltip={"Working roster — internal employees and self-employed contractors. Open a card for profile photo, contact details, compliance documents, and pay.\n\nWorking lists everyone except offboard. Use Employees for PAYE staff and Contractors for self-billed. Finance → Payroll keeps commission runs and recurring bills."}
         >
           <div className="flex flex-wrap gap-2">
             <Button
@@ -455,12 +460,6 @@ export default function PeoplePage() {
             </Button>
           </div>
         </PageHeader>
-
-        <p className="text-xs text-text-tertiary -mt-2 max-w-3xl">
-          <span className="font-medium text-text-secondary">Working</span> lists everyone except offboard. Use{" "}
-          <span className="font-medium text-text-secondary">Internal team</span> for PAYE staff and{" "}
-          <span className="font-medium text-text-secondary">Contractors</span> for self-billed partners. Finance → Payroll keeps commission runs and recurring bills; people live here.
-        </p>
 
         {bus.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 px-1">
@@ -492,25 +491,18 @@ export default function PeoplePage() {
         )}
 
         <div className="rounded-2xl border border-border-light bg-card/80 backdrop-blur-sm overflow-hidden">
-          <div className="px-4 pt-4 pb-2 border-b border-border-light flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <Tabs
-              variant="pills"
-              tabs={[
-                {
-                  id: "internal",
-                  label: "Internal team",
-                  count: rosterCounts.internal,
-                },
-                {
-                  id: "contractors",
-                  label: "Contractors",
-                  count: rosterCounts.contractors,
-                },
-              ]}
-              activeTab={section}
-              onChange={(id) => setSection(id as PeopleTab)}
-            />
-            <div className="flex flex-col sm:flex-row gap-2 sm:items-center w-full lg:max-w-2xl">
+          <div className="px-4 pt-4 pb-2 border-b border-border-light flex flex-col gap-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <Tabs
+                variant="pills"
+                tabs={[
+                  { id: "internal", label: "Employees", count: rosterCounts.internal },
+                  { id: "contractors", label: "Contractors", count: rosterCounts.contractors },
+                ]}
+                activeTab={section}
+                onChange={(id) => { setSection(id as PeopleTab); setStageFilter("all"); }}
+              />
+              <div className="flex flex-col sm:flex-row gap-2 sm:items-center w-full lg:max-w-2xl">
               <Select
                 value={buFilter}
                 onChange={(e) => setBuFilter(e.target.value)}
@@ -523,6 +515,25 @@ export default function PeoplePage() {
                 placeholder="Search by name, role, BU…"
                 className="flex-1 w-full min-w-0"
               />
+            </div>
+            </div>
+            {/* Stage filter pills */}
+            <div className="flex flex-wrap gap-1.5">
+              {(["all", "onboarding", "active", "offboard"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStageFilter(s)}
+                  className={cn(
+                    "rounded-lg px-3 py-1 text-xs font-semibold transition-colors",
+                    stageFilter === s
+                      ? "bg-primary text-white"
+                      : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
+                  )}
+                >
+                  {s === "all" ? "All" : s === "onboarding" ? "Onboarding" : s === "active" ? "Active" : "Offboarded"}
+                </button>
+              ))}
             </div>
           </div>
 
