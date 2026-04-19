@@ -517,6 +517,7 @@ export function DataTable<T>({
                   const id = getRowId?.(item) ?? String(index);
                   const isRowSelected = selectedId === id;
                   const isChecked = selectedIds?.has(id) ?? false;
+                  const isZebra = !isChecked && !isRowSelected && index % 2 === 1;
 
                   return (
                     <motion.tr
@@ -531,11 +532,11 @@ export function DataTable<T>({
                           : isRowSelected
                             ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
                             : "hover:bg-surface-hover border-l-[3px] border-l-transparent",
-                        !isChecked && !isRowSelected && index % 2 === 1 && "bg-[#F8F8FA]"
+                        isZebra && "bg-[#F5F5F7]"
                       )}
                     >
                       {selectable && (
-                        <td className="w-12 px-3 sm:px-4 py-3.5">
+                        <td className={cn("w-12 px-3 sm:px-4 py-3.5", isZebra && "bg-[#F5F5F7]")}>
                           <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
                         </td>
                       )}
@@ -546,7 +547,8 @@ export function DataTable<T>({
                           className={cn(
                             "px-3 sm:px-5 py-3.5 text-sm align-top",
                             col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
-                            col.cellClassName
+                            col.cellClassName,
+                            isZebra && "bg-[#F5F5F7]"
                           )}
                         >
                           {col.render
