@@ -5,7 +5,7 @@ import {
   parsePostgrestUnknownColumnName,
   postgrestFullErrorText,
 } from "@/lib/supabase-schema-compat";
-import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
+import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 
 /** Real `quotes` columns only — stray keys (e.g. from UI state spread) must not reach PostgREST. */
 const QUOTE_WRITABLE_KEYS = new Set<string>([
@@ -106,10 +106,15 @@ function tryRelaxQuoteWritePayload(
 async function enrichQuotesWithAccountNames(quotes: Quote[]): Promise<Quote[]> {
   const clientIds = [...new Set(quotes.map((q) => q.client_id).filter(Boolean))] as string[];
   if (clientIds.length === 0) return quotes;
-  const labels = await batchResolveLinkedAccountLabels(getSupabase(), clientIds);
+  const supabase = getSupabase();
+  const [labels, logos] = await Promise.all([
+    batchResolveLinkedAccountLabels(supabase, clientIds),
+    batchResolveClientAccountLogoUrls(supabase, clientIds),
+  ]);
   return quotes.map((q) => ({
     ...q,
     source_account_name: q.client_id ? labels.get(q.client_id) ?? null : null,
+    source_account_logo_url: q.client_id ? logos.get(q.client_id) ?? null : null,
   }));
 }
 

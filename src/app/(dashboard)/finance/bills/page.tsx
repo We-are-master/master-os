@@ -24,7 +24,7 @@ import {
   Archive,
   Ban,
 } from "lucide-react";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Bill, BillStatus, BillRecurrence } from "@/types/database";
 import {
@@ -48,6 +48,8 @@ import {
 import { BILL_STANDARD_CATEGORY_OPTIONS, billCategoryLabel } from "@/lib/bill-categories";
 import { RECURRENCE_GENERATION_COUNTS, recurrenceLabel } from "@/lib/bill-recurrence";
 import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
+
+type BillsPreset = "all" | "one_off" | "recurring" | "needs_attention" | "approved" | "archived";
 
 const BILL_STATUSES: BillStatus[] = ["submitted", "approved", "paid", "rejected", "needs_attention"];
 
@@ -83,6 +85,8 @@ export default function BillsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   /** All = one-off + recurring; default All */
   const [billKindTab, setBillKindTab] = useState<"all" | "one_off" | "recurring">("all");
+  const [billsPreset, setBillsPreset] = useState<BillsPreset>("all");
+  const [showAllRows, setShowAllRows] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Bill | null>(null);
   const [saving, setSaving] = useState(false);
@@ -124,6 +128,27 @@ export default function BillsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setShowAllRows(false);
+    if (billsPreset === "all") {
+      setBillKindTab("all");
+      setStatusFilter("all");
+      return;
+    }
+    if (billsPreset === "one_off") {
+      setBillKindTab("one_off");
+      setStatusFilter("all");
+      return;
+    }
+    if (billsPreset === "recurring") {
+      setBillKindTab("recurring");
+      setStatusFilter("all");
+      return;
+    }
+    setBillKindTab("all");
+    setStatusFilter(billsPreset);
+  }, [billsPreset]);
 
   const scopedBills = useMemo(() => {
     const inPeriod = !periodBounds
@@ -189,6 +214,86 @@ export default function BillsPage() {
       totalAmount: totalAmt,
     };
   }, [bills, periodBounds, billKindTab]);
+
+  const headlineKpis = useMemo(() => {
+    const active = bills.filter((b) => !b.archived_at && b.status !== "rejected");
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const monthKey = today.slice(0, 7);
+    const next30 = new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
+
+    const overdueRows = active.filter(
+      (b) => b.due_date && b.due_date < today && b.status !== "paid" && b.status !== "needs_attention",
+    );
+    const monthRows = active.filter(
+      (b) => b.due_date?.slice(0, 7) === monthKey && b.status !== "paid" && b.status !== "needs_attention",
+    );
+    const next30Rows = active.filter(
+      (b) => b.due_date && b.due_date >= today && b.due_date <= next30 && b.status !== "needs_attention",
+    );
+    const recurringMonthlyRows = active.filter(
+      (b) => !!b.is_recurring && b.recurrence_interval === "monthly" && b.status !== "needs_attention",
+    );
+    const recurringMonthlySeriesRows = recurringMonthlyRows
+      .slice()
+      .sort((a, b) => String(a.due_date ?? "").localeCompare(String(b.due_date ?? "")))
+      .filter((bill, index, rows) => rows.findIndex((row) => recurringGroupKey(row) === recurringGroupKey(bill)) === index);
+
+    const sum = (rows: Bill[]) => rows.reduce((acc, row) => acc + Number(row.amount ?? 0), 0);
+    return {
+      overdueAmount: sum(overdueRows),
+      overdueCount: overdueRows.length,
+      dueMonthAmount: sum(monthRows),
+      dueMonthCount: monthRows.length,
+      next30Amount: sum(next30Rows),
+      recurringMonthlyAmount: sum(recurringMonthlySeriesRows),
+    };
+  }, [bills]);
+
+  const compactRows = useMemo(() => {
+    const rows = displayList.map((item) => {
+      if (item.type === "series") {
+        const head = item.all[0];
+        const due = getNextDueDate(item.all);
+        const visibleCount = item.visible.length;
+        const status = item.visible.every((r) => r.status === "approved")
+          ? "Approved"
+          : item.visible.every((r) => r.status === "needs_attention")
+            ? "Needs attention"
+            : "Mixed";
+        const cadence = recurrenceLabel(head.recurrence_interval as BillRecurrence | undefined);
+        return {
+          key: item.key,
+          amount: Number(head.amount ?? 0),
+          title: head.description,
+          category: billCategoryLabel(head.category),
+          meta: `${due ? `Next due ${formatDate(due)}` : "No due date"} · ${cadence} · ${visibleCount} occurrence${visibleCount === 1 ? "" : "s"}`,
+          status,
+          children: item.visible,
+          expandable: true,
+          onToggle: () => setExpandedSeries((s) => ({ ...s, [item.key]: !(s[item.key] ?? false) })),
+          expanded: expandedSeries[item.key] ?? false,
+        };
+      }
+      const row = item.bill;
+      const status = statusConfig[row.status]?.label ?? row.status;
+      return {
+        key: row.id,
+        amount: Number(row.amount ?? 0),
+        title: row.description,
+        category: billCategoryLabel(row.category),
+        meta: `${row.due_date ? `Next due ${formatDate(row.due_date)}` : "No due date"} · ${row.is_recurring ? recurrenceLabel(row.recurrence_interval) : "One-off"} · 1 occurrence`,
+        status,
+        children: [] as Bill[],
+        expandable: false,
+        onToggle: () => undefined,
+        expanded: false,
+      };
+    });
+    return rows.sort((a, b) => a.title.localeCompare(b.title));
+  }, [displayList, expandedSeries]);
+
+  const visibleCompactRows = showAllRows ? compactRows : compactRows.slice(0, 4);
 
   const handleApproveAllInSeries = async (seriesKey: string) => {
     const submittedInSeries = scopedBills.filter(
@@ -396,7 +501,7 @@ export default function BillsPage() {
   };
 
   /** Next due line in this group (skips paid/rejected); used in card header visibility. */
-  const getNextDueDate = (rows: Bill[]): string | null => {
+  function getNextDueDate(rows: Bill[]): string | null {
     const candidate = rows
       .filter((b) => !b.archived_at && b.status !== "paid" && b.status !== "rejected" && !!b.due_date)
       .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))[0];
@@ -405,7 +510,7 @@ export default function BillsPage() {
       .filter((b) => !b.archived_at && !!b.due_date)
       .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))[0];
     return fallback?.due_date ?? null;
-  };
+  }
 
   /** One badge for the series row: single status or “Mixed”. */
   const renderSeriesHeadlineStatusBadge = (visible: Bill[]) => {
@@ -497,7 +602,7 @@ export default function BillsPage() {
 
   return (
     <PageTransition>
-      <div className="space-y-5">
+      <div className="space-y-5 px-1 sm:px-0">
         <PageHeader
           title="Bills & expenses"
           subtitle="Filter by All, One-off, or Recurring; then by workflow. Period: All · Monthly · Week · Date range (default: current month). KPIs and the list match the bill type and the period."
@@ -514,369 +619,143 @@ export default function BillsPage() {
           </Button>
         </PageHeader>
 
-        <FinanceWeekRangeBar
-          mode={periodMode}
-          onModeChange={setPeriodMode}
-          weekAnchor={weekAnchor}
-          onWeekAnchorChange={setWeekAnchor}
-          showMonthOption
-          monthAnchor={monthAnchor}
-          onMonthAnchorChange={setMonthAnchor}
-          rangeFrom={rangeFrom}
-          rangeTo={rangeTo}
-          onRangeFromChange={setRangeFrom}
-          onRangeToChange={setRangeTo}
-        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="rounded-2xl border border-border-light bg-card p-5">
+            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-red-600">{formatCurrency(headlineKpis.overdueAmount)}</p>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Overdue</p>
+            <p className="mt-3 text-sm text-text-tertiary">{headlineKpis.overdueCount} bills</p>
+          </div>
+          <div className="rounded-2xl border border-border-light bg-card p-5">
+            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.dueMonthAmount)}</p>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Due this month</p>
+            <p className="mt-3 text-sm text-text-tertiary">{headlineKpis.dueMonthCount} bills</p>
+          </div>
+          <div className="rounded-2xl border border-border-light bg-card p-5">
+            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.next30Amount)}</p>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Next 30 days</p>
+            <p className="mt-3 text-sm text-text-tertiary">Cashflow</p>
+          </div>
+          <div className="rounded-2xl border border-border-light bg-card p-5">
+            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.recurringMonthlyAmount)}</p>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Recurring / mo</p>
+            <p className="mt-3 text-sm text-text-tertiary">Base burn</p>
+          </div>
+        </div>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard
-            title="Pending"
-            value={kpis.pendingAmount}
-            format="currency"
-            description={`${kpis.pendingCount} submitted · ${billKindKpiLabel} · ${kpiPeriodDesc}`}
-            icon={FileCheck}
-            accent="amber"
-          />
-          <KpiCard
-            title="Approved"
-            value={kpis.approvedAmount}
-            format="currency"
-            description={`${kpis.approvedCount} awaiting payment · ${billKindKpiLabel} · ${kpiPeriodDesc}`}
-            icon={DollarSign}
-            accent="primary"
-          />
-          <KpiCard
-            title="Total bills (period)"
-            value={kpis.totalAmount}
-            format="currency"
-            description={`${kpis.totalCount} line${kpis.totalCount === 1 ? "" : "s"} · ${billKindKpiLabel} · Excl. archived, rejected & needs attention · ${kpiPeriodDesc}`}
-            icon={Layers}
-            accent="blue"
-          />
-          <KpiCard
-            title="Paid"
-            value={kpis.paidAmount}
-            format="currency"
-            description={`${kpis.paidCount} paid · ${billKindKpiLabel} · ${kpiPeriodDesc}`}
-            icon={Banknote}
-            accent="emerald"
-          />
-        </StaggerContainer>
-
-        <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div>
-              <p className="text-sm font-semibold text-text-primary">Bills</p>
-              <p className="text-xs text-text-tertiary">
-                {statusFilter === "archived" ? (
-                  <>
-                    Archived bills are hidden from the default list and from pay runs. Restore from here or from Edit.
-                  </>
-                ) : (
-                  <>
-                    Filter by workflow stage. Use <span className="font-medium text-text-secondary">Needs attention</span> for
-                    follow-up. <span className="font-medium text-text-secondary">Mark paid</span> marks the line paid, clears it
-                    from the next Pay Run, and updates cost / cashflow dashboards. <span className="font-medium text-text-secondary">Void</span> archives the line.
-                  </>
+        <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:thin]">
+          <div className="inline-flex min-w-full gap-2 sm:flex sm:min-w-0 sm:flex-wrap">
+            {([
+              { id: "all", label: "All" },
+              { id: "one_off", label: "One-off" },
+              { id: "recurring", label: "Recurring" },
+              { id: "needs_attention", label: "Needs attention" },
+              { id: "approved", label: "Approved" },
+              { id: "archived", label: "Archived" },
+            ] as Array<{ id: BillsPreset; label: string }>).map((chip) => (
+              <button
+                key={chip.id}
+                type="button"
+                onClick={() => setBillsPreset(chip.id)}
+                className={cn(
+                  "shrink-0 whitespace-nowrap rounded-full border px-4 py-1.5 text-xs sm:text-sm font-semibold transition-colors",
+                  billsPreset === chip.id
+                    ? "border-primary bg-primary text-white"
+                    : "border-border-light bg-card text-text-secondary hover:bg-surface-hover",
                 )}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(
-              [
-                { id: "all" as const, label: "All" },
-                { id: "one_off" as const, label: "One-off" },
-                { id: "recurring" as const, label: "Recurring" },
-              ] as const
-            ).map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setBillKindTab(t.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                  billKindTab === t.id
-                    ? "bg-primary text-white shadow-sm"
-                    : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
-                }`}
               >
-                {t.label}
+                {chip.label}
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap gap-2">
-            {BILL_FILTER_ORDER.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  statusFilter === s
-                    ? "bg-primary text-white shadow-sm"
-                    : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary"
-                }`}
-              >
-                {s === "all" ? "All" : s === "archived" ? "Archived" : statusConfig[s as BillStatus]?.label ?? s}
-              </button>
-            ))}
-          </div>
-          {loading ? (
-            <div className="flex justify-center py-14">
-              <Loader2 className="h-8 w-8 animate-spin text-text-tertiary" />
-            </div>
-          ) : displayList.length === 0 ? (
-            <p className="text-sm text-text-tertiary py-10 text-center rounded-xl border border-dashed border-border-light bg-surface-hover/30">
-              {billKindTab === "all"
-                ? "No bills in this period for the current filters."
-                : billKindTab === "recurring"
-                  ? "No recurring bills in this period for the current filters."
-                  : "No one-off bills in this period for the current filters."}
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {displayList.map((item) => {
-                if (item.type === "series") {
-                  const head = item.all[0];
-                  const expanded = expandedSeries[item.key] ?? false;
-                  const summary = formatStatusSummary(item.visible);
-                  const cadence = recurrenceLabel(head.recurrence_interval as BillRecurrence | undefined);
-                  const nextDue = getNextDueDate(item.all);
-                  const submittedCountInSeries = scopedBills.filter(
-                    (b) => !b.archived_at && recurringGroupKey(b) === item.key && b.status === "submitted"
-                  ).length;
-                  return (
-                    <div
-                      key={item.key}
-                      className="rounded-xl border border-border-light bg-card overflow-hidden shadow-sm"
-                    >
-                      <div className="flex items-start gap-2 px-4 py-3 hover:bg-surface-hover/40 transition-colors">
-                        <button
-                          type="button"
-                          aria-expanded={expanded}
-                          aria-label={expanded ? "Collapse series" : "Expand series"}
-                          onClick={() =>
-                            setExpandedSeries((s) => ({ ...s, [item.key]: !expanded }))
-                          }
-                          className="mt-0.5 text-text-tertiary shrink-0 p-0.5 rounded hover:bg-surface-hover"
-                        >
-                          {expanded ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedSeries((s) => ({ ...s, [item.key]: !expanded }))
-                          }
-                          className="flex-1 min-w-0 space-y-1.5 text-left"
-                        >
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="text-lg font-bold tabular-nums text-text-primary shrink-0">
-                              {formatCurrency(head.amount)}
-                            </span>
-                            <Badge variant="primary" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
-                              {cadence}
-                            </Badge>
-                            <Badge variant="info" size="sm" className="shrink-0">
-                              Recurring
-                            </Badge>
-                            {head.category === "debit" ? (
-                              <Badge variant="outline" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
-                                Debit
-                              </Badge>
-                            ) : null}
-                            <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
-                              <p className="text-sm font-semibold text-text-primary min-w-0 truncate">{head.description}</p>
-                              <button
-                                type="button"
-                                className="shrink-0 p-1 rounded-md text-text-tertiary hover:text-primary hover:bg-surface-hover -mr-1"
-                                title="Edit name & details"
-                                aria-label="Edit bill name"
-                                onClick={(e) => openEditBill(head, e)}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                            </span>
-                          </div>
-                          <p className="text-xs text-text-tertiary">{billCategoryLabel(head.category)}</p>
-                          <p className="text-xs text-text-secondary">
-                            {item.visible.length} occurrence{item.visible.length === 1 ? "" : "s"} in view
-                            {item.all.length !== item.visible.length && (
-                              <span className="text-text-tertiary">
-                                {" "}
-                                ({item.all.length} total in period)
-                              </span>
-                            )}
-                            {summary ? (
-                              <>
-                                <span className="text-text-tertiary"> · </span>
-                                {summary}
-                              </>
-                            ) : null}
-                          </p>
-                        </button>
-                        {statusFilter !== "archived" && (
-                          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                            {nextDue ? (
-                              <span className="text-[11px] font-medium text-text-secondary whitespace-nowrap">
-                                Next due {formatDate(nextDue)}
-                              </span>
-                            ) : null}
-                            {renderSeriesHeadlineStatusBadge(item.visible)}
-                            {submittedCountInSeries > 0 ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-[11px] font-semibold border-primary/40 text-primary hover:bg-primary/10 shrink-0"
-                                disabled={approveSeriesBusyKey === item.key}
-                                loading={approveSeriesBusyKey === item.key}
-                                onClick={() => void handleApproveAllInSeries(item.key)}
-                                title="Approve every submitted line for this recurring bill (all months in period)"
-                              >
-                                Approve all
-                              </Button>
-                            ) : null}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="shrink-0"
-                              icon={<Archive className="h-3 w-3" />}
-                              onClick={() => setArchiveSeriesTarget(item)}
-                            >
-                              Archive
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                      {expanded && (
-                        <div className="border-t border-border-light bg-surface-hover/25">
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-sm min-w-[720px]">
-                              <thead>
-                                <tr className="border-b border-border-light text-left text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
-                                  <th className="px-4 py-2 font-medium">Due</th>
-                                  <th className="px-4 py-2 font-medium text-right">Amount</th>
-                                  <th className="px-4 py-2 font-medium">Submitted by</th>
-                                  <th className="px-4 py-2 font-medium">Status</th>
-                                  <th className="px-4 py-2 font-medium text-right w-[min(40%,280px)]">Actions</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {item.visible.map((r) => (
-                                  <tr key={r.id} className="border-b border-border-light/80 last:border-0">
-                                    <td className="px-4 py-2.5 align-top tabular-nums text-text-secondary whitespace-nowrap">
-                                      {formatDate(r.due_date)}
-                                    </td>
-                                    <td className="px-4 py-2.5 align-top text-right font-medium tabular-nums whitespace-nowrap">
-                                      {formatCurrency(r.amount)}
-                                    </td>
-                                    <td className="px-4 py-2.5 align-top text-text-tertiary whitespace-nowrap">
-                                      {r.submitted_by_name ?? "—"}
-                                    </td>
-                                    <td className="px-4 py-2.5 align-top">{renderStatusBadge(r)}</td>
-                                    <td className="px-4 py-2.5 align-top text-right">{renderBillActions(r)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
+        </div>
 
-                const r = item.bill;
-                const singleNextDue = getNextDueDate([r]);
-                return (
-                  <div
-                    key={r.id}
-                    className="rounded-xl border border-border-light bg-card shadow-sm px-4 py-3 space-y-3"
-                  >
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0 flex-1 space-y-1.5">
-                        {r.is_recurring ? (
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="text-lg font-bold tabular-nums text-text-primary shrink-0">
-                              {formatCurrency(r.amount)}
-                            </span>
-                            <Badge variant="primary" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
-                              {recurrenceLabel(r.recurrence_interval)}
-                            </Badge>
-                            <Badge variant="info" size="sm" className="shrink-0">
-                              Recurring
-                            </Badge>
-                            {r.category === "debit" ? (
-                              <Badge variant="outline" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
-                                Debit
-                              </Badge>
-                            ) : null}
-                            <span className="inline-flex items-center gap-1 min-w-0 w-full sm:w-auto">
-                              <p className="text-sm font-semibold text-text-primary min-w-0 truncate">{r.description}</p>
-                              <button
-                                type="button"
-                                className="shrink-0 p-1 rounded-md text-text-tertiary hover:text-primary hover:bg-surface-hover"
-                                title="Edit name & details"
-                                aria-label="Edit bill name"
-                                onClick={(e) => openEditBill(r, e)}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="inline-flex items-center gap-1 min-w-0">
-                              <p className="text-sm font-medium text-text-primary truncate">{r.description}</p>
-                              <button
-                                type="button"
-                                className="shrink-0 p-1 rounded-md text-text-tertiary hover:text-primary hover:bg-surface-hover"
-                                title="Edit name & details"
-                                aria-label="Edit bill name"
-                                onClick={(e) => openEditBill(r, e)}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                            </span>
-                            {r.category === "debit" ? (
-                              <Badge variant="outline" size="sm" className="shrink-0 font-semibold uppercase tracking-wide text-[10px]">
-                                Debit
-                              </Badge>
-                            ) : null}
-                          </div>
-                        )}
-                        <p className="text-xs text-text-tertiary">{billCategoryLabel(r.category)}</p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm shrink-0">
-                        {!r.is_recurring ? (
-                          <span className="font-medium tabular-nums">{formatCurrency(r.amount)}</span>
-                        ) : null}
-                        <span className="text-text-secondary tabular-nums whitespace-nowrap">
-                          Due {formatDate(r.due_date)}
-                        </span>
-                        <span className="text-text-tertiary whitespace-nowrap">
-                          {r.submitted_by_name ?? "—"}
-                        </span>
-                        {singleNextDue ? (
-                          <span className="text-[11px] font-medium text-text-secondary whitespace-nowrap">
-                            Next due {formatDate(singleNextDue)}
-                          </span>
-                        ) : null}
-                        {renderStatusBadge(r)}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-1 pt-0.5 border-t border-border-light/60 lg:border-0 lg:pt-0">
-                      {renderBillActions(r)}
+        {loading ? (
+          <div className="flex justify-center py-14">
+            <Loader2 className="h-8 w-8 animate-spin text-text-tertiary" />
+          </div>
+        ) : compactRows.length === 0 ? (
+          <p className="text-sm text-text-tertiary py-10 text-center rounded-xl border border-dashed border-border-light bg-surface-hover/30">
+            No bills for this filter.
+          </p>
+        ) : (
+          <div className="rounded-2xl border border-border-light bg-card overflow-hidden">
+            {visibleCompactRows.map((row) => (
+              <div key={row.key} className="border-b border-border-light last:border-0">
+                <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-5">
+                  <div className="min-w-0 flex items-start gap-3">
+                    <button
+                      type="button"
+                      onClick={row.onToggle}
+                      className={cn("mt-0.5 text-text-tertiary", !row.expandable && "cursor-default")}
+                      aria-label={row.expandable ? "Expand bill row" : "Bill row"}
+                      disabled={!row.expandable}
+                    >
+                      {row.expandable ? (
+                        row.expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 opacity-50" />
+                      )}
+                    </button>
+                    <div className="min-w-0">
+                      <p className="truncate text-base sm:text-lg font-semibold text-text-primary">{row.title}</p>
+                      <p className="mt-1 truncate text-xs sm:text-sm text-text-tertiary">{row.meta}</p>
                     </div>
                   </div>
-                );
-              })}
+                  <div className="shrink-0 w-full sm:w-auto flex items-center justify-start sm:justify-end gap-2 sm:gap-3">
+                    <p className="text-base font-semibold tabular-nums text-[#111827]">{formatCurrency(row.amount)}</p>
+                    <p className={cn("text-xs sm:text-sm font-medium whitespace-nowrap", row.status === "Approved" ? "text-emerald-600" : "text-text-tertiary")}>
+                      {row.status === "Approved" ? "● " : ""}
+                      {row.status}
+                    </p>
+                  </div>
+                </div>
+                {row.expandable && row.expanded ? (
+                  <div className="bg-surface-hover/40 px-4 pb-4 sm:px-6 sm:pb-5">
+                    <div className="mb-3 flex items-center justify-between">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Occurrences</p>
+                      {renderSeriesHeadlineStatusBadge(row.children)}
+                    </div>
+                    <div className="space-y-3">
+                      {row.children.map((bill) => (
+                        <div
+                          key={bill.id}
+                          className="rounded-xl border border-border-light bg-card p-3 sm:p-4"
+                        >
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm sm:text-base font-semibold text-text-primary">{bill.description}</p>
+                              <p className="mt-1 text-xs sm:text-sm text-text-tertiary">
+                                {bill.due_date ? formatDate(bill.due_date) : "No due date"} · {billCategoryLabel(bill.category)} ·{" "}
+                                {bill.is_recurring ? recurrenceLabel(bill.recurrence_interval) : "One-off"}
+                              </p>
+                            </div>
+                            <div className="shrink-0 text-left sm:text-right">
+                              <p className="text-lg sm:text-xl font-semibold tabular-nums text-text-primary">
+                                {formatCurrency(Number(bill.amount ?? 0))}
+                              </p>
+                              <div className="mt-1">{renderStatusBadge(bill)}</div>
+                            </div>
+                          </div>
+                          <div className="mt-3">{renderBillActions(bill)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+            <div className="px-6 py-4 text-center text-sm text-text-tertiary">
+              Showing {Math.min(visibleCompactRows.length, compactRows.length)} of {compactRows.length} ·{" "}
+              <button
+                type="button"
+                className="font-semibold text-primary hover:underline"
+                onClick={() => setShowAllRows((s) => !s)}
+              >
+                {showAllRows ? "Show less" : "View all"}
+              </button>
             </div>
-          )}
-        </motion.div>
+          </div>
+        )}
 
         <Modal
           open={!!archiveSeriesTarget}

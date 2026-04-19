@@ -16,7 +16,7 @@ import { Select } from "@/components/ui/select";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
-  Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon, Download,
+  Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon, Download, RefreshCw,
   ArrowRight, Briefcase, Receipt,
   MapPin, Building2, TrendingUp,
   AlertTriangle, XCircle, PoundSterling,   Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, Search,
@@ -91,7 +91,7 @@ import {
 } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
-import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
+import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
@@ -103,6 +103,12 @@ import {
   buildOfficeCancellationReasonText,
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
+import {
+  addDaysYmd,
+  getScheduleRangeYmd,
+  ukTodayYmd,
+  type ScheduleDatePreset,
+} from "@/lib/uk-schedule-range";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 const JOBS_PAGE_SIZE_OPTIONS = [10, 30, 100] as const;
@@ -118,48 +124,7 @@ function parseRestoredJobStatus(raw: string | null | undefined): Job["status"] {
 const NO_SCHEDULE_LIST_PARAMS: Partial<ListParams> = {};
 const BULK_MARK_PAID_NOTE_TAG = "PAID_MARKED_BY::";
 
-type ScheduleDatePreset = "all" | "today" | "tomorrow" | "week" | "month" | "custom";
 type JobsSortMode = "schedule_nearest" | "schedule_farthest" | "booking_recent" | "booking_oldest";
-const UK_TIMEZONE = "Europe/London";
-
-function ukTodayYmd(now = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: UK_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-}
-
-function addDaysYmd(ymd: string, days: number): string {
-  const [y, m, d] = ymd.split("-").map(Number);
-  const next = new Date(Date.UTC(y, m - 1, d + days));
-  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
-}
-
-function startOfWeekMondayYmd(ymd: string): string {
-  const [y, m, d] = ymd.split("-").map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  const day = date.getUTCDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  date.setUTCDate(date.getUTCDate() + diff);
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-}
-
-function endOfWeekSundayYmd(ymd: string): string {
-  return addDaysYmd(startOfWeekMondayYmd(ymd), 6);
-}
-
-function startOfMonthYmd(ymd: string): string {
-  const [y, m] = ymd.split("-").map(Number);
-  return `${y}-${String(m).padStart(2, "0")}-01`;
-}
-
-function endOfMonthYmd(ymd: string): string {
-  const [y, m] = ymd.split("-").map(Number);
-  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  return `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
-}
 
 function jobScheduleStartYmdUk(job: Pick<Job, "scheduled_start_at" | "scheduled_date">): string | null {
   if (job.scheduled_start_at) {
@@ -280,15 +245,16 @@ function formatMediumYmd(ymd: string): string {
   return formatBritishDate(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
 }
 
-function scheduleFilterSubtitle(
+/** Schedule window label for the page info tooltip (no duplicate revenue copy — that lives in the tooltip body). */
+function scheduleWindowHintLine(
   preset: ScheduleDatePreset,
   range: { from: string; to: string } | null
 ): string | null {
   if (!range || preset === "all") return null;
   if (range.from === range.to) {
-    return `Scheduled ${formatMediumYmd(range.from)} · Revenue & averages = all jobs below; tabs only filter the list`;
+    return `Scheduled ${formatMediumYmd(range.from)}`;
   }
-  return `Scheduled ${formatMediumYmd(range.from)} – ${formatMediumYmd(range.to)} · Revenue & averages = all jobs below; tabs only filter the list`;
+  return `Scheduled ${formatMediumYmd(range.from)} – ${formatMediumYmd(range.to)}`;
 }
 
 function jobBillableAmount(j: Job) {
@@ -378,27 +344,10 @@ function JobsPageContent() {
   const [dateFilterOpen, setDateFilterOpen] = useState(false);
   const dateFilterRef = useRef<HTMLDivElement>(null);
 
-  const scheduleRange = useMemo((): { from: string; to: string } | null => {
-    if (scheduleDatePreset === "all") return null;
-    const anchor = ukTodayYmd(new Date());
-    if (scheduleDatePreset === "today") {
-      return { from: anchor, to: anchor };
-    }
-    if (scheduleDatePreset === "tomorrow") {
-      const t = addDaysYmd(anchor, 1);
-      return { from: t, to: t };
-    }
-    if (scheduleDatePreset === "week") {
-      return { from: startOfWeekMondayYmd(anchor), to: endOfWeekSundayYmd(anchor) };
-    }
-    if (scheduleDatePreset === "month") {
-      return { from: startOfMonthYmd(anchor), to: endOfMonthYmd(anchor) };
-    }
-    let from = customScheduleFrom;
-    let to = customScheduleTo;
-    if (from > to) [from, to] = [to, from];
-    return { from, to };
-  }, [scheduleDatePreset, customScheduleFrom, customScheduleTo, anchorDayKey]);
+  const scheduleRange = useMemo(
+    () => getScheduleRangeYmd(scheduleDatePreset, customScheduleFrom, customScheduleTo),
+    [scheduleDatePreset, customScheduleFrom, customScheduleTo, anchorDayKey],
+  );
 
   const listParams = useMemo<Partial<ListParams>>(() => {
     if (!scheduleRange) return NO_SCHEDULE_LIST_PARAMS;
@@ -434,6 +383,7 @@ function JobsPageContent() {
   const [avgTicket, setAvgTicket] = useState(0);
   const [avgMarginPct, setAvgMarginPct] = useState(0);
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
+  const [clientAccountLogoByClientId, setClientAccountLogoByClientId] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     if (status === "deleted" && viewMode !== "list") setViewMode("list");
@@ -706,18 +656,27 @@ function JobsPageContent() {
     const ids = [...new Set(data.map((j) => j.client_id).filter(Boolean))] as string[];
     if (ids.length === 0) {
       setClientAccountMap({});
+      setClientAccountLogoByClientId({});
       return;
     }
     const supabase = getSupabase();
     let cancelled = false;
     (async () => {
-      const labels = await batchResolveLinkedAccountLabels(supabase, ids);
+      const [labels, logos] = await Promise.all([
+        batchResolveLinkedAccountLabels(supabase, ids),
+        batchResolveClientAccountLogoUrls(supabase, ids),
+      ]);
       if (cancelled) return;
       const next: Record<string, string> = {};
       labels.forEach((label, clientId) => {
         next[clientId] = label;
       });
       setClientAccountMap(next);
+      const nextLogo: Record<string, string | null> = {};
+      logos.forEach((url, clientId) => {
+        nextLogo[clientId] = url;
+      });
+      setClientAccountLogoByClientId(nextLogo);
     })();
     return () => { cancelled = true; };
   }, [data]);
@@ -1238,12 +1197,21 @@ function JobsPageContent() {
       label: "Client / Property",
       minWidth: "160px",
       cellClassName: "min-w-[10rem] max-w-[14rem] sm:max-w-[16rem]",
-      render: (item) => (
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
-          <p className="text-[11px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
-        </div>
-      ),
+      render: (item) => {
+        const logo =
+          item.client_id && clientAccountLogoByClientId[item.client_id] != null
+            ? clientAccountLogoByClientId[item.client_id]?.trim() || undefined
+            : undefined;
+        return (
+          <div className="flex items-start gap-2 min-w-0">
+            <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" src={logo} />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
+              <p className="text-[11px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
+            </div>
+          </div>
+        );
+      },
     },
     {
       key: "schedule",
@@ -1464,52 +1432,21 @@ function JobsPageContent() {
     buFilter.clientIdsInBu,
   ]);
 
-  const scheduleSubtitleText = scheduleFilterSubtitle(scheduleDatePreset, scheduleRange);
+  const scheduleWindowLine = scheduleWindowHintLine(scheduleDatePreset, scheduleRange);
+  const jobsPageInfoTooltip = useMemo(() => {
+    const parts = [
+      "Track and manage all active jobs.",
+      "Revenue & averages = all jobs shown below; status tabs only filter the list.",
+    ];
+    if (scheduleWindowLine) parts.push(scheduleWindowLine);
+    return parts.join("\n\n");
+  }, [scheduleWindowLine]);
 
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Jobs Management" subtitle="Track and manage all active jobs.">
+        <PageHeader title="Jobs Management" infoTooltip={jobsPageInfoTooltip}>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="relative flex items-center gap-2" ref={filterRef}>
-              <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-              {(filterPartner !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest" || buFilter.selectedBuId) && <span className="text-[10px] font-medium text-primary">Active</span>}
-              {filterOpen && (
-                <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
-                  <select value={filterPartner} onChange={(e) => setFilterPartner(e.target.value as "all" | "with" | "without")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                    <option value="all">All</option><option value="with">With partner</option><option value="without">Without partner</option>
-                  </select>
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Scheduled</p>
-                  <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                    <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
-                  </select>
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Sort</p>
-                  <select value={filterSort} onChange={(e) => setFilterSort(e.target.value as JobsSortMode)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                    <option value="schedule_nearest">Nearest schedule (default)</option>
-                    <option value="schedule_farthest">Farthest schedule</option>
-                    <option value="booking_recent">Most recent booking</option>
-                    <option value="booking_oldest">Oldest booking</option>
-                  </select>
-                  {buFilter.visible && (
-                    <>
-                      <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Business Unit</p>
-                      <select
-                        value={buFilter.selectedBuId ?? ""}
-                        onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
-                        className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2"
-                      >
-                        <option value="">All BUs</option>
-                        {buFilter.bus.map((bu) => (
-                          <option key={bu.id} value={bu.id}>{bu.name}</option>
-                        ))}
-                      </select>
-                    </>
-                  )}
-                  <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
-                </div>
-              )}
-            </div>
             <div className="relative" ref={dateFilterRef}>
               <Button
                 variant="outline"
@@ -1547,9 +1484,12 @@ function JobsPageContent() {
                       <Button
                         key={id}
                         type="button"
-                        variant={scheduleDatePreset === id ? "secondary" : "ghost"}
+                        variant={scheduleDatePreset === id ? "primary" : "ghost"}
                         size="sm"
-                        className="h-8 justify-center px-2 text-[11px] font-medium"
+                        className={cn(
+                          "h-8 justify-center px-3 text-[11px] font-medium rounded-[6px]",
+                          scheduleDatePreset !== id && "text-[#020040]",
+                        )}
                         onClick={() => {
                           setScheduleDatePreset(id);
                           if (id === "custom") setDateFilterOpen(true);
@@ -1572,14 +1512,24 @@ function JobsPageContent() {
                 </div>
               )}
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+              onClick={() => {
+                void loadDashboardStats();
+                refreshSilent();
+              }}
+              title="Reload jobs, KPIs, and tab counts from the server (no full-table loading flash)"
+            >
+              Refresh
+            </Button>
             <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
               Export
             </Button>
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
           </div>
         </PageHeader>
-
-        {scheduleSubtitleText ? <p className="text-xs text-text-tertiary -mt-2">{scheduleSubtitleText}</p> : null}
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
           <KpiCard
@@ -1627,7 +1577,53 @@ function JobsPageContent() {
                   <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
                 ))}
               </div>
+              <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
+                Export
+              </Button>
               <SearchInput placeholder="Search jobs..." className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <div className="relative flex items-center gap-1.5" ref={filterRef}>
+                <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
+                  Filter
+                </Button>
+                {(filterPartner !== "all" || filterScheduled !== "all" || filterSort !== "schedule_nearest" || buFilter.selectedBuId) && (
+                  <span className="text-[10px] font-medium text-primary">Active</span>
+                )}
+                {filterOpen && (
+                  <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Partner</p>
+                    <select value={filterPartner} onChange={(e) => setFilterPartner(e.target.value as "all" | "with" | "without")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                      <option value="all">All</option><option value="with">With partner</option><option value="without">Without partner</option>
+                    </select>
+                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Scheduled</p>
+                    <select value={filterScheduled} onChange={(e) => setFilterScheduled(e.target.value as "all" | "scheduled" | "unscheduled")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                      <option value="all">All</option><option value="scheduled">Has date</option><option value="unscheduled">No date</option>
+                    </select>
+                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Sort</p>
+                    <select value={filterSort} onChange={(e) => setFilterSort(e.target.value as JobsSortMode)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                      <option value="schedule_nearest">Nearest schedule (default)</option>
+                      <option value="schedule_farthest">Farthest schedule</option>
+                      <option value="booking_recent">Most recent booking</option>
+                      <option value="booking_oldest">Oldest booking</option>
+                    </select>
+                    {buFilter.visible && (
+                      <>
+                        <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Business Unit</p>
+                        <select
+                          value={buFilter.selectedBuId ?? ""}
+                          onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
+                          className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2"
+                        >
+                          <option value="">All BUs</option>
+                          {buFilter.bus.map((bu) => (
+                            <option key={bu.id} value={bu.id}>{bu.name}</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterPartner("all"); setFilterScheduled("all"); setFilterSort("schedule_nearest"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           {viewMode === "list" && (
@@ -1704,7 +1700,19 @@ function JobsPageContent() {
                               {sched}
                             </p>
                           ) : null}
-                          <p className="text-[11px] text-text-secondary mt-0.5 truncate">{j.client_name}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                            <Avatar
+                              name={j.client_name}
+                              size="xs"
+                              className="shrink-0"
+                              src={
+                                j.client_id && clientAccountLogoByClientId[j.client_id] != null
+                                  ? clientAccountLogoByClientId[j.client_id]?.trim() || undefined
+                                  : undefined
+                              }
+                            />
+                            <p className="text-[11px] text-text-secondary truncate min-w-0">{j.client_name}</p>
+                          </div>
                           <JobCardFinanceRow job={j} />
                           {jobSitePhotoUrls(j).length > 0 ? (
                             <div className="mt-2 border-t border-border-light pt-2">
@@ -2850,5 +2858,5 @@ function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => vo
     warning: "text-amber-700 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 border-amber-200",
     default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
-  return <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>{label}</button>;
+  return <button onClick={onClick} className={`inline-flex h-8 items-center px-2.5 text-xs font-medium rounded-[6px] border transition-colors ${colors[variant]}`}>{label}</button>;
 }

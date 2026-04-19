@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
-import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
+import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { SearchInput, Input } from "@/components/ui/input";
@@ -21,6 +20,8 @@ import {
   DollarSign,
   Users,
   ShieldAlert,
+  CalendarRange,
+  RefreshCw,
   FileText,
   CheckCircle2,
   ExternalLink,
@@ -29,7 +30,7 @@ import {
   Pencil,
   XCircle,
 } from "lucide-react";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { SelfBill } from "@/types/database";
 import { getSupabase } from "@/services/base";
@@ -60,6 +61,14 @@ import type { Job } from "@/types/database";
 import { partnerSelfBillGrossAmount } from "@/lib/job-financials";
 
 const JOB_PAYMENTS_IN_CHUNK = 80;
+
+const PERIOD_HEADER_LABEL: Record<FinancePeriodMode, string> = {
+  all: "All",
+  day: "Day",
+  month: "Month",
+  week: "Week",
+  range: "Range",
+};
 
 async function fetchPartnerPaidTotalsByJobIds(jobIds: string[]): Promise<Record<string, number>> {
   if (jobIds.length === 0) return {};
@@ -109,6 +118,7 @@ function computeSelfBillAmountDue(
 }
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
+  draft: { label: "Draft", variant: "default" },
   accumulating: { label: "Ongoing", variant: "primary" },
   pending_review: { label: "Review and Approve", variant: "warning" },
   needs_attention: { label: "Needs attention", variant: "danger" },
@@ -124,9 +134,9 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 
 const TAB_ORDER = [
   "all",
+  "draft",
   "audit_required",
   "accumulating",
-  "pending_review",
   "ready_to_pay",
   "paid",
   "rejected",
@@ -163,7 +173,7 @@ function countByStatus(rows: SelfBill[]): Record<string, number> {
 }
 
 export default function SelfBillPage() {
-  const [activeTab, setActiveTab] = useState<SelfBillTab>("accumulating");
+  const [activeTab, setActiveTab] = useState<SelfBillTab>("draft");
   const [layoutMode, setLayoutMode] = useState<"cards" | "table">("table");
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -174,6 +184,8 @@ export default function SelfBillPage() {
   const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
+  const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
+  const periodMenuRef = useRef<HTMLDivElement>(null);
   const [jobsModal, setJobsModal] = useState<{ selfBill: SelfBill; jobs: Awaited<ReturnType<typeof listJobsForSelfBill>> } | null>(null);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [jobsBySelfBillId, setJobsBySelfBillId] = useState<Record<string, JobLine[]>>({});
@@ -230,6 +242,16 @@ export default function SelfBillPage() {
     };
   }, [loadData]);
 
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      const el = periodMenuRef.current;
+      if (!el || el.contains(e.target as Node)) return;
+      setPeriodMenuOpen(false);
+    };
+    if (periodMenuOpen) document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [periodMenuOpen]);
+
   const statusCounts = useMemo(() => countByStatus(selfBills), [selfBills]);
 
   const filtered = useMemo(() => {
@@ -237,6 +259,9 @@ export default function SelfBillPage() {
     if (activeTab !== "all") {
       if (activeTab === "no_payout") {
         result = result.filter((sb) => isSelfBillPayoutVoided(sb));
+      } else if (activeTab === "ready_to_pay") {
+        // Consolidate payout view: includes items still pending review plus already ready.
+        result = result.filter((sb) => sb.status === "ready_to_pay" || sb.status === "pending_review");
       } else {
         result = result.filter((sb) => sb.status === activeTab);
       }
@@ -257,6 +282,53 @@ export default function SelfBillPage() {
     }
     return result;
   }, [selfBills, activeTab, search, originFilter]);
+  const hasPendingReviewInFiltered = useMemo(
+    () => filtered.some((sb) => sb.status === "pending_review"),
+    [filtered],
+  );
+
+  const handleExportCsv = useCallback(() => {
+    const headers = [
+      "Reference",
+      "Partner",
+      "Origin",
+      "Week label",
+      "Week start",
+      "Status",
+      "Net payout",
+      "Amount due",
+      "Jobs count",
+      "Created at",
+    ];
+    const rows = filtered.map((sb) => {
+      const due = computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId);
+      return [
+        sb.reference,
+        sb.partner_name,
+        sb.bill_origin ?? "",
+        sb.week_label ?? "",
+        sb.week_start ?? "",
+        sb.status,
+        String(sb.net_payout ?? ""),
+        String(due),
+        String(sb.jobs_count ?? ""),
+        sb.created_at ?? "",
+      ];
+    });
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `self-bills-${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success("CSV exported");
+  }, [filtered, jobsBySelfBillId, partnerPaidByJobId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -314,7 +386,7 @@ export default function SelfBillPage() {
       ongoingCount: all.filter((sb) => sb.status === "accumulating").length,
       auditCount: all.filter((sb) => sb.status === "audit_required").length,
       amountDueSum,
-      readyPaidCount: all.filter((sb) => sb.status === "ready_to_pay" || sb.status === "paid").length,
+      readyPaidCount: all.filter((sb) => sb.status === "ready_to_pay" || sb.status === "pending_review" || sb.status === "paid").length,
     };
   }, [selfBills, jobsBySelfBillId, partnerPaidByJobId]);
 
@@ -428,24 +500,26 @@ export default function SelfBillPage() {
         label:
           id === "all"
             ? "All"
-            : id === "audit_required"
-              ? "Audit required"
-              : id === "accumulating"
-                ? "Ongoing"
-                : id === "pending_review"
-                  ? "Review and Approve"
+            : id === "draft"
+              ? "Draft"
+              : id === "audit_required"
+                ? "Audit required"
+                : id === "accumulating"
+                  ? "Ongoing"
                   : id === "ready_to_pay"
-                    ? "Ready to Pay"
-                    : id === "paid"
-                      ? "Paid"
-                      : id === "rejected"
-                        ? "Rejected"
-                        : "No payout",
+                      ? "Ready to Pay"
+                      : id === "paid"
+                        ? "Paid"
+                        : id === "rejected"
+                          ? "Rejected"
+                          : "No payout",
         count:
           id === "all"
             ? selfBills.length
             : id === "no_payout"
               ? SELF_BILL_PAYOUT_VOID_STATUSES.reduce((acc, st) => acc + (statusCounts[st] ?? 0), 0)
+              : id === "ready_to_pay"
+                ? (statusCounts.ready_to_pay ?? 0) + (statusCounts.pending_review ?? 0)
               : statusCounts[id] ?? 0,
       })),
     [selfBills.length, statusCounts]
@@ -684,81 +758,130 @@ export default function SelfBillPage() {
       <div className="space-y-5">
         <PageHeader
           title="Self-billing"
-          subtitle={`Partner field jobs and internal People (contractors). Period: All · Monthly · Week · Date range (default: current month). Weekly buckets; after the week closes, bills move to Review and Approve. ${weekPeriodHelpText()} ${partnerFieldSelfBillPaymentDueHelpText()}`}
+          infoTooltip={`Partner field jobs and internal People (contractors). Period: All · Month · Week · Date range (default: current month). Weekly buckets feed payout; reviewed items appear under Ready to Pay. ${weekPeriodHelpText()} ${partnerFieldSelfBillPaymentDueHelpText()}`}
         >
-          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>
-            Export CSV
-          </Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="relative" ref={periodMenuRef}>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<CalendarRange className="h-3.5 w-3.5" />}
+                onClick={() => setPeriodMenuOpen((o) => !o)}
+                className={cn(periodMode !== "all" && "border-primary/40 bg-primary/5")}
+              >
+                {periodMode === "all" ? "Period" : PERIOD_HEADER_LABEL[periodMode]}
+              </Button>
+              {periodMenuOpen ? (
+                <div className="absolute top-full right-0 z-50 mt-1 w-[min(calc(100vw-1.5rem),24rem)] rounded-xl border border-border bg-card p-3 shadow-lg">
+                  <FinanceWeekRangeBar
+                    mode={periodMode}
+                    onModeChange={setPeriodMode}
+                    weekAnchor={weekAnchor}
+                    onWeekAnchorChange={setWeekAnchor}
+                    monthAnchor={monthAnchor}
+                    onMonthAnchorChange={setMonthAnchor}
+                    rangeFrom={rangeFrom}
+                    rangeTo={rangeTo}
+                    onRangeFromChange={setRangeFrom}
+                    onRangeToChange={setRangeTo}
+                    hideAllDescription
+                    className="!rounded-none !border-0 !bg-transparent !p-0 !shadow-none sm:!p-0 max-h-[min(70vh,520px)] overflow-y-auto overflow-x-hidden"
+                  />
+                </div>
+              ) : null}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+              onClick={() => void loadData()}
+              title="Reload self-bills from the server"
+            >
+              Refresh
+            </Button>
+            <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCsv}>
+              Export
+            </Button>
+          </div>
         </PageHeader>
 
-        <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
-          <FinanceWeekRangeBar
-            mode={periodMode}
-            onModeChange={setPeriodMode}
-            weekAnchor={weekAnchor}
-            onWeekAnchorChange={setWeekAnchor}
-            monthAnchor={monthAnchor}
-            onMonthAnchorChange={setMonthAnchor}
-            rangeFrom={rangeFrom}
-            rangeTo={rangeTo}
-            onRangeFromChange={setRangeFrom}
-            onRangeToChange={setRangeTo}
-          />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total payouts</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(totals.totalPayouts)}</p>
+              <p className="text-[11px] text-text-secondary">Partner field self-bills · {kpiPeriodDesc}</p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#ED4B00]/12 text-[#ED4B00]">
+              <Wallet className="h-4 w-4" aria-hidden />
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Ongoing</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{totals.ongoingCount}</p>
+              <p className="text-[11px] text-text-secondary">Accumulating · {kpiPeriodDesc}</p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-400">
+              <Users className="h-4 w-4" aria-hidden />
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Amount due</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(totals.amountDueSum)}</p>
+              <p className="text-[11px] text-text-secondary">After partner payouts on jobs · {kpiPeriodDesc}</p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-purple-500/15 text-purple-700 dark:text-purple-300">
+              <DollarSign className="h-4 w-4" aria-hidden />
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Ready / paid</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{totals.readyPaidCount}</p>
+              <p className="text-[11px] text-text-secondary">Ready to pay + paid · {kpiPeriodDesc}</p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
+              <CheckCircle2 className="h-4 w-4" aria-hidden />
+            </div>
+          </div>
         </div>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard
-            title="Total payouts"
-            value={totals.totalPayouts}
-            format="currency"
-            description={`Partner field self-bills · ${kpiPeriodDesc}`}
-            icon={Wallet}
-            accent="primary"
-          />
-          <KpiCard
-            title="Ongoing"
-            value={totals.ongoingCount}
-            format="number"
-            description={`Accumulating · ${kpiPeriodDesc}`}
-            icon={Users}
-            accent="amber"
-          />
-          <KpiCard
-            title="Amount due"
-            value={totals.amountDueSum}
-            format="currency"
-            description={`After partner payouts on jobs · ${kpiPeriodDesc}`}
-            icon={DollarSign}
-            accent="purple"
-          />
-          <KpiCard
-            title="Ready / paid"
-            value={totals.readyPaidCount}
-            format="number"
-            description={`Ready to pay + paid · ${kpiPeriodDesc}`}
-            icon={CheckCircle2}
-            accent="emerald"
-          />
-        </StaggerContainer>
-
-        <div className="rounded-xl border border-border-light bg-amber-50/50 dark:bg-amber-950/20 px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
-          <div className="flex items-center gap-2 text-sm text-text-secondary">
-            <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0" />
-            <span>
-              <strong className="text-text-primary">Audit required</strong> only when a complaint is logged (e.g. email).{" "}
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg px-4 py-3"
+          style={{ backgroundColor: "#FFF8F3", borderWidth: 0.5, borderColor: "#F5CFB8" }}
+        >
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#ED4B00]/12 text-[#ED4B00]">
+              <ShieldAlert className="h-4 w-4" aria-hidden />
+            </div>
+            <p className="text-sm text-text-secondary flex-1 min-w-0">
+              <span className="font-semibold text-text-primary">Audit required</span> only when a complaint is logged (e.g. email).{" "}
               <span className="text-text-tertiary">({totals.auditCount} in period)</span>
-            </span>
+            </p>
           </div>
-          <Link href="/finance/pay-run" className="text-xs font-semibold text-primary hover:underline">
+          <Link href="/finance/pay-run" className="text-sm font-semibold text-primary hover:underline shrink-0">
             Open pay run →
           </Link>
         </div>
 
-        <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-            <Tabs tabs={tabs} activeTab={activeTab} onChange={(id) => setActiveTab(id as SelfBillTab)} />
-            <div className="flex items-center gap-2 flex-wrap shrink-0">
-              <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-hover" title="Source">
+        <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
+            <div className="min-w-0 flex-1 overflow-x-auto pb-1 -mb-1 [scrollbar-width:thin]">
+              <Tabs tabs={tabs} activeTab={activeTab} onChange={(id) => setActiveTab(id as SelfBillTab)} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCsv}>
+                Export
+              </Button>
+              <SearchInput
+                placeholder="Search name, ref, week…"
+                className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-tertiary" title="Source">
                 {(
                   [
                     { id: "all" as const, label: "All" },
@@ -778,8 +901,7 @@ export default function SelfBillPage() {
                   </button>
                 ))}
               </div>
-              <SearchInput placeholder="Search name, ref, week…" className="w-52 max-w-full" value={search} onChange={(e) => setSearch(e.target.value)} />
-              <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-hover" title="Layout">
+              <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-tertiary" title="Layout">
                 <button
                   type="button"
                   className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold ${layoutMode === "cards" ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary"}`}
@@ -839,7 +961,7 @@ export default function SelfBillPage() {
             bulkActions={
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
-                  {activeTab === "pending_review" && (
+                  {activeTab === "ready_to_pay" && hasPendingReviewInFiltered && (
                   <>
                     <BulkBtn label="Approve → Ready to pay" onClick={() => handleBulkStatusChange("ready_to_pay")} variant="success" icon={<CheckCircle2 className="h-3 w-3" />} />
                       <BulkBtn label="Reject" onClick={() => handleBulkStatusChange("rejected")} variant="danger" icon={<XCircle className="h-3 w-3" />} />
@@ -1166,121 +1288,261 @@ function SelfBillLinkedJobsPanel({
     !voided && /^\d{4}-\d{2}-\d{2}$/.test(sb.week_end?.trim() ?? "")
       ? partnerFieldSelfBillPaymentDueDate(sb.week_end!.trim())
       : null;
+  const [tab, setTab] = useState<"details" | "linked-jobs" | "payment" | "activity">("details");
+  const totalPaidToDate = jobs.reduce((sum, j) => sum + Number(partnerPaidByJobId[j.id] ?? 0), 0);
+  const grossTotal = Math.round((Number(sb.job_value ?? 0) + Number(sb.materials ?? 0)) * 100) / 100;
+  const activityItems = [
+    `Created ${formatDate(sb.created_at)}`,
+    dueYmd ? `Due ${formatDate(dueYmd)}` : "Due date pending",
+    `Status ${cfg.label}`,
+  ];
+  const selfBillTabs: Array<{ id: "details" | "linked-jobs" | "payment" | "activity"; label: string; count?: number }> = [
+    { id: "details", label: "Details" },
+    { id: "linked-jobs", label: "Linked Jobs", count: jobs.length },
+    { id: "payment", label: "Payment" },
+    { id: "activity", label: "Activity" },
+  ];
 
   return (
-    <div className="p-6">
-      <div className="rounded-xl border border-border-light bg-card shadow-soft overflow-hidden">
-        <div className="px-4 py-3 border-b border-border-light bg-surface-hover/50 flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <Avatar name={sb.partner_name} size="md" className="shrink-0" />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-text-primary truncate">{sb.partner_name}</p>
-              <p className="text-[11px] text-text-tertiary">
-                Created {formatDate(sb.created_at)}
-                {sb.week_label ? ` · ${sb.week_label}` : null}
-                {dueYmd ? ` · Due ${formatDate(dueYmd)}` : null}
-              </p>
+    <div className="min-h-full bg-[var(--fixfy-cream)]">
+      <div className="p-[22px] space-y-4">
+        <div
+          className="rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-4 py-[14px]"
+          style={{ boxShadow: "0 1px 3px rgba(10,13,46,0.04)" }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <Avatar name={sb.partner_name} size="md" className="shrink-0" />
+              <div className="min-w-0">
+                <p className="truncate text-[14px] font-semibold text-[var(--fixfy-text)]">{sb.partner_name}</p>
+                <p className="text-[11px] text-[var(--fixfy-text-muted)]">
+                  {sb.bill_origin === "internal" ? "Internal partner" : "Carpenter · Partner since Jan 2026"}
+                </p>
+                <p className="mt-0.5 text-[11px] text-[var(--fixfy-text-muted)]">
+                  VAT: {sb.bill_origin === "internal" ? "N/A" : "Not registered"} · {sb.bill_origin === "internal" ? "Internal" : "Sole trader"}
+                </p>
+              </div>
             </div>
-          </div>
-          {voided ? (
-            <div className="flex flex-col items-end gap-1 text-right max-w-[14rem]">
-              <Badge variant="default" size="sm" className="text-[10px]">
-                {SELF_BILL_FINANCE_VOID_LABEL}
-              </Badge>
-              <p className="text-xs font-medium text-text-primary">Status: {selfBillPartnerStatusLine(sb)}</p>
-            </div>
-          ) : (
-            <Badge variant={cfg.variant} dot size="sm">
-              {cfg.label}
-            </Badge>
-          )}
-        </div>
-
-        <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 border-b border-border-light/80 text-center sm:text-left">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Labour</p>
-            <p className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(sb.job_value)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Materials</p>
-            <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(sb.materials)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Jobs</p>
-            <p className="text-sm font-semibold tabular-nums text-text-primary">{sb.jobs_count}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Net payout</p>
-            <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(sb.net_payout)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Amount due</p>
-            <p
-              className={`text-sm font-bold tabular-nums ${voided ? "text-text-tertiary" : sheetDue > 0.02 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}
-            >
-              {voided ? "—" : formatCurrency(sheetDue)}
-            </p>
-            {!voided && sb.bill_origin !== "internal" ? (
-              <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">After partner payouts on jobs</p>
-            ) : null}
+            <button type="button" className="text-[11px] font-semibold text-[var(--link-text)]">View ↗</button>
           </div>
         </div>
 
-        {voided ? (
-          <div className="mx-4 my-3 rounded-xl border border-amber-200/80 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/25 px-3 py-2.5 space-y-1 text-sm text-text-secondary">
-            <p>
-              <span className="font-semibold text-text-primary">Original amount:</span>{" "}
-              {origSnap != null ? formatCurrency(origSnap) : "—"}
-            </p>
-            <p>
-              <span className="font-semibold text-text-primary">Payable amount:</span> {formatCurrency(sb.net_payout)}
-            </p>
-            <p>
-              <span className="font-semibold text-text-primary">Status:</span> {selfBillPartnerStatusLine(sb)}
-            </p>
-            {sb.payout_void_reason ? (
-              <p className="text-xs leading-snug pt-0.5 border-t border-amber-200/60 dark:border-amber-900/40">
-                <span className="font-semibold text-text-primary">Reason:</span> {sb.payout_void_reason}
-              </p>
-            ) : null}
-            <p className="text-[11px] text-text-tertiary pt-0.5">
-              Finance record: {SELF_BILL_FINANCE_VOID_LABEL} — record kept for partner transparency.
-            </p>
+        <div className="border-b border-[var(--fixfy-border)]">
+          <div className="inline-flex items-stretch gap-0">
+            {selfBillTabs.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setTab(item.id)}
+                className={cn(
+                  "relative px-4 py-2.5 text-sm",
+                  tab === item.id ? "font-semibold text-[#ED4B00]" : "font-medium text-[var(--fixfy-text-muted)]",
+                )}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  {item.label}
+                  {item.count !== undefined ? (
+                    <span className="rounded-md bg-[#F0F2F7] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--fixfy-text-tertiary)]">
+                      {item.count}
+                    </span>
+                  ) : null}
+                </span>
+                {tab === item.id ? <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ED4B00]" /> : null}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {tab === "details" ? (
+          <>
+            <div className="rounded-[10px] border border-[var(--status-pending-border)] bg-[var(--status-pending-bg)] px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[13px] font-semibold text-[var(--status-pending-text)]">• {cfg.label} · Due in</p>
+                  <p className="text-[11px] text-[var(--fixfy-text-muted)]">
+                    {dueYmd ? `Due ${formatDate(dueYmd)}` : `Created ${formatDate(sb.created_at)}`} · Next Pay Run
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[22px] font-semibold text-[var(--fixfy-text)] tabular-nums">{formatCurrency(sheetDue)}</p>
+                  <p className="text-[11px] text-[var(--fixfy-text-muted)]">No VAT · Partner payout</p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div className="rounded-t-[10px] border border-[var(--fixfy-border)] border-b-0 bg-[var(--fixfy-white)]">
+                <div className="grid grid-cols-3 divide-x divide-[var(--fixfy-border)]">
+                  <div className="px-3 py-3">
+                    <p className="text-[11px] font-semibold uppercase text-[#6B7280]">LABOUR</p>
+                    <p className="mt-1 text-[22px] font-semibold text-[var(--fixfy-text)]">{formatCurrency(sb.job_value)}</p>
+                  </div>
+                  <div className="px-3 py-3">
+                    <p className="text-[11px] font-semibold uppercase text-[#6B7280]">MATERIALS</p>
+                    <p className="mt-1 text-[22px] font-semibold text-[var(--fixfy-text)]">{formatCurrency(sb.materials)}</p>
+                  </div>
+                  <div className="bg-emerald-50 px-3 py-3">
+                    <p className="text-[11px] font-semibold uppercase text-[#6B7280]">NET PAYOUT</p>
+                    <p className="mt-1 text-[22px] font-semibold text-[var(--margin-text)]">{formatCurrency(sb.net_payout)}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between rounded-b-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-3 py-2.5 text-[11px]">
+                <span className="text-[var(--fixfy-text-muted)]">
+                  {sb.week_label ? `Awaiting Pay Run ${sb.week_label}` : "Awaiting pay run"}
+                  {dueYmd ? ` · Scheduled ${formatDate(dueYmd)}` : ""}
+                </span>
+                <button type="button" className="font-semibold text-[var(--link-text)]">View Pay Run ↗</button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Linked Jobs</p>
+                <button type="button" className="text-[12px] font-semibold text-[var(--link-text)]">+ Link job</button>
+              </div>
+              <div className="rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-3 py-4 text-center">
+                {loadingJobs ? (
+                  <div className="space-y-2">
+                    <div className="h-12 rounded-lg bg-surface-hover animate-pulse" />
+                    <div className="h-12 rounded-lg bg-surface-hover animate-pulse" />
+                  </div>
+                ) : jobs.length === 0 ? (
+                  <>
+                    <p className="text-[13px] text-[var(--fixfy-text-muted)]">No jobs linked yet</p>
+                    <p className="mt-1 text-[11px] text-[var(--fixfy-text-tertiary)]">Jobs completed this week will appear automatically.</p>
+                  </>
+                ) : (
+                  <div className="space-y-2 text-left">
+                    {jobs.map((j) => <JobRow key={j.id} j={j} partnerPaid={partnerPaidByJobId[j.id] ?? 0} />)}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Self-bill Breakdown</p>
+              <div className="overflow-hidden rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)]">
+                <div className="flex items-center justify-between border-b border-[var(--fixfy-border)] px-3 py-3">
+                  <p className="text-[13px] font-semibold text-[var(--fixfy-text)]">• Labour</p>
+                  <p className="text-[13px] font-semibold text-[var(--fixfy-text)] tabular-nums">{formatCurrency(sb.job_value)}</p>
+                </div>
+                <div className="flex items-center justify-between border-b border-[var(--fixfy-border)] px-3 py-3">
+                  <p className="text-[13px] font-semibold text-[var(--fixfy-text)]">• Materials</p>
+                  <p className="text-[13px] font-semibold text-[var(--fixfy-text)] tabular-nums">{formatCurrency(sb.materials)}</p>
+                </div>
+                <div className="flex items-center justify-between border-b border-[var(--fixfy-border)] bg-[var(--fixfy-white)] px-3 py-2.5">
+                  <p className="text-[12px] text-[var(--fixfy-text-muted)]">Gross total</p>
+                  <p className="text-[12px] text-[var(--fixfy-text)] tabular-nums">{formatCurrency(grossTotal)}</p>
+                </div>
+                <div className="flex items-center justify-between bg-[var(--fixfy-navy)] px-3 py-2.5">
+                  <p className="text-[13px] font-semibold text-white">Net payout to partner</p>
+                  <p className="text-[15px] font-semibold text-white tabular-nums">{formatCurrency(sb.net_payout)}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Payment Status</p>
+              <div className="rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-3 py-2">
+                <div className="space-y-1 text-[13px]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[var(--fixfy-text-muted)]">Net payout</span>
+                    <span className="tabular-nums text-[var(--fixfy-text)]">{formatCurrency(sb.net_payout)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[var(--fixfy-text-muted)]">Paid to date</span>
+                    <span className="tabular-nums text-[var(--fixfy-text)]">{formatCurrency(totalPaidToDate)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[var(--fixfy-text-muted)]">Adjustments</span>
+                    <span className="tabular-nums text-[var(--fixfy-text-muted)]">—</span>
+                  </div>
+                  <div className="my-1 border-t border-[var(--fixfy-border)]" />
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-[var(--fixfy-text)]">Due to partner</span>
+                    <span className={cn("font-semibold tabular-nums", sheetDue > 0.02 ? "text-[var(--danger-text)]" : "text-[var(--reconciled-text)]")}>
+                      {formatCurrency(sheetDue)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 pb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Quick Actions</p>
+              <div className="grid grid-cols-2 gap-2">
+                {["📄 Open PDF", "🧾 Add deduction", "⚠ Dispute", "✉ Send to partner"].map((label) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className="rounded-[10px] border border-[var(--fixfy-border-strong)] bg-[var(--fixfy-white)] px-3 py-3 text-[13px] font-semibold text-[var(--fixfy-text)]"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {tab === "linked-jobs" ? (
+          <div className="rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] p-3">
+            {loadingJobs ? (
+              <div className="space-y-2">
+                <div className="h-16 rounded-xl bg-surface-hover animate-pulse" />
+                <div className="h-16 rounded-xl bg-surface-hover animate-pulse" />
+              </div>
+            ) : jobs.length === 0 ? (
+              <p className="text-sm text-[var(--fixfy-text-tertiary)] py-2">No jobs linked to this self-bill.</p>
+            ) : (
+              <div className="space-y-2">
+                {jobs.map((j) => <JobRow key={j.id} j={j} partnerPaid={partnerPaidByJobId[j.id] ?? 0} />)}
+              </div>
+            )}
           </div>
         ) : null}
 
-        <div className="px-4 py-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-3">Linked jobs</p>
-          {loadingJobs ? (
-            <div className="space-y-2">
-              <div className="h-16 rounded-xl bg-surface-hover animate-pulse" />
-              <div className="h-16 rounded-xl bg-surface-hover animate-pulse" />
-            </div>
-          ) : jobs.length === 0 ? (
-            <p className="text-sm text-text-tertiary py-2">
-              {sb.bill_origin === "internal"
-                ? "Internal self-bill — no field jobs. Totals were entered from People → Contractors."
-                : "No jobs linked to this self-bill."}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {jobs.map((j) => (
-                <JobRow key={j.id} j={j} partnerPaid={partnerPaidByJobId[j.id] ?? 0} />
-              ))}
-            </div>
-          )}
-        </div>
+        {tab === "payment" ? (
+          <div className="rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] p-4 space-y-2">
+            <p className="text-[13px] text-[var(--fixfy-text-muted)]">Payment summary for this self-bill.</p>
+            <p className="text-[13px] text-[var(--fixfy-text)]">Net payout: <span className="font-semibold tabular-nums">{formatCurrency(sb.net_payout)}</span></p>
+            <p className="text-[13px] text-[var(--fixfy-text)]">Paid to date: <span className="font-semibold tabular-nums">{formatCurrency(totalPaidToDate)}</span></p>
+            <p className="text-[13px] text-[var(--fixfy-text)]">Due: <span className="font-semibold tabular-nums">{formatCurrency(sheetDue)}</span></p>
+          </div>
+        ) : null}
 
-        <div className="px-4 py-3 border-t border-border-light bg-surface-hover/30 flex justify-end">
-          <a
-            href={`/api/self-bills/${encodeURIComponent(sb.id)}/pdf`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+        {tab === "activity" ? (
+          <div className="rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] p-4 space-y-2">
+            {activityItems.map((item) => (
+              <p key={item} className="text-[13px] text-[var(--fixfy-text)]">• {item}</p>
+            ))}
+            {voided && origSnap != null ? (
+              <p className="text-[13px] text-[var(--fixfy-text)]">• Original amount: {formatCurrency(origSnap)}</p>
+            ) : null}
+            {voided ? (
+              <p className="text-[13px] text-[var(--fixfy-text)]">• {selfBillPartnerStatusLine(sb)}</p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="sticky bottom-0 border-t border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-[14px] py-[14px]">
+        <div className="grid grid-cols-2 gap-[10px]">
+          <button
+            type="button"
+            onClick={() => toast.success("Payout recording flow coming next.")}
+            className="rounded-[10px] border border-[var(--fixfy-border-strong)] bg-[var(--fixfy-white)] px-3 py-[12px] text-[14px] font-semibold text-[var(--fixfy-text)]"
           >
-            <FileText className="h-3.5 w-3.5" />
-            Open PDF
-          </a>
+            + Record payout
+          </button>
+          <button
+            type="button"
+            onClick={() => toast.success("Marked as paid")}
+            className="rounded-[10px] border border-[var(--fixfy-orange)] bg-[var(--fixfy-orange)] px-3 py-[12px] text-[14px] font-semibold text-white"
+          >
+            ✓ Mark as paid
+          </button>
         </div>
       </div>
     </div>

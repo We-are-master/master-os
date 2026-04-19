@@ -4,7 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { staggerContainer, tableRowVariant } from "@/lib/motion";
-import { ChevronLeft, ChevronRight, Minus, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, Minus, SlidersHorizontal } from "lucide-react";
+
+/** One entry in the column header sort menu (explicit A–Z, newest, etc.). */
+export interface ColumnSortOption {
+  label: string;
+  /** Field to sort by; `null` clears sort (back to list default). */
+  sortKey: string | null;
+  direction: "asc" | "desc";
+}
 
 export interface Column<T> {
   key: string;
@@ -12,6 +20,11 @@ export interface Column<T> {
   width?: string;
   minWidth?: string;
   sortable?: boolean;
+  /**
+   * When set, the header opens a menu with these choices instead of cycling asc/desc.
+   * If omitted but `sortable` is true, falls back to asc → desc → clear.
+   */
+  sortOptions?: ColumnSortOption[];
   align?: "left" | "center" | "right";
   headerClassName?: string;
   cellClassName?: string;
@@ -45,6 +58,10 @@ interface DataTableProps<T> {
   columnConfigKey?: string;
   /** Optional scope (e.g. active tab id) appended to storage key. */
   columnConfigScope?: string;
+  /** Client-side column sort (optional). When set, sortable columns show icons and call `onSortChange`. */
+  sortColumnKey?: string | null;
+  sortDirection?: "asc" | "desc";
+  onSortChange?: (key: string | null, direction: "asc" | "desc") => void;
 }
 
 function Checkbox({ checked, indeterminate, onChange, className }: {
@@ -100,6 +117,9 @@ export function DataTable<T>({
   tableClassName,
   columnConfigKey,
   columnConfigScope,
+  sortColumnKey,
+  sortDirection = "asc",
+  onSortChange,
 }: DataTableProps<T>) {
   const configStorageKey = columnConfigKey
     ? `${columnConfigKey}:${columnConfigScope ?? "default"}`
@@ -107,6 +127,8 @@ export function DataTable<T>({
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
+  const [openSortMenuColKey, setOpenSortMenuColKey] = useState<string | null>(null);
+  const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const supportsColumnConfig = Boolean(configStorageKey) && columns.length > 1;
 
   useEffect(() => {
@@ -142,6 +164,22 @@ export function DataTable<T>({
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [columnMenuOpen]);
+
+  useEffect(() => {
+    if (!openSortMenuColKey) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!sortMenuRef.current?.contains(e.target as Node)) setOpenSortMenuColKey(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenSortMenuColKey(null);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [openSortMenuColKey]);
 
   const visibleColumns = useMemo(() => {
     if (!supportsColumnConfig) return columns;
@@ -181,6 +219,32 @@ export function DataTable<T>({
     onSelectionChange(next);
   };
 
+  const handleColumnSortClick = (col: Column<T>) => {
+    if (!col.sortable || !onSortChange) return;
+    if (col.sortOptions?.length) return;
+    if (sortColumnKey !== col.key) {
+      onSortChange(col.key, "asc");
+      return;
+    }
+    if (sortDirection === "asc") {
+      onSortChange(col.key, "desc");
+      return;
+    }
+    onSortChange(null, "asc");
+  };
+
+  const applySortOption = (opt: ColumnSortOption) => {
+    if (!onSortChange) return;
+    if (opt.sortKey == null) onSortChange(null, "asc");
+    else onSortChange(opt.sortKey, opt.direction);
+    setOpenSortMenuColKey(null);
+  };
+
+  const sortOptionMatches = (opt: ColumnSortOption) => {
+    if (opt.sortKey == null) return sortColumnKey == null;
+    return sortColumnKey === opt.sortKey && sortDirection === opt.direction;
+  };
+
   return (
     <div className={cn("bg-card rounded-xl border border-card-border shadow-soft overflow-hidden relative", className)}>
       <AnimatePresence>
@@ -216,7 +280,7 @@ export function DataTable<T>({
         )}
       </AnimatePresence>
 
-      <div className="overflow-x-auto -mx-px sm:mx-0 relative">
+      <div className="overflow-x-auto -mx-px sm:mx-0 relative" ref={sortMenuRef}>
         <table className={cn("w-full min-w-[1080px]", tableClassName)}>
           <thead>
             <tr className="border-b border-border-light">
@@ -229,22 +293,136 @@ export function DataTable<T>({
                   />
                 </th>
               )}
-              {visibleColumns.map((col) => (
-                <th
-                  key={col.key}
-                  style={{
-                    /** Prefer minWidth so header text stays one line; horizontal scroll handles overflow. */
-                    minWidth: col.minWidth ?? col.width,
-                  }}
-                  className={cn(
-                    "px-3 sm:px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary whitespace-nowrap",
-                    col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
-                    col.headerClassName
-                  )}
-                >
-                  {col.label}
-                </th>
-              ))}
+              {visibleColumns.map((col) => {
+                const sortable = Boolean(col.sortable && onSortChange && col.label);
+                const menuMode = Boolean(sortable && col.sortOptions?.length);
+                const legacyActive = sortable && !menuMode && sortColumnKey === col.key;
+                const menuActive =
+                  menuMode &&
+                  (col.sortOptions?.some((o) => sortOptionMatches(o)) ?? false);
+                const active = legacyActive || menuActive;
+                return (
+                  <th
+                    key={col.key}
+                    style={{
+                      /** Prefer minWidth so header text stays one line; horizontal scroll handles overflow. */
+                      minWidth: col.minWidth ?? col.width,
+                    }}
+                    className={cn(
+                      "px-3 sm:px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary whitespace-nowrap",
+                      menuMode && "relative z-20",
+                      col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
+                      col.headerClassName
+                    )}
+                    aria-sort={
+                      sortable && active
+                        ? sortDirection === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : sortable
+                          ? "none"
+                          : undefined
+                    }
+                  >
+                    {sortable ? (
+                      menuMode ? (
+                        <div className="inline-block w-max max-w-none text-left align-middle">
+                          <button
+                            type="button"
+                            aria-expanded={openSortMenuColKey === col.key}
+                            aria-haspopup="listbox"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenSortMenuColKey((k) => (k === col.key ? null : col.key));
+                            }}
+                            className={cn(
+                              "group inline-flex w-max max-w-none items-center gap-0.5 rounded-md -mx-1 px-1 py-0.5 -my-0.5 transition-colors hover:text-text-secondary hover:bg-surface-hover/80",
+                              col.align === "right" && "ml-auto",
+                              col.align === "center" && "mx-auto",
+                              active && "text-text-secondary",
+                            )}
+                            title="Sort options"
+                          >
+                            <span className="shrink-0 whitespace-nowrap">{col.label}</span>
+                            <span className="inline-flex shrink-0 gap-0.5 text-text-tertiary group-hover:text-text-secondary">
+                              {active ? (
+                                sortDirection === "asc" ? (
+                                  <ArrowUp className="h-3 w-3" aria-hidden />
+                                ) : (
+                                  <ArrowDown className="h-3 w-3" aria-hidden />
+                                )
+                              ) : (
+                                <ArrowUpDown className="h-3 w-3 opacity-50" aria-hidden />
+                              )}
+                              <ChevronDown className="h-3 w-3 opacity-60" aria-hidden />
+                            </span>
+                          </button>
+                          {openSortMenuColKey === col.key && col.sortOptions?.length ? (
+                            <ul
+                              role="listbox"
+                              className="absolute left-0 top-full z-50 mt-1 min-w-[13rem] max-w-[min(calc(100vw-1.5rem),18rem)] rounded-lg border border-border-light bg-card py-1 shadow-lg dark:border-border"
+                            >
+                              {col.sortOptions.map((opt, optIdx) => {
+                                const selected = sortOptionMatches(opt);
+                                return (
+                                  <li key={`${col.key}-sort-${optIdx}`} role="none">
+                                    <button
+                                      type="button"
+                                      role="option"
+                                      aria-selected={selected}
+                                      className={cn(
+                                        "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-surface-hover",
+                                        selected ? "text-primary" : "text-text-secondary",
+                                      )}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        applySortOption(opt);
+                                      }}
+                                    >
+                                      <span className="min-w-0 flex-1 leading-snug">{opt.label}</span>
+                                      {selected ? (
+                                        <span className="shrink-0 text-[10px] font-semibold text-primary" aria-hidden>
+                                          ✓
+                                        </span>
+                                      ) : null}
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleColumnSortClick(col)}
+                          className={cn(
+                            "group inline-flex w-max max-w-none items-center gap-1 rounded-md -mx-1 px-1 py-0.5 -my-0.5 transition-colors hover:text-text-secondary hover:bg-surface-hover/80",
+                            col.align === "right" && "ml-auto",
+                            col.align === "center" && "mx-auto",
+                          )}
+                          title="Sort"
+                        >
+                          <span className="shrink-0 whitespace-nowrap">{col.label}</span>
+                          <span className="inline-flex shrink-0 text-text-tertiary group-hover:text-text-secondary">
+                            {active ? (
+                              sortDirection === "asc" ? (
+                                <ArrowUp className="h-3 w-3" aria-hidden />
+                              ) : (
+                                <ArrowDown className="h-3 w-3" aria-hidden />
+                              )
+                            ) : (
+                              <ArrowUpDown className="h-3 w-3 opacity-50" aria-hidden />
+                            )}
+                          </span>
+                        </button>
+                      )
+                    ) : (
+                      col.label
+                    )}
+                  </th>
+                );
+              })}
               {supportsColumnConfig ? (
                 <th className="w-10 px-2 py-3 text-right relative">
                   <div className="inline-block" ref={columnMenuRef}>

@@ -4,13 +4,13 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
-  --color-primary: #e93701;
-  --color-primary-hover: #cf3101;
+  --color-primary: #ed4b00;
+  --color-primary-hover: #d84300;
   --color-primary-light: #fef3f0;
   --color-primary-50: #fff7ed;
   --color-primary-100: #ffedd5;
-  --color-primary-500: #e93701;
-  --color-primary-600: #cf3101;
+  --color-primary-500: #ed4b00;
+  --color-primary-600: #d84300;
   --color-primary-700: #b52b01;
 
   --color-navy: #020034;
@@ -40,7 +40,7 @@
 
   --color-sidebar: var(--sidebar-bg);
   --color-sidebar-hover: var(--sidebar-hover);
-  --color-sidebar-active: #e93701;
+  --color-sidebar-active: #ed4b00;
   --color-sidebar-text: #d6d3d1;
   --color-sidebar-text-muted: #78716c;
 
@@ -76,6 +76,31 @@
   --text-secondary: #78716c;
   --text-tertiary: #a8a29e;
   --text-inverse: #ffffff;
+
+  /* Fixfy invoice drawer tokens */
+  --fixfy-navy: #020040;
+  --fixfy-orange: #ED4B00;
+  --fixfy-cream: #F7F8FB;
+  --fixfy-white: #FFFFFF;
+  --fixfy-surface: #F7F8FB;
+  --fixfy-border: #DEE1EC;
+  --fixfy-border-strong: #C3C8D9;
+  --fixfy-text: #0A0D2E;
+  --fixfy-text-muted: #5B607D;
+  --fixfy-text-tertiary: #8A90A8;
+  --status-pending-bg: #FEF5E7;
+  --status-pending-border: #F5E0B5;
+  --status-pending-text: #412402;
+  --status-pending-dot: #BA7517;
+  --margin-bg: #F0F9EC;
+  --margin-text: #173404;
+  --reconciled-text: #3B6D11;
+  --partner-dot: #3C3489;
+  --partner-avatar-bg: #EEEDFE;
+  --client-avatar-bg: #E6F1FB;
+  --client-avatar-text: #042C53;
+  --danger-text: #A32D2D;
+  --link-text: #185FA5;
 
   --success-light: #ecfdf5;
   --warning-light: #fffbeb;

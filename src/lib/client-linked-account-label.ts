@@ -136,3 +136,56 @@ export async function batchResolveLinkedAccountLabels(
   mergeResolvedIntoLabelCache(missing, result);
   return result;
 }
+
+/**
+ * Map `clients.id` → linked corporate account `logo_url` (HTTPS), when `clients.source_account_id` is set.
+ */
+export async function batchResolveClientAccountLogoUrls(
+  supabase: SupabaseClient,
+  clientIds: string[],
+): Promise<Map<string, string | null>> {
+  const result = new Map<string, string | null>();
+  const unique = [...new Set(clientIds.filter(Boolean))];
+  if (unique.length === 0) return result;
+
+  const { data: clients, error } = await supabase
+    .from("clients")
+    .select("id, source_account_id")
+    .in("id", unique)
+    .is("deleted_at", null);
+
+  if (error || !clients?.length) {
+    for (const id of unique) result.set(id, null);
+    return result;
+  }
+
+  const rows = clients as Array<{ id: string; source_account_id?: string | null }>;
+  const accountIds = [...new Set(rows.map((c) => c.source_account_id).filter(Boolean))] as string[];
+
+  const logoByAccountId = new Map<string, string | null>();
+  if (accountIds.length > 0) {
+    const { data: accounts } = await supabase
+      .from("accounts")
+      .select("id, logo_url")
+      .in("id", accountIds)
+      .is("deleted_at", null);
+    for (const a of accounts ?? []) {
+      const row = a as { id: string; logo_url?: string | null };
+      const url = row.logo_url?.trim();
+      logoByAccountId.set(row.id, url && /^https?:\/\//i.test(url) ? url : null);
+    }
+  }
+
+  for (const c of rows) {
+    const aid = c.source_account_id?.trim();
+    if (aid && logoByAccountId.has(aid)) {
+      result.set(c.id, logoByAccountId.get(aid) ?? null);
+    } else {
+      result.set(c.id, null);
+    }
+  }
+  for (const id of unique) {
+    if (!result.has(id)) result.set(id, null);
+  }
+  return result;
+}

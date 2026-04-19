@@ -9,6 +9,7 @@ import {
   TrendingDown,
   type LucideIcon,
 } from "lucide-react";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 
 interface KpiCardProps {
   title: string;
@@ -68,22 +69,7 @@ export function KpiCard({
                 {title}
               </p>
               {descriptionAsTooltip && description ? (
-                <span className="group relative inline-flex">
-                  <span
-                    tabIndex={0}
-                    aria-label={description}
-                    className="inline-flex h-[14px] w-[14px] items-center justify-center rounded-full text-[10px] font-bold leading-none cursor-help outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
-                    style={{ background: "#F1F1F3", color: "#6B6B70" }}
-                  >
-                    !
-                  </span>
-                  <span
-                    role="tooltip"
-                    className="pointer-events-none invisible absolute top-full left-0 z-[60] mt-1 w-56 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1.5 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
-                  >
-                    {description}
-                  </span>
-                </span>
+                <FixfyHintIcon text={description} />
               ) : null}
             </div>
             <p className="text-2xl font-bold text-text-primary tracking-tight">

@@ -2,13 +2,11 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { PageHeader } from "@/components/layout/page-header";
-import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
+import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
-import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -16,17 +14,16 @@ import { Progress } from "@/components/ui/progress";
 import { motion } from "framer-motion";
 import { fadeInUp, staggerItem } from "@/lib/motion";
 import {
-  Plus, Download, Filter, Receipt, Clock, AlertTriangle,
-  FileText, Send, Calendar, MapPin, User, Briefcase, ArrowRight,
+  Plus, Download, Receipt, Clock, AlertTriangle, AlertCircle,
+  FileText, Send, Calendar, CalendarRange, MapPin, User, Briefcase, ArrowRight, RefreshCw,
   CheckCircle2, XCircle, CreditCard, Building2, Hash, TrendingUp,
-  Banknote, RotateCcw, Loader, Lock, ChevronDown, ChevronRight,
-  ShieldAlert, CircleAlert,
+  Banknote, RotateCcw, Loader, Lock, ChevronDown, ChevronUp, ChevronRight,
+  ShieldAlert, CircleAlert, Check, PenLine,
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Invoice, InvoiceCollectionStage, InvoiceStatus, Job, JobStatus } from "@/types/database";
+import type { Invoice, InvoiceStatus, Job, JobStatus } from "@/types/database";
 import { createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
-import { COLLECTION_STAGE_LABELS } from "@/lib/invoice-collection";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
@@ -38,16 +35,16 @@ import {
 } from "@/lib/invoice-balance";
 import { recordInvoicePartialPayment } from "@/services/invoice-partial";
 import { isJobForcePaid } from "@/lib/job-force-paid";
-import { jobBillableRevenue } from "@/lib/job-financials";
+import { jobBillableRevenue, partnerSelfBillGrossAmount } from "@/lib/job-financials";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { applyInvoicePeriodBoundsToQuery, getSupabase } from "@/services/base";
 import { fetchJobReferencesOverlappingPeriod } from "@/services/job-period-overlap-queries";
 import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
-import type { FinancePeriodMode } from "@/lib/finance-period";
 import {
   DEFAULT_FINANCE_PERIOD_MODE,
   getFinancePeriodClosedBounds,
   formatFinancePeriodKpiDescription,
+  type FinancePeriodMode,
 } from "@/lib/finance-period";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -55,11 +52,16 @@ import { AuditTimeline } from "@/components/ui/audit-timeline";
 import { LocationMiniMap } from "@/components/ui/location-picker";
 import { useProfile } from "@/hooks/use-profile";
 import { CreateInvoiceModal } from "@/components/invoices/create-invoice-modal";
+import { Modal } from "@/components/ui/modal";
 import {
-  INVOICE_PIPELINE_TAB_ORDER,
-  invoicePipelineTab,
-  type InvoicePipelineTab,
-} from "@/lib/invoice-pipeline";
+  INVOICE_FINANCE_TAB_ORDER,
+  invoiceExpectedDateYmd,
+  invoiceFinanceListTodayYmd,
+  invoiceIsDerivedOverdue,
+  invoiceMatchesFinanceTab,
+  isAwaitingPaymentTabStatus,
+  type InvoiceFinanceTab,
+} from "@/lib/invoice-finance-tab";
 import { weekPeriodHelpText } from "@/lib/self-bill-period";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
@@ -73,6 +75,58 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
 };
 
 const PAGE_SIZE = 10;
+
+const PERIOD_HEADER_LABEL: Record<FinancePeriodMode, string> = {
+  all: "All",
+  day: "Day",
+  month: "Month",
+  week: "Week",
+  range: "Range",
+};
+
+function accountHeaderAvatarBg(accountName: string): string {
+  const n = accountName.toLowerCase();
+  if (n.includes("checkatrade")) return "#185FA5";
+  if (n.includes("housekeep")) return "#7F77DD";
+  if (n.includes("express")) return "#1D9E75";
+  let h = 0;
+  for (let i = 0; i < accountName.length; i++) h = (h * 31 + accountName.charCodeAt(i)) >>> 0;
+  const hues = [221, 200, 170, 145, 25, 330];
+  const hue = hues[h % hues.length];
+  return `hsl(${hue} 45% 46%)`;
+}
+
+/** Status column — same `Badge` pattern as Requests / DataTable (`statusConfig` + derived overdue). */
+function invoiceRowStatusDisplay(
+  inv: Invoice,
+  todayYmd: string,
+): { variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; label: string } {
+  if (invoiceIsDerivedOverdue(inv, todayYmd)) {
+    return { variant: "danger", label: "Overdue" };
+  }
+  const cfg = statusConfig[inv.status];
+  if (cfg) return { variant: cfg.variant, label: cfg.label };
+  return { variant: "default", label: inv.status };
+}
+
+function formatExpectedDayMonth(ymd: string): string {
+  const [ys, ms, ds] = ymd.split("-");
+  const y = Number(ys);
+  const m = Number(ms);
+  const d = Number(ds);
+  if (!y || !m || !d) return "—";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${d} ${months[m - 1]}`;
+}
+
+/** Whole calendar days from `fromYmd` to `toYmd` (YYYY-MM-DD). */
+function calendarDaysDiff(fromYmd: string, toYmd: string): number {
+  const p = (s: string) => {
+    const [y, mo, d] = s.split("-").map(Number);
+    return Date.UTC(y, mo - 1, d);
+  };
+  return Math.round((p(toYmd) - p(fromYmd)) / 86400000);
+}
 
 /** Linked job fields used on the invoices list (status + schedule for columns). */
 type InvoiceListJobSnapshot = {
@@ -224,9 +278,12 @@ function computeInvoiceKpis(
   all: Invoice[],
   jobsByRef: Record<string, InvoiceListJobSnapshot>,
   customerPaidByJobId: Record<string, number>,
+  todayYmd: string,
 ) {
   const nonCancelled = all.filter((r) => r.status !== "cancelled");
-  const overdue = all.filter((r) => r.status === "overdue");
+  const overdue = all.filter(
+    (r) => r.status !== "cancelled" && r.status !== "paid" && invoiceIsDerivedOverdue(r, todayYmd),
+  );
   const overdueAmount = overdue.reduce((sum, r) => sum + invoiceListBalanceDue(r, jobsByRef, customerPaidByJobId), 0);
   const openStatuses = new Set<Invoice["status"]>(["pending", "partially_paid", "overdue", "draft", "audit_required"]);
   const openInvoices = all.filter((r) => openStatuses.has(r.status));
@@ -250,13 +307,6 @@ function computeInvoiceKpis(
     collectedInvoiceCount,
   };
 }
-
-const COLLECTION_STAGE_OPTIONS: InvoiceCollectionStage[] = [
-  "awaiting_deposit",
-  "deposit_collected",
-  "awaiting_final",
-  "completed",
-];
 
 /** Date used for period KPIs and the Date column (weekly batch → billing week; else created). */
 function invoiceEffectiveDateValue(inv: Pick<Invoice, "billing_week_start" | "created_at">): string {
@@ -303,6 +353,7 @@ interface LinkedJob {
   client_price: number;
   extras_amount?: number | null;
   partner_cost: number;
+  partner_agreed_value?: number | null;
   materials_cost: number;
   margin_percent: number;
   scheduled_date?: string;
@@ -330,8 +381,12 @@ export default function InvoicesPage() {
   const [monthAnchor, setMonthAnchor] = useState(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
+  const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
+  const periodMenuRef = useRef<HTMLDivElement>(null);
 
-  const [pipelineTab, setPipelineTab] = useState<InvoicePipelineTab>("all");
+  const [financeTab, setFinanceTab] = useState<InvoiceFinanceTab>("awaiting_payment");
+  /** When true, list shows only `audit_required` rows (from banner "Review now"). Cleared when changing tab. */
+  const [auditFocus, setAuditFocus] = useState(false);
   const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
   /** Soft-deleted rows (same period filter as active); shown only on Deleted tab. */
   const [deletedInvoices, setDeletedInvoices] = useState<Invoice[]>([]);
@@ -347,11 +402,14 @@ export default function InvoicesPage() {
   const [savingDueDateId, setSavingDueDateId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [accountNameById, setAccountNameById] = useState<Record<string, string>>({});
+  /** `accounts.id` → `logo_url` (HTTPS) for group header */
+  const [accountLogoById, setAccountLogoById] = useState<Record<string, string | null>>({});
   /** `job_reference` → `accounts.id` via job.client_id → clients.source_account_id */
   const [jobRefToSourceAccountId, setJobRefToSourceAccountId] = useState<Record<string, string>>({});
   /** `clients.full_name` (exact) → `source_account_id` when invoice has no job ref / no stored account */
   const [clientNameToSourceAccountId, setClientNameToSourceAccountId] = useState<Record<string, string>>({});
   const { profile } = useProfile();
+  const listTodayYmd = invoiceFinanceListTodayYmd();
 
   const loadPageData = useCallback(async () => {
     setLoading(true);
@@ -465,55 +523,61 @@ export default function InvoicesPage() {
   }, [loadPageData]);
 
   const kpis = useMemo(
-    () => computeInvoiceKpis(allInvoices, jobsByRef, customerPaidByJobId),
-    [allInvoices, jobsByRef, customerPaidByJobId],
+    () => computeInvoiceKpis(allInvoices, jobsByRef, customerPaidByJobId, listTodayYmd),
+    [allInvoices, jobsByRef, customerPaidByJobId, listTodayYmd],
   );
 
   const tabCounts = useMemo(() => {
-    const counts: Record<string, number> = {
-      all: allInvoices.length,
-      deleted: deletedInvoices.length,
+    const counts: Record<InvoiceFinanceTab, number> = {
+      all: allInvoices.filter((inv) => inv.status !== "cancelled").length,
+      draft: 0,
+      awaiting_payment: 0,
+      overdue: 0,
+      paid: 0,
+      cancelled: 0,
     };
     for (const inv of allInvoices) {
-      const ref = inv.job_reference?.trim();
-      const job = ref ? jobsByRef[ref] : undefined;
-      const tab = invoicePipelineTab(inv, job);
-      counts[tab] = (counts[tab] ?? 0) + 1;
+      if (inv.status === "draft") counts.draft += 1;
+      else if (inv.status === "paid") counts.paid += 1;
+      else if (inv.status === "cancelled") counts.cancelled += 1;
+      else if (invoiceIsDerivedOverdue(inv, listTodayYmd)) counts.overdue += 1;
+      else if (isAwaitingPaymentTabStatus(inv.status)) counts.awaiting_payment += 1;
     }
     return counts;
-  }, [allInvoices, deletedInvoices, jobsByRef]);
+  }, [allInvoices, listTodayYmd]);
 
-  const auditQueueCount = tabCounts.audit_required ?? 0;
+  const auditQueueCount = useMemo(
+    () => allInvoices.filter((inv) => inv.status === "audit_required").length,
+    [allInvoices],
+  );
 
   const allInvoicesForAux = useMemo(
     () => [...allInvoices, ...deletedInvoices],
     [allInvoices, deletedInvoices],
   );
 
-  /** Sum of invoice amounts for rows in the Ongoing pipeline tab with a linked job. */
-  const ongoingInvoicedTotal = useMemo(() => {
+  const awaitingPaymentKpi = useMemo(() => {
     let sum = 0;
     let n = 0;
     for (const inv of allInvoices) {
-      const ref = inv.job_reference?.trim();
-      if (!ref) continue;
-      const job = jobsByRef[ref];
-      if (invoicePipelineTab(inv, job) !== "ongoing") continue;
-      sum += Number(inv.amount);
+      if (!invoiceMatchesFinanceTab(inv, "awaiting_payment")) continue;
+      sum += invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
       n += 1;
     }
     return { sum, count: n };
-  }, [allInvoices, jobsByRef]);
+  }, [allInvoices, jobsByRef, customerPaidByJobId, listTodayYmd]);
+
+  /** Open balance KPI: awaiting (tab) + overdue (balance) − collected — aligned with the four summary cards. */
+  const openBalanceKpi = useMemo(() => {
+    const raw = awaitingPaymentKpi.sum + kpis.overdueAmount - kpis.collectedTotal;
+    const amount = Math.round(raw * 100) / 100;
+    const countInvoices = awaitingPaymentKpi.count + kpis.overdueCount;
+    return { amount, countInvoices };
+  }, [awaitingPaymentKpi.sum, awaitingPaymentKpi.count, kpis.overdueAmount, kpis.overdueCount, kpis.collectedTotal]);
 
   const filteredInvoices = useMemo(() => {
-    let rows = pipelineTab === "deleted" ? deletedInvoices : allInvoices;
-    if (pipelineTab !== "all" && pipelineTab !== "deleted") {
-      rows = rows.filter((inv) => {
-        const ref = inv.job_reference?.trim();
-        const job = ref ? jobsByRef[ref] : undefined;
-        return invoicePipelineTab(inv, job) === pipelineTab;
-      });
-    }
+    let rows = allInvoices.filter((inv) => invoiceMatchesFinanceTab(inv, financeTab));
+    if (auditFocus) rows = rows.filter((inv) => inv.status === "audit_required");
     if (search.trim()) {
       const q = search.toLowerCase();
       rows = rows.filter(
@@ -524,7 +588,7 @@ export default function InvoicesPage() {
       );
     }
     return rows;
-  }, [allInvoices, deletedInvoices, jobsByRef, pipelineTab, search]);
+  }, [allInvoices, financeTab, auditFocus, search, listTodayYmd]);
 
   const totalItems = filteredInvoices.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
@@ -536,11 +600,7 @@ export default function InvoicesPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [pipelineTab, search, periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]);
-
-  useEffect(() => {
-    if (pipelineTab === "deleted") setSelectedIds(new Set());
-  }, [pipelineTab]);
+  }, [financeTab, search, periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -643,18 +703,27 @@ export default function InvoicesPage() {
     const CHUNK = 50;
     (async () => {
       const map: Record<string, string> = {};
+      const logos: Record<string, string | null> = {};
       try {
         for (let i = 0; i < ids.length; i += CHUNK) {
           const chunk = ids.slice(i, i + CHUNK);
-          const { data: rows, error } = await getSupabase().from("accounts").select("id, company_name").in("id", chunk);
+          const { data: rows, error } = await getSupabase()
+            .from("accounts")
+            .select("id, company_name, logo_url")
+            .in("id", chunk);
           if (error) throw error;
           for (const row of rows ?? []) {
-            const r = row as { id: string; company_name?: string | null };
+            const r = row as { id: string; company_name?: string | null; logo_url?: string | null };
             const nm = (r.company_name ?? "").trim();
             map[r.id] = nm || "—";
+            const lu = (r.logo_url ?? "").trim();
+            logos[r.id] = lu || null;
           }
         }
-        if (!cancelled) setAccountNameById((prev) => ({ ...prev, ...map }));
+        if (!cancelled) {
+          setAccountNameById((prev) => ({ ...prev, ...map }));
+          setAccountLogoById((prev) => ({ ...prev, ...logos }));
+        }
       } catch {
         /* keep previous cache */
       }
@@ -929,29 +998,29 @@ export default function InvoicesPage() {
     customerPaidByJobId,
   ]);
 
-  const pipelineTabs = useMemo(
+  const financeTabs = useMemo(
     () =>
-      INVOICE_PIPELINE_TAB_ORDER.map((id) => ({
+      INVOICE_FINANCE_TAB_ORDER.map((id) => ({
         id,
         label:
-          id === "audit_required"
-            ? "Audit required"
-            : id === "ongoing"
-              ? "Ongoing"
-              : id === "review_approve"
-                ? "Review & approve"
-                : id === "awaiting_payment"
-                  ? "Awaiting payment"
-                  : id === "overdue"
-                    ? "Overdue"
-                    : id === "paid"
-                      ? "Paid"
-                      : id === "all"
-                        ? "All"
-                        : id === "deleted"
-                          ? "Deleted"
-                          : "Cancelled",
+          id === "all"
+            ? "All"
+            : id === "draft"
+              ? "Draft"
+              : id === "awaiting_payment"
+                ? "Awaiting payment"
+                : id === "overdue"
+                  ? "Overdue"
+                  : id === "paid"
+                    ? "Paid"
+                    : "Cancelled",
         count: tabCounts[id] ?? 0,
+        accent:
+          id === "awaiting_payment" && (tabCounts.awaiting_payment ?? 0) > 0
+            ? ("amber" as const)
+            : id === "overdue" && (tabCounts.overdue ?? 0) > 0
+              ? ("red" as const)
+              : undefined,
       })),
     [tabCounts],
   );
@@ -967,9 +1036,8 @@ export default function InvoicesPage() {
         totalAmount: number;
         totalDue: number;
         totalPaid: number;
-        paidCount: number;
-        pendingCount: number;
-        overdueCount: number;
+        awaitingInvoiceCount: number;
+        paidInvoiceCount: number;
       }
     >();
     for (const inv of filteredInvoices) {
@@ -990,17 +1058,15 @@ export default function InvoicesPage() {
           totalAmount: 0,
           totalDue: 0,
           totalPaid: 0,
-          paidCount: 0,
-          pendingCount: 0,
-          overdueCount: 0,
+          awaitingInvoiceCount: 0,
+          paidInvoiceCount: 0,
         };
       row.invoices.push(inv);
       row.totalAmount += Number(inv.amount) || 0;
       row.totalDue += due;
       row.totalPaid += paid;
-      if (inv.status === "paid") row.paidCount += 1;
-      else if (inv.status === "overdue") row.overdueCount += 1;
-      else row.pendingCount += 1;
+      if (inv.status === "paid") row.paidInvoiceCount += 1;
+      else if (invoiceMatchesFinanceTab(inv, "awaiting_payment")) row.awaitingInvoiceCount += 1;
       groups.set(key, row);
     }
     return [...groups.values()]
@@ -1024,260 +1090,228 @@ export default function InvoicesPage() {
     accountNameById,
     jobsByRef,
     customerPaidByJobId,
+    listTodayYmd,
   ]);
 
   const [expandedAccountGroups, setExpandedAccountGroups] = useState<Record<string, boolean>>({});
 
+  /** Stable signature of group keys + order — when it changes, reset accordion: só o 1.º aberto. */
+  const accountGroupKeysSig = useMemo(
+    () => groupedInvoicesByAccount.map((g) => g.key).join("|"),
+    [groupedInvoicesByAccount],
+  );
+  const prevAccountGroupKeysSig = useRef<string | null>(null);
+
   useEffect(() => {
-    setExpandedAccountGroups((prev) => {
+    if (prevAccountGroupKeysSig.current === accountGroupKeysSig) return;
+    prevAccountGroupKeysSig.current = accountGroupKeysSig;
+    setExpandedAccountGroups(() => {
       const next: Record<string, boolean> = {};
-      for (const g of groupedInvoicesByAccount) next[g.key] = prev[g.key] ?? true;
+      groupedInvoicesByAccount.forEach((g, i) => {
+        next[g.key] = i === 0;
+      });
       return next;
     });
-  }, [groupedInvoicesByAccount]);
+  }, [accountGroupKeysSig, groupedInvoicesByAccount]);
 
-  const columns: Column<Invoice>[] = [
-    {
-      key: "reference", label: "Invoice", width: "140px",
-      render: (item) => <p className="text-sm font-semibold text-text-primary">{item.reference}</p>,
-    },
-    {
-      key: "source_account",
-      label: "Account",
-      minWidth: "168px",
-      cellClassName: "align-top",
-      render: (item) => {
-        const id = effectiveInvoiceSourceAccountId(item, jobRefToSourceAccountId, clientNameToSourceAccountId);
-        const name = id ? accountNameById[id] : null;
-        return (
-          <div className="flex items-start gap-2 min-w-0">
-            <Building2 className="h-3.5 w-3.5 text-text-tertiary shrink-0 mt-0.5" />
-            <div className="min-w-0">
-              {!id ? (
-                <p className="text-sm text-text-tertiary">—</p>
-              ) : name ? (
-                <p className="text-sm font-medium text-text-primary truncate" title={name}>
-                  {name}
-                </p>
-              ) : (
-                <p className="text-xs text-text-tertiary">Loading…</p>
-              )}
-              <p className="text-[11px] text-text-tertiary truncate mt-0.5" title={item.client_name}>
-                Client · {item.client_name}
-              </p>
-            </div>
-          </div>
-        );
-      },
-    },
-    {
-      key: "client_name", label: "Client",
-      render: (item) => (
-        <div className="flex items-center gap-2.5">
-          <Avatar name={item.client_name} size="sm" />
-          <div>
-            <p className="text-sm font-medium text-text-primary">{item.client_name}</p>
-            {item.job_reference && <p className="text-[11px] text-text-tertiary">{item.job_reference}</p>}
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: "job_scheduled_date",
-      label: "Date (job date)",
-      render: (item) => {
-        const ref = item.job_reference?.trim();
-        const job = ref ? jobsByRef[ref] : undefined;
-        const ymd = displayDateYmdForInvoiceRow(item, job);
-        return (
-          <span className="text-sm text-text-secondary">{ymd ? formatDate(ymd) : "—"}</span>
-        );
-      },
-    },
-    {
-      key: "amount", label: "Amount", align: "right",
-      render: (item) => (
-        <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(item.amount)}</span>
-      ),
-    },
-    {
-      key: "amount_due",
-      label: "Amount due",
-      align: "right",
-      render: (item) => {
-        const due = invoiceListBalanceDue(item, jobsByRef, customerPaidByJobId);
-        const settled = due <= 0.02;
-        return (
-          <span
-            className={cn(
-              "text-sm font-medium tabular-nums",
-              settled && "text-text-tertiary",
-              !settled && item.status === "overdue" && "text-red-600",
-              !settled && item.status !== "overdue" && "text-text-primary",
-            )}
-          >
-            {formatCurrency(due)}
-          </span>
-        );
-      },
-    },
-    {
-      key: "due_date",
-      label: "Due Date",
-      render: (item) => {
-        const canEditDue =
-          !item.deleted_at && item.status !== "paid" && item.status !== "cancelled";
-        const ymd = item.due_date ? String(item.due_date).slice(0, 10) : "";
-        if (!canEditDue) {
-          return (
-            <span className={`text-sm ${item.status === "overdue" ? "text-red-600 font-medium" : "text-text-secondary"}`}>
-              {formatDate(item.due_date)}
-            </span>
-          );
-        }
-        return (
-          <div
-            className="min-w-[9.5rem] max-w-[12rem]"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <Input
-              type="date"
-              className="h-8 text-sm"
-              value={ymd}
-              disabled={savingDueDateId === item.id}
-              aria-label={`Due date for ${item.reference}`}
-              onChange={(e) => void handleInvoiceDueDateSave(item, e.target.value)}
-            />
-          </div>
-        );
-      },
-    },
-    {
-      key: "job_status", label: "Status",
-      render: (item) => {
-        const ref = item.job_reference?.trim();
-        const job = ref ? jobsByRef[ref] : undefined;
-        const js = job?.status;
-        const jConf = js ? (jobStatusColumnConfig[js] ?? { label: js.replace(/_/g, " "), variant: "default" as const }) : null;
-        const hasLink = !!item.stripe_payment_link_url;
-        const stripePd = item.stripe_payment_status === "paid";
-        return (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {jConf ? (
-              <Badge variant={jConf.variant} dot>
-                {jConf.label}
-              </Badge>
-            ) : (
-              <span className="text-sm text-text-tertiary">—</span>
-            )}
-            {hasLink && (
-              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                stripePd ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700" : "bg-blue-50 dark:bg-blue-950/30 text-blue-700"
-              }`}>
-                <CreditCard className="h-2.5 w-2.5" />
-                {stripePd ? "Stripe Paid" : "Stripe"}
-              </span>
-            )}
-          </div>
-        );
-      },
-    },
-  ];
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      const el = periodMenuRef.current;
+      if (!el || el.contains(e.target as Node)) return;
+      setPeriodMenuOpen(false);
+    };
+    if (periodMenuOpen) document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [periodMenuOpen]);
 
   return (
     <PageTransition>
       <div className="space-y-5">
         <PageHeader
           title="Invoices"
-          subtitle={`Period bar: All · Monthly · Week · Date range — default is the current calendar month. Tabs: Ongoing = job still open (not completed, awaiting payment, or cancelled); Review & approve = job completed; Awaiting payment = job awaiting payment after approve. ${weekPeriodHelpText()}`}
+          infoTooltip={`Period: All · Month · Week · Date range — default is the current calendar month where applicable. ${weekPeriodHelpText()}`}
         >
-          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>Export CSV</Button>
-          <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>Create Invoice</Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="relative" ref={periodMenuRef}>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<CalendarRange className="h-3.5 w-3.5" />}
+                onClick={() => setPeriodMenuOpen((o) => !o)}
+                className={cn(periodMode !== "all" && "border-primary/40 bg-primary/5")}
+              >
+                {periodMode === "all" ? "Period" : PERIOD_HEADER_LABEL[periodMode]}
+              </Button>
+              {periodMenuOpen ? (
+                <div className="absolute top-full right-0 z-50 mt-1 w-[min(calc(100vw-1.5rem),24rem)] rounded-xl border border-border bg-card p-3 shadow-lg">
+                  <FinanceWeekRangeBar
+                    mode={periodMode}
+                    onModeChange={setPeriodMode}
+                    weekAnchor={weekAnchor}
+                    onWeekAnchorChange={setWeekAnchor}
+                    monthAnchor={monthAnchor}
+                    onMonthAnchorChange={setMonthAnchor}
+                    rangeFrom={rangeFrom}
+                    rangeTo={rangeTo}
+                    onRangeFromChange={setRangeFrom}
+                    onRangeToChange={setRangeTo}
+                    hideAllDescription
+                    className="!rounded-none !border-0 !bg-transparent !p-0 !shadow-none sm:!p-0 max-h-[min(70vh,520px)] overflow-y-auto overflow-x-hidden"
+                  />
+                </div>
+              ) : null}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+              onClick={() => void loadPageData()}
+              title="Reload invoices from the server"
+            >
+              Refresh
+            </Button>
+            <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>
+              Export
+            </Button>
+            <Button
+              size="sm"
+              className="bg-[#ED4B00] text-white border-transparent hover:bg-[#ED4B00]/92 shadow-sm"
+              icon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => setCreateOpen(true)}
+            >
+              Create Invoice
+            </Button>
+          </div>
         </PageHeader>
 
-        <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
-          <FinanceWeekRangeBar
-            mode={periodMode}
-            onModeChange={setPeriodMode}
-            weekAnchor={weekAnchor}
-            onWeekAnchorChange={setWeekAnchor}
-            monthAnchor={monthAnchor}
-            onMonthAnchorChange={setMonthAnchor}
-            rangeFrom={rangeFrom}
-            rangeTo={rangeTo}
-            onRangeFromChange={setRangeFrom}
-            onRangeToChange={setRangeTo}
-          />
-        </div>
-
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard
-            title="Open invoices"
-            value={kpis.balanceDueOpen}
-            format="currency"
-            description={`${kpis.openInvoiceCount} unpaid (open balance) · ${kpiPeriodDesc}`}
-            icon={Receipt}
-            accent="purple"
-          />
-          <KpiCard
-            title="Ongoing"
-            value={ongoingInvoicedTotal.sum}
-            format="currency"
-            description={
-              ongoingInvoicedTotal.count > 0
-                ? `${ongoingInvoicedTotal.count} invoice${ongoingInvoicedTotal.count === 1 ? "" : "s"} · linked jobs in Ongoing tab · ${kpiPeriodDesc}`
-                : `Linked jobs in Ongoing tab · ${kpiPeriodDesc}`
-            }
-            icon={Clock}
-            accent="amber"
-          />
-          <KpiCard
-            title="Collected"
-            value={kpis.collectedTotal}
-            format="currency"
-            description={
-              kpis.collectedInvoiceCount > 0
-                ? `${kpis.collectedInvoiceCount} invoice${kpis.collectedInvoiceCount === 1 ? "" : "s"} · paid + partial payments · ${kpiPeriodDesc}`
-                : `Paid & partial (amount paid) · ${kpiPeriodDesc}`
-            }
-            icon={Banknote}
-            accent="emerald"
-          />
-          <KpiCard
-            title="Overdue"
-            value={kpis.overdueAmount}
-            format="currency"
-            description={
-              kpis.overdueCount > 0
-                ? `${kpis.overdueCount} overdue · balance due · ${kpiPeriodDesc}`
-                : `No overdue in period · ${kpiPeriodDesc}`
-            }
-            icon={CircleAlert}
-            accent="primary"
-          />
-        </StaggerContainer>
-
-        <div className="rounded-xl border border-border-light bg-amber-50/50 dark:bg-amber-950/20 px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
-          <div className="flex items-center gap-2 text-sm text-text-secondary">
-            <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0" />
-            <span>
-              <strong className="text-text-primary">Audit required</strong> when a client contests an invoice (mark via bulk or set status).{" "}
-              <span className="text-text-tertiary">({auditQueueCount} in period)</span>
-            </span>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Open balance</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">
+                {formatCurrency(openBalanceKpi.amount)}
+              </p>
+              <p className="text-[11px] text-text-secondary" title="Awaiting payment + overdue − collected">
+                Awaiting + overdue − collected · {openBalanceKpi.countInvoices} invoice
+                {openBalanceKpi.countInvoices === 1 ? "" : "s"}
+              </p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+              <Receipt className="h-4 w-4" aria-hidden />
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Awaiting payment</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(awaitingPaymentKpi.sum)}</p>
+              <p className="text-[11px] text-text-secondary">{awaitingPaymentKpi.count} invoice{awaitingPaymentKpi.count === 1 ? "" : "s"}</p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+              <Clock className="h-4 w-4" aria-hidden />
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Collected</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(kpis.collectedTotal)}</p>
+              <p className="text-[11px] text-text-secondary">{kpis.collectedInvoiceCount} paid</p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
+              <Check className="h-4 w-4" aria-hidden />
+            </div>
+          </div>
+          <div
+            className={cn(
+              "flex items-center justify-between gap-3 rounded-xl border bg-card px-3 py-2.5",
+              kpis.overdueCount > 0 ? "border-red-200/90 dark:border-red-900/50" : "border-border-light",
+            )}
+          >
+            <div className="min-w-0">
+              <p
+                className={cn(
+                  "text-[10px] font-semibold uppercase tracking-wide",
+                  kpis.overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-text-tertiary",
+                )}
+              >
+                Overdue
+              </p>
+              <p
+                className={cn(
+                  "text-[20px] font-bold tabular-nums leading-tight",
+                  kpis.overdueAmount > 0.02 ? "text-red-600 dark:text-red-400" : "text-[#020040]",
+                )}
+              >
+                {formatCurrency(kpis.overdueAmount)}
+              </p>
+              <p
+                className={cn(
+                  "text-[11px] font-medium",
+                  kpis.overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-text-secondary",
+                )}
+              >
+                {kpis.overdueCount} overdue
+              </p>
+            </div>
+            <div
+              className={cn(
+                "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg",
+                kpis.overdueAmount > 0.02
+                  ? "bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400"
+                  : "bg-surface-tertiary text-text-tertiary",
+              )}
+            >
+              <CircleAlert className="h-4 w-4" aria-hidden />
+            </div>
           </div>
         </div>
 
-        <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-            <Tabs
-              tabs={pipelineTabs}
-              activeTab={pipelineTab}
-              onChange={(id) => setPipelineTab(id as InvoicePipelineTab)}
-            />
-            <div className="flex items-center gap-2 flex-wrap shrink-0">
-              <SearchInput placeholder="Search ref, client, job…" className="w-52 max-w-full" value={search} onChange={(e) => setSearch(e.target.value)} />
-              <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
+        {auditQueueCount > 0 ? (
+          <div
+            className="flex flex-wrap items-center gap-3 rounded-lg px-4 py-3"
+            style={{ backgroundColor: "#FFF8F3", borderWidth: 0.5, borderColor: "#F5CFB8" }}
+          >
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#ED4B00]/12 text-[#ED4B00] text-sm font-bold">
+              !
+            </div>
+            <p className="text-sm text-text-secondary flex-1 min-w-0">
+              <span className="font-semibold text-text-primary">{auditQueueCount}</span> invoice{auditQueueCount === 1 ? "" : "s"} need
+              audit — clients contested.{" "}
+              <button
+                type="button"
+                className="font-semibold text-primary underline underline-offset-2 hover:opacity-90"
+                onClick={() => {
+                  setFinanceTab("awaiting_payment");
+                  setAuditFocus(true);
+                }}
+              >
+                Review now
+              </button>
+            </p>
+          </div>
+        ) : null}
+
+        <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
+            <div className="min-w-0 flex-1 overflow-x-auto pb-1 -mb-1 [scrollbar-width:thin]">
+              <Tabs
+                tabs={financeTabs}
+                activeTab={financeTab}
+                onChange={(id) => {
+                  setAuditFocus(false);
+                  setFinanceTab(id as InvoiceFinanceTab);
+                }}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>
+                Export
+              </Button>
+              <SearchInput
+                placeholder="Search ref, client, job…"
+                className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
           </div>
 
@@ -1291,33 +1325,66 @@ export default function InvoicesPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {groupedInvoicesByAccount.map((group) => {
-                const open = expandedAccountGroups[group.key] ?? true;
+              {groupedInvoicesByAccount.map((group, groupIndex) => {
+                const open = expandedAccountGroups[group.key] ?? groupIndex === 0;
+                const avBg = accountHeaderAvatarBg(group.accountName);
+                const accountLogo =
+                  group.accountId != null ? (accountLogoById[group.accountId] ?? "").trim() : "";
                 return (
                   <div key={group.key} className="rounded-xl border border-border-light bg-card overflow-hidden">
                     <button
                       type="button"
-                      onClick={() => setExpandedAccountGroups((prev) => ({ ...prev, [group.key]: !open }))}
-                      className="w-full px-4 py-3 border-b border-border-light bg-surface-hover/60 text-left"
+                      onClick={() =>
+                        setExpandedAccountGroups((prev) => {
+                          const wasOpen = prev[group.key] ?? groupIndex === 0;
+                          return { ...prev, [group.key]: !wasOpen };
+                        })
+                      }
+                      className="w-full px-[14px] py-2.5 text-left bg-[#FAFAFB] border-b border-border-light flex items-center justify-between gap-3"
                     >
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        {accountLogo ? (
+                          <Avatar
+                            name={group.accountName}
+                            src={accountLogo}
+                            size="sm"
+                            className="shrink-0 ring-0"
+                          />
+                        ) : (
+                          <div
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                            style={{ backgroundColor: avBg }}
+                            aria-hidden
+                          >
+                            {group.accountName.slice(0, 1).toUpperCase()}
+                          </div>
+                        )}
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <Building2 className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
-                            <p className="text-sm font-semibold text-text-primary truncate">{group.accountName}</p>
-                            <span className="text-xs text-text-tertiary">{group.invoices.length} invoice{group.invoices.length === 1 ? "" : "s"}</span>
-                          </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-text-tertiary">
-                            <span>Total {formatCurrency(group.totalAmount)}</span>
-                            <span>Paid {formatCurrency(group.totalPaid)}</span>
-                            <span className={group.totalDue > 0.02 ? "text-text-primary font-medium" : undefined}>Pending {formatCurrency(group.totalDue)}</span>
-                            <span>Overdue {group.overdueCount}</span>
-                          </div>
+                          <p className="text-[13px] font-medium text-[#020040] truncate">{group.accountName}</p>
+                          <p className="text-[10px] text-text-tertiary">
+                            {group.awaitingInvoiceCount} awaiting · {group.paidInvoiceCount} paid
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-1">
+                        <div className="text-right">
+                          <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Pending</p>
+                          <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">{formatCurrency(group.totalDue)}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Paid</p>
+                          <p className="text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                            {formatCurrency(group.totalPaid)}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total</p>
+                          <p className="text-sm font-semibold tabular-nums text-[#020040]">{formatCurrency(group.totalAmount)}</p>
                         </div>
                         {open ? (
-                          <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" />
+                          <ChevronUp className="h-4 w-4 text-text-tertiary shrink-0" aria-hidden />
                         ) : (
-                          <ChevronRight className="h-4 w-4 text-text-tertiary shrink-0" />
+                          <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" aria-hidden />
                         )}
                       </div>
                     </button>
@@ -1326,36 +1393,236 @@ export default function InvoicesPage() {
                         {group.invoices.map((inv) => {
                           const ref = inv.job_reference?.trim();
                           const job = ref ? jobsByRef[ref] : undefined;
-                          const status = statusConfig[inv.status] ?? { label: inv.status, variant: "default" as const };
+                          const ymd = displayDateYmdForInvoiceRow(inv, job);
+                          const due = invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
+                          const paidRow = invoiceListCollectedAmount(inv, jobsByRef, customerPaidByJobId);
+                          const isSimpleStatus = inv.status === "paid" || inv.status === "cancelled";
+                          const statusDisp = invoiceRowStatusDisplay(inv, listTodayYmd);
+                          const showQuick =
+                            inv.status === "draft" ||
+                            inv.status === "pending" ||
+                            inv.status === "partially_paid" ||
+                            inv.status === "overdue" ||
+                            inv.status === "audit_required";
+                          const expYmd = invoiceExpectedDateYmd(inv);
+                          const iconBtnClass =
+                            "inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] border-[0.5px] border-[#D8D8DD] bg-white p-0 transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
+                          const actionIcons =
+                            inv.status === "draft" ? (
+                              <>
+                                <button
+                                  type="button"
+                                  title="Approve & send"
+                                  className={iconBtnClass}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleStatusChange(inv, "pending");
+                                  }}
+                                >
+                                  <Send className="h-3.5 w-3.5 text-[#020040]" strokeWidth={2} aria-hidden />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Edit"
+                                  className={iconBtnClass}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedInvoice(inv);
+                                  }}
+                                >
+                                  <PenLine className="h-3.5 w-3.5 text-[#020040]" aria-hidden />
+                                </button>
+                              </>
+                            ) : showQuick ? (
+                              <>
+                                <button
+                                  type="button"
+                                  title="Mark as paid"
+                                  className={iconBtnClass}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleStatusChange(inv, "paid");
+                                  }}
+                                >
+                                  <Check className="h-3.5 w-3.5" style={{ color: "#0F6E56" }} strokeWidth={2.5} aria-hidden />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Edit"
+                                  className={iconBtnClass}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedInvoice(inv);
+                                  }}
+                                >
+                                  <PenLine className="h-3.5 w-3.5 text-[#020040]" aria-hidden />
+                                </button>
+                              </>
+                            ) : null;
                           return (
-                            <button
-                              type="button"
+                            <div
                               key={inv.id}
+                              role="button"
+                              tabIndex={0}
                               onClick={() => setSelectedInvoice(inv)}
-                              className="w-full px-4 py-3 text-left hover:bg-surface-hover/50 transition-colors"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  setSelectedInvoice(inv);
+                                }
+                              }}
+                              className="w-full bg-white px-3 py-2.5 text-left transition-colors cursor-pointer hover:bg-surface-hover/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:px-4 min-[900px]:py-3"
                             >
-                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-semibold text-text-primary truncate">
-                                    {inv.reference}
-                                    <span className="font-normal text-text-tertiary ml-2">{inv.client_name}</span>
-                                  </p>
-                                  <p className="text-[11px] text-text-tertiary truncate mt-0.5">
-                                    {inv.job_reference ? `${inv.job_reference} · ` : ""}
-                                    {displayDateYmdForInvoiceRow(inv, job) ? formatDate(displayDateYmdForInvoiceRow(inv, job)!) : "No job date"}
-                                  </p>
-                                </div>
-                                <div className="flex items-center gap-3 sm:gap-4 shrink-0">
-                                  <div className="text-right">
-                                    <p className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(inv.amount)}</p>
-                                    <p className="text-[11px] tabular-nums text-text-tertiary">
-                                      Due {formatCurrency(invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId))}
+                              {isSimpleStatus ? (
+                                <div className="flex items-center justify-between gap-3 min-w-0">
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-semibold text-text-primary truncate">{inv.reference}</p>
+                                    <p className="text-sm font-medium text-text-primary truncate">{inv.client_name}</p>
+                                    <p className="mt-0.5 truncate text-[11px] text-text-tertiary">
+                                      {inv.job_reference ? `${inv.job_reference} · ` : ""}
+                                      {ymd ? formatDate(ymd) : "—"}
                                     </p>
                                   </div>
-                                  <Badge variant={status.variant} dot>{status.label}</Badge>
+                                  <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+                                    {inv.status === "paid" ? (
+                                      <div className="text-right">
+                                        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">
+                                          Paid
+                                        </p>
+                                        <p className="text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                          {formatCurrency(paidRow)}
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <Badge variant="default" size="sm">
+                                        Cancelled
+                                      </Badge>
+                                    )}
+                                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />
+                                  </div>
                                 </div>
-                              </div>
-                            </button>
+                              ) : (
+                                <>
+                                  <div className="hidden min-[900px]:grid grid-cols-[1fr_minmax(0,138px)_minmax(0,120px)_minmax(0,92px)_60px] items-center gap-2 min-[1200px]:gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-semibold text-text-primary truncate">{inv.reference}</p>
+                                      <p className="text-sm font-medium text-text-primary truncate">{inv.client_name}</p>
+                                      <p className="mt-0.5 truncate text-[11px] text-text-tertiary">
+                                        {inv.job_reference ? `${inv.job_reference} · ` : ""}
+                                        {ymd ? formatDate(ymd) : "—"}
+                                      </p>
+                                    </div>
+                                    <div className="min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0">
+                                      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">
+                                        Expected
+                                      </span>
+                                      {!expYmd ? (
+                                        <span className="text-sm text-text-tertiary">—</span>
+                                      ) : listTodayYmd > expYmd ? (
+                                        <span className="inline-flex min-w-0 items-center gap-0.5 whitespace-nowrap text-sm font-medium text-red-700 dark:text-red-400">
+                                          <AlertCircle
+                                            className="h-3.5 w-3.5 shrink-0 text-red-500"
+                                            strokeWidth={2.5}
+                                            aria-hidden
+                                          />
+                                          {formatExpectedDayMonth(expYmd)} · {calendarDaysDiff(expYmd, listTodayYmd)}d late
+                                        </span>
+                                      ) : (
+                                        <span className="whitespace-nowrap text-sm text-text-secondary">
+                                          {formatExpectedDayMonth(expYmd)} · {calendarDaysDiff(listTodayYmd, expYmd)}d
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 text-right">
+                                      <div className="inline-flex flex-col items-end gap-0.5">
+                                        <span className="text-sm font-semibold tabular-nums text-text-primary">
+                                          {formatCurrency(inv.amount)}
+                                        </span>
+                                        {due > 0.02 ? (
+                                          <span className="text-[11px] tabular-nums font-medium text-amber-700 dark:text-amber-400">
+                                            Due {formatCurrency(due)}
+                                          </span>
+                                        ) : null}
+                                        {paidRow > 0.02 ? (
+                                          <span className="text-[11px] tabular-nums font-medium text-emerald-700 dark:text-emerald-400">
+                                            Paid {formatCurrency(paidRow)}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                    <div className="flex justify-center">
+                                      <Badge variant={statusDisp.variant} dot size="sm">
+                                        {statusDisp.label}
+                                      </Badge>
+                                    </div>
+                                    <div className="flex min-w-[60px] items-center justify-end gap-1">
+                                      <div className="hidden min-[700px]:flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                        {actionIcons}
+                                      </div>
+                                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />
+                                    </div>
+                                  </div>
+
+                                  <div className="min-[900px]:hidden space-y-1.5">
+                                    <div className="flex justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-semibold text-text-primary">{inv.reference}</p>
+                                        <p className="text-sm font-medium text-text-primary">{inv.client_name}</p>
+                                        <p className="mt-0.5 text-[11px] text-text-tertiary">
+                                          {inv.job_reference ? `${inv.job_reference} · ` : ""}
+                                          {ymd ? formatDate(ymd) : "—"}
+                                        </p>
+                                      </div>
+                                      <div className="shrink-0 self-start text-right">
+                                        <div className="inline-flex flex-col items-end gap-0.5">
+                                          <span className="text-sm font-semibold tabular-nums text-text-primary">
+                                            {formatCurrency(inv.amount)}
+                                          </span>
+                                          {due > 0.02 ? (
+                                            <span className="text-[11px] tabular-nums font-medium text-amber-700 dark:text-amber-400">
+                                              Due {formatCurrency(due)}
+                                            </span>
+                                          ) : null}
+                                          {paidRow > 0.02 ? (
+                                            <span className="text-[11px] tabular-nums font-medium text-emerald-700 dark:text-emerald-400">
+                                              Paid {formatCurrency(paidRow)}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 text-left">
+                                      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">
+                                        Expected
+                                      </span>
+                                      {!expYmd ? (
+                                        <span className="text-sm text-text-tertiary">—</span>
+                                      ) : listTodayYmd > expYmd ? (
+                                        <span className="inline-flex min-w-0 items-center gap-0.5 whitespace-nowrap text-sm font-medium text-red-700 dark:text-red-400">
+                                          <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-500" strokeWidth={2.5} aria-hidden />
+                                          {formatExpectedDayMonth(expYmd)} · {calendarDaysDiff(expYmd, listTodayYmd)}d late
+                                        </span>
+                                      ) : (
+                                        <span className="whitespace-nowrap text-sm text-text-secondary">
+                                          {formatExpectedDayMonth(expYmd)} · {calendarDaysDiff(listTodayYmd, expYmd)}d
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2">
+                                      <Badge variant={statusDisp.variant} dot size="sm">
+                                        {statusDisp.label}
+                                      </Badge>
+                                      <div className="flex shrink-0 items-center gap-1">
+                                        <div className="hidden min-[700px]:flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                          {actionIcons}
+                                        </div>
+                                        <ChevronRight className="h-3.5 w-3.5 text-text-tertiary" aria-hidden />
+                                      </div>
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -1408,15 +1675,16 @@ function InvoiceDetailDrawer({
     linkUrl?: string; linkId?: string; paymentStatus?: string; paidAt?: string; customerEmail?: string;
   }>({});
   const [linkCopied, setLinkCopied] = useState(false);
-  const [collStage, setCollStage] = useState<InvoiceCollectionStage>("awaiting_final");
-  const [collLocked, setCollLocked] = useState(false);
-  const [savingColl, setSavingColl] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
   const [partialPaymentDate, setPartialPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [savingPartial, setSavingPartial] = useState(false);
-  const [dueDateEdit, setDueDateEdit] = useState("");
-  const [savingDueDate, setSavingDueDate] = useState(false);
-  const [collectionSectionOpen, setCollectionSectionOpen] = useState(false);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentMode, setPaymentMode] = useState<"full" | "partial">("full");
+  const [paymentMethod, setPaymentMethod] = useState<"stripe" | "bank_transfer" | "cash" | "other">("stripe");
+  const [editingBreakdown, setEditingBreakdown] = useState(false);
+  const [breakdownPartnerCost, setBreakdownPartnerCost] = useState("");
+  const [partnerVatRegistered, setPartnerVatRegistered] = useState(false);
+  const [accountName, setAccountName] = useState("");
   /** Linked Job tab: sales & costs breakdown (collapsed by default). */
   const [linkedJobSalesCostsOpen, setLinkedJobSalesCostsOpen] = useState(false);
   /** Sum of customer_deposit + customer_final on linked job (aligns invoice paid/due with job card). */
@@ -1440,13 +1708,14 @@ function InvoiceDetailDrawer({
       customerEmail: invoice.stripe_customer_email ?? undefined,
     });
     setLinkCopied(false);
-    setCollStage(invoice.collection_stage ?? "awaiting_final");
-    setCollLocked(!!invoice.collection_stage_locked);
     setPartialAmount("");
     setPartialPaymentDate(new Date().toISOString().slice(0, 10));
-    setDueDateEdit(invoice.due_date ? String(invoice.due_date).slice(0, 10) : "");
-    setSavingDueDate(false);
-    setCollectionSectionOpen(false);
+    setPaymentMode("full");
+    setPaymentMethod("stripe");
+    setPaymentModalOpen(false);
+    setEditingBreakdown(false);
+    setPartnerVatRegistered(false);
+    setAccountName("");
     setLinkedJobSalesCostsOpen(false);
     setJobCustomerPaidSum(null);
 
@@ -1463,6 +1732,17 @@ function InvoiceDetailDrawer({
             .maybeSingle();
           if (cancelled) return;
           setLinkedJob((jobData ?? null) as LinkedJob | null);
+          const partnerId = (jobData as { partner_id?: string | null } | null)?.partner_id?.trim();
+          if (partnerId) {
+            const { data: partnerData } = await supabase
+              .from("partners")
+              .select("vat_registered")
+              .eq("id", partnerId)
+              .maybeSingle();
+            if (!cancelled) {
+              setPartnerVatRegistered(!!(partnerData as { vat_registered?: boolean | null } | null)?.vat_registered);
+            }
+          }
 
           const jid = (jobData as { id?: string } | null)?.id;
           if (jid) {
@@ -1505,6 +1785,19 @@ function InvoiceDetailDrawer({
       setLoadingJob(false);
     }
 
+    if (invoice.source_account_id?.trim()) {
+      void supabase
+        .from("accounts")
+        .select("full_name")
+        .eq("id", invoice.source_account_id.trim())
+        .maybeSingle()
+        .then(({ data }) => {
+          if (!cancelled) {
+            setAccountName((data as { full_name?: string | null } | null)?.full_name?.trim() || "");
+          }
+        });
+    }
+
     setLoadingRelated(true);
     supabase
       .from("invoices")
@@ -1529,6 +1822,25 @@ function InvoiceDetailDrawer({
       cancelled = true;
     };
   }, [invoice]);
+
+  useEffect(() => {
+    if (!invoice) return;
+    const charged = Math.max(0, Math.round(Number(invoice.amount ?? 0) * 100) / 100);
+    const partnerCost = linkedJob
+      ? Math.max(
+        0,
+        Math.min(
+          charged,
+          Math.round(
+            partnerSelfBillGrossAmount(
+              linkedJob as Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost">,
+            ) * 100,
+          ) / 100,
+        ),
+      )
+      : charged;
+    setBreakdownPartnerCost(String(partnerCost));
+  }, [invoice, linkedJob]);
 
   const handleGenerateLink = async () => {
     if (!invoice) return;
@@ -1580,44 +1892,6 @@ function InvoiceDetailDrawer({
     }
   };
 
-  const saveCollectionStage = async () => {
-    if (!invoice || !onInvoiceUpdated) return;
-    setSavingColl(true);
-    try {
-      const updated = await updateInvoice(invoice.id, {
-        collection_stage: collStage,
-        collection_stage_locked: collLocked,
-      });
-      onInvoiceUpdated(updated);
-      toast.success("Collection settings saved");
-    } catch {
-      toast.error("Failed to save collection settings");
-    } finally {
-      setSavingColl(false);
-    }
-  };
-
-  const saveDueDate = async () => {
-    if (!invoice || !onInvoiceUpdated) return;
-    const trimmed = dueDateEdit.trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-      toast.error("Enter a valid due date");
-      return;
-    }
-    const prev = invoice.due_date ? String(invoice.due_date).slice(0, 10) : "";
-    if (trimmed === prev) return;
-    setSavingDueDate(true);
-    try {
-      const updated = await updateInvoice(invoice.id, { due_date: trimmed });
-      onInvoiceUpdated(updated);
-      toast.success("Due date updated");
-    } catch {
-      toast.error("Failed to update due date");
-    } finally {
-      setSavingDueDate(false);
-    }
-  };
-
   const handleCopyLink = () => {
     if (stripeState.linkUrl) {
       navigator.clipboard.writeText(stripeState.linkUrl);
@@ -1627,9 +1901,46 @@ function InvoiceDetailDrawer({
     }
   };
 
+  const handleRecordPayment = async () => {
+    if (!invoice) return;
+    const fullRemaining = Math.max(0, Math.round(effectiveBalance * 100) / 100);
+    const parsedPartial = Number(partialAmount);
+    const amountToRecord = paymentMode === "full" ? fullRemaining : parsedPartial;
+    if (!Number.isFinite(amountToRecord) || amountToRecord <= 0) {
+      toast.error("Enter a valid payment amount.");
+      return;
+    }
+
+    if (paymentMode === "partial") {
+      if (!invoice.job_reference || !onInvoiceUpdated) {
+        toast.error("Partial amount can be recorded only on invoices linked to a job.");
+        return;
+      }
+      setSavingPartial(true);
+      try {
+        const updated = await recordInvoicePartialPayment(invoice.id, amountToRecord, {
+          paymentDate: partialPaymentDate,
+          createdBy: profile?.id,
+        });
+        onInvoiceUpdated(updated);
+        setPartialAmount("");
+        setPaymentModalOpen(false);
+        toast.success(`Recorded ${formatCurrency(amountToRecord)} via ${paymentMethod.replace("_", " ")}.`);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to record payment");
+      } finally {
+        setSavingPartial(false);
+      }
+      return;
+    }
+
+    onStatusChange(invoice, "paid");
+    setPaymentModalOpen(false);
+    toast.success(`Recorded ${formatCurrency(amountToRecord)} via ${paymentMethod.replace("_", " ")}.`);
+  };
+
   if (!invoice) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
-  const config = statusConfig[invoice.status] ?? statusConfig.pending;
   const isOverdue =
     invoice.status !== "paid" &&
     invoice.status !== "cancelled" &&
@@ -1660,9 +1971,9 @@ function InvoiceDetailDrawer({
   const drawerTabs = [
     { id: "details", label: "Details" },
     { id: "stripe", label: "Stripe" },
-    { id: "job", label: "Linked Job" },
-    { id: "client-history", label: "Client History", count: relatedInvoices.length },
-    { id: "history", label: "History" },
+    { id: "job", label: "Job" },
+    { id: "client-history", label: "Adjust", count: relatedInvoices.length },
+    { id: "history", label: "Activity", count: 3 },
   ];
 
   const linkedJobTotalCost = linkedJob ? linkedJob.partner_cost + linkedJob.materials_cost : 0;
@@ -1672,308 +1983,397 @@ function InvoiceDetailDrawer({
   const linkedJobMarginAmount = linkedJob ? linkedJobCustomerTotal - linkedJobTotalCost : 0;
   const linkedJobMarginPct = linkedJobCustomerTotal > 0.01 ? (linkedJobMarginAmount / linkedJobCustomerTotal) * 100 : 0;
   const linkedJobForcedPaidBySystemOwner = linkedJob ? isJobForcePaid(linkedJob.internal_notes) : false;
-
-  const canEditDueDate =
-    Boolean(onInvoiceUpdated) &&
-    !invoice.deleted_at &&
-    invoice.status !== "paid" &&
-    invoice.status !== "cancelled";
-
+  const issuedLabel = formatExpectedDayMonth(invoiceEffectiveDateValue(invoice));
+  const clientInitials = invoice.client_name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "CL";
+  const clientAddress = linkedJob?.property_address?.trim() || "Address unavailable";
+  const accountPillText = accountName || "Unlinked account";
+  const accountLinked = Boolean(accountName.trim());
+  const accountIdLabel = invoice.source_account_id?.trim()
+    ? `ACC-${invoice.source_account_id.replace(/-/g, "").slice(-4).toUpperCase()}`
+    : "ACC-—";
+  const chargedAmount = Math.max(0, Math.round(Number(invoice.amount ?? 0) * 100) / 100);
+  const linkedJobPartnerGross = linkedJob
+    ? Math.round(
+      partnerSelfBillGrossAmount(
+        linkedJob as Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost">,
+      ) * 100,
+    ) / 100
+    : chargedAmount;
+  const defaultPartnerGross = linkedJob
+    ? Math.max(0, Math.min(chargedAmount, linkedJobPartnerGross))
+    : chargedAmount;
+  const baselinePartnerCost = defaultPartnerGross;
+  const rawPartner = editingBreakdown ? Math.max(0, Number(breakdownPartnerCost) || 0) : baselinePartnerCost;
+  const partnerCostValue = Math.max(0, Math.min(chargedAmount, Math.round(rawPartner * 100) / 100));
+  const feeAmountValue = Math.max(0, Math.round((chargedAmount - partnerCostValue) * 100) / 100);
+  const vatFromGross = (gross: number) => Math.round((gross / 6) * 100) / 100;
+  const feeVatPortion = vatFromGross(feeAmountValue);
+  const feeNetPortion = Math.max(0, Math.round((feeAmountValue - feeVatPortion) * 100) / 100);
+  const partnerVatPortion = partnerVatRegistered ? vatFromGross(partnerCostValue) : 0;
+  const breakdownVat = Math.round((feeVatPortion + partnerVatPortion) * 100) / 100;
+  const breakdownSubtotal = Math.max(0, Math.round((chargedAmount - breakdownVat) * 100) / 100);
+  const breakdownCharged = chargedAmount;
+  const marginPct = chargedAmount > 0.01 ? Math.round((feeAmountValue / chargedAmount) * 100) : 0;
+  const paidPct = invAmt > 0.01 ? Math.max(0, Math.min(100, Math.round((effectivePaid / invAmt) * 100))) : 0;
+  const hasDueBalance = effectiveBalance > 0.01;
+  const statusTone = invoice.status === "paid"
+    ? { bg: "#F0F9EC", border: "#D6EAC8", text: "#173404", dot: "#3B6D11", due: "#3B6D11" }
+    : (invoice.status === "overdue" || isOverdue)
+      ? { bg: "#FCEBEB", border: "#EFC7C7", text: "#7A1E1E", dot: "#A32D2D", due: "#A32D2D" }
+      : { bg: "var(--status-pending-bg)", border: "var(--status-pending-border)", text: "var(--status-pending-text)", dot: "var(--status-pending-dot)", due: "var(--danger-text)" };
+  const statusLead = invoice.status === "paid"
+    ? `✓ Paid · ${formatDate(invoice.paid_date ?? invoice.last_payment_date ?? invoice.due_date)}`
+    : invoice.status === "partially_paid"
+      ? `Partial · ${paidPct}% paid`
+      : (invoice.status === "overdue" || isOverdue)
+        ? `⚠ Overdue ${Math.abs(daysUntilDue)}d`
+        : `Pending · Due in ${Math.max(0, daysUntilDue)}d`;
+  const statusSub = invoice.status === "paid"
+    ? `Paid ${formatDate(invoice.paid_date ?? invoice.last_payment_date ?? invoice.due_date)}`
+    : `Due ${formatDate(invoice.due_date)}`;
+  const primaryActionLabel = invoice.status === "paid"
+    ? "Send receipt"
+    : invoice.status === "partially_paid"
+      ? `💳 Collect ${formatCurrency(effectiveBalance)}`
+      : (invoice.status === "overdue" || isOverdue)
+        ? "⚠ Escalate to dispute"
+        : "✓ Mark as paid";
+  const canEditPartnerCost = onInvoiceUpdated && !!invoice.job_reference;
+  const modalRecordAmount = paymentMode === "full" ? effectiveBalance : Number(partialAmount || 0);
+  const paymentMethodOptions: Array<{ id: "stripe" | "bank_transfer" | "cash" | "other"; label: string }> = [
+    { id: "stripe", label: "Stripe" },
+    { id: "bank_transfer", label: "Bank transfer" },
+    { id: "cash", label: "Cash" },
+    { id: "other", label: "Other" },
+  ];
   return (
-    <Drawer open={!!invoice} onClose={onClose} title={invoice.reference} subtitle={invoice.client_name} width="w-[580px]">
-      <div className="px-6 pt-3 pb-0 border-b border-border-light">
-        <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} />
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
-        {/* ===== DETAILS TAB ===== */}
-        {tab === "details" && (
-          <div className="p-6 space-y-5">
-            {/* Status Banner */}
-            <div className={`p-4 rounded-xl border ${
-              invoice.status === "paid" ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200" :
-              invoice.status === "partially_paid" ? "bg-sky-50 dark:bg-sky-950/25 border-sky-200" :
-              invoice.status === "audit_required" ? "bg-red-50 dark:bg-red-950/30 border-red-200" :
-              invoice.status === "overdue" || isOverdue ? "bg-red-50 dark:bg-red-950/30 border-red-200" :
-              invoice.status === "cancelled" ? "bg-surface-hover border-border" :
-              invoice.status === "draft" ? "bg-slate-50 dark:bg-slate-950/30 border-slate-200 dark:border-slate-800" :
-              "bg-amber-50 dark:bg-amber-950/30 border-amber-200"
-            }`}>
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`h-10 w-10 shrink-0 rounded-xl flex items-center justify-center ${
-                    invoice.status === "paid" ? "bg-emerald-100" :
-                    invoice.status === "partially_paid" ? "bg-sky-100 dark:bg-sky-900/40" :
-                    invoice.status === "audit_required" ? "bg-red-100" :
-                    invoice.status === "overdue" || isOverdue ? "bg-red-100" :
-                    invoice.status === "cancelled" ? "bg-surface-tertiary" :
-                    invoice.status === "draft" ? "bg-slate-100 dark:bg-slate-900/50" :
-                    "bg-amber-100"
-                  }`}>
-                    {invoice.status === "paid" ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> :
-                     invoice.status === "partially_paid" ? <Banknote className="h-5 w-5 text-sky-600" /> :
-                     invoice.status === "audit_required" ? <ShieldAlert className="h-5 w-5 text-red-600" /> :
-                     invoice.status === "overdue" || isOverdue ? <AlertTriangle className="h-5 w-5 text-red-600" /> :
-                     invoice.status === "cancelled" ? <XCircle className="h-5 w-5 text-text-secondary" /> :
-                     invoice.status === "draft" ? <FileText className="h-5 w-5 text-slate-600" /> :
-                     <Clock className="h-5 w-5 text-amber-600" />}
-                  </div>
-                  <div className="min-w-0">
-                    <Badge variant={config.variant} dot size="md">{config.label}</Badge>
-                    <p className="text-xs text-text-tertiary mt-0.5">
-                      {invoice.status === "paid" && invoice.paid_date ? `Paid on ${formatDate(invoice.paid_date)}` :
-                       invoice.status === "audit_required" ? "Client dispute — review notes and correspondence, then clear audit when ready." :
-                       invoice.status === "partially_paid" || showBalanceHero ? `${formatCurrency(effectivePaid)} received · ${formatCurrency(effectiveBalance)} due` :
-                       isOverdue ? `Overdue by ${Math.abs(daysUntilDue)} days` :
-                       invoice.status === "cancelled"
-                         ? invoice.cancellation_reason?.trim()
-                           ? `Cancelled: ${invoice.cancellation_reason.trim()}`
-                           : "This invoice was cancelled"
-                       : `Due in ${daysUntilDue} days`}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  {invoice.status === "partially_paid" || showBalanceHero ? (
-                    <>
-                      <p className="text-2xl font-bold text-text-primary tabular-nums">{formatCurrency(effectiveBalance)}</p>
-                      <p className="text-[11px] text-text-tertiary">due · invoice total {formatCurrency(invoice.amount)}</p>
-                    </>
-                  ) : (
-                    <p className="text-2xl font-bold text-text-primary tabular-nums">{formatCurrency(invoice.amount)}</p>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Metadata directly under amount / status banner */}
-            <div className="grid grid-cols-2 gap-4">
-              <InfoRow icon={Hash} label="Reference" value={invoice.reference} />
-              <InfoRow icon={Building2} label="Client" value={invoice.client_name} />
-              <InfoRow icon={Calendar} label="Issue Date" value={formatDate(invoiceEffectiveDateValue(invoice))} />
-              {canEditDueDate ? (
-                <div className="space-y-1.5 min-w-0">
-                  <div className="flex items-center gap-2 text-text-secondary">
-                    <Calendar className="h-4 w-4 shrink-0 text-text-tertiary" />
-                    <span className="text-xs font-medium text-text-secondary">Due date</span>
-                    {isOverdue ? (
-                      <span className="text-[10px] font-semibold text-red-600 dark:text-red-400">Overdue</span>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Input
-                      type="date"
-                      className="w-full min-w-[9.5rem] max-w-[11rem]"
-                      value={dueDateEdit}
-                      onChange={(e) => setDueDateEdit(e.target.value)}
-                      aria-label="Invoice due date"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={
-                        savingDueDate ||
-                        dueDateEdit.trim() === (invoice.due_date ? String(invoice.due_date).slice(0, 10) : "")
-                      }
-                      onClick={() => void saveDueDate()}
-                    >
-                      {savingDueDate ? "Saving…" : "Save"}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <InfoRow icon={Calendar} label="Due Date" value={formatDate(invoice.due_date)} highlight={isOverdue} />
-              )}
-              {invoice.paid_date && <InfoRow icon={CheckCircle2} label="Paid Date" value={formatDate(invoice.paid_date)} />}
-              {invoice.job_reference && <InfoRow icon={Briefcase} label="Job Reference" value={invoice.job_reference} />}
-            </div>
-
-            {invoice.job_reference && onInvoiceUpdated && (
-              <div className="rounded-xl border border-border-light overflow-hidden">
+    <>
+      <Drawer
+        open={!!invoice}
+        onClose={onClose}
+        title={invoice.reference}
+        subtitle={undefined}
+        width="w-[580px]"
+        headerExtra={(
+          <div className="flex items-center gap-1 text-[11px] text-[var(--fixfy-text-muted)]">
+            <span>Issued {issuedLabel}</span>
+            {invoice.job_reference ? (
+              <>
+                <span aria-hidden>·</span>
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface-hover/60 transition-colors"
-                  onClick={() => setCollectionSectionOpen((o) => !o)}
-                  aria-expanded={collectionSectionOpen}
+                  onClick={() => setTab("job")}
+                  className="font-semibold text-[var(--link-text)]"
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Lock className="h-4 w-4 text-text-tertiary shrink-0" />
-                    <span className="text-xs font-semibold text-text-tertiary uppercase tracking-wide truncate">Customer collection (job)</span>
-                  </div>
-                  {collectionSectionOpen ? (
-                    <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
-                  ) : (
-                    <ChevronRight className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
-                  )}
+                  {invoice.job_reference} ↗
                 </button>
-                {collectionSectionOpen ? (
-                  <div className="px-4 pb-4 pt-0 space-y-3 border-t border-border-light">
-                    <p className="text-[11px] text-text-tertiary pt-3">
-                      Stages follow deposit/final on the job when unlocked. Turn on <strong>Lock</strong> to keep this stage fixed (e.g. paid by bank transfer outside Stripe).
-                    </p>
-                    <Select
-                      label="Collection stage"
-                      value={collStage}
-                      onChange={(e) => setCollStage(e.target.value as InvoiceCollectionStage)}
-                      options={COLLECTION_STAGE_OPTIONS.map((v) => ({ value: v, label: COLLECTION_STAGE_LABELS[v] }))}
-                    />
-                    <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
-                      <input
-                        type="checkbox"
-                        className="rounded border-border"
-                        checked={collLocked}
-                        onChange={(e) => setCollLocked(e.target.checked)}
-                      />
-                      Lock stage (manual only)
-                    </label>
-                    <Button type="button" size="sm" onClick={saveCollectionStage} disabled={savingColl}>
-                      {savingColl ? "Saving…" : "Save collection"}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            )}
-
-            {/* Invoice collections — aligned with job customer ledger when linked */}
-            <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
-              <div>
-                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Invoice · customer collections</p>
-                <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
-                  {linkedJob
-                    ? "Totals follow payments recorded on the job (deposit / final). They stay in sync with the job finance card."
-                    : "Amounts on this invoice row only (no job link)."}
-                </p>
-              </div>
-              <div className="space-y-2 rounded-lg border border-border-light bg-card/50 px-3 py-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-text-secondary">Invoice amount</span>
-                  <span className="font-semibold text-text-primary tabular-nums">{formatCurrency(invoice.amount)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-text-secondary">Amount received</span>
-                  <span className="font-semibold text-text-primary tabular-nums">
-                    {useLedgerBridge ? formatCurrency(effectivePaid) : formatCurrency(rowPaid)}
-                  </span>
-                </div>
-                {useLedgerBridge && Math.abs(rowPaid - effectivePaid) > 0.02 ? (
-                  <p className="text-[10px] text-amber-600 dark:text-amber-400/90">
-                    Invoice row shows {formatCurrency(rowPaid)}; job ledger has {formatCurrency(jobCustomerPaidSum!)} — showing the higher so due matches the job.
-                  </p>
-                ) : null}
-                <div className="flex justify-between text-sm pt-1 border-t border-border-light">
-                  <span className="font-medium text-text-primary">Balance due</span>
-                  <span className="font-bold text-primary tabular-nums">
-                    {useLedgerBridge ? formatCurrency(effectiveBalance) : formatCurrency(invoiceBalanceDue(invoice))}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {invoice.job_reference &&
-              onInvoiceUpdated &&
-              (invoice.status === "pending" || invoice.status === "partially_paid" || invoice.status === "overdue") && (
-              <div className="rounded-xl border border-border bg-surface-hover/80 p-4 space-y-3">
-                <div>
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Record partial payment</p>
-                  <p className="text-[11px] text-text-tertiary mt-1 leading-relaxed">
-                    Posts to the linked job (deposit / final split) and updates this invoice and amount due on the job.
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="Amount"
-                    value={partialAmount}
-                    onChange={(e) => setPartialAmount(e.target.value)}
-                  />
-                  <Input type="date" value={partialPaymentDate} onChange={(e) => setPartialPaymentDate(e.target.value)} />
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="w-full"
-                  loading={savingPartial}
-                  disabled={!partialAmount || Number(partialAmount) <= 0}
-                  onClick={async () => {
-                    if (!invoice || !onInvoiceUpdated) return;
-                    setSavingPartial(true);
-                    try {
-                      const updated = await recordInvoicePartialPayment(invoice.id, Number(partialAmount), {
-                        paymentDate: partialPaymentDate,
-                        createdBy: profile?.id,
-                      });
-                      onInvoiceUpdated(updated);
-                      setPartialAmount("");
-                      toast.success("Partial payment recorded");
-                    } catch (e) {
-                      toast.error(e instanceof Error ? e.message : "Failed to record payment");
-                    } finally {
-                      setSavingPartial(false);
-                    }
-                  }}
-                >
-                  Record partial payment
-                </Button>
-              </div>
-            )}
-
-            {/* Status actions — Mark as Paid, reminders, cancel, etc. */}
-            <div className="flex flex-wrap gap-2 pt-1">
-              {invoice.status === "audit_required" && (
-                <>
-                  <Button size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
-                    Clear audit (pending)
-                  </Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>
-                    Cancel invoice
-                  </Button>
-                </>
-              )}
-              {invoice.status === "draft" && (
-                <>
-                  <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>
-                    Issue (mark pending)
-                  </Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>
-                    Cancel
-                  </Button>
-                </>
-              )}
-              {invoice.status === "pending" && (
-                <>
-                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark as Paid</Button>
-                  <Button variant="outline" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => toast.success("Reminder sent")}>Send Reminder</Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Cancel</Button>
-                </>
-              )}
-              {invoice.status === "partially_paid" && (
-                <>
-                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark fully paid</Button>
-                  <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reopen (reset)</Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Cancel</Button>
-                </>
-              )}
-              {invoice.status === "overdue" && (
-                <>
-                  <Button size="sm" icon={<CheckCircle2 className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "paid")}>Mark as Paid</Button>
-                  <Button variant="outline" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={() => toast.success("Urgent reminder sent")}>Send Urgent Reminder</Button>
-                  <Button variant="outline" size="sm" icon={<XCircle className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "cancelled")}>Write Off</Button>
-                </>
-              )}
-              {invoice.status === "paid" && (
-                <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reopen</Button>
-              )}
-              {invoice.status === "cancelled" && (
-                <Button variant="outline" size="sm" icon={<RotateCcw className="h-3.5 w-3.5" />} onClick={() => onStatusChange(invoice, "pending")}>Reactivate</Button>
-              )}
-            </div>
+              </>
+            ) : null}
           </div>
         )}
+        footer={tab === "details" ? (
+          <div className="bg-[var(--fixfy-surface)] px-[14px] py-[14px]">
+            <div className="grid grid-cols-2 gap-[10px]">
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentMode("full");
+                  setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
+                  setPaymentModalOpen(true);
+                }}
+                className="rounded-[10px] border border-[var(--fixfy-border-strong)] bg-[var(--fixfy-white)] px-3 py-[12px] text-[14px] font-semibold text-[var(--fixfy-text)]"
+              >
+                + Add payment
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (invoice.status === "paid") {
+                    toast.success("Receipt sent to client.");
+                    return;
+                  }
+                  if (invoice.status === "partially_paid") {
+                    setPaymentMode("full");
+                    setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
+                    setPaymentModalOpen(true);
+                    return;
+                  }
+                  if (invoice.status === "overdue" || isOverdue) {
+                    toast.error("Invoice escalated to dispute.");
+                    return;
+                  }
+                  onStatusChange(invoice, "paid");
+                }}
+                className="rounded-[10px] border border-[var(--fixfy-orange)] bg-[var(--fixfy-orange)] px-3 py-[12px] text-[14px] font-semibold text-white"
+              >
+                {primaryActionLabel}
+              </button>
+            </div>
+          </div>
+        ) : undefined}
+      >
+        <div className="min-h-full bg-[var(--fixfy-cream)]">
+          <div className="px-[22px] pb-4 pt-4">
+            <div
+              className="flex items-start justify-between gap-3 rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-4 py-[14px]"
+              style={{ boxShadow: "0 1px 3px rgba(10,13,46,0.04)" }}
+            >
+              <div className="min-w-0 space-y-2">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--client-avatar-bg)] text-[13px] font-semibold text-[var(--client-avatar-text)]">
+                    {clientInitials}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-semibold text-[var(--fixfy-text)]">{invoice.client_name}</p>
+                    {!accountLinked ? (
+                      <p className="mt-0.5 text-[11px] italic text-[var(--fixfy-text-tertiary)]">No linked account</p>
+                    ) : null}
+                    <p className="mt-0.5 truncate text-[11px] text-[var(--fixfy-text-muted)]">{clientAddress}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pl-[52px]">
+                  {accountLinked ? (
+                    <>
+                      <span className="rounded-full bg-[var(--partner-avatar-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--partner-dot)]">
+                        {accountPillText}
+                      </span>
+                      <span className="text-[10px] text-[var(--fixfy-text-muted)]">{accountIdLabel}</span>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+              <button type="button" className="shrink-0 text-[11px] font-semibold text-[var(--link-text)]">
+                View ↗
+              </button>
+            </div>
+          </div>
 
-        {/* ===== STRIPE TAB ===== */}
+          <div className="border-b border-[var(--fixfy-border)] px-[22px]">
+            <div className="w-full min-w-0 overflow-x-auto [scrollbar-width:thin]">
+              <div className="inline-flex flex-nowrap items-stretch gap-0">
+                {drawerTabs.map((tb) => (
+                  <button
+                    key={tb.id}
+                    type="button"
+                    onClick={() => setTab(tb.id)}
+                    className={cn(
+                      "relative shrink-0 whitespace-nowrap px-4 py-2.5 text-left text-sm transition-colors",
+                      tab === tb.id ? "font-semibold text-[#ED4B00]" : "font-medium text-[var(--fixfy-text-muted)]",
+                    )}
+                  >
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                      {tb.label}
+                      {tb.count !== undefined ? (
+                        <span className="shrink-0 rounded-md bg-[#F0F2F7] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--fixfy-text-tertiary)]">
+                          {tb.count}
+                        </span>
+                      ) : null}
+                    </span>
+                    {tab === tb.id ? <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ED4B00]" /> : null}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {/* ===== DETAILS TAB ===== */}
+            {tab === "details" && (
+              <div className="space-y-4 p-[22px]">
+                <div
+                  className="rounded-[10px] border px-4 py-3"
+                  style={{ backgroundColor: statusTone.bg, borderColor: statusTone.border }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: statusTone.dot }} />
+                        <p className="text-[13px] font-semibold" style={{ color: statusTone.text }}>{statusLead}</p>
+                      </div>
+                      <p className="mt-1 text-[11px] text-[var(--fixfy-text-muted)]">{statusSub}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[22px] font-semibold text-[var(--fixfy-text)] tabular-nums">{formatCurrency(invoice.amount)}</p>
+                      <p className="text-[11px] text-[var(--fixfy-text-muted)]">Incl. {formatCurrency(breakdownVat)} VAT</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="rounded-t-[10px] border border-[var(--fixfy-border)] border-b-0 bg-[var(--fixfy-white)]">
+                    <div className="grid grid-cols-3 divide-x divide-[var(--fixfy-border)]">
+                      <div className="px-3 py-3">
+                        <p className="text-[11px] font-semibold uppercase text-[#6B7280]">TOTAL PRICE</p>
+                        <p className="mt-1 text-[22px] font-semibold text-[var(--fixfy-text)]">{formatCurrency(invoice.amount)}</p>
+                      </div>
+                      <div className="px-3 py-3">
+                        <p className="text-[11px] font-semibold uppercase text-[#6B7280]">YOUR COST</p>
+                        <p className="mt-1 text-[22px] font-semibold text-[var(--fixfy-text)]">{formatCurrency(partnerCostValue)}</p>
+                      </div>
+                      <div className="bg-emerald-50 px-3 py-3">
+                        <p className="text-[11px] font-semibold uppercase text-[#6B7280]">MARGIN %</p>
+                        <p className="mt-1 text-[20px] sm:text-[22px] font-semibold text-[var(--margin-text)] leading-tight">
+                          {formatCurrency(feeAmountValue)} · <span className="text-[14px] sm:text-[16px] font-semibold tabular-nums">{marginPct}%</span>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between rounded-b-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-3 py-2.5">
+                    <div className="flex min-w-0 items-center gap-2 text-[11px] text-[var(--fixfy-text-muted)]">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--partner-avatar-bg)] text-[10px] text-[var(--partner-dot)]">JS</span>
+                      <span className="truncate">
+                        Matched SB-{invoice.reference.slice(-4)} · {linkedJob?.partner_name || "Partner"} · <span className="text-[var(--reconciled-text)]">✓ Reconciled</span>
+                      </span>
+                    </div>
+                    <button type="button" className="shrink-0 text-[11px] font-semibold text-[var(--link-text)]">Open ↗</button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Invoice Breakdown</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (editingBreakdown) {
+                          setEditingBreakdown(false);
+                          toast.success("Breakdown changes saved.");
+                        } else {
+                          setEditingBreakdown(true);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-[var(--fixfy-text-muted)] transition-colors hover:bg-[var(--fixfy-border)] hover:text-[var(--fixfy-text)]"
+                    >
+                      <PenLine className="h-[13px] w-[13px] stroke-[2]" />
+                      {editingBreakdown ? "Save changes" : "Edit"}
+                    </button>
+                  </div>
+                  <div className="overflow-hidden rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)]">
+                    <div className="flex items-start justify-between border-b border-[var(--fixfy-border)] px-3 py-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--partner-dot)]" />
+                          <p className="text-[13px] font-semibold text-[var(--fixfy-text)]">Partner cost</p>
+                          <span className="rounded-[3px] bg-[#F3F4F6] px-[6px] py-[1px] text-[10px] font-semibold text-[#6B7280]">
+                            [{partnerVatRegistered ? "inc VAT" : "no VAT"}]
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-[var(--fixfy-text-muted)]">
+                          Paid to {linkedJob?.partner_name || "partner"} via SB-{invoice.reference.slice(-4)}
+                        </p>
+                        {editingBreakdown && canEditPartnerCost && Math.abs(partnerCostValue - baselinePartnerCost) > 0.01 ? (
+                          <p className="mt-1 text-[11px] text-[var(--danger-text)]">This will adjust self-bill SB-{invoice.reference.slice(-4)}</p>
+                        ) : null}
+                      </div>
+                      {editingBreakdown && canEditPartnerCost ? (
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={breakdownPartnerCost}
+                          onChange={(e) => setBreakdownPartnerCost(e.target.value)}
+                          className="h-8 w-28 text-right"
+                        />
+                      ) : (
+                        <p className="text-[13px] font-semibold text-[var(--fixfy-text)] tabular-nums">{formatCurrency(partnerCostValue)}</p>
+                      )}
+                    </div>
+                    <div className="flex items-start justify-between border-b border-[var(--fixfy-border)] px-3 py-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--fixfy-orange)]" />
+                          <p className="text-[13px] font-semibold text-[var(--fixfy-text)]">Master fee</p>
+                          <span className="rounded-[3px] bg-[#FEF3C7] px-[6px] py-[1px] text-[10px] font-semibold text-[#78350F]">
+                            [inc VAT]
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-[var(--fixfy-text-muted)]">
+                          Platform commission ({formatCurrency(feeNetPortion)} net + {formatCurrency(feeVatPortion)} VAT)
+                        </p>
+                      </div>
+                      <p className="text-[13px] font-semibold text-[var(--fixfy-text)] tabular-nums">{formatCurrency(feeAmountValue)}</p>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-[var(--fixfy-border)] bg-[var(--fixfy-white)] px-3 py-2.5">
+                      <p className="text-[11px] text-[var(--fixfy-text-muted)]">Subtotal</p>
+                      <p className="text-[12px] text-[var(--fixfy-text)] tabular-nums">{formatCurrency(breakdownSubtotal)}</p>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-[var(--fixfy-border)] bg-[var(--fixfy-white)] px-3 py-2.5">
+                      <p className="text-[11px] text-[var(--fixfy-text-muted)]">
+                        VAT 20% <span className="text-[#9CA3AF]">· on Master fee only</span>
+                      </p>
+                      <p className="text-[12px] text-[var(--fixfy-text)] tabular-nums">{formatCurrency(breakdownVat)}</p>
+                    </div>
+                    <div className="flex items-center justify-between bg-[var(--fixfy-navy)] px-3 py-2.5">
+                      <p className="text-[13px] font-semibold text-white">Customer charged</p>
+                      <p className="text-[15px] font-semibold text-white tabular-nums">{formatCurrency(breakdownCharged)}</p>
+                    </div>
+                  </div>
+                  {editingBreakdown ? (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingBreakdown(false);
+                          setBreakdownPartnerCost(String(baselinePartnerCost));
+                        }}
+                        className="rounded-md px-2 py-1 text-[12px] text-[var(--fixfy-text-muted)]"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Balance</p>
+                  <div className="rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-3 py-2">
+                    <div className="space-y-1 text-[13px]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[var(--fixfy-text-muted)]">Invoice</span>
+                        <span className="tabular-nums text-[var(--fixfy-text)]">{formatCurrency(invoice.amount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[var(--fixfy-text-muted)]">Received</span>
+                        <span className="tabular-nums text-[var(--fixfy-text)]">{formatCurrency(effectivePaid)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[var(--fixfy-text-muted)]">Adjustments</span>
+                        <span className="tabular-nums text-[var(--fixfy-text-muted)]">—</span>
+                      </div>
+                      <div className="my-1 border-t border-[var(--fixfy-border)]" />
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-[var(--fixfy-text)]">Due</span>
+                        <span className="font-semibold tabular-nums" style={{ color: hasDueBalance ? "var(--danger-text)" : "var(--reconciled-text)" }}>
+                          {formatCurrency(effectiveBalance)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pb-3">
+                  <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Quick Actions</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {["📄 View PDF", "🏷 Discount", "🎁 Goodwill", "✉ Remind"].map((label) => (
+                      <button
+                        key={label}
+                        type="button"
+                        className="rounded-[10px] border border-[var(--fixfy-border-strong)] bg-[var(--fixfy-white)] px-3 py-3 text-[13px] font-semibold text-[var(--fixfy-text)]"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ===== STRIPE TAB ===== */}
         {tab === "stripe" && (
           <div className="p-6 space-y-5">
             {/* Stripe Status Header */}
@@ -2466,7 +2866,96 @@ function InvoiceDetailDrawer({
           </div>
         )}
       </div>
-    </Drawer>
+    </div>
+      </Drawer>
+
+      <Modal
+        open={paymentModalOpen}
+        onClose={() => setPaymentModalOpen(false)}
+        title="Record payment"
+        size="sm"
+      >
+        <div className="space-y-4 p-4">
+          <div className="space-y-2">
+            <label className="flex items-start gap-2 rounded-md border border-[var(--fixfy-border)] bg-[var(--fixfy-white)] px-3 py-2 text-[13px] text-[var(--fixfy-text)]">
+              <input
+                type="radio"
+                name="paymentMode"
+                checked={paymentMode === "full"}
+                onChange={() => {
+                  setPaymentMode("full");
+                  setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
+                }}
+              />
+              <span>Full remaining ({formatCurrency(effectiveBalance)})</span>
+            </label>
+            <label className="flex items-start gap-2 rounded-md border border-[var(--fixfy-border)] bg-[var(--fixfy-white)] px-3 py-2 text-[13px] text-[var(--fixfy-text)]">
+              <input
+                type="radio"
+                name="paymentMode"
+                checked={paymentMode === "partial"}
+                onChange={() => setPaymentMode("partial")}
+              />
+              <span>Partial amount</span>
+            </label>
+            {paymentMode === "partial" ? (
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                placeholder="Enter amount"
+                value={partialAmount}
+                onChange={(e) => setPartialAmount(e.target.value)}
+              />
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Method</p>
+            <div className="grid grid-cols-2 gap-2">
+              {paymentMethodOptions.map((method) => (
+                <button
+                  key={method.id}
+                  type="button"
+                  onClick={() => setPaymentMethod(method.id)}
+                  className={cn(
+                    "rounded-md border px-3 py-2 text-[12px]",
+                    paymentMethod === method.id
+                      ? "border-[var(--fixfy-orange)] bg-[var(--fixfy-orange)] text-white"
+                      : "border-[var(--fixfy-border)] bg-[var(--fixfy-white)] text-[var(--fixfy-text)]",
+                  )}
+                >
+                  {method.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Date</p>
+            <Input type="date" value={partialPaymentDate} onChange={(e) => setPartialPaymentDate(e.target.value)} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 border-t border-[var(--fixfy-border)] pt-3">
+            <button
+              type="button"
+              onClick={() => setPaymentModalOpen(false)}
+              className="rounded-[10px] border border-[var(--fixfy-border-strong)] bg-[var(--fixfy-white)] px-3 py-[10px] text-[13px] text-[var(--fixfy-text)]"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={savingPartial || !Number.isFinite(modalRecordAmount) || modalRecordAmount <= 0}
+              onClick={() => void handleRecordPayment()}
+              className="rounded-[10px] border border-[var(--fixfy-orange)] bg-[var(--fixfy-orange)] px-3 py-[10px] text-[13px] font-medium text-white disabled:opacity-50"
+            >
+              {savingPartial ? "Recording..." : `Record ${formatCurrency(modalRecordAmount)}`}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 }
 
