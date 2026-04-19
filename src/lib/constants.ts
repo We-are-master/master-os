@@ -45,6 +45,7 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Workforce", href: "/people", icon: "contact", permission: "team" },
     ],
   },
+  // Users Access (/team) intentionally hidden from sidebar (accessible via settings)
   {
     label: "Finance",
     items: [

@@ -125,7 +125,7 @@ function relocateScheduleToOverview(nav: NavGroup[]): NavGroup[] {
  * Migrate stored navigation: Services → Admin; strip duplicates; Team → People; Payroll nav item stripped (hidden).
  */
 function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
-  const strip = new Set(["/finance/payroll", "/services"]);
+  const strip = new Set(["/finance/payroll", "/services", "/team"]);
   const next = nav.map((g) => ({
     ...g,
     label: g.label === LEGACY_TEAM_GROUP_LABEL ? PEOPLE_GROUP_LABEL : g.label,
@@ -134,22 +134,17 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
 
   const peopleIdx = next.findIndex((g) => g.label === PEOPLE_GROUP_LABEL);
   if (peopleIdx >= 0) {
-    const items = next[peopleIdx].items.map((i) =>
-      i.href === "/team" ? { ...i, ...TEAM_CORE_ITEM } : i
-    );
-    const extras = items.filter(
-      (i) => i.href !== "/people" && i.href !== "/team" && i.href !== "/finance/payroll"
-    );
+    const items = next[peopleIdx].items;
+    const extras = items.filter((i) => i.href !== "/people" && i.href !== "/finance/payroll");
     const peopleItem = items.find((i) => i.href === "/people") ?? { ...PEOPLE_DIRECTORY_ITEM };
-    const teamItem = items.find((i) => i.href === "/team") ?? { ...TEAM_CORE_ITEM };
     next[peopleIdx] = {
       ...next[peopleIdx],
-      items: [peopleItem, teamItem, ...extras],
+      items: [peopleItem, ...extras],
     };
   } else {
     next.push({
       label: PEOPLE_GROUP_LABEL,
-      items: [{ ...PEOPLE_DIRECTORY_ITEM }, { ...TEAM_CORE_ITEM }],
+      items: [{ ...PEOPLE_DIRECTORY_ITEM }],
     });
   }
 
@@ -214,7 +209,6 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     label: PEOPLE_GROUP_LABEL,
     items: [
       { label: "Workforce", href: "/people", icon: "contact", permission: "team" },
-      { label: "Users Access", href: "/team", icon: "users-2", permission: "team" },
     ],
   },
   {
