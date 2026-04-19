@@ -622,8 +622,21 @@ export function OverviewExecutiveBundle() {
           fromIso: `${fromDay}T00:00:00.000Z`,
           toIso: `${toDay}T23:59:59.999Z`,
         };
-        const [rows, billsRes, payrollRes] = await Promise.all([
-          fetchPipelineJobsForDashboard(supabase, monthBounds, { dateBasis: "schedule_start" }),
+        const MONTHLY_STATUSES = [
+          "unassigned", "auto_assigning", "scheduled", "late",
+          "in_progress_phase1", "in_progress_phase2", "in_progress_phase3",
+          "final_check", "awaiting_payment", "need_attention", "completed",
+        ];
+        const jobsRes = await supabase
+          .from("jobs")
+          .select("id, client_price, extras_amount, partner_cost, materials_cost, scheduled_date, scheduled_finish_date")
+          .is("deleted_at", null)
+          .in("status", MONTHLY_STATUSES)
+          .gte("scheduled_date", fromDay)
+          .lte("scheduled_date", toDay);
+        const rows = (jobsRes.data ?? []) as OverviewPipelineJobRow[];
+        const [, billsRes, payrollRes] = await Promise.all([
+          Promise.resolve(),
           supabase.from("bills").select("amount").is("archived_at", null).neq("status", "rejected")
             .gte("due_date", fromDay).lte("due_date", toDay),
           supabase.from("payroll_internal_costs").select("amount").not("due_date", "is", null)
