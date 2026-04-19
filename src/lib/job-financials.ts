@@ -52,7 +52,7 @@ export function deriveStoredJobFinancials(j: Job): Pick<Job, "margin_percent" | 
   };
 }
 
-export function partnerPaymentCap(j: Job): number {
+export function partnerPaymentCap(j: Pick<Job, "partner_agreed_value" | "partner_cost">): number {
   const agreed = Number(j.partner_agreed_value ?? 0);
   const cost = Number(j.partner_cost ?? 0);
   return agreed > 0 ? agreed : cost;
@@ -83,7 +83,7 @@ export function partnerCashOutDisplaySplit(
 }
 
 /** Partner payout + materials — rolls into weekly self-bill (even when partner is already marked paid). */
-export function partnerSelfBillGrossAmount(j: Job): number {
+export function partnerSelfBillGrossAmount(j: Pick<Job, "partner_agreed_value" | "partner_cost" | "materials_cost">): number {
   return partnerPaymentCap(j) + Number(j.materials_cost ?? 0);
 }
 

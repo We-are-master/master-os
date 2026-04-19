@@ -77,21 +77,31 @@ const TAB_ACCENT: Record<
 export function Tabs({ tabs, activeTab, onChange, variant = "default", className }: TabsProps) {
   if (variant === "pills") {
     return (
-      <div className={cn("inline-flex max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto p-1 bg-surface-tertiary rounded-xl [scrollbar-width:thin]", className)}>
+      <div
+        className={cn(
+          "inline-flex max-w-full flex-nowrap items-center gap-1 overflow-x-auto rounded-xl border p-1 [scrollbar-width:thin]",
+          "border-primary/25 bg-gradient-to-b from-card to-primary/[0.06] shadow-inner",
+          "dark:border-primary/35 dark:from-card dark:to-primary/[0.08]",
+          className,
+        )}
+      >
         {tabs.map((tab) => (
           <button
             key={tab.id}
+            type="button"
             onClick={() => onChange(tab.id)}
             className={cn(
-              "relative shrink-0 whitespace-nowrap px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors duration-200",
-              activeTab === tab.id ? "text-text-primary" : "text-text-secondary hover:text-text-primary"
+              "relative shrink-0 whitespace-nowrap rounded-lg px-3.5 py-1.5 text-sm transition-colors duration-200",
+              activeTab === tab.id
+                ? "font-semibold text-text-primary"
+                : "font-medium text-text-primary/72 hover:text-text-primary dark:text-text-primary/65 dark:hover:text-text-primary",
             )}
           >
             {activeTab === tab.id && (
               <motion.div
                 layoutId="pill-tab"
-                className="absolute inset-0 bg-card rounded-lg shadow-sm"
-                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="absolute inset-0 rounded-lg bg-card shadow-md ring-1 ring-primary/25 dark:bg-card dark:ring-primary/40"
+                transition={{ type: "spring", damping: 26, stiffness: 320 }}
               />
             )}
             <span className="relative z-10 inline-flex items-center gap-1.5 whitespace-nowrap">
@@ -99,14 +109,14 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
               {tab.count !== undefined && (
                 <span
                   className={cn(
-                    "text-[10px] font-bold px-1.5 py-0.5 rounded-md",
+                    "rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
                     tab.accent
                       ? activeTab === tab.id
                         ? TAB_ACCENT[tab.accent].countActive
                         : TAB_ACCENT[tab.accent].countInactive
                       : activeTab === tab.id
-                        ? TAB_ACCENT.neutral.countActive
-                        : TAB_ACCENT.neutral.countInactive,
+                        ? "bg-primary/18 text-primary dark:bg-primary/30 dark:text-primary"
+                        : "bg-primary/12 text-primary/90 dark:bg-primary/[0.18] dark:text-primary",
                   )}
                 >
                   {tab.count}

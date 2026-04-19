@@ -18,14 +18,14 @@ const variantStyles: Record<ButtonVariant, string> = {
   danger:
     "bg-red-600 text-white hover:bg-red-700 shadow-sm",
   outline:
-    "bg-card text-text-primary border border-border hover:bg-surface-tertiary hover:border-border shadow-sm",
+    "bg-white text-[#020040] border-[0.5px] border-[#D8D8DD] hover:bg-surface-hover hover:border-[#D8D8DD] shadow-sm dark:bg-card dark:text-text-primary dark:border-border",
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-xs gap-1.5 rounded-lg",
-  md: "h-9 px-4 text-sm gap-2 rounded-lg",
-  lg: "h-11 px-6 text-sm gap-2 rounded-xl",
-  icon: "h-9 w-9 rounded-lg",
+  sm: "h-8 px-3 text-xs font-medium gap-1.5 rounded-[6px]",
+  md: "h-8 px-3.5 text-xs font-medium gap-2 rounded-[6px]",
+  lg: "h-10 px-6 text-sm font-medium gap-2 rounded-[6px]",
+  icon: "h-8 w-8 rounded-[6px]",
 };
 
 interface ButtonProps {
@@ -72,7 +72,7 @@ export function Button({
       style={style}
       whileTap={!disabled ? buttonTap : undefined}
       className={cn(
-        "inline-flex items-center justify-center font-medium transition-all duration-200 cursor-pointer select-none",
+        "inline-flex items-center justify-center transition-all duration-200 cursor-pointer select-none",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-1",
         "disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none",
         variantStyles[variant],

@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, type ReactNode } from "react";
 import type { RefObject } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { MapPin, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { buildLiveMapPopupHtml, createLiveMapMarkerElement } from "@/components/dashboard/live-map-marker-icons";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
+
+export type LiveMapRegionPreset = "london" | "uk" | "europe" | "fit_all";
 
 export interface ScheduleLiveMapPoint {
   id: string;
@@ -17,11 +20,36 @@ export interface ScheduleLiveMapPoint {
   longitude: number;
   lastUpdateIso: string;
   inactive: boolean;
+  /** Primary trade label from partners (or inferred). */
+  trade?: string;
+  trades?: string[] | null;
 }
 
 interface ScheduleLiveMapProps {
   points: ScheduleLiveMapPoint[];
   className?: string;
+  /** Map framing: London default does not jump on every data refresh. */
+  regionPreset?: LiveMapRegionPreset;
+  /** When a specific trade is selected, markers use that trade icon (caller filters points). */
+  tradeFilter?: "all" | string;
+  /** Extra controls next to Full screen (e.g. Refresh), top-left overlay on the map. */
+  toolbarExtra?: ReactNode;
+  /** When true, map sits flush under a filter bar (no top radius / top border). */
+  embeddedInCard?: boolean;
+}
+
+const LONDON_CENTER: [number, number] = [-0.1276, 51.5072];
+const UK_BOUNDS: mapboxgl.LngLatBoundsLike = [
+  [-8.65, 49.5],
+  [2.35, 58.85],
+];
+const EUROPE_BOUNDS: mapboxgl.LngLatBoundsLike = [
+  [-11.5, 35.5],
+  [40.5, 71.2],
+];
+
+function pointIdsSignature(points: ScheduleLiveMapPoint[]): string {
+  return [...new Set(points.map((p) => p.id))].sort().join(",");
 }
 
 function useMapResize(mapRef: RefObject<mapboxgl.Map | null>, fullscreen: boolean) {
@@ -47,11 +75,23 @@ function useMapResize(mapRef: RefObject<mapboxgl.Map | null>, fullscreen: boolea
   }, [mapRef]);
 }
 
-export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
+/** Shared with Schedule page for Refresh + map overlay buttons. */
+export const LIVE_MAP_TOOLBAR_BTN_CLASS =
+  "inline-flex items-center gap-1 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-[9px] py-[5px] text-[11px] font-medium text-[#020040] shadow-sm transition-colors hover:bg-[#FAFAFB]";
+
+export function ScheduleLiveMap({
+  points,
+  className,
+  regionPreset = "london",
+  tradeFilter = "all",
+  toolbarExtra,
+  embeddedInCard = false,
+}: ScheduleLiveMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const [fullscreen, setFullscreen] = useState(false);
+  const prevRegionRef = useRef<LiveMapRegionPreset | null>(null);
 
   const validPoints = useMemo(
     () =>
@@ -64,6 +104,8 @@ export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
       ),
     [points],
   );
+
+  const idsSig = useMemo(() => pointIdsSignature(validPoints), [validPoints]);
 
   useMapResize(mapRef, fullscreen);
 
@@ -94,7 +136,7 @@ export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
       style: "mapbox://styles/mapbox/streets-v12",
-      center: [-0.1276, 51.5072],
+      center: LONDON_CENTER,
       zoom: 9,
     });
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
@@ -108,6 +150,7 @@ export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
     };
   }, []);
 
+  /** Markers + popups — refresh when locations or trade icon mode changes. */
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -117,29 +160,84 @@ export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
 
     if (validPoints.length === 0) return;
 
-    const bounds = new mapboxgl.LngLatBounds();
     for (const point of validPoints) {
-      const color = point.inactive ? "#f59e0b" : "#22c55e";
-      const marker = new mapboxgl.Marker({ color })
+      const el = createLiveMapMarkerElement({
+        inactive: point.inactive,
+        tradeFilter: tradeFilter === "all" ? "all" : tradeFilter,
+        trade: point.trade,
+        trades: point.trades ?? null,
+      });
+      const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
         .setLngLat([point.longitude, point.latitude])
         .setPopup(
           new mapboxgl.Popup({ closeButton: false, offset: 12 }).setHTML(
-            `<div style="font-size:12px"><strong>${point.name}</strong><br/>${point.inactive ? "Inactive" : "Active"}<br/>${new Date(point.lastUpdateIso).toLocaleString()}</div>`,
+            buildLiveMapPopupHtml({
+              name: point.name,
+              inactive: point.inactive,
+              lastUpdateIso: point.lastUpdateIso,
+              trade: point.trade,
+              trades: point.trades ?? null,
+            }),
           ),
         )
         .addTo(map);
       markersRef.current.push(marker);
-      bounds.extend([point.longitude, point.latitude]);
     }
+  }, [validPoints, tradeFilter]);
 
-    if (validPoints.length === 1) {
-      const p = validPoints[0];
-      map.flyTo({ center: [p.longitude, p.latitude], zoom: 12, essential: true });
+  /** Fixed regions: only when the user changes the preset (not when filters change). */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (regionPreset === "fit_all") return;
+
+    if (regionPreset === "london") {
+      map.flyTo({ center: LONDON_CENTER, zoom: 10.5, duration: 600, essential: true });
+    } else if (regionPreset === "uk") {
+      map.fitBounds(UK_BOUNDS, { padding: 56, maxZoom: 8, duration: 650 });
+    } else if (regionPreset === "europe") {
+      map.fitBounds(EUROPE_BOUNDS, { padding: 48, maxZoom: 5.5, duration: 650 });
+    }
+    prevRegionRef.current = regionPreset;
+  }, [regionPreset]);
+
+  /** Fit all markers: when preset is fit_all and the visible partner set changes — not on every location poll. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (regionPreset !== "fit_all") return;
+
+    if (validPoints.length === 0) {
+      prevRegionRef.current = regionPreset;
       return;
     }
 
-    map.fitBounds(bounds, { padding: 64, maxZoom: 13, duration: 700 });
-  }, [validPoints]);
+    const bounds = new mapboxgl.LngLatBounds();
+    for (const point of validPoints) {
+      bounds.extend([point.longitude, point.latitude]);
+    }
+
+    const switchedToFitAll = prevRegionRef.current !== "fit_all";
+    prevRegionRef.current = regionPreset;
+
+    if (validPoints.length === 1) {
+      const p = validPoints[0]!;
+      map.flyTo({
+        center: [p.longitude, p.latitude],
+        zoom: 12,
+        duration: switchedToFitAll ? 600 : 0,
+        essential: true,
+      });
+      return;
+    }
+
+    map.fitBounds(bounds, {
+      padding: 64,
+      maxZoom: 13,
+      minZoom: 3,
+      duration: switchedToFitAll ? 700 : 0,
+    });
+  }, [regionPreset, idsSig]);
 
   if (!MAPBOX_TOKEN) {
     return (
@@ -176,18 +274,19 @@ export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
         </div>
       ) : null}
 
-      <div className={cn("relative w-full", fullscreen ? "flex min-h-0 flex-1 flex-col" : "min-h-[430px]")}>
+      <div className="relative flex w-full min-h-0 flex-1 flex-col">
         {!fullscreen ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="absolute left-3 top-3 z-10 border-border/80 bg-card/95 shadow-md backdrop-blur-sm"
-            icon={<Maximize2 className="h-3.5 w-3.5" />}
-            onClick={() => setFullscreen(true)}
-          >
-            Full screen
-          </Button>
+          <div className="absolute left-3 top-3 z-[2] flex flex-wrap items-center gap-2">
+            {toolbarExtra}
+            <button
+              type="button"
+              className={LIVE_MAP_TOOLBAR_BTN_CLASS}
+              onClick={() => setFullscreen(true)}
+            >
+              <Maximize2 className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
+              Full screen
+            </button>
+          </div>
         ) : null}
         <div
           ref={mapContainerRef}
@@ -195,7 +294,9 @@ export function ScheduleLiveMap({ points, className }: ScheduleLiveMapProps) {
             "w-full",
             fullscreen
               ? "min-h-0 flex-1 rounded-none border-0"
-              : "h-[68vh] min-h-[430px] rounded-xl border border-border",
+              : embeddedInCard
+                ? "h-full min-h-[200px] w-full rounded-none border-0"
+                : "h-full min-h-[200px] rounded-xl border border-border",
           )}
         />
       </div>

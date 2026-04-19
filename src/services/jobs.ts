@@ -443,29 +443,20 @@ export async function createJob(
   input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Job> {
   const supabase = getSupabase();
-  const billablePre = Number(input.client_price ?? 0) + Number(input.extras_amount ?? 0);
-  const scheduledPre = Number(input.customer_deposit ?? 0) + Number(input.customer_final_payment ?? 0);
-  const invoiceTotalPre = Math.max(0, Math.max(billablePre, scheduledPre));
-  const needInvoice = invoiceTotalPre > 0.01;
-  /** Geocode in parallel with ref RPCs — same critical path, independent I/O. */
+  /** Every job gets a paired draft invoice in Finance (amount may be 0 until pricing is set). */
   const [jobRefRes, invRefRes, coords] = await Promise.all([
     supabase.rpc("next_job_ref"),
-    needInvoice
-      ? supabase.rpc("next_invoice_ref")
-      : Promise.resolve({ data: null as string | null, error: null }),
+    supabase.rpc("next_invoice_ref"),
     resolveJobGeocode(input.property_address),
   ]);
   if (jobRefRes.error) throw jobRefRes.error;
+  if (invRefRes.error) throw invRefRes.error;
   const ref = jobRefRes.data as string;
-  let invoiceRefPre: string | undefined;
-  if (needInvoice) {
-    if (invRefRes.error) throw invRefRes.error;
-    const ir = invRefRes.data as string | null;
-    if (ir == null || String(ir).trim() === "") {
-      throw new Error("Could not generate invoice reference (next_invoice_ref).");
-    }
-    invoiceRefPre = ir;
+  const ir = invRefRes.data as string | null;
+  if (ir == null || String(ir).trim() === "") {
+    throw new Error("Could not generate invoice reference (next_invoice_ref).");
   }
+  const invoiceRefPre = ir;
 
   const baseRow = { ...input, reference: ref } as Record<string, unknown>;
   /** No partner → stay in Unassigned (Work Request + Auto assign keeps `auto_assigning`). */
@@ -529,7 +520,7 @@ export async function createJob(
   const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
   const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
-  if (invoiceTotal > 0.01 && !job.invoice_id) {
+  if (!job.invoice_id) {
     try {
       let dueDateStr = "";
       try {
@@ -549,7 +540,7 @@ export async function createJob(
           invoice_kind: "combined",
           collection_stage: hasDeposit ? "awaiting_deposit" : "awaiting_final",
         },
-        invoiceRefPre ? { reference: invoiceRefPre } : undefined,
+        { reference: invoiceRefPre },
       );
       const { error: linkErr } = await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
       if (!linkErr) {
@@ -620,8 +611,8 @@ export async function createJob(
    * - self-heal missing job foreign keys when documents already exist
    */
   try {
-    // Invoice expected whenever the customer side has value.
-    if (invoiceTotal > 0.01) {
+    // Every job should have a draft invoice (amount may be 0).
+    {
       let invoiceId = job.invoice_id ?? null;
       if (!invoiceId) {
         const linked = await listInvoicesLinkedToJob(job.reference, null);

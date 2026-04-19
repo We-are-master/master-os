@@ -469,6 +469,44 @@ export async function markPayRunItemsPaid(itemIds: string[]): Promise<void> {
   ]);
 }
 
+/** Partner self-bill states shown as “Draft” in Pay Run (not yet cleared for payout). */
+const PAY_RUN_DRAFT_SELF_BILL_STATUSES = new Set([
+  "draft",
+  "accumulating",
+  "pending_review",
+  "needs_attention",
+  "audit_required",
+]);
+
+export type PayRunQueueBucket = "draft" | "approved_to_pay" | "paid";
+
+/**
+ * Classifies a pay-run line for UI filters. Workforce/bills only enter the run when already approved,
+ * so they map to **approved_to_pay** while unpaid. Partner lines follow `self_bills.status`.
+ */
+export function payRunQueueBucket(item: PayRunItem, selfBillStatus?: string | null): PayRunQueueBucket {
+  if (item.status === "paid") return "paid";
+  if (item.item_type !== "self_bill") return "approved_to_pay";
+  const s = (selfBillStatus ?? "").trim();
+  if (PAY_RUN_DRAFT_SELF_BILL_STATUSES.has(s)) return "draft";
+  return "approved_to_pay";
+}
+
+/** Load current `self_bills.status` for partner lines (for Draft vs Approved to pay). */
+export async function fetchSelfBillStatusesByIds(ids: string[]): Promise<Record<string, string>> {
+  const unique = [...new Set(ids.map((x) => x.trim()).filter(Boolean))];
+  if (unique.length === 0) return {};
+  const supabase = getSupabase();
+  const { data, error } = await supabase.from("self_bills").select("id,status").in("id", unique);
+  if (error) throw error;
+  const m: Record<string, string> = {};
+  for (const row of data ?? []) {
+    const r = row as { id: string; status: string };
+    m[r.id] = r.status;
+  }
+  return m;
+}
+
 export function payRunItemTypeLabel(itemType: PayRunItem["item_type"]): string {
   switch (itemType) {
     case "self_bill":

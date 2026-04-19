@@ -10,6 +10,8 @@ interface DrawerProps {
   onClose: () => void;
   title?: string;
   subtitle?: string;
+  /** Renders inside the header area below the title row (e.g. owner row). */
+  headerExtra?: React.ReactNode;
   children: React.ReactNode;
   /** Renders below the scroll area (e.g. sticky chat input). */
   footer?: React.ReactNode;
@@ -22,6 +24,7 @@ export function Drawer({
   onClose,
   title,
   subtitle,
+  headerExtra,
   children,
   footer,
   width = "w-[440px]",
@@ -51,20 +54,23 @@ export function Drawer({
             )}
           >
             {title && (
-              <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-border-light shrink-0">
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-base font-semibold text-text-primary truncate">{title}</h3>
-                  {subtitle && (
-                    <p className="text-xs text-text-tertiary mt-0.5 line-clamp-2 break-words">{subtitle}</p>
-                  )}
+              <div className="shrink-0 border-b border-border-light">
+                <div className="flex items-start justify-between gap-3 px-6 py-4">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-base font-semibold text-text-primary truncate">{title}</h3>
+                    {subtitle && (
+                      <p className="text-xs text-text-tertiary mt-0.5 line-clamp-2 break-words">{subtitle}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary transition-colors"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-surface-tertiary hover:text-text-secondary transition-colors"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+                {headerExtra ? <div className="px-6 pb-3">{headerExtra}</div> : null}
               </div>
             )}
             <div className="flex flex-1 flex-col min-h-0">

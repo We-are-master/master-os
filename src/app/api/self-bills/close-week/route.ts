@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 
-/** Move all accumulating self-bills for a week (Monday date) into finance review. */
+/** Move all accumulating or draft partner buckets for a week (Monday date) into finance review. */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       .from("self_bills")
       .update({ status: "pending_review" })
       .eq("week_start", weekStart)
-      .eq("status", "accumulating")
+      .in("status", ["accumulating", "draft"])
       .select("id");
 
     if (error) throw error;

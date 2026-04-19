@@ -4,7 +4,8 @@
 
 | UI label | `status` value | When |
 |----------|----------------|------|
-| Ongoing | `accumulating` | ISO week Mon–Sun is open; new jobs attach here. |
+| Draft | `draft` | New weekly bucket (or DB fallback from insert); totals update as jobs link; **Review & approve** on the job moves partner side toward `awaiting_payment` / `ready_to_pay`. |
+| Ongoing | `accumulating` | ISO week Mon–Sun is open; new jobs attach here (legacy DBs that reject `draft` on insert). |
 | Review and Approve | `pending_review` | After the week closes (see **Week close** below). |
 | Ready to Pay | `ready_to_pay` | Finance approves from Review. |
 | Paid | `paid` | Marked when the pay run line is paid (see `pay-runs.ts` → `markPayRunItemsPaid`). |
@@ -15,7 +16,7 @@
 ## Week close (Sunday 23:59 → Review)
 
 - **API:** `POST /api/self-bills/close-week` with body `{ "weekStart": "YYYY-MM-DD" }` (Monday of the week to close).
-- Moves all rows with that `week_start` from `accumulating` → `pending_review`.
+- Moves all rows with that `week_start` from `accumulating` or `draft` → `pending_review`.
 - **Automation:** schedule a job **after** Sunday end-of-week (e.g. Monday 00:05 local or UTC) to call this with the **previous** ISO week’s Monday date.
 
 Example (manual SQL to move a week — same as the API):
@@ -25,7 +26,7 @@ Example (manual SQL to move a week — same as the API):
 UPDATE self_bills
 SET status = 'pending_review'
 WHERE week_start = :week_start
-  AND status = 'accumulating';
+  AND status IN ('accumulating', 'draft');
 ```
 
 ## Audit required (complaint by email)
@@ -47,7 +48,7 @@ Already implemented: when a pay run item of type `self_bill` is marked paid, `se
 ## UI defaults
 
 - Period filter defaults to **All** so lists are not hidden by week.
-- Tab defaults to **Ongoing** (`accumulating`).
+- Tab defaults to **Draft** (`draft`); **Ongoing** (`accumulating`) covers legacy buckets where the DB rejected `draft` on insert.
 - Realtime: client subscribes to `postgres_changes` on `self_bills` for live updates.
 
 ## Optional future columns (not required)

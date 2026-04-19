@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/uk-address-review-fields";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
-import { UserPlus, MapPin, Loader2, ChevronDown } from "lucide-react";
+import { UserPlus, MapPin, Loader2, ChevronDown, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import type { Client, ClientAddress } from "@/types/database";
 import { listClients, createClient, getClient } from "@/services/clients";
@@ -193,6 +193,7 @@ export function ClientAddressPicker({
     function handleClickOutside(e: MouseEvent) {
       if (containerRef.current?.contains(e.target as Node)) return;
       setClientDropdownOpen(false);
+      setAddressPickerOpen(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -205,6 +206,11 @@ export function ClientAddressPicker({
       setClientSearch(client.full_name);
       setClientDropdownOpen(false);
       setClientResults([]);
+      setAddingNewAddress(false);
+      setNewAddressRaw("");
+      setNewAddressPending(null);
+      setAddressSearch("");
+      setAddressPickerOpen(false);
       const keepAddr = valueRef.current.property_address || "";
       onChange({
         client_id: client.id,
@@ -258,6 +264,14 @@ export function ClientAddressPicker({
   const clientIdForAddresses = value.client_id ?? selectedClient?.id ?? null;
 
   useEffect(() => {
+    setAddressSearch("");
+    setAddressPickerOpen(false);
+    setAddingNewAddress(false);
+    setNewAddressRaw("");
+    setNewAddressPending(null);
+  }, [clientIdForAddresses]);
+
+  useEffect(() => {
     if (!clientIdForAddresses) {
       setAddresses([]);
       return;
@@ -268,31 +282,6 @@ export function ClientAddressPicker({
       .catch(() => setAddresses([]))
       .finally(() => setAddressLoading(false));
   }, [clientIdForAddresses]);
-
-  useEffect(() => {
-    if (selectedClient && !addressLoading && addresses.length === 0 && value.property_address?.trim()) {
-      setAddingNewAddress(true);
-      setNewAddressRaw(value.property_address.trim());
-    }
-  }, [selectedClient, addressLoading, addresses.length, value.property_address]);
-
-  /** When the client has no saved addresses, open the new-address field so the user always sees where to type (modals, create flows). */
-  const autoOpenedNewAddressForClientRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!value.client_id || !selectedClient) {
-      if (!value.client_id) autoOpenedNewAddressForClientRef.current = null;
-      return;
-    }
-    if (addressLoading) return;
-    if (addresses.length > 0) {
-      autoOpenedNewAddressForClientRef.current = null;
-      return;
-    }
-    if (addingNewAddress) return;
-    if (autoOpenedNewAddressForClientRef.current === value.client_id) return;
-    autoOpenedNewAddressForClientRef.current = value.client_id;
-    setAddingNewAddress(true);
-  }, [value.client_id, selectedClient, addressLoading, addresses.length, addingNewAddress]);
 
   const selectAddress = useCallback(
     (addr: ClientAddress) => {
@@ -309,6 +298,8 @@ export function ClientAddressPicker({
       });
       setAddingNewAddress(false);
       setNewAddressRaw("");
+      setAddressPickerOpen(false);
+      setAddressSearch("");
       if (jobCurrentAddressOnly) setJobAddressListExpanded(false);
     },
     [onChange, jobCurrentAddressOnly]
@@ -367,19 +358,10 @@ export function ClientAddressPicker({
     addresses.length > 0 &&
     Boolean(currentPropertyDisplayLine.trim());
 
-  /** Dropdown-style picker: collapse to a summary card once an address is picked; user taps "Change" to open a search list. */
   const selectedAddressRow = useMemo(
     () => addresses.find((a) => a.id === value.client_address_id) ?? null,
     [addresses, value.client_address_id],
   );
-  const showAddressPickerCollapsed =
-    !jobCurrentAddressOnly &&
-    !!selectedClient &&
-    !addressLoading &&
-    !addingNewAddress &&
-    !addressPickerOpen &&
-    !!selectedAddressRow &&
-    addresses.length > 0;
   const filteredAddresses = useMemo(() => {
     const q = addressSearch.trim().toLowerCase();
     if (!q) return addresses;
@@ -541,7 +523,8 @@ export function ClientAddressPicker({
     }
   }, [selectedClient, clientSearch, selectClient]);
 
-  const outerLayoutClass = layout === "grid-2" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : "";
+  const outerLayoutClass =
+    layout === "grid-2" ? "grid grid-cols-1 items-start gap-3 sm:grid-cols-2 sm:items-start" : "";
   return (
     <div className={cn(outerLayoutClass, className)} ref={containerRef}>
       {!clientSectionLocked ? (
@@ -569,7 +552,7 @@ export function ClientAddressPicker({
               }}
               placeholder={loadAllClientsOnOpen ? "Search or pick from the list…" : "Search by name or email..."}
               className={cn(
-                "w-full h-9 rounded-lg border border-border bg-card px-3 pr-9 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30",
+                "box-border h-9 max-h-9 min-h-9 w-full shrink-0 rounded-lg border border-border bg-card px-3 py-0 pr-9 text-sm leading-9 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30",
                 clientNameInputClassName,
               )}
               autoComplete="off"
@@ -657,7 +640,7 @@ export function ClientAddressPicker({
       )}
 
       {showAddressSection && (
-        <div className={layout === "grid-2" ? "" : "mt-3"}>
+        <div className={cn(layout === "grid-2" ? "min-w-0" : "mt-3")}>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">{labelAddress}</label>
           {!selectedClient && value.client_id ? (
             <div className="flex items-center gap-2 text-text-tertiary text-sm py-2">
@@ -691,38 +674,23 @@ export function ClientAddressPicker({
                   ← Back to current address only
                 </button>
               ) : null}
-              {addresses.map((addr) => {
-                const full = [addr.address, addr.city, addr.postcode].filter(Boolean).join(", ");
-                const isSelected = value.client_address_id === addr.id;
-                return (
-                  <button
-                    key={addr.id}
-                    type="button"
-                    onClick={() => selectAddress(addr)}
-                    className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${isSelected ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"}`}
-                  >
-                    <span className="font-medium">{addr.label || "Address"}</span>
-                    <span className="text-text-secondary block truncate">{full || addr.address}</span>
-                  </button>
-                );
-              })}
               {addingNewAddress ? (
                 <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
                   <p className="text-xs font-medium text-text-secondary mb-2">New address</p>
-              <AddressAutocomplete
-                value={newAddressRaw}
-                onChange={(val) => {
-                  setNewAddressRaw(val);
-                  setNewAddressPending(null);
-                  if (val.trim()) emit({ client_address_id: undefined, property_address: val.trim() });
-                  else emit({ client_address_id: undefined, property_address: "" });
-                }}
-                onSelect={(parts) => {
-                  setNewAddressRaw(parts.full_address);
-                  setNewAddressPending({ parts, form: addressPartsToFormState(parts) });
-                }}
-                placeholder="Type address or postcode..."
-              />
+                  <AddressAutocomplete
+                    value={newAddressRaw}
+                    onChange={(val) => {
+                      setNewAddressRaw(val);
+                      setNewAddressPending(null);
+                      if (val.trim()) emit({ client_address_id: undefined, property_address: val.trim() });
+                      else emit({ client_address_id: undefined, property_address: "" });
+                    }}
+                    onSelect={(parts) => {
+                      setNewAddressRaw(parts.full_address);
+                      setNewAddressPending({ parts, form: addressPartsToFormState(parts) });
+                    }}
+                    placeholder="Type address or postcode..."
+                  />
                   {newAddressPending ? (
                     <>
                       <UkAddressReviewFields
@@ -782,24 +750,107 @@ export function ClientAddressPicker({
                   </Button>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddingNewAddress(true);
-                    emit({ client_address_id: undefined });
-                    if (valueRef.current.property_address) setNewAddressRaw(valueRef.current.property_address);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border hover:border-primary/50 hover:bg-primary/5 text-sm text-text-tertiary hover:text-primary"
-                >
-                  <MapPin className="h-4 w-4" /> Add new address
-                </button>
+                <div className="relative">
+                  {selectedAddressRow ? (
+                    <div className="flex min-h-9 items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary">
+                      <p className="min-w-0 flex-1 whitespace-normal break-words leading-snug">{currentPropertyDisplayLine}</p>
+                      <button
+                        type="button"
+                        className="mt-0.5 shrink-0 rounded-md p-1 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-primary"
+                        aria-label="Change address"
+                        title="Change address"
+                        onClick={() => {
+                          setAddressSearch("");
+                          setAddressPickerOpen(true);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        value={addressSearch}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setAddressSearch(v);
+                          setAddressPickerOpen(true);
+                          emit({ client_address_id: undefined, property_address: v.trim() });
+                        }}
+                        onFocus={() => setAddressPickerOpen(true)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") setAddressPickerOpen(false);
+                        }}
+                        placeholder={
+                          addresses.length === 0
+                            ? "Type to add, or use Add new address below…"
+                            : "Search or select a saved address…"
+                        }
+                        className={cn(
+                          "box-border h-9 max-h-9 min-h-9 w-full shrink-0 rounded-lg border border-border bg-card px-3 py-0 pr-9 text-sm leading-9 text-text-primary placeholder:text-text-tertiary",
+                          "focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30",
+                        )}
+                        autoComplete="off"
+                        aria-expanded={addressPickerOpen}
+                        aria-autocomplete="list"
+                      />
+                      <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center">
+                        <ChevronDown className="h-4 w-4 text-text-tertiary" />
+                      </div>
+                    </>
+                  )}
+                  {addressPickerOpen ? (
+                    <div
+                      className="absolute left-0 right-0 top-full z-50 mt-1 flex max-h-56 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-lg"
+                      onMouseDown={(e) => e.preventDefault()}
+                    >
+                      <div className="min-h-0 flex-1 overflow-y-auto">
+                        {addresses.length === 0 ? (
+                          <p className="px-3 py-3 text-xs text-text-tertiary">No saved addresses for this client yet.</p>
+                        ) : filteredAddresses.length === 0 ? (
+                          <p className="px-3 py-3 text-center text-xs text-text-tertiary">No matches — try another search</p>
+                        ) : (
+                          filteredAddresses.map((addr) => {
+                            const full = [addr.address, addr.city, addr.postcode].filter(Boolean).join(", ");
+                            const isSelected = value.client_address_id === addr.id;
+                            return (
+                              <button
+                                key={addr.id}
+                                type="button"
+                                onClick={() => selectAddress(addr)}
+                                className={cn(
+                                  "w-full border-b border-border px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-surface-hover",
+                                  isSelected && "bg-primary/5",
+                                )}
+                              >
+                                <span className="font-medium text-text-primary">{addr.label || "Address"}</span>
+                                <span className="block truncate text-xs text-text-secondary">{full || addr.address}</span>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAddressPickerOpen(false);
+                          setAddingNewAddress(true);
+                          emit({ client_address_id: undefined });
+                          if (valueRef.current.property_address) setNewAddressRaw(valueRef.current.property_address);
+                        }}
+                        className="sticky bottom-0 z-[1] flex w-full shrink-0 items-center gap-2 border-t border-border bg-card px-3 py-2.5 text-left text-sm font-medium text-primary hover:bg-primary/10"
+                      >
+                        <MapPin className="h-4 w-4 shrink-0" />
+                        Add new address
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               )}
             </div>
             )
           ) : null}
-          {selectedClient && addresses.length === 0 && !addressLoading && !addingNewAddress && (
-            <p className="text-xs text-text-tertiary mb-2">No addresses. Add one below.</p>
-          )}
         </div>
       )}
 

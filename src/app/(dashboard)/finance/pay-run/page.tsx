@@ -24,10 +24,13 @@ import {
   exportPayRunToCsv,
   decodePayRunLabel,
   payRunItemTypeLabel,
+  payRunQueueBucket,
+  fetchSelfBillStatusesByIds,
 } from "@/services/pay-runs";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 
 type TypeFilter = "all" | "partner" | "workforce" | "bill";
+type StatusFilter = "all" | "draft" | "approved_to_pay" | "paid";
 
 export default function PayRunPage() {
   const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
@@ -36,9 +39,11 @@ export default function PayRunPage() {
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
   const [items, setItems] = useState<PayRunItem[]>([]);
+  const [selfBillStatusById, setSelfBillStatusById] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [paying, setPaying] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
 
   const boundsDate = useMemo(() => {
@@ -72,6 +77,12 @@ export default function PayRunPage() {
       await syncPayRunItems(run.id, week_start, week_end);
       const list = await getPayRunWithItems(run.id);
       setItems(list);
+      const sbIds = list.filter((i) => i.item_type === "self_bill").map((i) => i.source_id);
+      try {
+        setSelfBillStatusById(await fetchSelfBillStatusesByIds(sbIds));
+      } catch {
+        setSelfBillStatusById({});
+      }
     } catch (e) {
       console.error("Pay run load failed", e);
       const msg =
@@ -92,17 +103,27 @@ export default function PayRunPage() {
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [week_start, typeFilter]);
+  }, [week_start, typeFilter, statusFilter]);
 
   const displayRows = useMemo(() => {
-    if (typeFilter === "all") return items;
-    return items.filter((i) => {
-      if (typeFilter === "partner") return i.item_type === "self_bill";
-      if (typeFilter === "workforce") return i.item_type === "internal_cost";
-      if (typeFilter === "bill") return i.item_type === "bill";
+    let rows = items;
+    if (typeFilter !== "all") {
+      rows = rows.filter((i) => {
+        if (typeFilter === "partner") return i.item_type === "self_bill";
+        if (typeFilter === "workforce") return i.item_type === "internal_cost";
+        if (typeFilter === "bill") return i.item_type === "bill";
+        return true;
+      });
+    }
+    if (statusFilter === "all") return rows;
+    return rows.filter((i) => {
+      const bucket = payRunQueueBucket(i, selfBillStatusById[i.source_id]);
+      if (statusFilter === "paid") return bucket === "paid";
+      if (statusFilter === "draft") return bucket === "draft";
+      if (statusFilter === "approved_to_pay") return bucket === "approved_to_pay";
       return true;
     });
-  }, [items, typeFilter]);
+  }, [items, typeFilter, statusFilter, selfBillStatusById]);
 
   const dueThisWeek = items.filter((i) => i.status === "pending");
   const paidThisWeek = items.filter((i) => i.status === "paid");
@@ -111,6 +132,28 @@ export default function PayRunPage() {
 
   const totalDue = dueThisWeek.reduce((s, i) => s + Number(i.amount), 0);
   const totalPaid = paidThisWeek.reduce((s, i) => s + Number(i.amount), 0);
+
+  const statusTabs = useMemo(() => {
+    const bucket = (i: PayRunItem) => payRunQueueBucket(i, selfBillStatusById[i.source_id]);
+    return [
+      { id: "all" as const, label: "All", count: items.length },
+      {
+        id: "draft" as const,
+        label: "Draft",
+        count: items.filter((i) => bucket(i) === "draft").length,
+      },
+      {
+        id: "approved_to_pay" as const,
+        label: "Approved to pay",
+        count: items.filter((i) => bucket(i) === "approved_to_pay").length,
+      },
+      {
+        id: "paid" as const,
+        label: "Paid",
+        count: items.filter((i) => bucket(i) === "paid").length,
+      },
+    ];
+  }, [items, selfBillStatusById]);
 
   const typeTabs = useMemo(
     () => [
@@ -200,7 +243,7 @@ export default function PayRunPage() {
       <div className="space-y-5">
         <PageHeader
           title="Pay Run"
-          subtitle={`${weekNumberLine} · Execute payments for items already in Finance — partner self-bills, workforce payroll lines, and supplier bills. Period: All · Monthly · Week · Date range (default: current month). Pick any week; unpaid lines for that week stay visible even if you are in a later week.`}
+          subtitle={`${weekNumberLine} · Execute partner self-bills, workforce payroll, and supplier bills already approved in Finance.`}
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExport}>
             Export CSV
@@ -219,7 +262,7 @@ export default function PayRunPage() {
           rangeTo={rangeTo}
           onRangeFromChange={handleRangeFromChange}
           onRangeToChange={setRangeTo}
-          rangeHelperText="Pay run is weekly. Monthly picks the week that contains the 1st of that month. In date range mode, the week containing “From” is used (adjust “From” to jump to another week)."
+          rangeHelperText="Pay run is weekly. Monthly and date range select the week anchor."
         />
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -250,12 +293,24 @@ export default function PayRunPage() {
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-3">
-          <Tabs
-            variant="pills"
-            tabs={typeTabs.map((t) => ({ id: t.id, label: t.label, count: t.count }))}
-            activeTab={typeFilter}
-            onChange={(id) => setTypeFilter(id as TypeFilter)}
-          />
+          <div className="flex flex-col gap-3 min-w-0">
+            <div className="min-w-0 overflow-x-auto pb-0.5 -mb-0.5 [scrollbar-width:thin]">
+              <Tabs
+                variant="pills"
+                tabs={statusTabs.map((t) => ({ id: t.id, label: t.label, count: t.count }))}
+                activeTab={statusFilter}
+                onChange={(id) => setStatusFilter(id as StatusFilter)}
+              />
+            </div>
+            <div className="min-w-0 overflow-x-auto pb-0.5 -mb-0.5 [scrollbar-width:thin]">
+              <Tabs
+                variant="pills"
+                tabs={typeTabs.map((t) => ({ id: t.id, label: t.label, count: t.count }))}
+                activeTab={typeFilter}
+                onChange={(id) => setTypeFilter(id as TypeFilter)}
+              />
+            </div>
+          </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="text-sm font-semibold text-text-primary">Payment queue</h3>
@@ -305,6 +360,19 @@ export default function PayRunPage() {
                 <tbody>
                   {displayRows.map((i) => {
                     const { name, reference } = decodePayRunLabel(i.source_label);
+                    const queueBucket = payRunQueueBucket(i, selfBillStatusById[i.source_id]);
+                    const statusLabel =
+                      queueBucket === "paid"
+                        ? "Paid"
+                        : queueBucket === "draft"
+                          ? "Draft"
+                          : "Approved to pay";
+                    const statusClass =
+                      queueBucket === "paid"
+                        ? "text-emerald-600 font-medium"
+                        : queueBucket === "draft"
+                          ? "text-text-secondary font-medium"
+                          : "text-amber-600 font-medium";
                     return (
                       <tr key={i.id} className="border-b border-border last:border-0">
                         <td className="p-3">
@@ -332,9 +400,7 @@ export default function PayRunPage() {
                           {i.due_date ? formatDate(i.due_date) : "—"}
                         </td>
                         <td className="p-3">
-                          <span className={i.status === "paid" ? "text-emerald-600 font-medium" : "text-amber-600"}>
-                            {i.status === "paid" ? "Paid" : "Unpaid"}
-                          </span>
+                          <span className={statusClass}>{statusLabel}</span>
                         </td>
                       </tr>
                     );
@@ -343,9 +409,9 @@ export default function PayRunPage() {
               </table>
               {displayRows.length === 0 && (
                 <p className="p-8 text-center text-text-tertiary max-w-lg mx-auto">
-                  No lines for this filter. Unpaid partner self-bills (that week, net &gt; 0), workforce rows with due date in
-                  the week, and approved bills due in the week appear here. Change the week above or open Partner / Workforce /
-                  Bills modules to prepare items.
+                  No lines for this combination of status (Draft / Approved to pay / Paid) and type (Partner / Workforce /
+                  Bills). Change filters, or change the week above. Items appear when partner self-bills, workforce payroll, and
+                  approved supplier bills fall in this run.
                 </p>
               )}
             </div>

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FileText, ClipboardList, Briefcase, Receipt,
-  MessageSquare, Settings, LogOut, Menu, X, Sun, Moon, MapPin,
+  MessageSquare, Settings, LogOut, Menu, X, Sun, Moon,
 } from "lucide-react";
 
 interface PortalShellProps {
@@ -17,7 +17,6 @@ interface PortalShellProps {
 
 const NAV_ITEMS = [
   { href: "/portal",          label: "Dashboard", icon: LayoutDashboard },
-  { href: "/portal/assets",   label: "Assets",    icon: MapPin          },
   { href: "/portal/requests", label: "Requests",  icon: ClipboardList   },
   { href: "/portal/quotes",   label: "Quotes",    icon: FileText        },
   { href: "/portal/jobs",     label: "Jobs",      icon: Briefcase       },

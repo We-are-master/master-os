@@ -7,9 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { Avatar } from "@/components/ui/avatar";
-import { JobOwnerSelect } from "@/components/ui/job-owner-select";
-import { DataTable, type Column } from "@/components/ui/data-table";
+import { DataTable, type Column, type ColumnSortOption } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
 import { Input, SearchInput } from "@/components/ui/input";
@@ -20,12 +20,12 @@ import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Filter, Download, List, LayoutGrid, Calendar, Map as MapIcon,
-  FileText, BarChart3, Clock, ArrowRight,
+  FileText, BarChart3, Clock, ArrowRight, Check,
   Send, CheckCircle2, RotateCcw, RefreshCw, XCircle,
-  Mail, Building2,
+  Mail,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
-  ClipboardList, MapPin, Gavel, UserRound, Sparkles, ChevronDown, Brain,
-  Wallet, Percent, PoundSterling, ImagePlus, X,
+  ClipboardList, MapPin, Gavel, UserRound, Building2, Sparkles, ChevronDown, Brain,
+  Wallet, Percent, PoundSterling, ImagePlus, X, Pencil, UserPlus,
   MailCheck,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -54,7 +54,6 @@ import {
   type QuoteBid,
 } from "@/services/quote-bids";
 import { getRequest } from "@/services/requests";
-import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { getStatusCounts, getSupabase, softDeleteById, type ListParams, type ListResult } from "@/services/base";
 import { useProfile } from "@/hooks/use-profile";
 import { logAudit, logBulkAction } from "@/services/audit";
@@ -63,6 +62,8 @@ import { KanbanBoard } from "@/components/shared/kanban-board";
 import { normalizeTotalPhases } from "@/lib/job-phases";
 import { getPartnerAssignmentBlockReason } from "@/lib/job-partner-assign";
 import { getErrorMessage, isUuid, isValidIsoDateTime, parseIsoDateOnly } from "@/lib/utils";
+import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
+import { getScheduleRangeYmd, ukTodayYmd, type ScheduleDatePreset } from "@/lib/uk-schedule-range";
 import { insertQuoteLineItemsResilient } from "@/lib/quote-line-items-insert";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
@@ -106,7 +107,6 @@ function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>)
 }
 
 const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
-type KpiDatePreset = "day" | "week" | "month" | "range";
 
 /**
  * Label for proposal line 1: type of work only.
@@ -393,8 +393,6 @@ const statusConfig: Record<string, { variant: "default" | "primary" | "success" 
   converted_to_job: { variant: "success", dot: true },
 };
 
-const statusSteps = ["Draft", "In Survey", "Bidding", "Awaiting Customer", "Accepted"];
-
 /** Open pipeline: every status that still needs internal/customer work before job conversion. */
 const PIPELINE_STATUS_IN = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"] as const;
 
@@ -410,6 +408,64 @@ async function listQuotesForPage(params: ListParams): Promise<ListResult<Quote>>
   return listQuotes({ ...params });
 }
 
+/** Same ordering as `QuoteStageColumn` for list sort. */
+const QUOTE_STATUS_SORT_ORDER: Record<string, number> = {
+  draft: 0,
+  in_survey: 1,
+  bidding: 2,
+  awaiting_customer: 3,
+  accepted: 4,
+  rejected: -1,
+  converted_to_job: 5,
+};
+
+const SORT_CLEAR: ColumnSortOption = { label: "Default order", sortKey: null, direction: "asc" };
+
+/** By quote `created_at` — available from any column’s sort menu. */
+const QUOTE_SORT_CREATED: ColumnSortOption[] = [
+  { label: "Newest first", sortKey: "__created_at", direction: "desc" },
+  { label: "Oldest first", sortKey: "__created_at", direction: "asc" },
+];
+
+const QUOTE_SORT_REFERENCE: ColumnSortOption[] = [
+  { label: "Quote A → Z", sortKey: "reference", direction: "asc" },
+  { label: "Quote Z → A", sortKey: "reference", direction: "desc" },
+  ...QUOTE_SORT_CREATED,
+  SORT_CLEAR,
+];
+
+function quoteSortTextCol(columnKey: string, title: string): ColumnSortOption[] {
+  return [
+    { label: `${title} A → Z`, sortKey: columnKey, direction: "asc" },
+    { label: `${title} Z → A`, sortKey: columnKey, direction: "desc" },
+    ...QUOTE_SORT_CREATED,
+  ];
+}
+
+const QUOTE_SORT_STAGE: ColumnSortOption[] = [
+  { label: "Early stage first", sortKey: "status", direction: "asc" },
+  { label: "Late stage first", sortKey: "status", direction: "desc" },
+  ...QUOTE_SORT_CREATED,
+];
+
+const QUOTE_SORT_AMOUNT: ColumnSortOption[] = [
+  { label: "Low to high", sortKey: "total_value", direction: "asc" },
+  { label: "High to low", sortKey: "total_value", direction: "desc" },
+  ...QUOTE_SORT_CREATED,
+];
+
+const QUOTE_SORT_MARGIN: ColumnSortOption[] = [
+  { label: "Low to high", sortKey: "margin_percent", direction: "asc" },
+  { label: "High to low", sortKey: "margin_percent", direction: "desc" },
+  ...QUOTE_SORT_CREATED,
+];
+
+const QUOTE_SORT_AVG_BID: ColumnSortOption[] = [
+  { label: "Low to high", sortKey: "avg_bid", direction: "asc" },
+  { label: "High to low", sortKey: "avg_bid", direction: "desc" },
+  ...QUOTE_SORT_CREATED,
+];
+
 const STAGE_META: { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
   { id: "draft", label: "Draft", short: "Draft", icon: ClipboardList },
   { id: "in_survey", label: "Survey", short: "Survey", icon: MapPin },
@@ -417,9 +473,6 @@ const STAGE_META: { id: string; label: string; short: string; icon: typeof Clipb
   { id: "awaiting_customer", label: "Awaiting customer", short: "Awaiting customer", icon: UserRound },
   { id: "accepted", label: "Accepted", short: "Won", icon: CheckCircle2 },
 ];
-
-/** List stage filter chips: Survey hidden (quotes can still be in survey inside Active pipeline / kanban). */
-const STAGE_FILTER_CHIPS = STAGE_META.filter((s) => s.id !== "in_survey");
 
 function QuoteStageColumn({ status }: { status: string }) {
   const stepMap: Record<string, number> = {
@@ -541,15 +594,12 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const { profile } = useProfile();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
-  const [kpiDatePreset, setKpiDatePreset] = useState<KpiDatePreset>("month");
-  const [kpiRangeFrom, setKpiRangeFrom] = useState<string>(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  });
-  const [kpiRangeTo, setKpiRangeTo] = useState<string>(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  });
+  const kpiAnchorDayKey = ukTodayYmd(new Date());
+  const [kpiSchedulePreset, setKpiSchedulePreset] = useState<ScheduleDatePreset>("month");
+  const [kpiCustomFrom, setKpiCustomFrom] = useState(() => ukTodayYmd(new Date()));
+  const [kpiCustomTo, setKpiCustomTo] = useState(() => ukTodayYmd(new Date()));
+  const [kpiDateFilterOpen, setKpiDateFilterOpen] = useState(false);
+  const kpiDateFilterRef = useRef<HTMLDivElement>(null);
   const [kpiLoading, setKpiLoading] = useState(false);
   const [kpiSummary, setKpiSummary] = useState({
     totalQuotedValue: 0,
@@ -597,11 +647,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (filterRef.current && !filterRef.current.contains(e.target as Node)) setFilterOpen(false);
+      const t = e.target as Node;
+      if (filterRef.current && !filterRef.current.contains(t)) setFilterOpen(false);
+      if (kpiDateFilterOpen && kpiDateFilterRef.current && !kpiDateFilterRef.current.contains(t)) setKpiDateFilterOpen(false);
     }
-    if (filterOpen) document.addEventListener("mousedown", handleClickOutside);
+    if (filterOpen || kpiDateFilterOpen) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [filterOpen]);
+  }, [filterOpen, kpiDateFilterOpen]);
 
   const filteredQuotes = useMemo(() => {
     return data.filter((q) => {
@@ -638,6 +690,59 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     void refreshListBidAverages();
   }, [dataIdsKey, status, refreshListBidAverages]);
 
+  const [listSortKey, setListSortKey] = useState<string | null>(null);
+  const [listSortDir, setListSortDir] = useState<"asc" | "desc">("asc");
+
+  useEffect(() => {
+    if (listSortKey === "avg_bid" && status !== "bidding") setListSortKey(null);
+  }, [status, listSortKey]);
+
+  const quoteListSorted = useMemo(() => {
+    const rows = [...filteredQuotes];
+    if (!listSortKey) return rows;
+    const mul = listSortDir === "asc" ? 1 : -1;
+    const typeOfWorkSort = (q: Quote) =>
+      normalizeTypeOfWork(q.service_type) || normalizeTypeOfWork(q.title) || q.title || "";
+    rows.sort((a, b) => {
+      switch (listSortKey) {
+        case "reference":
+          return mul * (a.reference ?? "").localeCompare(b.reference ?? "", undefined, { sensitivity: "base" });
+        case "client_name":
+          return mul * (a.client_name ?? "").localeCompare(b.client_name ?? "", undefined, { sensitivity: "base" });
+        case "service_type":
+          return mul * typeOfWorkSort(a).localeCompare(typeOfWorkSort(b), undefined, { sensitivity: "base" });
+        case "quote_type":
+          return mul * String(a.quote_type ?? "").localeCompare(String(b.quote_type ?? ""));
+        case "status": {
+          const ao = QUOTE_STATUS_SORT_ORDER[a.status] ?? 0;
+          const bo = QUOTE_STATUS_SORT_ORDER[b.status] ?? 0;
+          return mul * (ao - bo);
+        }
+        case "avg_bid": {
+          const av = avgBidByQuoteId[a.id];
+          const bv = avgBidByQuoteId[b.id];
+          const an = typeof av === "number" && Number.isFinite(av) ? av : Number.NEGATIVE_INFINITY;
+          const bn = typeof bv === "number" && Number.isFinite(bv) ? bv : Number.NEGATIVE_INFINITY;
+          return mul * (an - bn);
+        }
+        case "total_value":
+          return mul * ((Number(a.total_value) || 0) - (Number(b.total_value) || 0));
+        case "margin_percent":
+          return mul * ((Number(a.margin_percent) || 0) - (Number(b.margin_percent) || 0));
+        case "__created_at":
+          return mul * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        default:
+          return 0;
+      }
+    });
+    return rows;
+  }, [filteredQuotes, listSortKey, listSortDir, avgBidByQuoteId]);
+
+  const handleQuoteListSortChange = useCallback((key: string | null, direction: "asc" | "desc") => {
+    setListSortKey(key);
+    setListSortDir(direction);
+  }, []);
+
   const quoteKanbanColumns = useMemo(() => {
     const ids = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"];
     return ids.map((id) => ({
@@ -669,43 +774,29 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     }, delayMs);
   }, [refreshSilent, loadCounts]);
 
+  const kpiScheduleRangeYmd = useMemo(
+    () => getScheduleRangeYmd(kpiSchedulePreset, kpiCustomFrom, kpiCustomTo),
+    [kpiSchedulePreset, kpiCustomFrom, kpiCustomTo, kpiAnchorDayKey],
+  );
+
   const kpiDateBounds = useMemo(() => {
-    const now = new Date();
-    const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-    const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-    if (kpiDatePreset === "day") {
-      return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
-    }
-    if (kpiDatePreset === "week") {
-      const day = now.getDay();
-      const diff = day === 0 ? -6 : 1 - day;
-      const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
-      const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
-      return { from: startOfDay(monday).toISOString(), to: endOfDay(sunday).toISOString() };
-    }
-    if (kpiDatePreset === "month") {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      return { from: startOfDay(first).toISOString(), to: endOfDay(last).toISOString() };
-    }
-    const from = new Date(`${kpiRangeFrom}T00:00:00`);
-    const to = new Date(`${kpiRangeTo}T23:59:59.999`);
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
-    return { from: from.toISOString(), to: to.toISOString() };
-  }, [kpiDatePreset, kpiRangeFrom, kpiRangeTo]);
+    if (!kpiScheduleRangeYmd) return null;
+    return {
+      from: localYmdStartIso(kpiScheduleRangeYmd.from),
+      to: localYmdEndIso(kpiScheduleRangeYmd.to),
+    };
+  }, [kpiScheduleRangeYmd]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!kpiDateBounds) return;
       setKpiLoading(true);
       try {
         const supabase = getSupabase();
-        const { data, error } = await supabase
-          .from("quotes")
-          .select("status,total_value,created_at")
-          .gte("created_at", kpiDateBounds.from)
-          .lte("created_at", kpiDateBounds.to);
+        const base = supabase.from("quotes").select("status,total_value,created_at");
+        const { data, error } = kpiDateBounds
+          ? await base.gte("created_at", kpiDateBounds.from).lte("created_at", kpiDateBounds.to)
+          : await base;
         if (error) throw error;
         const rows = (data ?? []) as Array<{ status: string; total_value?: number | null }>;
         const openStatuses = new Set(["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "converted_to_job"]);
@@ -741,6 +832,21 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     (statusCounts.bidding ?? 0) +
     (statusCounts.awaiting_customer ?? 0) +
     (statusCounts.accepted ?? 0);
+
+  /** Same tab strip pattern as Requests: underline + count badges. */
+  const quoteStageTabs = useMemo(
+    () => [
+      { id: "pipeline", label: "Active pipeline", count: pipelineCount },
+      { id: "draft", label: "Draft", count: statusCounts.draft ?? 0 },
+      { id: "bidding", label: "Bidding", count: statusCounts.bidding ?? 0 },
+      { id: "awaiting_customer", label: "Awaiting customer", count: statusCounts.awaiting_customer ?? 0 },
+      { id: "accepted", label: "Accepted", count: statusCounts.accepted ?? 0 },
+      { id: "rejected", label: "Rejected", count: statusCounts.rejected ?? 0 },
+      { id: "all", label: "All quotes", count: statusCounts.all ?? 0 },
+      { id: "converted_to_job", label: "Converted", count: statusCounts.converted_to_job ?? 0 },
+    ],
+    [statusCounts, pipelineCount],
+  );
 
   /** Share of quotes in selected KPI date window that became jobs (`converted_to_job`). */
   const quoteToJobConversion = useMemo(
@@ -1070,7 +1176,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const columns: Column<Quote>[] = useMemo(() => {
     const lead: Column<Quote>[] = [
       {
-        key: "reference", label: "Quote", width: "200px",
+        key: "reference",
+        label: "Quote",
+        width: "200px",
+        sortable: true,
+        sortOptions: QUOTE_SORT_REFERENCE,
         render: (item) => (
           <div>
             <p className="text-sm font-semibold text-text-primary">{item.reference}</p>
@@ -1079,10 +1189,19 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         ),
       },
       {
-        key: "client_name", label: "Client",
+        key: "client_name",
+        label: "Client",
+        minWidth: "8.5rem",
+        sortable: true,
+        sortOptions: quoteSortTextCol("client_name", "Client"),
         render: (item) => (
           <div className="flex items-start gap-2 min-w-0">
-            <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" />
+            <Avatar
+              name={item.client_name}
+              size="sm"
+              className="shrink-0 mt-0.5"
+              src={item.source_account_logo_url?.trim() || undefined}
+            />
             <div className="min-w-0">
               <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
               {item.source_account_name?.trim() ? (
@@ -1095,13 +1214,20 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       {
         key: "service_type",
         label: "Type of work",
+        minWidth: "10.5rem",
+        sortable: true,
+        sortOptions: quoteSortTextCol("service_type", "Type of work"),
         render: (item) => {
           const type = normalizeTypeOfWork(item.service_type) || normalizeTypeOfWork(item.title) || item.title || "—";
           return <span className="text-sm text-text-secondary truncate block max-w-[180px]">{type}</span>;
         },
       },
       {
-        key: "quote_type", label: "Type",
+        key: "quote_type",
+        label: "Type",
+        minWidth: "5rem",
+        sortable: true,
+        sortOptions: quoteSortTextCol("quote_type", "Type"),
         render: (item) => (
           <Badge variant={item.quote_type === "partner" ? "warning" : "info"} size="sm">
             {item.quote_type === "partner" ? "Partner" : "Manual"}
@@ -1109,12 +1235,21 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         ),
       },
       {
-        key: "status", label: "Stage",
+        key: "status",
+        label: "Stage",
+        minWidth: "8rem",
+        sortable: true,
+        sortOptions: QUOTE_SORT_STAGE,
         render: (item) => <QuoteStageColumn status={item.status} />,
       },
     ];
     const avgBidColumn: Column<Quote> = {
-      key: "avg_bid", label: "AVG Bid", align: "right" as const,
+      key: "avg_bid",
+      label: "AVG Bid",
+      minWidth: "5.5rem",
+      align: "right" as const,
+      sortable: true,
+      sortOptions: QUOTE_SORT_AVG_BID,
       render: (item) => {
         const avg = avgBidByQuoteId[item.id];
         return typeof avg === "number" && Number.isFinite(avg) ? (
@@ -1126,11 +1261,20 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     };
     const tail: Column<Quote>[] = [
       {
-        key: "total_value", label: "Amount", align: "right" as const,
+        key: "total_value",
+        label: "Amount",
+        minWidth: "5.5rem",
+        align: "right" as const,
+        sortable: true,
+        sortOptions: QUOTE_SORT_AMOUNT,
         render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>,
       },
       {
-        key: "margin_percent", label: "Margin",
+        key: "margin_percent",
+        label: "Margin",
+        minWidth: "4.75rem",
+        sortable: true,
+        sortOptions: QUOTE_SORT_MARGIN,
         render: (item) => item.margin_percent ? (
           <span className={`text-xs font-semibold ${item.margin_percent >= 30 ? "text-emerald-600" : item.margin_percent >= 20 ? "text-amber-600" : "text-red-500"}`}>
             {item.margin_percent}%
@@ -1150,50 +1294,115 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       <div className="space-y-5">
         <PageHeader
           title="Quotes"
-          subtitle="Work one stage at a time: Draft → Bidding → Awaiting customer → Accepted. Use Active pipeline to see open quotes only."
+          infoTooltip={
+            "Headline KPIs use each quote’s creation date within the Dates window above.\n\n" +
+            "Status tabs filter the list below."
+          }
         >
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
-            onClick={() => {
-              void loadCounts();
-              refreshSilent();
-            }}
-            title="Reload quotes and tab counts from the server (no full-table loading flash)"
-          >
-            Refresh
-          </Button>
-          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>Export</Button>
-          <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={handleNewQuoteClick}>New Quote</Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="relative" ref={kpiDateFilterRef}>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Calendar className="h-3.5 w-3.5" />}
+                onClick={() => setKpiDateFilterOpen((o) => !o)}
+                className={cn(kpiScheduleRangeYmd && "border-primary/40 bg-primary/5")}
+              >
+                {kpiSchedulePreset === "all"
+                  ? "Dates"
+                  : kpiSchedulePreset === "today"
+                    ? "Today"
+                    : kpiSchedulePreset === "tomorrow"
+                      ? "Tomorrow"
+                      : kpiSchedulePreset === "week"
+                        ? "This week"
+                        : kpiSchedulePreset === "month"
+                          ? "This month"
+                          : "Custom range"}
+              </Button>
+              {kpiDateFilterOpen && (
+                <div className="absolute top-full right-0 mt-1 w-[min(calc(100vw-2rem),280px)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">KPI window (created date)</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(
+                      [
+                        ["all", "All dates"],
+                        ["today", "Today"],
+                        ["tomorrow", "Tomorrow"],
+                        ["week", "This week"],
+                        ["month", "This month"],
+                        ["custom", "Custom"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <Button
+                        key={id}
+                        type="button"
+                        variant={kpiSchedulePreset === id ? "primary" : "ghost"}
+                        size="sm"
+                        className={cn(
+                          "h-8 justify-center px-3 text-[11px] font-medium rounded-[6px]",
+                          kpiSchedulePreset !== id && "text-[#020040]",
+                        )}
+                        onClick={() => {
+                          setKpiSchedulePreset(id);
+                          if (id === "custom") setKpiDateFilterOpen(true);
+                          else setKpiDateFilterOpen(false);
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                  {kpiSchedulePreset === "custom" ? (
+                    <div className="space-y-2 pt-1 border-t border-border-light">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">From · to</p>
+                      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
+                        <Input type="date" value={kpiCustomFrom} onChange={(e) => setKpiCustomFrom(e.target.value)} className="h-9 text-sm" />
+                        <Input type="date" value={kpiCustomTo} onChange={(e) => setKpiCustomTo(e.target.value)} className="h-9 text-sm" />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+              onClick={() => {
+                void loadCounts();
+                refreshSilent();
+              }}
+              title="Reload quotes and tab counts from the server (no full-table loading flash)"
+            >
+              Refresh
+            </Button>
+            <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
+              Export
+            </Button>
+            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={handleNewQuoteClick}>New Quote</Button>
+          </div>
         </PageHeader>
 
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="w-[180px]">
-            <Select
-              label="KPI date"
-              value={kpiDatePreset}
-              onChange={(e) => setKpiDatePreset(e.target.value as KpiDatePreset)}
-              options={[
-                { value: "day", label: "Day" },
-                { value: "week", label: "Week" },
-                { value: "month", label: "Month" },
-                { value: "range", label: "Range" },
-              ]}
-            />
-          </div>
-          {kpiDatePreset === "range" && (
-            <>
-              <Input type="date" value={kpiRangeFrom} onChange={(e) => setKpiRangeFrom(e.target.value)} className="w-[170px] h-9" />
-              <Input type="date" value={kpiRangeTo} onChange={(e) => setKpiRangeTo(e.target.value)} className="w-[170px] h-9" />
-            </>
-          )}
-          {kpiLoading ? <span className="text-xs text-text-tertiary animate-pulse">Updating KPIs…</span> : null}
-        </div>
-
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Total Quoted" value={kpiSummary.totalQuotedValue} format="currency" icon={BarChart3} accent="primary" description="Includes Awaiting Customer value" />
-          <KpiCard title="Bidding" value={kpiSummary.biddingCount} format="number" icon={FileText} accent="blue" description="No. of quotes in bidding" />
+          <KpiCard
+            title="Total Quoted"
+            value={kpiSummary.totalQuotedValue}
+            format="currency"
+            icon={BarChart3}
+            accent="primary"
+            description="Includes Awaiting Customer value"
+            descriptionAsTooltip
+          />
+          <KpiCard
+            title="Bidding"
+            value={kpiSummary.biddingCount}
+            format="number"
+            icon={FileText}
+            accent="blue"
+            description="No. of quotes in bidding"
+            descriptionAsTooltip
+          />
           <KpiCard title="Rejected Value" value={kpiSummary.rejectedValue} format="currency" icon={XCircle} accent="amber" />
           <KpiCard
             title="Conversion Rate"
@@ -1206,107 +1415,16 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                 ? "No quotes yet"
                 : `${quoteToJobConversion.converted} job${quoteToJobConversion.converted === 1 ? "" : "s"} from ${quoteToJobConversion.total} quote${quoteToJobConversion.total === 1 ? "" : "s"} · conversion rate`
             }
+            descriptionAsTooltip
           />
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="rounded-2xl border border-border-light bg-card/70 p-4 mb-4 space-y-3">
-            <div className="flex items-start gap-2">
-              <Sparkles className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-semibold text-text-primary">Pick a stage to focus the list</p>
-                <p className="text-[11px] text-text-tertiary mt-0.5">
-                  <strong className="text-text-secondary">Active pipeline</strong> shows quotes still in play (not rejected or converted).
-                </p>
-              </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
+            <div className="min-w-0 flex-1 overflow-x-auto pb-1 -mb-1 [scrollbar-width:thin]">
+              <Tabs tabs={quoteStageTabs} activeTab={status} onChange={setStatus} />
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setStatus("pipeline")}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all",
-                  status === "pipeline"
-                    ? "border-primary bg-primary text-white shadow-sm"
-                    : "border-border-light bg-surface-hover hover:border-primary/40 text-text-secondary"
-                )}
-              >
-                <span className="text-xs font-bold">Active pipeline</span>
-                <span className={cn("text-[11px] font-bold tabular-nums", status === "pipeline" ? "text-white/90" : "text-text-tertiary")}>
-                  {pipelineCount}
-                </span>
-              </button>
-              {STAGE_FILTER_CHIPS.map((s) => {
-                const c = statusCounts[s.id] ?? 0;
-                const active = status === s.id;
-                const Icon = s.icon;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => setStatus(s.id)}
-                    className={cn(
-                      "inline-flex items-center gap-2 rounded-xl border px-3 py-2 transition-all min-w-[7rem]",
-                      active
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border-light bg-card hover:border-primary/30 text-text-secondary"
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                    <span className="text-xs font-semibold truncate">{s.label}</span>
-                    <span className={cn("ml-auto text-[11px] font-bold tabular-nums", active ? "text-primary" : "text-text-tertiary")}>{c}</span>
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                onClick={() => setStatus("rejected")}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-xl border px-3 py-2 transition-all min-w-[7rem]",
-                  status === "rejected"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border-light bg-card hover:border-primary/30 text-text-secondary"
-                )}
-              >
-                <XCircle className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                <span className="text-xs font-semibold truncate">Rejected</span>
-                <span className={cn("ml-auto text-[11px] font-bold tabular-nums", status === "rejected" ? "text-primary" : "text-text-tertiary")}>
-                  {statusCounts.rejected ?? 0}
-                </span>
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 border-t border-border-light/80">
-              <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">More</span>
-              {[
-                { id: "all", label: "All quotes" },
-                { id: "converted_to_job", label: "Converted" },
-              ].map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setStatus(t.id)}
-                  className={cn(
-                    "text-xs font-medium rounded-lg px-2 py-1 transition-colors",
-                    status === t.id ? "bg-surface-tertiary text-text-primary" : "text-text-tertiary hover:text-primary"
-                  )}
-                >
-                  {t.label}
-                  <span className="text-[10px] text-text-tertiary ml-1 tabular-nums">
-                    ({t.id === "all" ? statusCounts.all ?? 0 : statusCounts[t.id] ?? 0})
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-xs text-text-tertiary hidden sm:block">
-              {status === "pipeline" && "Showing: draft through accepted · "}
-              {status !== "pipeline" && status !== "all" && `Filtered by: ${statusLabels[status] ?? status} · `}
-              {status === "all" && "Showing every quote · "}
-              Use the view toggles for list, board, or calendar.
-            </p>
-            <div className="flex items-center gap-2 sm:ml-auto">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
                 {[{ id: "list", icon: List }, { id: "kanban", icon: LayoutGrid }, { id: "calendar", icon: Calendar }, { id: "map", icon: MapIcon }].map(({ id, icon: Icon }) => (
                   <button key={id} onClick={() => setViewMode(id)} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}>
@@ -1314,15 +1432,27 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                   </button>
                 ))}
               </div>
-              <SearchInput placeholder="Search quotes..." className="w-52" value={search} onChange={(e) => setSearch(e.target.value)} />
-              <div className="relative" ref={filterRef}>
-                <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-                {(filterQuoteType !== "all" || buFilter.selectedBuId) && <span className="ml-1 text-[10px] font-medium text-primary">Active</span>}
+              <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
+                Export
+              </Button>
+              <SearchInput
+                placeholder="Search quotes..."
+                className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <div className="relative flex items-center gap-1.5" ref={filterRef}>
+                <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
+                  Filter
+                </Button>
+                {(filterQuoteType !== "all" || buFilter.selectedBuId) && (
+                  <span className="text-[10px] font-medium text-primary">Active</span>
+                )}
                 {filterOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-56 rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                  <div className="absolute top-full right-0 mt-1 w-[min(100vw-2rem,18rem)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
                     <div>
                       <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Quote type</p>
-                      <select value={filterQuoteType} onChange={(e) => setFilterQuoteType(e.target.value as "all" | "internal" | "partner")} className="w-full h-8 rounded-lg border border-border bg-card text-sm px-2">
+                      <select value={filterQuoteType} onChange={(e) => setFilterQuoteType(e.target.value as "all" | "internal" | "partner")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
                         <option value="all">All</option>
                         <option value="internal">Manual</option>
                         <option value="partner">Partner</option>
@@ -1334,7 +1464,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                         <select
                           value={buFilter.selectedBuId ?? ""}
                           onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
-                          className="w-full h-8 rounded-lg border border-border bg-card text-sm px-2"
+                          className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2"
                         >
                           <option value="">All BUs</option>
                           {buFilter.bus.map((bu) => (
@@ -1343,7 +1473,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                         </select>
                       </div>
                     )}
-                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterQuoteType("all"); buFilter.setSelectedBuId(null); }}>Clear</Button>
+                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setFilterQuoteType("all"); buFilter.setSelectedBuId(null); }}>Clear filters</Button>
                   </div>
                 )}
               </div>
@@ -1351,7 +1481,25 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           </div>
 
           {viewMode === "list" && (
-            <DataTable columns={columns} data={data} columnConfigKey="quotes-columns" columnConfigScope={status} getRowId={(item) => item.id} loading={loading} selectedId={selectedQuote?.id} onRowClick={setSelectedQuote} page={page} totalPages={totalPages} totalItems={totalItems} onPageChange={setPage} selectable selectedIds={selectedIds} onSelectionChange={setSelectedIds}
+            <DataTable
+              columns={columns}
+              data={quoteListSorted}
+              columnConfigKey="quotes-columns"
+              columnConfigScope={status}
+              getRowId={(item) => item.id}
+              loading={loading}
+              selectedId={selectedQuote?.id}
+              onRowClick={setSelectedQuote}
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              onPageChange={setPage}
+              selectable
+              selectedIds={selectedIds}
+              onSelectionChange={setSelectedIds}
+              sortColumnKey={listSortKey}
+              sortDirection={listSortDir}
+              onSortChange={handleQuoteListSortChange}
               bulkActions={
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
@@ -1449,27 +1597,166 @@ function PartnerBidMiniDash({
       role="region"
       aria-label="Partner figures: cost or average bid, bids received, invited and quoted partners"
     >
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-px">
-        <div className="bg-card dark:bg-surface-secondary/55 px-2 py-1.5 sm:px-2.5 sm:py-2 min-w-0">
+      <div className="grid grid-cols-2 min-[400px]:grid-cols-4 gap-px">
+        <div className="bg-card dark:bg-surface-secondary/55 px-2.5 py-2.5 min-w-0">
           <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">{primaryLabel}</p>
-          <p className="mt-0.5 text-[15px] sm:text-lg font-bold tabular-nums text-text-primary leading-tight truncate">
+          <p className="mt-0.5 text-base font-bold tabular-nums text-text-primary leading-tight truncate">
             {bidsLoading ? "…" : primaryValue != null ? formatCurrency(primaryValue) : "—"}
           </p>
         </div>
-        <div className="bg-card dark:bg-surface-secondary/55 px-2 py-1.5 sm:px-2.5 sm:py-2 min-w-0" title="Partner submissions on this quote">
-          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Bids received</p>
-          <p className="mt-0.5 text-[15px] sm:text-lg font-bold tabular-nums text-text-primary leading-tight">{bidsReceivedCount}</p>
+        <div className="bg-card dark:bg-surface-secondary/55 px-2.5 py-2.5 min-w-0" title="Partner submissions on this quote">
+          <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Bids</p>
+          <p className="mt-0.5 text-base font-bold tabular-nums text-text-primary leading-tight">{bidsReceivedCount}</p>
         </div>
-        <div className="bg-card dark:bg-surface-secondary/55 px-2 py-1.5 sm:px-2.5 sm:py-2 min-w-0">
+        <div className="bg-card dark:bg-surface-secondary/55 px-2.5 py-2.5 min-w-0">
           <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Invited</p>
-          <p className="mt-0.5 text-[15px] sm:text-lg font-bold tabular-nums text-text-primary leading-tight">{invitedPartnersCount}</p>
+          <p className="mt-0.5 text-base font-bold tabular-nums text-text-primary leading-tight">{invitedPartnersCount}</p>
         </div>
-        <div className="bg-card dark:bg-surface-secondary/55 px-2 py-1.5 sm:px-2.5 sm:py-2 min-w-0">
+        <div className="bg-card dark:bg-surface-secondary/55 px-2.5 py-2.5 min-w-0">
           <p className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Quoted</p>
-          <p className="mt-0.5 text-[15px] sm:text-lg font-bold tabular-nums text-primary leading-tight">{quotedPartnersCount}</p>
+          <p
+            className={cn(
+              "mt-0.5 text-base font-bold tabular-nums leading-tight",
+              quotedPartnersCount === 0 ? "text-[#6B6B70]" : "text-primary",
+            )}
+          >
+            {quotedPartnersCount}
+          </p>
         </div>
       </div>
     </div>
+  );
+}
+
+/** Quote pipeline without Survey — Draft → Bids → Awaiting → Won (in_survey maps to Draft). */
+const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
+  { id: "draft", label: "Draft", short: "Draft", icon: ClipboardList },
+  { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
+  { id: "awaiting_customer", label: "Awaiting customer", short: "Awaiting", icon: UserRound },
+  { id: "accepted", label: "Accepted", short: "Won", icon: CheckCircle2 },
+];
+
+const QUOTE_NAVY = "#020040";
+
+/** Horizontal pipeline stepper — compact, navy active/completed, grey future (Survey hidden). */
+function QuotePipelineStepper({ status }: { status: string }) {
+  const legacyMap: Record<string, number> = {
+    draft: 0,
+    in_survey: 0,
+    bidding: 1,
+    awaiting_customer: 2,
+    accepted: 3,
+    rejected: -1,
+    converted_to_job: 5,
+  };
+  const current = legacyMap[status] ?? 0;
+  const n = QUOTE_DRAWER_PIPELINE.length;
+
+  if (current === -1) {
+    return (
+      <section className="overflow-hidden rounded-xl border border-border-light bg-card/30" aria-label="Quote stage">
+        <div className="flex items-center gap-2.5 px-3 py-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-400">
+            <XCircle className="h-3.5 w-3.5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-text-primary">Rejected</p>
+            <p className="text-[10px] text-text-tertiary">Quote closed</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (current === 5) {
+    return (
+      <section className="overflow-hidden rounded-xl border border-border-light bg-card/30" aria-label="Quote stage">
+        <div className="flex items-center gap-2.5 px-3 py-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-hover text-text-secondary">
+            <Briefcase className="h-3.5 w-3.5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-text-primary">Converted to job</p>
+            <p className="text-[10px] text-text-tertiary">Continue in Jobs</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const flowStep = Math.min(Math.max(current, 0), n - 1);
+  const headline = statusLabels[status] ?? QUOTE_DRAWER_PIPELINE[flowStep]?.label ?? "Progress";
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-border-light bg-card/30" aria-label="Quote stage">
+      <div className="border-b border-border-light px-2.5 py-1.5 sm:px-3">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-2">
+          <p className="truncate text-sm font-semibold text-text-primary">{headline}</p>
+          <span className="shrink-0 text-[10px] font-medium tabular-nums text-text-tertiary">
+            Step {flowStep + 1} of {n}
+          </span>
+        </div>
+      </div>
+      <div className="px-1 py-1.5 sm:px-1.5">
+        <ol
+          className="flex w-full items-start gap-0 overflow-x-auto pb-0.5 [scrollbar-width:thin] min-[400px]:grid min-[400px]:grid-cols-4 min-[400px]:overflow-visible"
+          role="list"
+        >
+          {QUOTE_DRAWER_PIPELINE.map((step, idx) => {
+            const isPast = idx < flowStep;
+            const isCurrent = idx === flowStep;
+            const Icon = step.icon;
+            return (
+              <li
+                key={step.id}
+                className="relative flex min-w-[3rem] flex-1 flex-col items-center px-0.5 text-center min-[400px]:min-w-0"
+                aria-current={isCurrent ? "step" : undefined}
+              >
+                {idx > 0 ? (
+                  <div
+                    className="absolute left-0 top-[10px] hidden h-px w-1/2 -translate-x-1/2 bg-border min-[400px]:block"
+                    aria-hidden
+                  />
+                ) : null}
+                <div className="relative z-[1] flex flex-col items-center gap-0.5">
+                  {isPast ? (
+                    <span
+                      className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-2 text-white shadow-sm"
+                      style={{ borderColor: QUOTE_NAVY, backgroundColor: QUOTE_NAVY }}
+                    >
+                      <Check className="h-2.5 w-2.5" strokeWidth={2.5} aria-hidden />
+                    </span>
+                  ) : (
+                    <span
+                      className={cn(
+                        "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border-2 transition-colors",
+                        isCurrent ? "text-white shadow-sm" : "border-[#D1D5DB] bg-transparent text-text-tertiary dark:border-neutral-600",
+                      )}
+                      style={isCurrent ? { borderColor: QUOTE_NAVY, backgroundColor: QUOTE_NAVY } : undefined}
+                    >
+                      <Icon className="h-2.5 w-2.5 shrink-0" strokeWidth={2} aria-hidden />
+                    </span>
+                  )}
+                  <span
+                    className={cn(
+                      "max-w-[5rem] text-[10px] leading-tight text-balance min-[400px]:max-w-none",
+                      isCurrent ? "font-semibold" : isPast ? "font-medium" : "font-medium text-text-tertiary",
+                    )}
+                    style={
+                      isCurrent || isPast
+                        ? { color: QUOTE_NAVY }
+                        : undefined
+                    }
+                  >
+                    {step.short}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    </section>
   );
 }
 
@@ -1514,10 +1801,7 @@ function QuoteDetailDrawer({
   const onQuoteUpdateRef = useRef(onQuoteUpdate);
   onQuoteUpdateRef.current = onQuoteUpdate;
   const [proposalSaving, setProposalSaving] = useState(false);
-  const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
-  const [savingOwner, setSavingOwner] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
-  const [ownerOpen, setOwnerOpen] = useState(false);
   const [clientOnQuoteOpen, setClientOnQuoteOpen] = useState(false);
   /** 100 = baseline customer sell (40% margin on lines 1–2); range 0–1000 scales from that baseline. */
   const [proposalScalePercent, setProposalScalePercent] = useState(100);
@@ -1540,7 +1824,6 @@ function QuoteDetailDrawer({
   } | null>(null);
   /** Scope / line items / dates / email — collapsed by default; summary + sell scale stay visible. */
   const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
-  const isAdmin = profile?.role === "admin";
   /** Earliest selectable day for proposed start dates (local calendar day). */
   const minProposalStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
@@ -1562,7 +1845,6 @@ function QuoteDetailDrawer({
       setQuoteEmailedInSession(false);
       setSendState("idle");
       setProposalScalePercent(100);
-      setOwnerOpen(false);
       setClientOnQuoteOpen(false);
       setPricingOpen(false);
       setExpandedBidIds(new Set());
@@ -1758,11 +2040,6 @@ function QuoteDetailDrawer({
     if (fresh) onQuoteUpdateRef.current?.(fresh);
   }, [loadBids]);
 
-  useEffect(() => {
-    if (!isAdmin) return;
-    listAssignableUsers().then(setAssignableUsers).catch(() => {});
-  }, [isAdmin]);
-
   const approvedBid = useMemo(() => bids.find((b) => b.status === "approved") ?? null, [bids]);
   const bidsReceivedCount =
     quote.quote_type !== "partner" ? 0 : bidsLoading ? Number(quote.partner_quotes_count) || 0 : bids.length;
@@ -1803,12 +2080,9 @@ function QuoteDetailDrawer({
     }
   }, [selectedReviewBidId, bidsCollapsedVisible]);
 
-  const config = statusConfig[quote.status] ?? { variant: "default" as const };
   const actions = getQuoteActions(quote);
   /** Start Bidding lives on the Bids tab, not under Review & Send. */
   const overviewActions = actions.filter((a) => a.status !== "bidding");
-  const stepMap: Record<string, number> = { draft: 0, in_survey: 1, bidding: 2, awaiting_customer: 3, accepted: 4, rejected: -1, converted_to_job: 5 };
-  const currentStep = stepMap[quote.status] ?? 0;
   const lineTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const proposalLine0Sell = (Number(lineItems[0]?.quantity) || 0) * (Number(lineItems[0]?.unitPrice) || 0);
   const proposalLine1Sell = (Number(lineItems[1]?.quantity) || 0) * (Number(lineItems[1]?.unitPrice) || 0);
@@ -1865,7 +2139,7 @@ function QuoteDetailDrawer({
     !Number.isNaN(sendDepositPercentNum) &&
     bidPayloadTrimmedString(sendEmail as unknown).includes("@");
 
-  /** Recipient shown in Move this quote — matches the field above (send email). */
+  /** Recipient preview in “Client on this quote” header (matches send email field). */
   const confirmSendEmail = useMemo(
     () => bidPayloadTrimmedString(sendEmail as unknown) || bidPayloadTrimmedString(quote.client_email as unknown),
     [sendEmail, quote.client_email],
@@ -2167,75 +2441,68 @@ function QuoteDetailDrawer({
     }
   };
 
+  const customerProposalTitleHint =
+    quote.status === "awaiting_customer"
+      ? "The customer's Accept / Reject links stay the same; they receive the latest PDF each time you send or resend."
+      : [guidance.headline, guidance.detail]
+          .filter(Boolean)
+          .join(" — ")
+          .concat(
+            ` Lines 1–2: partner unit costs come from the approved bid (locked); customer unit sell defaults to ${Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin on sell. Use the scale below to adjust sell; edit rows directly if needed.`,
+          );
+
   return (
     <Drawer
       open={!!quote}
       onClose={onClose}
       title={bidPayloadTrimmedString(quote.reference as unknown) || "Quote"}
       subtitle={bidPayloadTrimmedString(quote.title as unknown) || undefined}
-      width="w-[540px]"
+      width="w-full max-w-[440px]"
     >
       <div className="flex flex-col h-full">
-        <Tabs tabs={drawerTabs} activeTab={tab} onChange={setTab} className="px-6 pt-2" />
+        <Tabs
+          tabs={drawerTabs}
+          activeTab={tab}
+          onChange={setTab}
+          className="px-4 [&_button]:px-3 [&_button]:py-1.5 [&_button]:text-[13px]"
+        />
         {tab === "bids" && quote.quote_type === "partner" && quote.status === "bidding" && (
           <div
-            className="mx-6 mt-3 rounded-xl px-2.5 py-2 sm:px-3 sm:py-2.5 bg-emerald-500/[0.07] dark:bg-emerald-500/[0.09]"
+            className="mx-4 mt-2 rounded-xl border border-border-light bg-card/90 px-2.5 py-2.5 dark:bg-surface-secondary/30"
             role="region"
             aria-label="Proposal summary"
           >
-            <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between min-[420px]:gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold text-emerald-800/90 dark:text-emerald-400/95">Total Price</p>
-                <p className="mt-0.5 text-lg min-[420px]:text-xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400 leading-none">
-                  {formatCurrency(lineTotal)}
+            <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
+              <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
+                <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total Price</p>
+                <p className="mt-0.5 text-base font-bold tabular-nums leading-none text-text-primary">{formatCurrency(lineTotal)}</p>
+              </div>
+              <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
+                <div className="flex items-center gap-1 text-text-tertiary">
+                  <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                  <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
+                </div>
+                <p className="mt-0.5 text-base font-semibold tabular-nums text-text-primary">
+                  {formatCurrency(effectiveProposalPartnerTotal)}
                 </p>
               </div>
-              <div className="grid grid-cols-1 gap-1.5 min-[420px]:grid-cols-3 min-[420px]:min-w-[280px] min-[420px]:max-w-[min(100%,420px)] min-[420px]:shrink-0">
-                <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
-                  <div className="flex items-center gap-1 text-text-tertiary">
-                    <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                    <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
-                  </div>
-                  <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">
-                    {formatCurrency(effectiveProposalPartnerTotal)}
-                  </p>
+              <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
+                <div className="flex items-center gap-1 text-text-tertiary">
+                  <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                  <span className="text-[9px] font-medium uppercase tracking-wide">Margin %</span>
                 </div>
-                <div className="rounded-md border border-emerald-500/25 bg-emerald-500/15 dark:border-emerald-500/30 dark:bg-emerald-500/12 px-2 py-1.5">
-                  <div className="flex items-center gap-1 text-emerald-800/85 dark:text-emerald-400/90">
-                    <PoundSterling className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
-                    <span className="text-[9px] font-medium uppercase tracking-wide">Gross margin</span>
-                  </div>
-                  <p
-                    className={cn(
-                      "mt-0.5 text-sm font-bold tabular-nums",
-                      proposalSummaryMarginPct >= 20
-                        ? "text-emerald-700 dark:text-emerald-400"
-                        : proposalSummaryMarginPct >= 0
-                          ? "text-amber-700 dark:text-amber-400"
-                          : "text-red-600 dark:text-red-400",
-                    )}
-                  >
-                    {formatCurrency(proposalMarginAbs)}
-                  </p>
-                </div>
-                <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
-                  <div className="flex items-center gap-1 text-text-tertiary">
-                    <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                    <span className="text-[9px] font-medium uppercase tracking-wide">% margin</span>
-                  </div>
-                  <p
-                    className={cn(
-                      "mt-0.5 text-sm font-bold tabular-nums",
-                      proposalSummaryMarginPct >= 20
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : proposalSummaryMarginPct >= 0
-                          ? "text-amber-600 dark:text-amber-400"
-                          : "text-red-600 dark:text-red-400",
-                    )}
-                  >
-                    {proposalSummaryMarginPct}%
-                  </p>
-                </div>
+                <p
+                  className={cn(
+                    "mt-0.5 text-base font-bold tabular-nums",
+                    proposalSummaryMarginPct > 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : proposalSummaryMarginPct === 0
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-red-600 dark:text-red-400",
+                  )}
+                >
+                  {proposalSummaryMarginPct}%
+                </p>
               </div>
             </div>
           </div>
@@ -2244,144 +2511,115 @@ function QuoteDetailDrawer({
 
           {/* OVERVIEW TAB: Status + Details together */}
           {tab === "overview" && (
-            <div className="p-4 sm:p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-light bg-surface-hover/80 px-4 py-3">
-                <div>
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Current stage</p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <Badge variant={config.variant} dot={config.dot} size="sm">
-                      {statusLabels[quote.status] ?? quote.status}
-                    </Badge>
-                    {currentStep >= 0 && currentStep < 5 && (
-                      <span className="text-[11px] text-text-tertiary">Step {Math.min(currentStep + 1, 5)} of 5</span>
-                    )}
-                  </div>
+            <div className="space-y-3 p-3 sm:p-4">
+              <QuotePipelineStepper status={quote.status} />
+              {quote.status === "rejected" && quote.rejection_reason?.trim() ? (
+                <div className="rounded-lg border border-red-200/80 bg-red-50/70 px-3 py-2 text-xs leading-snug text-text-secondary dark:border-red-900/40 dark:bg-red-950/25">
+                  {quote.rejection_reason}
                 </div>
-                <div className="flex gap-1">
-                  {statusSteps.map((step, i) => {
-                    const isActive = i === currentStep && currentStep >= 0 && currentStep < 5;
-                    const isPast = i < currentStep && currentStep >= 0 && currentStep < 5;
-                    return (
-                      <div
-                        key={step}
-                        title={step}
-                        className={cn(
-                          "h-2 w-6 rounded-full transition-colors",
-                          isActive ? "bg-primary" : isPast ? "bg-primary/40" : "bg-border"
-                        )}
-                      />
-                    );
-                  })}
+              ) : null}
+
+              {quote.quote_type !== "partner" ? (
+                <div className="flex items-start gap-2 rounded-lg border border-border-light/70 bg-surface-hover/50 px-2.5 py-1.5">
+                  <p className="text-[10px] font-medium text-text-secondary">Manual quote</p>
+                  <FixfyHintIcon text="No partner bid stats. Set sell and costs in Customer proposal below." />
                 </div>
-              </div>
-              {(quote.status === "rejected" || quote.status === "converted_to_job") && (
-                <div className="rounded-xl border border-border-light p-4 space-y-2">
-                  {quote.status === "rejected" && (
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600">
-                        <XCircle className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-red-600">Rejected</p>
-                        {quote.rejection_reason && <p className="text-xs text-text-tertiary mt-1">{quote.rejection_reason}</p>}
-                      </div>
-                    </div>
-                  )}
-                  {quote.status === "converted_to_job" && (
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-                        <Briefcase className="h-4 w-4" />
-                      </div>
-                      <p className="text-sm font-semibold text-emerald-600">Converted to job</p>
-                    </div>
-                  )}
-                </div>
-              )}
-              <details
-                key={`owner-${quote.id}`}
-                className="group rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary open:shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:open:shadow-md dark:open:shadow-black/20"
-                open={ownerOpen}
-                onToggle={(e) => setOwnerOpen(e.currentTarget.open)}
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <UserRound className="h-4 w-4 shrink-0 text-text-tertiary" />
-                    <span className="text-xs font-semibold text-text-secondary">Owner</span>
-                    <span className="text-[10px] text-text-tertiary truncate">
-                      {quote.owner_name?.trim() || "Unassigned"}
-                    </span>
-                  </div>
-                  <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary transition-transform group-open:rotate-180" />
-                </summary>
-                <div className="border-t border-border-light dark:border-border px-4 pb-4 pt-1">
-                  {isAdmin ? (
-                    <div className="pt-2">
-                      <JobOwnerSelect
-                        value={quote.owner_id}
-                        fallbackName={quote.owner_name}
-                        users={assignableUsers}
-                        disabled={savingOwner}
-                        onChange={async (ownerId) => {
-                          const owner = assignableUsers.find((u) => u.id === ownerId);
-                          setSavingOwner(true);
-                          try {
-                            const updated = await updateQuote(quote.id, {
-                              owner_id: ownerId,
-                              owner_name: owner?.full_name,
-                            });
-                            onQuoteUpdate?.(updated);
-                            toast.success("Owner updated");
-                          } catch {
-                            toast.error("Failed to update owner");
-                          } finally {
-                            setSavingOwner(false);
-                          }
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <p className="text-sm font-semibold text-text-primary pt-2">{quote.owner_name || "No owner"}</p>
-                  )}
-                </div>
-              </details>
+              ) : null}
 
               <div
                 key={`client-on-quote-${quote.id}`}
-                className="rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:shadow-md dark:shadow-black/20"
+                className="rounded-lg border border-border-light bg-card shadow-sm dark:border-border dark:bg-card"
               >
-                <button
-                  type="button"
-                  className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left rounded-t-xl hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition-colors"
-                  aria-expanded={clientOnQuoteOpen}
-                  onClick={() => setClientOnQuoteOpen((o) => !o)}
-                >
-                  <Building2 className="h-4 w-4 shrink-0 text-blue-600" aria-hidden />
-                  <div className="min-w-0 flex-1 text-left">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client on this quote</p>
-                    <p className="mt-0.5 truncate text-sm font-semibold text-text-primary">
-                      {bidPayloadTrimmedString(quoteClientPick.client_name as unknown) ||
-                        bidPayloadTrimmedString(quote.client_name as unknown) ||
-                        "—"}
-                    </p>
-                    <p className="mt-0.5 truncate text-xs text-text-secondary">
-                      {bidPayloadTrimmedString(quoteClientPick.property_address as unknown) ||
-                        bidPayloadTrimmedString(quote.property_address as unknown) ||
-                        "—"}
+                <div className="flex items-start gap-2 px-2.5 pt-2.5 pb-1 sm:px-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client on this quote</p>
+                      <FixfyHintIcon
+                        text={
+                          quote.status === "awaiting_customer"
+                            ? "The PDF uses the client and property shown here."
+                            : "Recipients and property for this proposal — expand below to change."
+                        }
+                      />
+                    </div>
+                    <p className="mt-0.5 text-[10px] leading-snug text-text-tertiary">
+                      {quote.status === "awaiting_customer"
+                        ? "PDF will be sent to the addresses below."
+                        : "This quote will be sent to the client email below."}
                     </p>
                   </div>
-                  <ChevronDown
-                    className={cn(
-                      "h-4 w-4 shrink-0 text-text-tertiary transition-transform duration-200",
-                      clientOnQuoteOpen && "rotate-180",
-                    )}
-                    aria-hidden
-                  />
-                </button>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md p-1 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary"
+                    aria-expanded={clientOnQuoteOpen}
+                    aria-label={clientOnQuoteOpen ? "Hide change client" : "Change client or property"}
+                    onClick={() => setClientOnQuoteOpen((o) => !o)}
+                  >
+                    <ChevronDown
+                      className={cn("h-4 w-4 transition-transform duration-200", clientOnQuoteOpen && "rotate-180")}
+                      aria-hidden
+                    />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 px-2.5 pb-2.5 sm:grid-cols-2 sm:gap-2.5 sm:px-3">
+                  <div className="min-w-0 rounded-md border border-border-light/90 bg-surface-hover/35 px-2 py-2 dark:bg-surface-secondary/20">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Contact</p>
+                    <div className="mt-1.5 flex items-start gap-2">
+                      <Avatar
+                        name={confirmClientName || "?"}
+                        size="sm"
+                        className="shrink-0"
+                        src={quote.source_account_logo_url?.trim() || undefined}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold leading-tight text-text-primary">{confirmClientName || "—"}</p>
+                        <p className="mt-0.5 break-all text-[11px] leading-snug text-text-secondary">{confirmSendEmail || "—"}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="min-w-0 rounded-md border border-border-light/90 bg-surface-hover/35 px-2 py-2 dark:bg-surface-secondary/20">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Account</p>
+                    <div className="mt-1.5 flex items-start gap-2">
+                      <div
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+                        aria-hidden
+                      >
+                        <Building2 className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        {linkedAccountPreview ? (
+                          <>
+                            <p className="truncate text-sm font-semibold leading-tight text-text-primary">
+                              {linkedAccountPreview.companyName}
+                            </p>
+                            <p className="mt-0.5 break-all text-[11px] leading-snug text-text-secondary">{linkedAccountPreview.email}</p>
+                            {linkedAccountPreview.financeEmail &&
+                            linkedAccountPreview.financeEmail.toLowerCase() !== linkedAccountPreview.email.toLowerCase() ? (
+                              <p className="mt-1 text-[10px] leading-snug text-text-tertiary">
+                                Finance · <span className="text-text-secondary break-all">{linkedAccountPreview.financeEmail}</span>
+                              </p>
+                            ) : null}
+                          </>
+                        ) : (
+                          <p className="text-[11px] italic text-text-tertiary">No linked account</p>
+                        )}
+                        <p className="mt-1.5 break-words border-t border-border-light/70 pt-1.5 text-[11px] leading-snug text-text-secondary">
+                          {bidPayloadTrimmedString(quoteClientPick.property_address as unknown) ||
+                            bidPayloadTrimmedString(quote.property_address as unknown) ||
+                            "—"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {clientOnQuoteOpen ? (
-                  <div className="border-t border-border-light px-4 pb-4 pt-2 space-y-3 dark:border-border rounded-b-xl">
-                    <p className="text-[11px] text-text-tertiary leading-snug">
-                      Change the client or property if you need to send the proposal to someone else.
-                    </p>
+                  <div className="space-y-3 border-t border-dashed border-border-light px-2.5 pb-3 pt-2.5 sm:px-3 dark:border-border">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[11px] font-medium text-text-secondary">Change client or property</p>
+                      <FixfyHintIcon text="Change the client or property if you need to send the proposal to someone else." />
+                    </div>
                     <ClientAddressPicker
                       value={quoteClientPick}
                       onChange={setQuoteClientPick}
@@ -2424,21 +2662,6 @@ function QuoteDetailDrawer({
                 ) : null}
               </div>
 
-              {quote.quote_type === "partner" ? (
-                <PartnerBidMiniDash
-                  bidsLoading={bidsLoading}
-                  primaryLabel={bidDashPrimary.label}
-                  primaryValue={bidDashPrimary.value}
-                  bidsReceivedCount={bidsReceivedCount}
-                  invitedPartnersCount={invitedPartnersCount}
-                  quotedPartnersCount={quotedPartnersCount}
-                />
-              ) : (
-                <div className="rounded-lg border border-border-light/70 bg-surface-hover/50 px-2.5 py-1.5 text-[10px] text-text-tertiary leading-snug">
-                  Manual quote — no partner bid stats. Set sell and costs in Customer proposal below.
-                </div>
-              )}
-
               {/* Bid Summary — partner submission (read-only reference); pricing control is in Customer proposal */}
               <details
                 key={`bid-summary-${quote.id}`}
@@ -2446,7 +2669,7 @@ function QuoteDetailDrawer({
                 open={pricingOpen}
                 onToggle={(e) => setPricingOpen(e.currentTarget.open)}
               >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
                   <div className="flex items-center gap-2 min-w-0">
                     <SlidersHorizontal className="h-4 w-4 shrink-0 text-text-tertiary" />
                     <span className="text-xs font-semibold text-text-secondary">Bid Summary</span>
@@ -2530,10 +2753,17 @@ function QuoteDetailDrawer({
                     ) : null}
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-border-light bg-surface-hover/60 px-3 py-2 text-[11px] text-text-tertiary leading-snug">
-                    {quote.quote_type === "partner"
-                      ? "No approved bid yet — open the Bids tab to review and approve one. Partner unit costs on the first two proposal lines will lock from the bid; customer sell and scale are set in Customer proposal below."
-                      : "Manual quote — set partner unit cost and customer sell per line in Customer proposal. The scale uses a 40% margin baseline on lines 1–2."}
+                  <div className="flex items-start gap-2 rounded-xl border border-border-light bg-surface-hover/60 px-3 py-2">
+                    <p className="text-[11px] font-medium text-text-secondary">
+                      {quote.quote_type === "partner" ? "No approved bid yet" : "Manual line pricing"}
+                    </p>
+                    <FixfyHintIcon
+                      text={
+                        quote.quote_type === "partner"
+                          ? "Open the Bids tab to review and approve one. Partner unit costs on the first two proposal lines will lock from the bid; customer sell and scale are set in Customer proposal below."
+                          : "Set partner unit cost and customer sell per line in Customer proposal. The scale uses a 40% margin baseline on lines 1–2."
+                      }
+                    />
                   </div>
                 )}
                 </div>
@@ -2548,122 +2778,77 @@ function QuoteDetailDrawer({
                 </div>
               )}
 
-              {guidance.headline && (
-                <div className="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 to-transparent px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div className="flex gap-3 min-w-0">
-                    <Sparkles className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-text-primary">{guidance.headline}</p>
-                      {guidance.detail ? <p className="text-xs text-text-tertiary mt-0.5">{guidance.detail}</p> : null}
-                    </div>
-                  </div>
-                  {guidance.goToTab && guidance.goToLabel && tab !== guidance.goToTab && (
-                    <Button size="sm" variant="outline" className="shrink-0" onClick={() => setTab(guidance.goToTab!)}>
-                      {guidance.goToLabel}
-                    </Button>
-                  )}
-                </div>
-              )}
-
               {["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status) && (
-                <div className="rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-4 space-y-4">
+                <div className="space-y-3 rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-2.5">
                   {quote.status === "awaiting_customer" && (
-                    <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 dark:bg-amber-950/25 dark:border-amber-800/50 px-3 py-2.5 space-y-1">
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-2.5 py-2 dark:border-amber-800/50 dark:bg-amber-950/25">
                       <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">Edit after sending</p>
-                      <p className="text-[11px] text-amber-900/85 dark:text-amber-100/85 leading-snug">
-                        You can still change <strong className="font-semibold text-amber-950 dark:text-amber-50">line items, scope, dates, deposit, message</strong>, use the{" "}
-                        <strong className="font-semibold text-amber-950 dark:text-amber-50">customer sell scale</strong> below, and review <strong className="font-semibold text-amber-950 dark:text-amber-50">Bid Summary</strong>.{" "}
-                        Use <strong className="font-semibold text-amber-950 dark:text-amber-50">Save Quote</strong> to store only, or{" "}
-                        <strong className="font-semibold text-amber-950 dark:text-amber-50">Resend Quote</strong> under Move this quote to email the PDF.
-                      </p>
+                      <FixfyHintIcon text="You can still change line items, scope, dates, deposit, message, use the customer sell scale below, and review Bid Summary. Use Save Quote to store only, or Resend Quote under Move this quote to email the PDF." />
                     </div>
                   )}
-                  <div>
-                    <p className="text-xs font-semibold text-text-primary">
-                      {quote.status === "awaiting_customer" ? "Customer proposal" : "Customer proposal (required before Send to Customer)"}
-                    </p>
-                    <p className="text-[11px] text-text-tertiary mt-0.5">
-                      {quote.status === "awaiting_customer" ? (
-                        <>The customer&apos;s Accept / Reject links stay the same; they receive the latest PDF each time you send or resend.</>
-                      ) : (
-                        <>
-                          Lines 1–2: partner unit costs come from the approved bid (locked); customer unit sell defaults to{" "}
-                          <strong className="text-text-secondary">{Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin on sell</strong>. Use the scale below to adjust sell; edit rows directly if needed.
-                        </>
-                      )}
-                    </p>
+                  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                    <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#020040]" aria-hidden />
+                    <span className="text-xs font-semibold text-text-primary">Customer proposal</span>
+                    {quote.status !== "awaiting_customer" ? (
+                      <span className="rounded-full bg-[#ED4B00]/12 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#C4461F]">
+                        Required before send
+                      </span>
+                    ) : null}
+                    <FixfyHintIcon text={customerProposalTitleHint} />
+                    {guidance.goToTab && guidance.goToLabel && tab !== guidance.goToTab ? (
+                      <Button size="sm" variant="outline" className="ml-auto h-7 shrink-0 px-2 text-[11px]" onClick={() => setTab(guidance.goToTab!)}>
+                        {guidance.goToLabel}
+                      </Button>
+                    ) : null}
                   </div>
 
                   <div
-                    className="rounded-xl px-2.5 py-2 sm:px-3 sm:py-2.5 bg-emerald-500/[0.07] dark:bg-emerald-500/[0.09]"
+                    className="rounded-xl border border-border-light bg-card/90 px-2.5 py-2.5 dark:bg-surface-secondary/30"
                     role="region"
                     aria-label="Quote summary"
                   >
-                    <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between min-[420px]:gap-3">
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-semibold text-emerald-800/90 dark:text-emerald-400/95">Total Price</p>
-                        <p className="mt-0.5 text-lg min-[420px]:text-xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400 leading-none">
-                          {formatCurrency(lineTotal)}
+                    <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
+                      <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
+                        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total Price</p>
+                        <p className="mt-0.5 text-base font-bold tabular-nums leading-none text-text-primary">{formatCurrency(lineTotal)}</p>
+                      </div>
+                      <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
+                        <div className="flex items-center gap-1 text-text-tertiary">
+                          <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                          <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
+                        </div>
+                        <p className="mt-0.5 text-base font-semibold tabular-nums text-text-primary">
+                          {formatCurrency(effectiveProposalPartnerTotal)}
                         </p>
                       </div>
-                      <div className="grid grid-cols-1 gap-1.5 min-[420px]:grid-cols-3 min-[420px]:min-w-[280px] min-[420px]:max-w-[min(100%,420px)] min-[420px]:shrink-0">
-                        <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
-                          <div className="flex items-center gap-1 text-text-tertiary">
-                            <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                            <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
-                          </div>
-                          <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">
-                            {formatCurrency(effectiveProposalPartnerTotal)}
-                          </p>
+                      <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
+                        <div className="flex items-center gap-1 text-text-tertiary">
+                          <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                          <span className="text-[9px] font-medium uppercase tracking-wide">Margin %</span>
                         </div>
-                        <div className="rounded-md border border-emerald-500/25 bg-emerald-500/15 dark:border-emerald-500/30 dark:bg-emerald-500/12 px-2 py-1.5">
-                          <div className="flex items-center gap-1 text-emerald-800/85 dark:text-emerald-400/90">
-                            <PoundSterling className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
-                            <span className="text-[9px] font-medium uppercase tracking-wide">Gross margin</span>
-                          </div>
-                          <p
-                            className={cn(
-                              "mt-0.5 text-sm font-bold tabular-nums",
-                              proposalSummaryMarginPct >= 20
-                                ? "text-emerald-700 dark:text-emerald-400"
-                                : proposalSummaryMarginPct >= 0
-                                  ? "text-amber-700 dark:text-amber-400"
-                                  : "text-red-600 dark:text-red-400",
-                            )}
-                          >
-                            {formatCurrency(proposalMarginAbs)}
-                          </p>
-                        </div>
-                        <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
-                          <div className="flex items-center gap-1 text-text-tertiary">
-                            <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                            <span className="text-[9px] font-medium uppercase tracking-wide">% margin</span>
-                          </div>
-                          <p
-                            className={cn(
-                              "mt-0.5 text-sm font-bold tabular-nums",
-                              proposalSummaryMarginPct >= 20
-                                ? "text-emerald-600 dark:text-emerald-400"
-                                : proposalSummaryMarginPct >= 0
-                                  ? "text-amber-600 dark:text-amber-400"
-                                  : "text-red-600 dark:text-red-400",
-                            )}
-                          >
-                            {proposalSummaryMarginPct}%
-                          </p>
-                        </div>
+                        <p
+                          className={cn(
+                            "mt-0.5 text-base font-bold tabular-nums",
+                            proposalSummaryMarginPct > 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : proposalSummaryMarginPct === 0
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-red-600 dark:text-red-400",
+                          )}
+                        >
+                          {proposalSummaryMarginPct}%
+                        </p>
                       </div>
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-border-light bg-card/80 dark:bg-surface-secondary/30 p-3 space-y-3">
+                  <div className="space-y-2 rounded-xl border border-border-light bg-card/80 p-2.5 dark:bg-surface-secondary/30">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Customer sell scale</p>
-                      <span className="text-xs font-bold tabular-nums text-primary">{proposalScalePercent}%</span>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Customer sell scale</p>
+                      <span className="text-xs font-bold tabular-nums text-[#020040]">{proposalScalePercent}%</span>
                     </div>
-                    <p className="text-[10px] text-text-tertiary leading-snug">
-                      Baseline at 100% = <strong className="font-semibold text-text-secondary">{Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin on sell</strong> on lines 1–2. Moves only{" "}
-                      <strong className="font-semibold text-text-secondary">customer unit sell</strong>; partner unit costs on those lines stay fixed (from the bid or your edits).
+                    <p className="text-[10px] text-text-tertiary">
+                      {Math.round(BID_DEFAULT_MARGIN_ON_SELL * 100)}% margin baseline
                     </p>
                     <input
                       type="range"
@@ -2677,28 +2862,46 @@ function QuoteDetailDrawer({
                         setProposalScalePercent(v);
                         recalcCustomerLinePricesFromPartnerScale(v);
                       }}
-                      className="w-full h-2 rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-40 disabled:cursor-not-allowed bg-border dark:bg-zinc-700"
+                      className="h-2 w-full cursor-pointer appearance-none rounded-full bg-border accent-[#020040] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-700"
                     />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                      <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
-                        <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 1 · Labour</p>
-                        <p className="text-[11px] text-text-secondary mt-1">
+                    <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
+                      <div className="rounded-lg border border-border-light bg-surface-hover/80 px-2.5 py-2">
+                        <p className="text-[9px] font-semibold uppercase text-text-tertiary">Line 1 · Labour</p>
+                        <p className="mt-1 text-[11px] text-text-secondary">
                           Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine0Partner)}</span>
                           {" · "}
                           Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine0Sell)}</span>
                         </p>
-                        <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginLabourPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                        <p
+                          className={cn(
+                            "mt-0.5 text-xs font-bold tabular-nums",
+                            proposalMarginLabourPct > 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : proposalMarginLabourPct === 0
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-red-600 dark:text-red-400",
+                          )}
+                        >
                           Margin {proposalMarginLabourPct}%
                         </p>
                       </div>
-                      <div className="rounded-lg bg-surface-hover/80 border border-border-light px-3 py-2">
-                        <p className="text-[9px] font-semibold text-text-tertiary uppercase">Line 2 · Materials</p>
-                        <p className="text-[11px] text-text-secondary mt-1">
+                      <div className="rounded-lg border border-border-light bg-surface-hover/80 px-2.5 py-2">
+                        <p className="text-[9px] font-semibold uppercase text-text-tertiary">Line 2 · Materials</p>
+                        <p className="mt-1 text-[11px] text-text-secondary">
                           Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine1Partner)}</span>
                           {" · "}
                           Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine1Sell)}</span>
                         </p>
-                        <p className={cn("text-xs font-bold mt-0.5 tabular-nums", proposalMarginMaterialsPct >= 20 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                        <p
+                          className={cn(
+                            "mt-0.5 text-xs font-bold tabular-nums",
+                            proposalMarginMaterialsPct > 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : proposalMarginMaterialsPct === 0
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-red-600 dark:text-red-400",
+                          )}
+                        >
                           Margin {proposalMarginMaterialsPct}%
                         </p>
                       </div>
@@ -2938,102 +3141,90 @@ function QuoteDetailDrawer({
                   </div>
                     </>
                   ) : null}
+
+                  {quote.request_id ? (
+                    <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border-light bg-card/60 px-3 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={emailAttachRequestPhotos}
+                        onChange={(e) => setEmailAttachRequestPhotos(e.target.checked)}
+                        className="h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20"
+                      />
+                      <span className="min-w-0 flex-1 text-[13px] font-medium text-text-primary">Attach request site photos to customer email</span>
+                      <FixfyHintIcon text="Includes PDF plus images. Off by default — use when the client should see the same photos partners received." />
+                    </label>
+                  ) : null}
                 </div>
               )}
 
-              {quote.request_id && (
-                <label className="flex items-start gap-2.5 cursor-pointer rounded-xl border border-border-light bg-card/60 px-3 py-2.5">
+              {quote.request_id && !["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status) ? (
+                <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border-light bg-card/60 px-3 py-2.5">
                   <input
                     type="checkbox"
                     checked={emailAttachRequestPhotos}
                     onChange={(e) => setEmailAttachRequestPhotos(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/20"
+                    className="h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20"
                   />
-                  <span className="text-[13px] text-text-primary leading-snug">
-                    <span className="font-medium">Attach request site photos</span> to the customer email (PDF plus images). Off by default — use when the client should see the same photos partners received.
-                  </span>
+                  <span className="min-w-0 flex-1 text-[13px] font-medium text-text-primary">Attach request site photos to customer email</span>
+                  <FixfyHintIcon text="Includes PDF plus images. Off by default — use when the client should see the same photos partners received." />
                 </label>
-              )}
+              ) : null}
 
-              <div className="rounded-xl border border-border-light bg-surface-hover/80 p-4 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <FileText className="h-4 w-4 shrink-0 text-text-tertiary" />
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
-                      Customer PDF preview
-                    </p>
+              <div className="border-t border-border-light pt-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border-light bg-card">
+                      <FileText className="h-4 w-4 text-text-tertiary" aria-hidden />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1">
+                        <p className="text-sm font-semibold text-text-primary">Customer PDF</p>
+                        <FixfyHintIcon text="Matches the PDF attached when you email the client. Uses saved scope, line items and figures — use Save Quote to refresh before preview or download." />
+                      </div>
+                      <p className="text-[11px] text-text-tertiary">Uses saved figures</p>
+                    </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    icon={<Download className="h-3.5 w-3.5" />}
-                    onClick={() => {
-                      const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.rel = "noopener";
-                      a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
-                      document.body.appendChild(a);
-                      a.click();
-                      a.remove();
-                    }}
-                  >
-                    Download PDF
-                  </Button>
-                </div>
-                <p className="text-[11px] text-text-tertiary">
-                  Matches the PDF attached when you email the client. Uses <strong className="text-text-secondary">saved</strong> scope, line items and figures — use <strong className="text-text-secondary">Save Quote</strong> to refresh.
-                </p>
-                <div className="rounded-lg border border-border bg-white dark:bg-zinc-900 overflow-hidden">
-                  <iframe
-                    title="Quote PDF preview"
-                    src={`/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`}
-                    className="w-full border-0 bg-white dark:bg-zinc-950"
-                    style={{ height: 480, maxHeight: "65vh" }}
-                    key={`pdf-${quote.id}-${quote.updated_at}`}
-                  />
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-text-primary"
+                      onClick={() => {
+                        window.open(
+                          `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      }}
+                    >
+                      Preview
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-text-primary"
+                      icon={<Download className="h-3.5 w-3.5" />}
+                      onClick={() => {
+                        const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.rel = "noopener";
+                        a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                      }}
+                    >
+                      Download
+                    </Button>
+                  </div>
                 </div>
               </div>
 
               <div className="space-y-2 pt-4 border-t border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Move this quote</p>
-                <div className="rounded-lg border border-border-light bg-card/60 px-3 py-2.5 space-y-2 -mt-0.5 mb-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                    {quote.status === "awaiting_customer" ? "PDF will go to" : "Email before you send"}
-                  </p>
-                  <div className="text-[13px] text-text-primary space-y-2.5">
-                    <div>
-                      <span className="text-[11px] text-text-tertiary block">Client</span>
-                      <p className="font-medium leading-snug">{confirmClientName || "—"}</p>
-                      <p className="text-[12px] text-text-secondary break-all mt-0.5">{confirmSendEmail || "—"}</p>
-                    </div>
-                    {linkedAccountPreview ? (
-                      <div className="pt-2 border-t border-border-light/80">
-                        <span className="text-[11px] text-text-tertiary block">Account</span>
-                        <p className="font-medium leading-snug">{linkedAccountPreview.companyName}</p>
-                        <p className="text-[12px] text-text-secondary break-all mt-0.5">{linkedAccountPreview.email}</p>
-                        {linkedAccountPreview.financeEmail &&
-                        linkedAccountPreview.financeEmail.toLowerCase() !== linkedAccountPreview.email.toLowerCase() ? (
-                          <p className="text-[12px] text-text-secondary break-all mt-1">
-                            <span className="text-[11px] text-text-tertiary">Finance · </span>
-                            {linkedAccountPreview.financeEmail}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full sm:w-auto"
-                    onClick={() => setClientOnQuoteOpen(true)}
-                  >
-                    Edit client
-                  </Button>
-                </div>
                 <div
                   className={cn(
                     "-mx-1 flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-visible px-1 py-1 scroll-smooth sm:gap-2",
@@ -3115,7 +3306,7 @@ function QuoteDetailDrawer({
 
           {/* BIDS TAB — Partner bids from app; approve to set quote partner */}
           {tab === "bids" && (
-            <div className="p-4 sm:p-5 space-y-3">
+            <div className="space-y-3 p-3 sm:p-4">
               {quote.quote_type === "partner" ? (
                 <PartnerBidMiniDash
                   bidsLoading={bidsLoading}
@@ -4018,8 +4209,8 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
           <span className="text-sm text-text-secondary">Create job without deposit (override)</span>
         </label>
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit">Create Job</Button>
+          <Button variant="outline" size="sm" onClick={onClose} type="button">Cancel</Button>
+          <Button type="submit" size="sm">Create Job</Button>
         </div>
       </form>
     </Modal>
@@ -4388,15 +4579,73 @@ function CreateQuoteForm({
     <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
       <div className="max-h-[min(65dvh,520px)] overflow-y-auto overscroll-contain px-4 py-4 sm:max-h-[min(72dvh,580px)] sm:px-6 sm:py-5">
         <div className="space-y-4">
-      <Select
-        label="Quote type"
-        value={quoteType}
-        onChange={(e) => setQuoteType(e.target.value as "internal" | "partner")}
-        options={[
-          { value: "internal", label: "Manual Quote" },
-          { value: "partner", label: "Invite Partner to Bid" },
-        ]}
-      />
+      <div>
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[#020040]">
+          Quote type <span className="text-[#ED4B00]">*</span>
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Quote type">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={quoteType === "internal"}
+            onClick={() => setQuoteType("internal")}
+            className={cn(
+              "relative flex gap-3 rounded-xl border-2 p-3 text-left transition-colors",
+              quoteType === "internal"
+                ? "border-[#020040] bg-card shadow-sm"
+                : "border-neutral-200/90 bg-card hover:border-neutral-300 dark:border-border dark:hover:border-border",
+            )}
+          >
+            <span
+              className={cn(
+                "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
+                quoteType === "internal" ? "bg-[#020040] text-white" : "bg-[#020040]/08 text-[#020040]",
+              )}
+            >
+              <Pencil className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <p className="text-sm font-semibold text-[#020040]">Build manually</p>
+              <p className="mt-0.5 text-[11px] text-text-tertiary">Enter lines yourself</p>
+            </div>
+            {quoteType === "internal" ? (
+              <span className="absolute bottom-2 right-2 flex h-5 w-5 items-center justify-center rounded-full bg-[#020040] text-white shadow-sm" aria-hidden>
+                <Check className="h-3 w-3" strokeWidth={3} />
+              </span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={quoteType === "partner"}
+            onClick={() => setQuoteType("partner")}
+            className={cn(
+              "relative flex gap-3 rounded-xl border-2 p-3 text-left transition-colors",
+              quoteType === "partner"
+                ? "border-[#020040] bg-card shadow-sm"
+                : "border-neutral-200/90 bg-card hover:border-neutral-300 dark:border-border dark:hover:border-border",
+            )}
+          >
+            <span
+              className={cn(
+                "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
+                quoteType === "partner" ? "bg-[#ED4B00]/15 text-[#ED4B00]" : "bg-[#ED4B00]/10 text-[#ED4B00]",
+              )}
+            >
+              <UserPlus className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <p className="text-sm font-semibold text-[#020040]">Invite partners</p>
+              <p className="mt-0.5 text-[11px] text-text-tertiary">Partners submit bids</p>
+            </div>
+            {quoteType === "partner" ? (
+              <span className="absolute bottom-2 right-2 flex h-5 w-5 items-center justify-center rounded-full bg-[#020040] text-white shadow-sm" aria-hidden>
+                <Check className="h-3 w-3" strokeWidth={3} />
+              </span>
+            ) : null}
+          </button>
+        </div>
+      </div>
       <ClientAddressPicker value={clientAddress} onChange={setClientAddress} loadAllClientsOnOpen />
       <Select
         label="Type of work *"
@@ -4407,9 +4656,60 @@ function CreateQuoteForm({
           ...typeOfWorkOptions,
         ]}
       />
+      <div
+        className="rounded-xl border border-border-light bg-card px-2.5 py-2.5 shadow-sm"
+        role="region"
+        aria-label="Quote financial summary"
+      >
+        <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-stretch min-[420px]:justify-between min-[420px]:gap-3">
+          <div className="min-w-0 shrink-0 min-[420px]:max-w-[38%]">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-800/90 dark:text-emerald-400/95">Total price</p>
+            <p className="mt-0.5 text-xl font-bold tabular-nums leading-none text-emerald-600 dark:text-emerald-400">
+              {formatCurrency(lineSellTotal)}
+            </p>
+          </div>
+          <div className="grid min-w-0 flex-1 grid-cols-1 gap-2 min-[360px]:grid-cols-3">
+            <div className="rounded-lg bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
+              <div className="flex items-center gap-1 text-text-tertiary">
+                <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
+              </div>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(linePartnerTotal)}</p>
+            </div>
+            <div className="rounded-lg bg-[#ED4B00]/10 px-2 py-1.5 dark:bg-[#ED4B00]/15">
+              <div className="flex items-center gap-1 text-text-tertiary">
+                <PoundSterling className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
+                <span className="text-[9px] font-medium uppercase tracking-wide">Gross margin</span>
+              </div>
+              <p
+                className={cn(
+                  "mt-0.5 text-sm font-bold tabular-nums",
+                  createProposalMarginAbs < 0 ? "text-red-600" : "text-[#ED4B00]",
+                )}
+              >
+                {formatCurrency(createProposalMarginAbs)}
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-100/80 px-2 py-1.5 dark:bg-slate-800/40">
+              <div className="flex items-center gap-1 text-text-tertiary">
+                <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                <span className="text-[9px] font-medium uppercase tracking-wide">% margin</span>
+              </div>
+              <p
+                className={cn(
+                  "mt-0.5 text-sm font-bold tabular-nums",
+                  createProposalMarginPct < 0 ? "text-red-600" : "text-[#ED4B00]",
+                )}
+              >
+                {createProposalMarginPct}%
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
       {quoteType === "partner" && (
-        <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3 space-y-2">
-          <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Photos (optional)</p>
+        <div className="space-y-2 rounded-xl border border-border-light bg-surface-hover/40 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Photos (optional)</p>
           <p className="text-[11px] text-text-tertiary">
             Up to 8 images (5 MB each). Shown in the partner app on the job invitation when this quote is in bidding.
           </p>
@@ -4467,69 +4767,9 @@ function CreateQuoteForm({
       )}
       {quoteType === "internal" ? (
         <>
-          <div
-            className="rounded-xl px-2.5 py-2 sm:px-3 sm:py-2.5 bg-emerald-500/[0.07] dark:bg-emerald-500/[0.09]"
-            role="region"
-            aria-label="Quote summary"
-          >
-            <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between min-[420px]:gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold text-emerald-800/90 dark:text-emerald-400/95">Total price</p>
-                <p className="mt-0.5 text-lg min-[420px]:text-xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400 leading-none">
-                  {formatCurrency(lineSellTotal)}
-                </p>
-              </div>
-              <div className="grid grid-cols-1 gap-1.5 min-[420px]:grid-cols-3 min-[420px]:min-w-[280px] min-[420px]:max-w-[min(100%,420px)] min-[420px]:shrink-0">
-                <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
-                  <div className="flex items-center gap-1 text-text-tertiary">
-                    <Wallet className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                    <span className="text-[9px] font-medium uppercase tracking-wide">Your cost</span>
-                  </div>
-                  <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(linePartnerTotal)}</p>
-                </div>
-                <div className="rounded-md border border-emerald-500/25 bg-emerald-500/15 dark:border-emerald-500/30 dark:bg-emerald-500/12 px-2 py-1.5">
-                  <div className="flex items-center gap-1 text-emerald-800/85 dark:text-emerald-400/90">
-                    <PoundSterling className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
-                    <span className="text-[9px] font-medium uppercase tracking-wide">Gross margin</span>
-                  </div>
-                  <p
-                    className={cn(
-                      "mt-0.5 text-sm font-bold tabular-nums",
-                      createProposalMarginPct >= 20
-                        ? "text-emerald-700 dark:text-emerald-400"
-                        : createProposalMarginPct >= 0
-                          ? "text-amber-700 dark:text-amber-400"
-                          : "text-red-600 dark:text-red-400",
-                    )}
-                  >
-                    {formatCurrency(createProposalMarginAbs)}
-                  </p>
-                </div>
-                <div className="rounded-md bg-black/[0.04] dark:bg-white/[0.06] px-2 py-1.5">
-                  <div className="flex items-center gap-1 text-text-tertiary">
-                    <Percent className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
-                    <span className="text-[9px] font-medium uppercase tracking-wide">% margin</span>
-                  </div>
-                  <p
-                    className={cn(
-                      "mt-0.5 text-sm font-bold tabular-nums",
-                      createProposalMarginPct >= 20
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : createProposalMarginPct >= 0
-                          ? "text-amber-600 dark:text-amber-400"
-                          : "text-red-600 dark:text-red-400",
-                    )}
-                  >
-                    {createProposalMarginPct}%
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope / line items</label>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Scope / line items</label>
               <button
                 type="button"
                 onClick={() =>
@@ -4538,20 +4778,20 @@ function CreateQuoteForm({
                     { description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0", notes: "" },
                   ])
                 }
-                className="text-[11px] font-medium text-primary hover:underline"
+                className="text-[11px] font-medium text-[#ED4B00] hover:underline"
               >
                 + Add item
               </button>
             </div>
             <div className="space-y-2">
               {lineItems.map((item, idx) => (
-                <div key={idx} className="flex gap-2 items-start p-3 bg-surface-hover rounded-xl">
-                  <div className="flex-1 min-w-0">
+                <div key={idx} className="flex items-start gap-2 rounded-xl border border-border-light bg-surface-hover p-3">
+                  <div className="min-w-0 flex-1">
                     <Input
                       placeholder={idx === 0 ? "Type of work / labour" : idx === 1 ? "Materials" : "Service / description"}
                       value={item.description}
                       onChange={(e) => updateCreateLineItem(idx, "description", e.target.value)}
-                      className="text-xs mb-1.5"
+                      className="mb-1.5 text-xs"
                     />
                     <div className="flex gap-2 flex-wrap items-end">
                       <div className="w-20 shrink-0">
@@ -4687,13 +4927,15 @@ function CreateQuoteForm({
       ) : (
         <>
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Service description *</label>
+            <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+              Service description <span className="text-[#ED4B00]">*</span>
+            </label>
             <textarea
               value={partnerDescription}
               onChange={(e) => setPartnerDescription(e.target.value)}
               placeholder="Describe scope, inclusions and exclusions... (used for partner bids)"
               rows={5}
-              className="w-full rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary/30 resize-none"
+              className="w-full resize-none rounded-xl border border-border bg-card px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/15"
             />
           </div>
           <div>
@@ -4816,10 +5058,16 @@ function CreateQuoteForm({
       </div>
       <div className="shrink-0 border-t border-border-light bg-card px-4 py-3 sm:px-6">
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button variant="outline" onClick={onCancel} type="button" disabled={uploadingPhotos} className="w-full sm:w-auto">
+          <Button variant="outline" size="sm" onClick={onCancel} type="button" disabled={uploadingPhotos} className="w-full sm:w-auto">
             Cancel
           </Button>
-          <Button type="submit" loading={uploadingPhotos} disabled={uploadingPhotos} className="w-full sm:w-auto">
+          <Button
+            type="submit"
+            size="sm"
+            loading={uploadingPhotos}
+            disabled={uploadingPhotos}
+            className="w-full border-0 bg-[#ED4B00] text-white hover:bg-[#d84300] sm:w-auto"
+          >
             Create Quote
           </Button>
         </div>
@@ -4915,5 +5163,5 @@ function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => vo
     warning: "text-amber-700 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 border-amber-200",
     default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
-  return <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>{label}</button>;
+  return <button onClick={onClick} className={`inline-flex h-8 items-center px-2.5 text-xs font-medium rounded-[6px] border transition-colors ${colors[variant]}`}>{label}</button>;
 }

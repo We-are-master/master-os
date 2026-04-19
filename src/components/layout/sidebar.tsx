@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { APP_NAME, NAVIGATION, type NavItem } from "@/lib/constants";
 import { useSidebar } from "@/hooks/use-sidebar";
@@ -25,6 +25,8 @@ import {
   Wallet,
   Settings,
   ChevronLeft,
+  ChevronDown,
+  ChevronRight,
   Layers,
   UserCircle,
   CircleDollarSign,
@@ -242,9 +244,30 @@ function mergeNewNavItems(
 export function Sidebar() {
   const { collapsed, toggle } = useSidebar();
   const adminConfig = useAdminConfigOptional();
-  const navGroups = adminConfig?.filteredNavigation?.length
-    ? mergeNewNavItems(adminConfig.filteredNavigation, NAVIGATION)
-    : NAVIGATION;
+  const navGroups = useMemo(
+    () =>
+      adminConfig?.filteredNavigation?.length
+        ? mergeNewNavItems(adminConfig.filteredNavigation, NAVIGATION)
+        : NAVIGATION,
+    [adminConfig?.filteredNavigation],
+  );
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const sectionLabelsSig = useMemo(
+    () => navGroups.map((group) => group.label).join("|"),
+    [navGroups],
+  );
+
+  useEffect(() => {
+    setCollapsedSections((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const group of navGroups) {
+        next[group.label] = prev[group.label] ?? false;
+      }
+      const sameKeys = Object.keys(next).length === Object.keys(prev).length;
+      const sameValues = sameKeys && Object.keys(next).every((k) => next[k] === prev[k]);
+      return sameValues ? prev : next;
+    });
+  }, [sectionLabelsSig, navGroups]);
 
   return (
     <motion.aside
@@ -262,21 +285,35 @@ export function Sidebar() {
           <div key={group.label}>
             <AnimatePresence>
               {!collapsed && (
-                <motion.p
+                <motion.button
+                  type="button"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-sidebar-text-muted"
+                  onClick={() =>
+                    setCollapsedSections((prev) => ({
+                      ...prev,
+                      [group.label]: !prev[group.label],
+                    }))
+                  }
+                  className="mb-2 flex w-full items-center justify-between px-3 text-[10px] font-bold uppercase tracking-[0.08em] text-sidebar-text-muted transition-colors hover:text-sidebar-text"
                 >
-                  {group.label}
-                </motion.p>
+                  <span>{group.label}</span>
+                  {collapsedSections[group.label] ? (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                  )}
+                </motion.button>
               )}
             </AnimatePresence>
-            <div className="space-y-0.5">
-              {group.items.map((item) => (
-                <NavLink key={item.href} item={item} collapsed={collapsed} />
-              ))}
-            </div>
+            {(collapsed || !collapsedSections[group.label]) && (
+              <div className="space-y-0.5">
+                {group.items.map((item) => (
+                  <NavLink key={item.href} item={item} collapsed={collapsed} />
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </nav>
