@@ -846,17 +846,17 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
           <KpiCard
-            className="min-h-[128px] h-full"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
             title="New requests"
             value={requestKpis.newReq}
             format="number"
             icon={Inbox}
-            accent="blue"
+            accent="primary"
             description="Awaiting triage"
             descriptionAsTooltip
           />
           <KpiCard
-            className="min-h-[128px] h-full"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
             title="Approval rate"
             value={requestKpis.approvalPct ?? "—"}
             format={requestKpis.approvalPct != null ? "percent" : "none"}
@@ -870,12 +870,12 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             descriptionAsTooltip
           />
           <KpiCard
-            className="min-h-[128px] h-full"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
             title="Request → quote"
             value={requestKpis.quotePct ?? "—"}
             format={requestKpis.quotePct != null ? "percent" : "none"}
             icon={FileText}
-            accent="purple"
+            accent="amber"
             description={
               requestKpis.total === 0
                 ? "No requests yet"
@@ -884,12 +884,12 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             descriptionAsTooltip
           />
           <KpiCard
-            className="min-h-[128px] h-full"
+            className="min-h-[128px] h-full bg-[#FAFAFB]"
             title="Request → job"
             value={requestKpis.jobPct ?? "—"}
             format={requestKpis.jobPct != null ? "percent" : "none"}
             icon={Briefcase}
-            accent="amber"
+            accent="stone"
             description={
               requestKpis.total === 0
                 ? "No requests yet"
