@@ -2758,7 +2758,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     );
     if (!updated) return;
     try {
-      const financeAnchorDate = new Date();
+      const financeAnchorDate = updated.scheduled_date ? new Date(updated.scheduled_date) : new Date();
       const [linked, dueForAnchor, linkedSelfBills] = await Promise.all([
         listInvoicesLinkedToJob(updated.reference, updated.invoice_id),
         getInvoiceDueDateIsoForClient(updated.client_id ?? null, financeAnchorDate),
@@ -2939,7 +2939,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
 
       /** Single instant for invoice due date, weekly invoice week, and partner self-bill week (this approve action only). */
-      const financeAnchorDate = new Date();
+      const financeAnchorDate = current.scheduled_date ? new Date(current.scheduled_date) : new Date();
       const wantsSelfBill = !!current.partner_id?.trim();
       const selfBillIdBeforePartnerSection = current.self_bill_id ?? null;
 

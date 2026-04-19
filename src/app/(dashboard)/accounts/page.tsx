@@ -20,7 +20,7 @@ import {
   Plus, Building, DollarSign, Briefcase, TrendingUp, Mail, User, Calendar,
   Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Account, Client, Job, Invoice } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -536,18 +536,19 @@ export default function AccountsPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
             <Select
               label="Industry"
               options={INDUSTRY_OPTIONS}
               value={form.industry}
               onChange={(e) => setForm((f) => ({ ...f, industry: e.target.value }))}
             />
-            <Select
-              label="Payment Terms"
-              options={PAYMENT_TERMS_OPTIONS}
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Payment Terms</label>
+            <PaymentTermsBuilder
               value={form.payment_terms}
-              onChange={(e) => setForm((f) => ({ ...f, payment_terms: e.target.value }))}
+              onChange={(v) => setForm((f) => ({ ...f, payment_terms: v }))}
             />
           </div>
 
@@ -975,8 +976,8 @@ function AccountDetailDrawer({
         {tab === "overview" && (
           <div className="space-y-4">
             {isAdmin ? (
-              <div className="rounded-xl border border-border-light bg-surface-hover/50 p-4 space-y-3">
-                <p className="text-xs font-semibold text-text-secondary">Edit account</p>
+              <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 space-y-3">
+                <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Edit account</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Company</label>
@@ -1195,22 +1196,21 @@ function AccountDetailDrawer({
                     onChange={(e) => setEdit((p) => ({ ...p, status: e.target.value as Account["status"] }))}
                   />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Select
-                    label="Payment terms"
-                    options={PAYMENT_TERMS_OPTIONS}
+                <div>
+                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1.5">Payment terms</label>
+                  <PaymentTermsBuilder
                     value={edit.payment_terms}
-                    onChange={(e) => setEdit((p) => ({ ...p, payment_terms: e.target.value }))}
+                    onChange={(v) => setEdit((p) => ({ ...p, payment_terms: v }))}
                   />
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Credit limit</label>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={edit.credit_limit}
-                      onChange={(e) => setEdit((p) => ({ ...p, credit_limit: e.target.value }))}
-                    />
-                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Credit limit</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={edit.credit_limit}
+                    onChange={(e) => setEdit((p) => ({ ...p, credit_limit: e.target.value }))}
+                  />
                 </div>
                 <div className="flex justify-end pt-1">
                   <Button
@@ -1529,6 +1529,159 @@ function PortalUsersTabSection({ accountId, accountName }: { accountId: string; 
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── PaymentTermsBuilder ───────────────────────────────────────────────────
+const WEEKDAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
+const WEEKDAY_LABELS: Record<string, string> = {
+  monday: "Monday", tuesday: "Tuesday", wednesday: "Wednesday",
+  thursday: "Thursday", friday: "Friday", saturday: "Saturday", sunday: "Sunday",
+};
+
+function buildCycleString(freq: "monthly" | "biweekly", cutoffDay: string, cutoffWeekday: string, payWeekday: string): string {
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  if (freq === "monthly") return `Monthly cutoff ${cutoffDay} pay ${cap(payWeekday)}`;
+  return `Every 2 weeks cutoff ${cap(cutoffWeekday)} pay ${cap(payWeekday)}`;
+}
+
+function parseCycleValue(value: string) {
+  const isCycle = /monthly\s+cutoff/i.test(value) || /every\s+2\s+weeks?\s+cutoff/i.test(value);
+  if (!isCycle) return null;
+  const isbi = /every\s+2\s+weeks/i.test(value);
+  const dMatch = value.match(/monthly\s+cutoff\s+(\d+)/i);
+  const wMatch = value.match(/every\s+2\s+weeks?\s+cutoff\s+(\w+)/i);
+  const pMatch = value.match(/pay\s+(\w+)/i);
+  return {
+    freq: (isbi ? "biweekly" : "monthly") as "monthly" | "biweekly",
+    cutoffDay: dMatch ? dMatch[1] : "26",
+    cutoffWeekday: wMatch ? wMatch[1].toLowerCase() : "wednesday",
+    payWeekday: pMatch ? pMatch[1].toLowerCase() : "friday",
+  };
+}
+
+function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const parsed = parseCycleValue(value);
+  const [mode, setMode] = useState<"standard" | "cycle">(parsed ? "cycle" : "standard");
+  const [freq, setFreq] = useState<"monthly" | "biweekly">(parsed?.freq ?? "monthly");
+  const [cutoffDay, setCutoffDay] = useState(parsed?.cutoffDay ?? "26");
+  const [cutoffWeekday, setCutoffWeekday] = useState(parsed?.cutoffWeekday ?? "wednesday");
+  const [payWeekday, setPayWeekday] = useState(parsed?.payWeekday ?? "friday");
+
+  useEffect(() => {
+    const p = parseCycleValue(value);
+    if (p) {
+      setMode("cycle");
+      setFreq(p.freq);
+      setCutoffDay(p.cutoffDay);
+      setCutoffWeekday(p.cutoffWeekday);
+      setPayWeekday(p.payWeekday);
+    } else {
+      setMode("standard");
+    }
+  }, [value]);
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex gap-1.5">
+        {(["standard", "cycle"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => {
+              setMode(m);
+              if (m === "standard") {
+                onChange("Net 30");
+              } else {
+                onChange(buildCycleString(freq, cutoffDay, cutoffWeekday, payWeekday));
+              }
+            }}
+            className={cn(
+              "px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors",
+              mode === m
+                ? "bg-[#020040] text-white border-[#020040]"
+                : "bg-white text-text-secondary border-border-light hover:bg-surface-hover",
+            )}
+          >
+            {m === "standard" ? "Standard" : "Cycle-based"}
+          </button>
+        ))}
+      </div>
+
+      {mode === "standard" ? (
+        <Select
+          options={PAYMENT_TERMS_OPTIONS}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : (
+        <div className="rounded-xl border border-border-light bg-white p-3.5 space-y-3">
+          <div>
+            <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Billing cycle</label>
+            <Select
+              options={[
+                { value: "monthly", label: "Monthly" },
+                { value: "biweekly", label: "Every 2 weeks" },
+              ]}
+              value={freq}
+              onChange={(e) => {
+                const f = e.target.value as "monthly" | "biweekly";
+                setFreq(f);
+                onChange(buildCycleString(f, cutoffDay, cutoffWeekday, payWeekday));
+              }}
+            />
+          </div>
+
+          {freq === "monthly" ? (
+            <div>
+              <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Cut-off day of month</label>
+              <Select
+                options={Array.from({ length: 28 }, (_, i) => ({
+                  value: String(i + 1),
+                  label: `Day ${i + 1}`,
+                }))}
+                value={cutoffDay}
+                onChange={(e) => {
+                  setCutoffDay(e.target.value);
+                  onChange(buildCycleString("monthly", e.target.value, cutoffWeekday, payWeekday));
+                }}
+              />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Cut-off weekday</label>
+              <Select
+                options={WEEKDAYS.map((w) => ({ value: w, label: WEEKDAY_LABELS[w] }))}
+                value={cutoffWeekday}
+                onChange={(e) => {
+                  setCutoffWeekday(e.target.value);
+                  onChange(buildCycleString("biweekly", cutoffDay, e.target.value, payWeekday));
+                }}
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Pay on weekday</label>
+            <Select
+              options={WEEKDAYS.map((w) => ({ value: w, label: WEEKDAY_LABELS[w] }))}
+              value={payWeekday}
+              onChange={(e) => {
+                setPayWeekday(e.target.value);
+                onChange(buildCycleString(freq, cutoffDay, cutoffWeekday, e.target.value));
+              }}
+            />
+          </div>
+
+          <div className="rounded-lg bg-[#020040]/5 border border-[#020040]/15 px-3 py-2">
+            <p className="text-[10px] font-medium text-[#020040]/60 uppercase mb-0.5">Encoded as</p>
+            <p className="text-xs font-mono font-semibold text-[#020040]">
+              {buildCycleString(freq, cutoffDay, cutoffWeekday, payWeekday)}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
