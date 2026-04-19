@@ -1,18 +1,27 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { CalendarRange } from "lucide-react";
-import { PRESET_OPTIONS } from "@/lib/dashboard-date-range";
+import type { DateRangePreset } from "@/lib/dashboard-date-range";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 interface DashboardDateToolbarProps {
-  /** Renders on the same row as the preset (e.g. job filters) to keep one compact bar. */
+  /** Renders on the same row as the period pills (e.g. job filters). */
   trailing?: ReactNode;
   /** Overrides the default footnote under the preset row (e.g. CEO dashboard). */
   footnote?: ReactNode;
 }
+
+const PERIOD_PILLS: { id: DateRangePreset; label: string }[] = [
+  { id: "1d", label: "Today" },
+  { id: "wtd", label: "Week" },
+  { id: "mtd", label: "Month" },
+  { id: "qtd", label: "Quarter" },
+  { id: "ytd", label: "Year" },
+  { id: "all", label: "All" },
+  { id: "custom", label: "Custom" },
+];
 
 export function DashboardDateToolbar({ trailing, footnote }: DashboardDateToolbarProps) {
   const {
@@ -26,23 +35,28 @@ export function DashboardDateToolbar({ trailing, footnote }: DashboardDateToolba
   } = useDashboardDateRange();
 
   return (
-    <div className="rounded-2xl border border-border-light backdrop-blur-sm px-4 py-3 space-y-3 shadow-sm ring-1 ring-border-light/30 bg-gradient-to-br from-card via-card/95 to-surface-hover/35">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 justify-between">
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
-          <span className="text-xs font-semibold text-text-tertiary uppercase tracking-wide inline-flex items-center gap-1.5 shrink-0">
-            <CalendarRange className="h-3.5 w-3.5" />
-            Date range
-          </span>
-          <div className="w-52 max-w-full min-w-[12rem]">
-            <Select
-              value={preset}
-              onChange={(e) => setPreset(e.target.value as typeof preset)}
-              options={PRESET_OPTIONS.map((opt) => ({ value: opt.id, label: opt.label }))}
-            />
-          </div>
+    <div className="rounded-2xl border border-border-light bg-[#FAFAFB] px-4 py-3 space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {PERIOD_PILLS.map((pill) => (
+            <button
+              key={pill.id}
+              type="button"
+              onClick={() => setPreset(pill.id)}
+              className={cn(
+                "rounded-lg px-3 py-1 text-xs font-semibold transition-colors",
+                preset === pill.id
+                  ? "bg-primary text-white"
+                  : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary",
+              )}
+            >
+              {pill.label}
+            </button>
+          ))}
         </div>
         {trailing != null && <div className="shrink-0">{trailing}</div>}
       </div>
+
       {preset === "custom" && (
         <div className="flex flex-wrap items-end gap-3">
           <div>
@@ -55,12 +69,13 @@ export function DashboardDateToolbar({ trailing, footnote }: DashboardDateToolba
           </div>
         </div>
       )}
+
       <p className="text-[11px] text-text-tertiary">
         {footnote ?? (
           <>
-            Widgets and job filter counts use: <strong className="text-text-secondary">{rangeLabel}</strong>
+            <strong className="text-text-secondary">{rangeLabel}</strong>
             {preset === "custom" && (!customFrom || !customTo) && (
-              <span className="text-amber-600 dark:text-amber-400 ml-1">— pick both dates</span>
+              <span className="text-amber-600 ml-1">— pick both dates</span>
             )}
           </>
         )}
