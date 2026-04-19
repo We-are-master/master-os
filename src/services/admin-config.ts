@@ -41,30 +41,15 @@ function defaultInboxItem(href: (typeof INBOX_HREFS)[number]): NavItem {
   return { label: "Outreach", href: "/outreach", icon: "mail-plus" };
 }
 
-/** Pull Tickets + Outreach into a single Inbox group directly under Overview (migrates legacy layouts). */
+/** Strip the Inbox group (Tickets + Outreach) from stored nav — hidden from sidebar. */
 function relocateInboxItems(nav: NavGroup[]): NavGroup[] {
-  const found = new Map<string, NavItem>();
-  const rest = nav
+  return nav
     .filter((g) => g.label !== INBOX_GROUP_LABEL)
     .map((g) => ({
       ...g,
-      items: g.items.filter((i) => {
-        if (i.href === "/tickets" || i.href === "/outreach") {
-          found.set(i.href, i);
-          return false;
-        }
-        return true;
-      }),
-    }));
-  const items: NavItem[] = INBOX_HREFS.map((h) => found.get(h) ?? defaultInboxItem(h));
-  const inboxGroup: NavGroup = { label: INBOX_GROUP_LABEL, items };
-  const overviewIdx = rest.findIndex((g) => g.label === "Overview");
-  if (overviewIdx >= 0) {
-    const out = [...rest];
-    out.splice(overviewIdx + 1, 0, inboxGroup);
-    return out;
-  }
-  return [inboxGroup, ...rest];
+      items: g.items.filter((i) => i.href !== "/tickets" && i.href !== "/outreach"),
+    }))
+    .filter((g) => g.items.length > 0);
 }
 
 const PIPELINE_SIDEBAR_HREFS = new Set(["/pipelines/partners", "/pipelines/corporate"]);
@@ -199,13 +184,6 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     items: [
       { label: "Dashboard", href: "/", icon: "grid-2x2", permission: "dashboard" },
       { label: "Live View", href: "/schedule", icon: "calendar", permission: "jobs" },
-    ],
-  },
-  {
-    label: INBOX_GROUP_LABEL,
-    items: [
-      { label: "Tickets", href: "/tickets", icon: "message-square" },
-      { label: "Outreach", href: "/outreach", icon: "mail-plus" },
     ],
   },
   {

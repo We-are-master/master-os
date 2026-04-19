@@ -24,13 +24,6 @@ export const NAVIGATION: NavGroup[] = [
     ],
   },
   {
-    label: "Inbox",
-    items: [
-      { label: "Tickets", href: "/tickets", icon: "message-square" },
-      { label: "Outreach", href: "/outreach", icon: "mail-plus" },
-    ],
-  },
-  {
     label: "Operations",
     items: [
       { label: "Requests", href: "/requests", icon: "inbox", badge: 12 },
