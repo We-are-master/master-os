@@ -642,31 +642,29 @@ export default function BillsPage() {
           </div>
         </div>
 
-        <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:thin]">
-          <div className="inline-flex min-w-full gap-2 sm:flex sm:min-w-0 sm:flex-wrap">
-            {([
-              { id: "all", label: "All" },
-              { id: "one_off", label: "One-off" },
-              { id: "recurring", label: "Recurring" },
-              { id: "needs_attention", label: "Needs attention" },
-              { id: "approved", label: "Approved" },
-              { id: "archived", label: "Archived" },
-            ] as Array<{ id: BillsPreset; label: string }>).map((chip) => (
-              <button
-                key={chip.id}
-                type="button"
-                onClick={() => setBillsPreset(chip.id)}
-                className={cn(
-                  "shrink-0 whitespace-nowrap rounded-full border px-4 py-1.5 text-xs sm:text-sm font-semibold transition-colors",
-                  billsPreset === chip.id
-                    ? "border-primary bg-primary text-white"
-                    : "border-border-light bg-card text-text-secondary hover:bg-surface-hover",
-                )}
-              >
-                {chip.label}
-              </button>
-            ))}
-          </div>
+        <div className="flex flex-wrap gap-1.5">
+          {([
+            { id: "all", label: "All" },
+            { id: "one_off", label: "One-off" },
+            { id: "recurring", label: "Recurring" },
+            { id: "needs_attention", label: "Needs attention" },
+            { id: "approved", label: "Approved" },
+            { id: "archived", label: "Archived" },
+          ] as Array<{ id: BillsPreset; label: string }>).map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => setBillsPreset(chip.id)}
+              className={cn(
+                "rounded-lg px-3 py-1 text-xs font-semibold transition-colors",
+                billsPreset === chip.id
+                  ? "bg-primary text-white"
+                  : "bg-surface-hover text-text-secondary hover:bg-surface-tertiary",
+              )}
+            >
+              {chip.label}
+            </button>
+          ))}
         </div>
 
         {loading ? (
@@ -679,8 +677,8 @@ export default function BillsPage() {
           </p>
         ) : (
           <div className="rounded-2xl border border-border-light bg-card overflow-hidden">
-            {visibleCompactRows.map((row) => (
-              <div key={row.key} className="border-b border-border-light last:border-0">
+            {visibleCompactRows.map((row, index) => (
+              <div key={row.key} className={cn("border-b border-border-light last:border-0", index % 2 === 1 && "bg-[#F5F5F7]")}>
                 <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-5">
                   <div className="min-w-0 flex items-start gap-3">
                     <button
