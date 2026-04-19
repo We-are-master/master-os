@@ -3,7 +3,7 @@ import { getWeekBoundsForDate } from "@/lib/self-bill-period";
 import { localYmdBoundsToUtcIso } from "@/lib/schedule-calendar";
 import type { ListParams } from "@/services/base";
 
-export type FinancePeriodMode = "all" | "week" | "month" | "range";
+export type FinancePeriodMode = "all" | "day" | "week" | "month" | "range";
 
 /** UI order in `FinanceWeekRangeBar`: All · Monthly · Week · Date range. */
 export const FINANCE_PERIOD_MODES_ORDER: readonly FinancePeriodMode[] = ["all", "month", "week", "range"];
@@ -32,6 +32,15 @@ export function getFinancePeriodClosedBounds(
   monthAnchor?: Date
 ): { from: string; to: string } | null {
   if (mode === "all") return null;
+  if (mode === "day") {
+    const d = weekAnchor;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const day = d.getDate();
+    const s = `${y}-${pad(m)}-${pad(day)}`;
+    return { from: s, to: s };
+  }
   if (mode === "week") {
     const { weekStart, weekEnd } = getWeekBoundsForDate(weekAnchor);
     return { from: weekStart, to: weekEnd };
@@ -114,6 +123,12 @@ export function formatFinancePeriodKpiDescription(
   monthAnchor?: Date
 ): string {
   if (mode === "all") return "All periods";
+  if (mode === "day") {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const d = weekAnchor;
+    const s = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return s;
+  }
   if (mode === "week") {
     const { weekStart, weekEnd } = getWeekBoundsForDate(weekAnchor);
     const start = parseISO(weekStart);

@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
@@ -19,8 +20,8 @@ import { fadeInUp, modalTransition, overlayTransition } from "@/lib/motion";
 import {
   Plus, Filter, MapPin, Phone, Mail, CheckCircle2, XCircle,
   ArrowRight, Briefcase, FileText, Users, Send, PenLine,
-  Inbox, Percent, CalendarRange, ImagePlus, X, ChevronDown, Download,
-  Check, Wrench, MessageSquarePlus, UserPlus, Edit3,
+  Inbox, Percent, CalendarRange, Calendar, ImagePlus, X, ChevronDown, Download, RefreshCw,
+  Check, Wrench, MessageSquarePlus, UserPlus, Edit3, Search, LayoutGrid,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ServiceRequest, Quote, Partner } from "@/types/database";
@@ -67,14 +68,13 @@ import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-f
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
 import { mergeImageUrlLists, normalizeJsonImageArray } from "@/lib/request-attachment-images";
-import { FinanceWeekRangeBar } from "@/components/finance/finance-week-range-bar";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 import {
-  DEFAULT_FINANCE_PERIOD_MODE,
-  getFinancePeriodClosedBounds,
-  type FinancePeriodMode,
-} from "@/lib/finance-period";
+  getScheduleRangeYmd,
+  ukTodayYmd,
+  type ScheduleDatePreset,
+} from "@/lib/uk-schedule-range";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
@@ -140,47 +140,26 @@ interface RequestsClientProps {
 
 export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   const router = useRouter();
-  const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
-  const [weekAnchor, setWeekAnchor] = useState(() => new Date());
-  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
-  const [periodRangeFrom, setPeriodRangeFrom] = useState("");
-  const [periodRangeTo, setPeriodRangeTo] = useState("");
-  /** Empty until `periodMode` sync runs — must match default "all" (no range) on first paint. */
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const anchorDayKey = ukTodayYmd(new Date());
+  const [scheduleDatePreset, setScheduleDatePreset] = useState<ScheduleDatePreset>("all");
+  const [customScheduleFrom, setCustomScheduleFrom] = useState(() => ukTodayYmd(new Date()));
+  const [customScheduleTo, setCustomScheduleTo] = useState(() => ukTodayYmd(new Date()));
+  const [dateFilterOpen, setDateFilterOpen] = useState(false);
+  const dateFilterRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const bounds = getFinancePeriodClosedBounds(
-      periodMode,
-      weekAnchor,
-      periodRangeFrom,
-      periodRangeTo,
-      monthAnchor,
-    );
-    if (!bounds) {
-      setDateFrom("");
-      setDateTo("");
-    } else {
-      setDateFrom(bounds.from);
-      setDateTo(bounds.to);
-    }
-  }, [periodMode, weekAnchor, monthAnchor, periodRangeFrom, periodRangeTo]);
+  const scheduleRangeYmd = useMemo(
+    () => getScheduleRangeYmd(scheduleDatePreset, customScheduleFrom, customScheduleTo),
+    [scheduleDatePreset, customScheduleFrom, customScheduleTo, anchorDayKey],
+  );
 
   const createdAtRangeFilter = useMemo(() => {
-    let fromY = dateFrom.trim();
-    let toY = dateTo.trim();
-    if (fromY && toY && fromY > toY) {
-      const t = fromY;
-      fromY = toY;
-      toY = t;
-    }
-    if (!fromY && !toY) return undefined;
+    if (!scheduleRangeYmd) return undefined;
     return {
       dateColumn: "created_at" as const,
-      dateFrom: fromY ? localYmdStartIso(fromY) : undefined,
-      dateTo: toY ? localYmdEndIso(toY) : undefined,
+      dateFrom: localYmdStartIso(scheduleRangeYmd.from),
+      dateTo: localYmdEndIso(scheduleRangeYmd.to),
     };
-  }, [dateFrom, dateTo]);
+  }, [scheduleRangeYmd]);
 
   const {
     data, loading, page, totalPages, totalItems,
@@ -246,11 +225,13 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (filterRef.current && !filterRef.current.contains(e.target as Node)) setFilterOpen(false);
+      const t = e.target as Node;
+      if (filterRef.current && !filterRef.current.contains(t)) setFilterOpen(false);
+      if (dateFilterOpen && dateFilterRef.current && !dateFilterRef.current.contains(t)) setDateFilterOpen(false);
     }
-    if (filterOpen) document.addEventListener("mousedown", handleClickOutside);
+    if (filterOpen || dateFilterOpen) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [filterOpen]);
+  }, [filterOpen, dateFilterOpen]);
 
   const filteredRequests = useMemo(() => {
     return data.filter((r) => {
@@ -644,7 +625,11 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
         const acct = linkedAccountDisplay(item.source_account_name);
         return (
           <div className="flex items-center gap-2.5 min-w-0">
-            <Avatar name={item.client_name} size="sm" />
+            <Avatar
+              name={item.client_name}
+              size="sm"
+              src={item.source_account_logo_url?.trim() || undefined}
+            />
             <div className="min-w-0">
               <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
               <p className="text-[11px] text-text-tertiary truncate" title={acct || undefined}>
@@ -767,90 +752,97 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Requests" infoTooltip="Manage incoming service requests and leads.">
-          <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
-            Export
-          </Button>
-          <div className="relative flex items-center gap-2" ref={filterRef}>
-            <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>Filter</Button>
-            {(filterPriority !== "all" || filterService !== "all" || periodMode !== DEFAULT_FINANCE_PERIOD_MODE || buFilter.selectedBuId) && (
-              <span className="text-[10px] font-medium text-primary">Active</span>
-            )}
-            {filterOpen && (
-              <div className="absolute top-full right-0 mt-1 w-[min(100vw-2rem,18rem)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
-                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
-                  <CalendarRange className="h-3.5 w-3.5 shrink-0" />
-                  Created date
-                </p>
-                <p className="text-[10px] text-text-tertiary leading-snug">
-                  Use the <strong className="text-text-secondary">Period</strong> bar above (All · Monthly · Week · Date range). List and KPIs follow creation date in that window (inclusive).
-                </p>
-                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Priority</p>
-                <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value as "all" | "high" | "urgent")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                  <option value="all">All</option>
-                  <option value="high">High & Urgent</option>
-                  <option value="urgent">Urgent only</option>
-                </select>
-                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Service type</p>
-                <select value={filterService} onChange={(e) => setFilterService(e.target.value)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
-                  <option value="all">All</option>
-                  {serviceFilterOptions.map((name) => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-                {buFilter.visible && (
-                  <>
-                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Business Unit</p>
-                    <select
-                      value={buFilter.selectedBuId ?? ""}
-                      onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
-                      className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2"
-                    >
-                      <option value="">All BUs</option>
-                      {buFilter.bus.map((bu) => (
-                        <option key={bu.id} value={bu.id}>{bu.name}</option>
-                      ))}
-                    </select>
-                  </>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => {
-                    setFilterPriority("all");
-                    setFilterService("all");
-                    buFilter.setSelectedBuId(null);
-                    setPeriodMode(DEFAULT_FINANCE_PERIOD_MODE);
-                    setWeekAnchor(new Date());
-                    setMonthAnchor(new Date());
-                    setPeriodRangeFrom("");
-                    setPeriodRangeTo("");
-                  }}
-                >
-                  Clear filters
-                </Button>
-              </div>
-            )}
+        <PageHeader
+          title="Requests"
+          infoTooltip={
+            "Manage incoming service requests and leads.\n\n" +
+            "Headline KPIs use each request’s created date within the Dates window above. Status tabs filter the list below."
+          }
+        >
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="relative" ref={dateFilterRef}>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Calendar className="h-3.5 w-3.5" />}
+                onClick={() => setDateFilterOpen((o) => !o)}
+                className={cn(scheduleRangeYmd && "border-primary/40 bg-primary/5")}
+              >
+                {scheduleDatePreset === "all"
+                  ? "Dates"
+                  : scheduleDatePreset === "today"
+                    ? "Today"
+                    : scheduleDatePreset === "tomorrow"
+                      ? "Tomorrow"
+                      : scheduleDatePreset === "week"
+                        ? "This week"
+                        : scheduleDatePreset === "month"
+                          ? "This month"
+                          : "Custom range"}
+              </Button>
+              {dateFilterOpen && (
+                <div className="absolute top-full right-0 mt-1 w-[min(calc(100vw-2rem),280px)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Created date</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(
+                      [
+                        ["all", "All dates"],
+                        ["today", "Today"],
+                        ["tomorrow", "Tomorrow"],
+                        ["week", "This week"],
+                        ["month", "This month"],
+                        ["custom", "Custom"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <Button
+                        key={id}
+                        type="button"
+                        variant={scheduleDatePreset === id ? "primary" : "ghost"}
+                        size="sm"
+                        className={cn(
+                          "h-8 justify-center px-3 text-[11px] font-medium rounded-[6px]",
+                          scheduleDatePreset !== id && "text-[#020040]",
+                        )}
+                        onClick={() => {
+                          setScheduleDatePreset(id);
+                          if (id === "custom") setDateFilterOpen(true);
+                          else setDateFilterOpen(false);
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                  {scheduleDatePreset === "custom" ? (
+                    <div className="space-y-2 pt-1 border-t border-border-light">
+                      <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">From · to</p>
+                      <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-2">
+                        <Input type="date" value={customScheduleFrom} onChange={(e) => setCustomScheduleFrom(e.target.value)} className="h-9 text-sm" />
+                        <Input type="date" value={customScheduleTo} onChange={(e) => setCustomScheduleTo(e.target.value)} className="h-9 text-sm" />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />}
+              onClick={() => {
+                void loadCounts();
+                refreshSilent();
+              }}
+              title="Reload requests and tab counts from the server (no full-table loading flash)"
+            >
+              Refresh
+            </Button>
+            <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
+              Export
+            </Button>
+            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Request</Button>
           </div>
-          <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Request</Button>
         </PageHeader>
-
-        <div className="rounded-xl border border-border-light bg-surface-hover/60 p-4 space-y-3">
-          <FinanceWeekRangeBar
-            mode={periodMode}
-            onModeChange={setPeriodMode}
-            weekAnchor={weekAnchor}
-            onWeekAnchorChange={setWeekAnchor}
-            monthAnchor={monthAnchor}
-            onMonthAnchorChange={setMonthAnchor}
-            rangeFrom={periodRangeFrom}
-            rangeTo={periodRangeTo}
-            onRangeFromChange={setPeriodRangeFrom}
-            onRangeToChange={setPeriodRangeTo}
-            hideAllDescription
-          />
-        </div>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
           <KpiCard
@@ -908,14 +900,84 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
         </StaggerContainer>
 
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-          <div className="flex items-center justify-between mb-4">
-            <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
-            <SearchInput
-              placeholder="Search requests..."
-              className="w-56"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 min-w-0">
+            <div className="min-w-0 flex-1 pb-1 -mb-1">
+              <Tabs tabs={tabs} activeTab={status} onChange={setStatus} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
+                Export
+              </Button>
+              <SearchInput
+                placeholder="Search requests..."
+                className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <div className="relative flex items-center gap-1.5" ref={filterRef}>
+                <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />} onClick={() => setFilterOpen((o) => !o)}>
+                  Filter
+                </Button>
+                {(filterPriority !== "all" || filterService !== "all" || scheduleDatePreset !== "all" || buFilter.selectedBuId) && (
+                  <span className="text-[10px] font-medium text-primary">Active</span>
+                )}
+                {filterOpen && (
+                  <div className="absolute top-full right-0 mt-1 w-[min(100vw-2rem,18rem)] rounded-xl border border-border bg-card shadow-lg z-50 p-3 space-y-3">
+                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide flex items-center gap-1.5">
+                      <CalendarRange className="h-3.5 w-3.5 shrink-0" />
+                      Created date
+                    </p>
+                    <p className="text-[10px] text-text-tertiary leading-snug">
+                      Use <strong className="text-text-secondary">Dates</strong> in the header to filter by creation date. List and KPIs follow that window (inclusive).
+                    </p>
+                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Priority</p>
+                    <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value as "all" | "high" | "urgent")} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                      <option value="all">All</option>
+                      <option value="high">High & Urgent</option>
+                      <option value="urgent">Urgent only</option>
+                    </select>
+                    <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Service type</p>
+                    <select value={filterService} onChange={(e) => setFilterService(e.target.value)} className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2">
+                      <option value="all">All</option>
+                      {serviceFilterOptions.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                    {buFilter.visible && (
+                      <>
+                        <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Business Unit</p>
+                        <select
+                          value={buFilter.selectedBuId ?? ""}
+                          onChange={(e) => buFilter.setSelectedBuId(e.target.value || null)}
+                          className="w-full h-8 rounded-lg border border-border bg-card text-sm text-text-primary px-2"
+                        >
+                          <option value="">All BUs</option>
+                          {buFilter.bus.map((bu) => (
+                            <option key={bu.id} value={bu.id}>{bu.name}</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        setFilterPriority("all");
+                        setFilterService("all");
+                        buFilter.setSelectedBuId(null);
+                        setScheduleDatePreset("all");
+                        const t = ukTodayYmd(new Date());
+                        setCustomScheduleFrom(t);
+                        setCustomScheduleTo(t);
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           <DataTable
@@ -967,7 +1029,11 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                   <div>
                     <label className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client</label>
                     <div className="flex items-center gap-3 mt-2">
-                      <Avatar name={selectedRequest.client_name} size="lg" />
+                      <Avatar
+                        name={selectedRequest.client_name}
+                        size="lg"
+                        src={selectedRequest.source_account_logo_url?.trim() || undefined}
+                      />
                       <div>
                         <p className="text-base font-semibold text-text-primary">{selectedRequest.client_name}</p>
                         <p className="text-sm text-text-secondary">
@@ -1771,6 +1837,29 @@ function partnerPrimaryTradeDisplay(p: Partner): string {
   return first?.trim() || "—";
 }
 
+/** "Builder and 3 others" → "Builder +3" for compact invite rows. */
+function partnerMatchLabelCompact(partner: Partner, requestType: string): string {
+  const raw = partnerMatchTypeLabel(partner, requestType);
+  return raw.replace(/\s+and\s+(\d+)\s+others?/i, " +$1");
+}
+
+/** One-line header: REF · client · postcode, city · trade */
+function invitePartnerModalSubtitle(req: ServiceRequest, clientName: string): string {
+  const trade = req.service_type?.trim() || "—";
+  const rawAddr = req.property_address?.trim() ?? "";
+  const pc = req.postcode?.trim() || extractUkPostcode(rawAddr) || "";
+  const parts = rawAddr.split(",").map((s) => s.trim()).filter(Boolean);
+  let city = "";
+  if (parts.length >= 2) {
+    const pcNorm = pc.replace(/\s/g, "").toUpperCase();
+    const nonPc = parts.filter((p) => p.replace(/\s/g, "").toUpperCase() !== pcNorm);
+    const candidate = nonPc.filter((p) => !extractUkPostcode(p));
+    city = candidate.length ? candidate[candidate.length - 1] : "";
+  }
+  const loc = pc && city ? `${pc}, ${city}` : pc || city || (rawAddr.length > 40 ? `${rawAddr.slice(0, 40)}…` : rawAddr || "—");
+  return `${req.reference} · ${clientName || "—"} · ${loc} · ${trade}`;
+}
+
 /** Persist a typed-only address (no saved row yet) so quote insert gets a valid client_address_id. */
 async function ensureClientAddressForQuote(ca: ClientAndAddressValue): Promise<ClientAndAddressValue> {
   const cid = ca.client_id;
@@ -1808,7 +1897,8 @@ function InvitePartnerToQuote({
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [invitePhotos, setInvitePhotos] = useState<File[]>([]);
   const [invitePhotoPreviews, setInvitePhotoPreviews] = useState<string[]>([]);
-  const [summaryExpanded, setSummaryExpanded] = useState(true);
+  const [requestDetailsExpanded, setRequestDetailsExpanded] = useState(false);
+  const [partnerListFilter, setPartnerListFilter] = useState<"matched" | "all">("matched");
   const [partnersLoading, setPartnersLoading] = useState(false);
   const [inviting, setInviting] = useState(false);
 
@@ -1829,7 +1919,8 @@ function InvitePartnerToQuote({
     let cancelled = false;
     queueMicrotask(() => {
       setSearchTerm("");
-      setSummaryExpanded(true);
+      setRequestDetailsExpanded(false);
+      setPartnerListFilter("matched");
       setPartners([]);
       setClientAddress(serviceRequestToClientAddressValue(request));
       setInvitePhotos([]);
@@ -1898,265 +1989,334 @@ function InvitePartnerToQuote({
     return filtered.filter((p) => !safePartnerMatchesTypeOfWork(p, request.service_type));
   }, [request, filtered]);
 
-  const matchIdSet = useMemo(() => new Set(serviceRelated.map((p) => p.id)), [serviceRelated]);
-
   if (!request) return null;
+
+  const clientDisplayName = (clientAddress.client_name || request.client_name || "").trim();
+  const headerSubtitle = invitePartnerModalSubtitle(request, clientDisplayName);
+  const requestTypeStr = (request.service_type ?? "").trim() || "—";
+  const photoThumbUrls = summaryImageUrls.slice(0, 3);
+  const totalPhotoCount = summaryImageUrls.length + invitePhotos.length;
+
+  const selectAllVisible = () => {
+    const rows = partnerListFilter === "matched" ? serviceRelated : filtered;
+    setSelectedIds(new Set(rows.map((p) => p.id).filter(Boolean) as string[]));
+  };
 
   return (
     <Modal
       open={!!request}
       onClose={onClose}
       title="Invite partners"
-      subtitle={`${request.reference} — ${request.service_type}`}
+      subtitle={headerSubtitle}
+      headerLeading={<UserPlus className="h-5 w-5" strokeWidth={2} aria-hidden />}
       size="lg"
-      className="w-[min(100%,calc(100vw-1.5rem))] max-w-3xl"
+      className="w-[min(100%,calc(100vw-1.5rem))] max-w-2xl"
     >
-      <div className="p-3 sm:p-6 flex flex-col gap-3 sm:gap-4 min-h-0">
-        <div className="shrink-0 space-y-2">
-          <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Client and address *</p>
-          <ClientAddressPicker
-            value={clientAddress}
-            onChange={setClientAddress}
-            labelClient="Client *"
-            labelAddress="Property address *"
-            lockClient={!!request.client_id}
-          />
-        </div>
-
-        <div className="shrink-0 rounded-xl border border-border-light bg-surface-hover/80 overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setSummaryExpanded((v) => !v)}
-            aria-expanded={summaryExpanded}
-            className="flex w-full shrink-0 items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-3 text-left hover:bg-surface-hover/90 transition-colors"
-          >
-            <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invite summary</span>
-            <ChevronDown
-              className={cn("h-4 w-4 shrink-0 text-text-tertiary transition-transform", summaryExpanded && "rotate-180")}
-              aria-hidden
-            />
-          </button>
-          {summaryExpanded && (
-            <div className="px-3 pb-3 pt-2 sm:px-5 sm:pb-4 sm:pt-3 space-y-3 border-t border-border-light">
-              <p className="text-sm text-text-primary break-words">
-                <span className="text-text-tertiary text-xs font-medium">Type of work · </span>
-                {request.service_type?.trim() || "—"}
-              </p>
-              <p className="text-sm text-text-primary break-words">
-                <span className="text-text-tertiary text-xs font-medium">Address · </span>
-                {request.property_address?.trim() || "—"}
-              </p>
-              <p className="text-sm text-text-secondary whitespace-pre-wrap break-words max-w-full">
-                <span className="text-text-tertiary text-xs font-medium block mb-0.5">Service description</span>
+      <div className="flex min-h-0 flex-col gap-2.5 p-3 sm:gap-3 sm:p-4">
+        {/* Request details — compact bar + expand */}
+        <div className="shrink-0 overflow-hidden rounded-[8px] border border-[#E4E4E8] bg-[#FAFAFB]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2.5 py-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">Request details</span>
+            <div className="flex items-center gap-1">
+              {photoThumbUrls.map((url, i) => (
+                <div
+                  key={`${url}-${i}`}
+                  className="h-5 w-5 shrink-0 overflow-hidden rounded border border-[#E4E4E8] bg-white"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                </div>
+              ))}
+              {summaryImageUrls.length === 0 ? (
+                <span className="text-[10px] text-[#6B6B70]">No photos</span>
+              ) : (
+                <span className="text-[10px] tabular-nums text-[#6B6B70]">{totalPhotoCount} photos</span>
+              )}
+            </div>
+            <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-[#D8D8DD] bg-white px-2 py-1 text-[11px] font-medium text-[#020040] hover:bg-[#F4F5FB]">
+              <LayoutGrid className="h-3 w-3 shrink-0 text-[#6B6B70]" aria-hidden />
+              Add photos
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple
+                className="sr-only"
+                disabled={invitePhotos.length >= 8}
+                onChange={(e) => {
+                  const list = e.target.files;
+                  if (!list?.length) return;
+                  const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
+                  setInvitePhotos(next);
+                  setInvitePhotoPreviews((prev) => {
+                    prev.forEach((u) => URL.revokeObjectURL(u));
+                    return next.map((f) => URL.createObjectURL(f));
+                  });
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setRequestDetailsExpanded((v) => !v)}
+              className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-medium text-[#020040] hover:underline"
+            >
+              View details
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", requestDetailsExpanded && "rotate-180")} />
+            </button>
+          </div>
+          {requestDetailsExpanded && (
+            <div className="space-y-3 border-t border-[#E4E4E8] bg-white px-2.5 py-2.5">
+              <p className="whitespace-pre-wrap break-words text-[13px] leading-snug text-[#020040]">
+                <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">
+                  Service description
+                </span>
                 {request.description?.trim() || "—"}
               </p>
-              <div className="min-w-0">
-                <span className="text-text-tertiary text-xs font-medium block mb-1.5">Photos (request + extra for invite)</span>
-                {summaryImageUrls.length === 0 ? (
-                  <p className="text-xs text-text-tertiary mb-2">No photos on the request yet — add below for this invite.</p>
-                ) : (
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 mb-3">
-                    {summaryImageUrls.map((url, i) => (
-                      <a
-                        key={`${url}-${i}`}
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block aspect-square rounded-lg border border-border-light overflow-hidden bg-card hover:ring-2 hover:ring-primary/30 transition-shadow min-w-0"
-                        title="Open full size"
-                      >
-                        <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" />
-                      </a>
-                    ))}
-                  </div>
-                )}
-                <p className="text-[11px] text-text-tertiary mb-2">Up to 8 extra images (5 MB each) — merged with request photos for the partner app.</p>
-                <div className="flex flex-wrap gap-2 items-center">
-                  <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-text-primary cursor-pointer hover:border-primary/30">
-                    <ImagePlus className="h-3.5 w-3.5" />
-                    Add photos
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
-                      multiple
-                      className="sr-only"
-                      disabled={invitePhotos.length >= 8}
-                      onChange={(e) => {
-                        const list = e.target.files;
-                        if (!list?.length) return;
-                        const next = [...invitePhotos, ...Array.from(list)].slice(0, 8);
-                        setInvitePhotos(next);
-                        setInvitePhotoPreviews((prev) => {
-                          prev.forEach((u) => URL.revokeObjectURL(u));
-                          return next.map((f) => URL.createObjectURL(f));
-                        });
-                        e.target.value = "";
-                      }}
-                    />
-                  </label>
-                </div>
-                {invitePhotoPreviews.length > 0 && (
-                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 mt-2">
-                    {invitePhotoPreviews.map((src, i) => (
-                      <div key={src} className="relative aspect-square rounded-lg overflow-hidden border border-border-light bg-surface-hover min-w-0">
-                        <img src={src} alt="" className="h-full w-full object-cover" />
-                        <button
-                          type="button"
-                          className="absolute top-0.5 right-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
-                          onClick={() => {
-                            const idx = i;
-                            setInvitePhotoPreviews((prev) => {
-                              const u = prev[idx];
-                              if (u) URL.revokeObjectURL(u);
-                              return prev.filter((_, j) => j !== idx);
-                            });
-                            setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
-                          }}
-                          aria-label="Remove photo"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+              <div className="min-w-0 space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">Client &amp; property *</p>
+                <ClientAddressPicker
+                  value={clientAddress}
+                  onChange={setClientAddress}
+                  labelClient="Client *"
+                  labelAddress="Property address *"
+                  lockClient={!!request.client_id}
+                />
               </div>
+              {summaryImageUrls.length > 0 && (
+                <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
+                  {summaryImageUrls.map((url, i) => (
+                    <a
+                      key={`${url}-${i}`}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block aspect-square min-w-0 overflow-hidden rounded border border-[#E4E4E8] bg-card hover:ring-2 hover:ring-[#020040]/20"
+                      title="Open full size"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    </a>
+                  ))}
+                </div>
+              )}
+              <p className="text-[10px] text-[#6B6B70]">Up to 8 extra images for the partner app.</p>
+              {invitePhotoPreviews.length > 0 && (
+                <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
+                  {invitePhotoPreviews.map((src, i) => (
+                    <div key={src} className="relative aspect-square min-w-0 overflow-hidden rounded border border-[#E4E4E8] bg-[#FAFAFB]">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={src} alt="" className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        className="absolute right-0.5 top-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                        onClick={() => {
+                          const idx = i;
+                          setInvitePhotoPreviews((prev) => {
+                            const u = prev[idx];
+                            if (u) URL.revokeObjectURL(u);
+                            return prev.filter((_, j) => j !== idx);
+                          });
+                          setInvitePhotos((prev) => prev.filter((_, j) => j !== idx));
+                        }}
+                        aria-label="Remove photo"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        <div className="shrink-0">
+        {/* Search + segment */}
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
           <Input
-            placeholder="Search partners by name, trade, or location…"
+            icon={<Search className="h-3.5 w-3.5" />}
+            placeholder="Search by name, trade or location…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="text-sm"
+            className="min-w-0 flex-1 text-sm"
           />
+          <div className="flex shrink-0 rounded-lg border border-[#E4E4E8] bg-white p-0.5">
+            <button
+              type="button"
+              onClick={() => setPartnerListFilter("matched")}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                partnerListFilter === "matched"
+                  ? "bg-[#020040] text-white"
+                  : "text-[#6B6B70] hover:text-[#020040]",
+              )}
+            >
+              Matched ({serviceRelated.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setPartnerListFilter("all")}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                partnerListFilter === "all"
+                  ? "bg-[#020040] text-white"
+                  : "text-[#6B6B70] hover:text-[#020040]",
+              )}
+            >
+              All ({filtered.length})
+            </button>
+          </div>
         </div>
 
         {!partnersLoading && partners.length > 0 && (
-          <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-            <button
-              type="button"
-              className="font-medium text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
-              disabled={serviceRelated.length === 0}
-              onClick={() => setSelectedIds(new Set(serviceRelated.map((p) => p.id)))}
-            >
-              Select matched
-            </button>
-            <button
-              type="button"
-              className="font-medium text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-40 disabled:pointer-events-none"
-              disabled={serviceRelated.length === 0}
-              onClick={() =>
-                setSelectedIds((prev) => {
-                  const next = new Set(prev);
-                  serviceRelated.forEach((p) => next.delete(p.id));
-                  return next;
-                })
-              }
-            >
-              Deselect matched
-            </button>
-            <button type="button" className="font-medium text-text-tertiary hover:underline" onClick={() => setSelectedIds(new Set())}>
-              Clear selection
-            </button>
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px]">
+            <span className="text-[11px] text-[#020040]">
+              {serviceRelated.length} matched partners for {requestTypeStr}
+            </span>
+            <div className="flex items-center gap-1.5 text-[11px]">
+              <button
+                type="button"
+                className="font-medium text-[#020040] hover:underline disabled:opacity-40"
+                disabled={partnerListFilter === "matched" ? serviceRelated.length === 0 : filtered.length === 0}
+                onClick={selectAllVisible}
+              >
+                Select all
+              </button>
+              <span className="text-[#D8D8DD]" aria-hidden>
+                |
+              </span>
+              <button type="button" className="font-medium text-[#6B6B70] hover:underline" onClick={() => setSelectedIds(new Set())}>
+                Clear
+              </button>
+            </div>
           </div>
         )}
 
-        {!partnersLoading && serviceRelated.length > 0 && (
-          <p className="shrink-0 text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
-            Matching “{request.service_type}” (trade / type of work) — {serviceRelated.length} partner(s)
-          </p>
-        )}
-
-        <div className="space-y-2 rounded-xl border border-border-light/60 bg-surface-hover/30 p-2 sm:p-3 min-h-0">
+        <div className="min-h-0 max-h-[min(42vh,360px)] space-y-1 overflow-y-auto rounded-[8px] border border-[#E4E4E8] bg-[#FAFAFB] p-1.5">
           {!partnersLoading &&
-            [...serviceRelated, ...others].map((p) => {
-            if (!p.id) return null;
-            const isSelected = selectedIds.has(p.id);
-            const isMatch = matchIdSet.has(p.id);
-            const loc = (p.location ?? "").trim() || "—";
-            const requestType = (request.service_type ?? "").trim() || "—";
-            const typeLine = isMatch ? partnerMatchTypeLabel(p, requestType) : partnerPrimaryTradeDisplay(p);
-            return (
-              <label
-                key={p.id}
-                className={cn(
-                  "flex items-start sm:items-center gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-xl border cursor-pointer transition-all",
-                  isSelected
-                    ? "border-primary bg-primary/5 dark:bg-primary/15 dark:border-primary/60"
-                    : isMatch
-                      ? "border-amber-200 bg-amber-50/40 hover:border-primary/30 dark:border-amber-500/45 dark:bg-amber-950/30 dark:hover:border-amber-400/50 dark:hover:bg-amber-950/40"
-                      : "border-border hover:border-primary/30 hover:bg-surface-hover dark:border-border dark:hover:bg-surface-tertiary/80",
-                )}
-              >
-                <input type="checkbox" checked={isSelected} onChange={(e) => {
-                  setSelectedIds((prev) => {
-                    const next = new Set(prev);
-                    if (e.target.checked) next.add(p.id); else next.delete(p.id);
-                    return next;
-                  });
-                }} className="h-4 w-4 rounded border-border text-primary focus:ring-primary/20" />
-                <Avatar name={p.company_name} size="md" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-text-primary break-words">{p.company_name}</p>
-                  <p className="text-xs font-medium text-text-secondary dark:text-neutral-200 break-words">
-                    {typeLine}
-                    <span className="font-normal text-text-tertiary dark:text-neutral-400"> · {loc}</span>
-                  </p>
-                </div>
-                {isMatch && <Badge variant="warning" size="sm" className="shrink-0 self-start sm:self-center">Match</Badge>}
-              </label>
-            );
-          })}
-          {partnersLoading && (
-            <p className="text-sm text-text-tertiary text-center py-6">Loading partners…</p>
-          )}
+            (() => {
+              if (partners.length === 0) return null;
+              const requestType = (request.service_type ?? "").trim() || "—";
+              const row = (p: Partner, isMatch: boolean) => {
+                if (!p.id) return null;
+                const isSelected = selectedIds.has(p.id);
+                const loc = (p.location ?? "").trim() || "—";
+                const typeLine = isMatch ? partnerMatchLabelCompact(p, requestType) : partnerPrimaryTradeDisplay(p);
+                return (
+                  <label
+                    key={p.id}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-2 rounded-[8px] border px-[10px] py-2 transition-colors",
+                      isMatch
+                        ? "border-[#D8DBEE] bg-[#F4F5FB]"
+                        : "border-[#E4E4E8] bg-white hover:bg-[#FAFAFB]",
+                      isSelected && "ring-1 ring-[#020040]/25",
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(p.id);
+                          else next.delete(p.id);
+                          return next;
+                        });
+                      }}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-[#D8D8DD] text-[#020040] focus:ring-[#020040]/20"
+                    />
+                    <Avatar name={p.company_name} size="sm" className="!h-[26px] !w-[26px] !text-[11px] !leading-none" />
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words text-[12px] font-medium leading-tight text-[#020040]">{p.company_name}</p>
+                      <p className="break-words text-[10px] leading-snug text-[#6B6B70]">
+                        {typeLine}
+                        <span> · {loc}</span>
+                      </p>
+                    </div>
+                    {isMatch ? (
+                      <span className="shrink-0 rounded-full bg-[#D8DBEE] px-2 py-0.5 text-[10px] font-medium text-[#020040]">
+                        Match
+                      </span>
+                    ) : null}
+                  </label>
+                );
+              };
+              if (partnerListFilter === "matched") {
+                return serviceRelated.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-[#6B6B70]">No partners match this search for this trade.</p>
+                ) : (
+                  serviceRelated.map((p) => row(p, true))
+                );
+              }
+              return (
+                <>
+                  {serviceRelated.map((p) => row(p, true))}
+                  {others.length > 0 ? (
+                    <>
+                      <p className="px-1 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">
+                        Other partners
+                      </p>
+                      {others.map((p) => row(p, false))}
+                    </>
+                  ) : null}
+                </>
+              );
+            })()}
+          {partnersLoading && <p className="py-6 text-center text-sm text-[#6B6B70]">Loading partners…</p>}
           {!partnersLoading && partners.length === 0 && (
-            <p className="text-sm text-text-tertiary text-center py-6">No partners returned — check your connection or try again.</p>
+            <p className="py-6 text-center text-sm text-[#6B6B70]">No partners returned — check your connection or try again.</p>
           )}
           {!partnersLoading && partners.length > 0 && filtered.length === 0 && (
-            <p className="text-sm text-text-tertiary text-center py-6">No partners match this search — clear the search to see all.</p>
+            <p className="py-6 text-center text-sm text-[#6B6B70]">No partners match this search — clear the search to see all.</p>
           )}
         </div>
 
-        <div className="shrink-0 pt-3 sm:pt-4 border-t border-border-light space-y-3">
-          <div>
-            <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1 block">Send invite via</label>
-            <div className="flex flex-wrap gap-2">
-              {(["email", "app", "both"] as const).map((m) => (
-                <button key={m} onClick={() => setSendMethod(m)} className={`flex-1 min-w-[5.5rem] sm:flex-initial px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${sendMethod === m ? "border-primary bg-primary/10 text-primary" : "border-border text-text-tertiary hover:text-text-primary"}`}>
-                  {m === "both" ? "Email + App" : m.charAt(0).toUpperCase() + m.slice(1)}
-                </button>
-              ))}
+        <div className="shrink-0 space-y-2 border-t border-[#E4E4E8] pt-2.5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">Send via</span>
+              <div className="flex rounded-lg border border-[#E4E4E8] bg-white p-0.5">
+                {(["email", "app", "both"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setSendMethod(m)}
+                    className={cn(
+                      "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                      sendMethod === m ? "bg-[#020040] text-white" : "text-[#6B6B70] hover:text-[#020040]",
+                    )}
+                  >
+                    {m === "both" ? "Both" : m.charAt(0).toUpperCase() + m.slice(1)}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-text-tertiary">
-              {selectedIds.size === 0 ? "Please select at least one partner" : `${selectedIds.size} partner(s) selected`}
-            </p>
-            <Button
-              size="sm"
-              className="w-full sm:w-auto shrink-0"
-              icon={<Send className="h-3.5 w-3.5" />}
-              loading={inviting}
-              disabled={
-                inviting || selectedIds.size === 0 || !clientAddress.client_id || !clientAddress.property_address
-              }
-              onClick={async () => {
-                setInviting(true);
-                try {
-                  await Promise.resolve(
-                    onDone(request, Array.from(selectedIds), sendMethod, clientAddress, invitePhotos),
-                  );
-                } finally {
-                  setInviting(false);
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className="text-[12px] tabular-nums text-[#6B6B70]">
+                {selectedIds.size} selected
+              </span>
+              <Button
+                size="sm"
+                className="!border-0 !bg-[#020040] !text-white shadow-none hover:!bg-[#0a0860]"
+                icon={<Send className="h-3.5 w-3.5" />}
+                loading={inviting}
+                disabled={
+                  inviting || selectedIds.size === 0 || !clientAddress.client_id || !clientAddress.property_address
                 }
-              }}
-            >
-              Invite partners
-            </Button>
+                onClick={async () => {
+                  setInviting(true);
+                  try {
+                    await Promise.resolve(
+                      onDone(request, Array.from(selectedIds), sendMethod, clientAddress, invitePhotos),
+                    );
+                  } finally {
+                    setInviting(false);
+                  }
+                }}
+              >
+                Send invites
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -2519,24 +2679,6 @@ function ConvertToJobModal({
     ? Math.round(((hourlyPreview.clientTotal - hourlyPreview.partnerTotal) / hourlyPreview.clientTotal) * 1000) / 10
     : 0;
 
-  const hint = (text: string) => (
-    <span className="group relative inline-flex">
-      <span
-        tabIndex={0}
-        aria-label={text}
-        className="inline-flex h-[13px] w-[13px] items-center justify-center rounded-full text-[9px] font-bold leading-none cursor-help outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
-        style={{ background: "#F1F1F3", color: "#6B6B70" }}
-      >
-        !
-      </span>
-      <span
-        role="tooltip"
-        className="pointer-events-none invisible absolute top-full left-0 z-[60] mt-1 w-60 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1.5 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
-      >
-        {text}
-      </span>
-    </span>
-  );
   const labelNavy = "flex items-center gap-[6px] text-[10px] font-medium uppercase";
   const labelStyle = { color: "#020040", letterSpacing: "0.6px" } as const;
 
@@ -2562,7 +2704,7 @@ function ConvertToJobModal({
             <div>
               <label className={labelNavy} style={labelStyle}>
                 Call-out type <span style={{ color: "#ED4B00" }}>*</span>
-                {hint("Loads default hours, client rate and partner rate from the Services catalog. You can still tweak the partner rate and billed hours below.")}
+                <FixfyHintIcon text="Loads default hours, client rate and partner rate from the Services catalog. You can still tweak the partner rate and billed hours below." />
               </label>
               <ServiceCatalogSelect
                 emptyOptionLabel="Select from Services…"
@@ -2623,7 +2765,7 @@ function ConvertToJobModal({
               {form.assignment_mode === "manual" && form.partner_id ? (
                 <span style={{ color: "#ED4B00" }}>*</span>
               ) : null}
-              {hint("Required when you assign a partner. Tells them exactly what the job covers.")}
+              <FixfyHintIcon text="Required when you assign a partner. Tells them exactly what the job covers." />
             </label>
             <textarea
               value={form.scope}
@@ -2648,7 +2790,7 @@ function ConvertToJobModal({
             >
               <p className={labelNavy} style={labelStyle}>
                 Access &amp; parking
-                {hint("CCZ is only available for central London postcodes (EC1–4, WC1–2, W1, SW1, SE1). Parking fee applies when no free parking is available.")}
+                <FixfyHintIcon text="CCZ is only available for central London postcodes (EC1–4, WC1–2, W1, SW1, SE1). Parking fee applies when no free parking is available." />
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
                 <button
@@ -2833,7 +2975,9 @@ function ConvertToJobModal({
                 <div>
                   <label className={labelNavy} style={labelStyle}>
                     Partner hourly rate
-                    {hint(`Client hourly rate is loaded from Call-out type: ${formatCurrency(Number(form.hourly_client_rate) || 0)}/h. Billing rounds up in 30-min increments from timer logs (1h minimum).`)}
+                    <FixfyHintIcon
+                      text={`Client hourly rate is loaded from Call-out type: ${formatCurrency(Number(form.hourly_client_rate) || 0)}/h. Billing rounds up in 30-min increments from timer logs (1h minimum).`}
+                    />
                   </label>
                   <Input className="mt-[6px]" type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
                 </div>
@@ -2887,7 +3031,7 @@ function ConvertToJobModal({
           <button
             type="button"
             onClick={onClose}
-            className="bg-white rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer"
+            className="inline-flex h-8 items-center justify-center rounded-[6px] px-[14px] text-[12px] font-medium cursor-pointer bg-white"
             style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
             onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FAFAFB")}
             onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#FFFFFF")}
@@ -2896,10 +3040,10 @@ function ConvertToJobModal({
           </button>
           <button
             type="submit"
-            className="inline-flex items-center gap-[6px] text-white border-none rounded-[6px] px-[16px] py-[7px] text-[12px] font-medium cursor-pointer"
-            style={{ background: "#020040" }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#0a0860")}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
+            className="inline-flex h-8 items-center justify-center gap-[6px] text-white border-none rounded-[6px] px-4 text-[12px] font-medium cursor-pointer"
+            style={{ background: "#ED4B00" }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#d84300")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#ED4B00")}
           >
             <Briefcase className="h-3.5 w-3.5" /> Create job
           </button>
@@ -3068,26 +3212,6 @@ function CreateRequestModal({
   const cczEligibleCreate = form.request_kind === "work" && isLikelyCczAddress(clientAddress.property_address);
   const inCczPreviewCreate = cczEligibleCreate && form.in_ccz;
 
-  /** Small `!` hint — used to collapse explanatory copy into a tooltip beside labels. */
-  const hint = (text: string) => (
-    <span className="group relative inline-flex">
-      <span
-        tabIndex={0}
-        aria-label={text}
-        className="inline-flex h-[13px] w-[13px] items-center justify-center rounded-full text-[9px] font-bold leading-none cursor-help outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
-        style={{ background: "#F1F1F3", color: "#6B6B70" }}
-      >
-        !
-      </span>
-      <span
-        role="tooltip"
-        className="pointer-events-none invisible absolute top-full left-0 z-[60] mt-1 w-56 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1.5 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
-      >
-        {text}
-      </span>
-    </span>
-  );
-
   const labelNavy = "flex items-center gap-[6px] text-[10px] font-medium uppercase";
   const labelStyle = { color: "#020040", letterSpacing: "0.6px" } as const;
   const inputBoxStyle = {
@@ -3106,12 +3230,12 @@ function CreateRequestModal({
       scrollBody
     >
       <form onSubmit={handleSubmit} className="flex flex-col">
-        <div className="px-5 sm:px-6 pt-5 pb-4 space-y-[14px]">
+        <div className="px-5 sm:px-6 pt-4 pb-3 space-y-2.5 sm:space-y-3">
           {/* 1. Request type — segmented card picker */}
           <div>
             <label className={labelNavy} style={labelStyle}>
               Request type <span style={{ color: "#ED4B00" }}>*</span>
-              {hint("Work Request — fixed price / 60s confirm. Quote — survey first, same-day.")}
+              <FixfyHintIcon text="Work Request — fixed price / 60s confirm. Quote — survey first, same-day." />
             </label>
             <div className="mt-[6px] grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
               {([
@@ -3162,80 +3286,19 @@ function CreateRequestModal({
             </div>
           </div>
 
-          {/* 2. Client & property — 2x2 grid inside inset */}
-          <div
-            className="rounded-[10px] p-[14px]"
-            style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
-          >
-            <p className={labelNavy + " mb-[10px]"} style={labelStyle}>
-              Client &amp; property <span style={{ color: "#ED4B00" }}>*</span>
-              {hint("Search for an existing client or create a new one. This link is kept when you convert to quote or job.")}
-            </p>
-            <ClientAddressPicker
-              value={clientAddress}
-              onChange={setClientAddress}
-              labelClient="Client *"
-              labelAddress="Property address *"
-              layout="grid-2"
-            />
-            <div className="mt-[10px] grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
-              <div>
-                <label className={labelNavy} style={labelStyle}>
-                  Postcode <span style={{ color: "#ED4B00" }}>*</span>
-                  {hint("Auto-filled from the property address — edit if needed.")}
-                </label>
-                <Input
-                  value={postcode}
-                  onChange={(e) => setPostcode(e.target.value.toUpperCase())}
-                  placeholder="SW1A 1AA"
-                  className="mt-[6px]"
-                />
-              </div>
-              <div>
-                <label className={labelNavy} style={labelStyle}>Priority</label>
-                <Select
-                  value={form.priority}
-                  onChange={(e) => update("priority", e.target.value)}
-                  options={[
-                    { value: "low", label: "Low" },
-                    { value: "medium", label: "Medium" },
-                    { value: "high", label: "High" },
-                    { value: "urgent", label: "Urgent" },
-                  ]}
-                  className="mt-[6px]"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 3. On-site contact */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-[12px]">
-            <div>
-              <label className={labelNavy} style={labelStyle}>Name (on-site)</label>
-              <Input
-                value={form.onsite_contact_name}
-                onChange={(e) => update("onsite_contact_name", e.target.value)}
-                placeholder="Optional"
-                className="mt-[6px]"
-              />
-            </div>
-            <div>
-              <label className={labelNavy} style={labelStyle}>Mobile (on-site)</label>
-              <Input
-                value={form.client_phone}
-                onChange={(e) => update("client_phone", e.target.value)}
-                placeholder="Optional"
-                className="mt-[6px]"
-              />
-            </div>
-          </div>
-
-          {/* 4. Call-out type / Service name */}
+          {/* 2. Call-out type / Service name — before client so template is chosen first */}
           {form.request_kind === "work" ? (
-            <div>
+            <div
+              className="min-w-0 rounded-[10px] p-3 sm:p-[14px]"
+              style={{
+                background: "#FFFFFF",
+                border: "0.5px solid #E4E4E8",
+                boxShadow: "0 2px 14px rgba(2, 0, 64, 0.07), 0 1px 2px rgba(2, 0, 64, 0.04)",
+              }}
+            >
               <label className={labelNavy} style={labelStyle}>
                 Call-out type
-                {hint("Template text is loaded from Services — you can still edit the issue description below.")}
+                <FixfyHintIcon text="Template text is loaded from Services — you can still edit the issue description below." />
               </label>
               <Select
                 value={form.catalog_service_id}
@@ -3257,7 +3320,14 @@ function CreateRequestModal({
               />
             </div>
           ) : form.request_kind === "quote" ? (
-            <div>
+            <div
+              className="min-w-0 rounded-[10px] p-3 sm:p-[14px]"
+              style={{
+                background: "#FFFFFF",
+                border: "0.5px solid #E4E4E8",
+                boxShadow: "0 2px 14px rgba(2, 0, 64, 0.07), 0 1px 2px rgba(2, 0, 64, 0.04)",
+              }}
+            >
               <label className={labelNavy} style={labelStyle}>
                 Service name <span style={{ color: "#ED4B00" }}>*</span>
               </label>
@@ -3284,6 +3354,74 @@ function CreateRequestModal({
             </p>
           )}
 
+          {/* 3. Client & property — 2x2 grid inside inset */}
+          <div
+            className="rounded-[10px] p-3 sm:p-[14px]"
+            style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
+          >
+            <p className={labelNavy + " mb-2"} style={labelStyle}>
+              Client &amp; property <span style={{ color: "#ED4B00" }}>*</span>
+              <FixfyHintIcon text="Search for an existing client or create a new one. This link is kept when you convert to quote or job." />
+            </p>
+            <ClientAddressPicker
+              value={clientAddress}
+              onChange={setClientAddress}
+              labelClient="Client *"
+              labelAddress="Property address *"
+              layout="grid-2"
+            />
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-[10px]">
+              <div>
+                <label className={labelNavy} style={labelStyle}>
+                  Postcode <span style={{ color: "#ED4B00" }}>*</span>
+                  <FixfyHintIcon text="Auto-filled from the property address — edit if needed." />
+                </label>
+                <Input
+                  value={postcode}
+                  onChange={(e) => setPostcode(e.target.value.toUpperCase())}
+                  placeholder="SW1A 1AA"
+                  className="mt-[6px]"
+                />
+              </div>
+              <div>
+                <label className={labelNavy} style={labelStyle}>Priority</label>
+                <Select
+                  value={form.priority}
+                  onChange={(e) => update("priority", e.target.value)}
+                  options={[
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                    { value: "urgent", label: "Urgent" },
+                  ]}
+                  className="mt-[6px]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 4. On-site contact */}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
+            <div>
+              <label className={labelNavy} style={labelStyle}>Name (on-site)</label>
+              <Input
+                value={form.onsite_contact_name}
+                onChange={(e) => update("onsite_contact_name", e.target.value)}
+                placeholder="Optional"
+                className="mt-[6px]"
+              />
+            </div>
+            <div>
+              <label className={labelNavy} style={labelStyle}>Mobile (on-site)</label>
+              <Input
+                value={form.client_phone}
+                onChange={(e) => update("client_phone", e.target.value)}
+                placeholder="Optional"
+                className="mt-[6px]"
+              />
+            </div>
+          </div>
+
           {/* 5. Service description */}
           <div>
             <div className="flex items-baseline justify-between gap-2">
@@ -3295,9 +3433,9 @@ function CreateRequestModal({
             <textarea
               value={form.description}
               onChange={(e) => update("description", e.target.value)}
-              rows={3}
+              rows={2}
               placeholder="Describe the issue — what the client needs, access, urgency…"
-              className="mt-[6px] w-full rounded-[8px] px-3 py-[10px] text-[13px] outline-none resize-none focus:ring-[3px] focus:ring-[rgba(2,0,64,0.08)]"
+              className="mt-[6px] w-full rounded-[8px] px-3 py-2 text-[13px] outline-none resize-none focus:ring-[3px] focus:ring-[rgba(2,0,64,0.08)]"
               style={{
                 ...inputBoxStyle,
                 fontFamily: "inherit",
@@ -3306,10 +3444,10 @@ function CreateRequestModal({
             />
           </div>
 
-          {/* 6. Access & Parking — inline toggles with running total */}
+          {/* 6. Access fees — inline toggles with running total */}
           {form.request_kind === "work" && (
             <div
-              className="rounded-[10px] p-[14px] flex flex-wrap items-center gap-x-[24px] gap-y-[10px]"
+              className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-[10px] p-3 sm:p-[14px]"
               style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
             >
               <button
@@ -3332,7 +3470,7 @@ function CreateRequestModal({
                     style={{ transform: form.in_ccz && cczEligibleCreate ? "translateX(14px)" : "translateX(2px)" }}
                   />
                 </span>
-                {hint("CCZ is only available for central London postcodes (EC1–4, WC1–2, W1, SW1, SE1).")}
+                <FixfyHintIcon text="CCZ is only available for central London postcodes (EC1–4, WC1–2, W1, SW1, SE1)." />
               </button>
               <button
                 type="button"
@@ -3350,7 +3488,7 @@ function CreateRequestModal({
                     style={{ transform: !form.has_free_parking ? "translateX(14px)" : "translateX(2px)" }}
                   />
                 </span>
-                {hint("Parking fee applies when the customer can't offer free parking.")}
+                <FixfyHintIcon text="Parking fee applies when the customer can't offer free parking." />
               </button>
               <div className="ml-auto text-right">
                 <p className="text-[10px] uppercase" style={{ color: "#6B6B70", letterSpacing: "0.6px" }}>
@@ -3365,13 +3503,13 @@ function CreateRequestModal({
 
           {/* 7. Photos — single-line header */}
           <div
-            className="rounded-[10px] p-[14px] space-y-[10px]"
+            className="space-y-2 rounded-[10px] p-3 sm:p-[14px]"
             style={{ background: "#FAFAFB", border: "0.5px solid #E4E4E8" }}
           >
-            <div className="flex items-center gap-[12px] flex-wrap">
+            <div className="flex flex-wrap items-center gap-3">
               <p className={labelNavy + " flex-shrink-0"} style={labelStyle}>
                 Photos
-                {hint("Up to 8 images — stored on the request and carried to quotes / partner app when you convert.")}
+                <FixfyHintIcon text="Up to 8 images — stored on the request and carried to quotes / partner app when you convert." />
               </p>
               <label
                 className="inline-flex items-center gap-[6px] rounded-[6px] bg-white px-3 py-[6px] text-[12px] font-medium cursor-pointer"
@@ -3436,14 +3574,14 @@ function CreateRequestModal({
         </div>
 
         <div
-          className="flex justify-end gap-[10px] px-6 py-[14px]"
+          className="flex justify-end gap-2 px-5 py-2.5 sm:px-6 sm:py-3"
           style={{ borderTop: "0.5px solid #E4E4E8", background: "#FFFFFF" }}
         >
           <button
             type="button"
             onClick={onClose}
             disabled={createSubmitting}
-            className="bg-white rounded-[6px] px-[14px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="inline-flex h-8 items-center justify-center rounded-[6px] px-[14px] text-[12px] font-medium cursor-pointer bg-white disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ color: "#020040", border: "0.5px solid #D8D8DD" }}
             onMouseEnter={(e) => {
               if (!(e.currentTarget as HTMLButtonElement).disabled)
@@ -3456,13 +3594,13 @@ function CreateRequestModal({
           <button
             type="submit"
             disabled={createSubmitting}
-            className="text-white border-none rounded-[6px] px-[16px] py-[7px] text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: "#020040" }}
+            className="inline-flex h-8 items-center justify-center text-white border-none rounded-[6px] px-4 text-[12px] font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: "#ED4B00" }}
             onMouseEnter={(e) => {
               if (!(e.currentTarget as HTMLButtonElement).disabled)
-                (e.currentTarget as HTMLButtonElement).style.background = "#0a0860";
+                (e.currentTarget as HTMLButtonElement).style.background = "#d84300";
             }}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#ED4B00")}
           >
             {createSubmitting ? "Creating…" : "Create request"}
           </button>
@@ -3480,6 +3618,6 @@ function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => vo
     default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return (
-    <button onClick={onClick} className={`px-2.5 py-1 text-xs font-medium rounded-lg border transition-colors ${colors[variant]}`}>{label}</button>
+    <button onClick={onClick} className={`inline-flex h-8 items-center px-2.5 text-xs font-medium rounded-[6px] border transition-colors ${colors[variant]}`}>{label}</button>
   );
 }

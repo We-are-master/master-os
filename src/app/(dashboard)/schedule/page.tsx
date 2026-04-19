@@ -13,13 +13,20 @@ import { Avatar } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
 import { Tabs } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { ScheduleLiveMap, type ScheduleLiveMapPoint } from "@/components/dashboard/schedule-live-map";
+import {
+  ScheduleLiveMap,
+  LIVE_MAP_TOOLBAR_BTN_CLASS,
+  type LiveMapRegionPreset,
+  type ScheduleLiveMapPoint,
+} from "@/components/dashboard/schedule-live-map";
+import { liveMapTradeFilterOptions } from "@/components/dashboard/live-map-marker-icons";
+import { liveMapPointMatchesTradeFilter } from "@/lib/live-map-trade-filter";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { motion, AnimatePresence } from "framer-motion";
 import { staggerContainer, staggerItem, fadeInUp } from "@/lib/motion";
 import {
   Plus, ChevronLeft, ChevronRight, Calendar as CalIcon,
-  Briefcase, AlertTriangle, MapPin, DollarSign, User, RefreshCw, Search, Download,
+  Briefcase, AlertTriangle, MapPin, DollarSign, User, RefreshCw, Search, Download, ChevronDown,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
@@ -49,7 +56,7 @@ import {
   scheduleJobNeedsAssignmentHighlight,
   sumScheduleMonthRevenue,
 } from "@/lib/schedule-visible-jobs";
-import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
+import { batchResolveLinkedAccountLabels, batchResolveClientAccountLogoUrls } from "@/lib/client-linked-account-label";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
@@ -62,6 +69,17 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ];
 const LIVE_MAP_INACTIVE_MINUTES = 15;
+
+const LIVE_MAP_REGION_OPTIONS: { value: LiveMapRegionPreset; label: string }[] = [
+  { value: "fit_all", label: "All" },
+  { value: "uk", label: "United Kingdom" },
+  { value: "london", label: "London" },
+  { value: "europe", label: "Europe" },
+];
+
+const LIVE_MAP_NATIVE_SELECT_CLASS =
+  "h-8 min-w-[120px] flex-1 appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-8 text-[11px] font-medium text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15 sm:min-w-[140px] sm:flex-none";
+
 type LiveMapStatusFilter = "all" | "active" | "inactive";
 
 const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
@@ -139,6 +157,7 @@ export default function SchedulePage() {
   const [loading, setLoading] = useState(true);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedJobAccountName, setSelectedJobAccountName] = useState<string | null>(null);
+  const [accountLogoByClientId, setAccountLogoByClientId] = useState<Map<string, string | null>>(() => new Map());
   const [legendBarChipsOpen, setLegendBarChipsOpen] = useState(false);
   const [view, setView] = useState<"calendar" | "live_map">("calendar");
   const [liveMapPoints, setLiveMapPoints] = useState<ScheduleLiveMapPoint[]>([]);
@@ -146,6 +165,8 @@ export default function SchedulePage() {
   const [liveMapUpdatedAt, setLiveMapUpdatedAt] = useState<string | null>(null);
   const [liveMapSearch, setLiveMapSearch] = useState("");
   const [liveMapStatusFilter, setLiveMapStatusFilter] = useState<LiveMapStatusFilter>("all");
+  const [liveMapRegionPreset, setLiveMapRegionPreset] = useState<LiveMapRegionPreset>("london");
+  const [liveMapTradeFilter, setLiveMapTradeFilter] = useState<"all" | string>("all");
   const [exportOpen, setExportOpen] = useState(false);
   const scheduleVisibleFields = ["reference", "title", "client_name", "property_address", "status", "partner_name", "scheduled_date", "scheduled_start_at", "scheduled_finish_date"];
   const scheduleAllFields = useMemo(
@@ -250,11 +271,24 @@ export default function SchedulePage() {
       // Fallback source: explicitly linked partners table.
       const { data: linkedPartners } = await supabase
         .from("partners")
-        .select("company_name, auth_user_id")
+        .select("company_name, auth_user_id, trade, trades")
         .not("auth_user_id", "is", null);
-      for (const p of (linkedPartners ?? []) as Array<{ company_name: string | null; auth_user_id: string | null }>) {
+      const tradeByAuthUserId = new Map<string, { trade: string; trades: string[] | null }>();
+      for (const p of (linkedPartners ?? []) as Array<{
+        company_name: string | null;
+        auth_user_id: string | null;
+        trade: string | null;
+        trades: string[] | null;
+      }>) {
         if (p.auth_user_id && !byId.has(p.auth_user_id)) {
           byId.set(p.auth_user_id, p.company_name?.trim() || "Partner");
+        }
+        if (p.auth_user_id) {
+          const tr = (p.trade ?? "").trim() || "General";
+          tradeByAuthUserId.set(p.auth_user_id, {
+            trade: tr,
+            trades: Array.isArray(p.trades) && p.trades.length > 0 ? p.trades : null,
+          });
         }
       }
 
@@ -267,6 +301,7 @@ export default function SchedulePage() {
             if (!loc) return null;
             const minutesSincePing = Math.floor((nowMs - new Date(loc.created_at).getTime()) / 60000);
             const inactive = !loc.is_active || minutesSincePing > LIVE_MAP_INACTIVE_MINUTES;
+            const tr = tradeByAuthUserId.get(p.userId);
             return {
               id: p.userId,
               name: p.name,
@@ -274,11 +309,13 @@ export default function SchedulePage() {
               longitude: Number(loc.longitude),
               lastUpdateIso: loc.created_at,
               inactive,
-            } satisfies ScheduleLiveMapPoint;
+              trade: tr?.trade ?? "General",
+              trades: tr?.trades ?? null,
+            } as ScheduleLiveMapPoint;
           })
       );
 
-      setLiveMapPoints(rows.filter((r): r is ScheduleLiveMapPoint => !!r));
+      setLiveMapPoints(rows.filter((r): r is ScheduleLiveMapPoint => r !== null));
       setLiveMapUpdatedAt(new Date().toISOString());
     } catch {
       // non-critical map panel
@@ -325,6 +362,23 @@ export default function SchedulePage() {
     };
   }, [selectedJob?.client_id, selectedJob?.id]);
 
+  useEffect(() => {
+    const ids = [...new Set(jobs.map((j) => j.client_id).filter(Boolean))] as string[];
+    if (ids.length === 0) {
+      setAccountLogoByClientId(new Map());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const supabase = getSupabase();
+      const map = await batchResolveClientAccountLogoUrls(supabase, ids);
+      if (!cancelled) setAccountLogoByClientId(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobs]);
+
   const goToday = () => {
     setYear(now.getFullYear());
     setMonth(now.getMonth());
@@ -353,6 +407,8 @@ export default function SchedulePage() {
     while (days.length % 7 !== 0) days.push(null);
     return days;
   }, [firstDayOfWeek, daysInMonth]);
+
+  const calendarWeekRowCount = useMemo(() => Math.max(1, calendarDays.length / 7), [calendarDays.length]);
 
   const jobsByDay = useMemo(() => {
     const monthStart = new Date(year, month, 1);
@@ -412,62 +468,80 @@ export default function SchedulePage() {
       if (liveMapStatusFilter === "active" && p.inactive) return false;
       if (liveMapStatusFilter === "inactive" && !p.inactive) return false;
       if (q && !p.name.toLowerCase().includes(q)) return false;
+      if (!liveMapPointMatchesTradeFilter(p, liveMapTradeFilter)) return false;
       return true;
     });
-  }, [liveMapPoints, liveMapSearch, liveMapStatusFilter]);
+  }, [liveMapPoints, liveMapSearch, liveMapStatusFilter, liveMapTradeFilter]);
 
   const liveMapFiltersActive =
-    liveMapSearch.trim().length > 0 || liveMapStatusFilter !== "all";
+    liveMapSearch.trim().length > 0 ||
+    liveMapStatusFilter !== "all" ||
+    liveMapTradeFilter !== "all" ||
+    liveMapRegionPreset !== "london";
 
   return (
-    <PageTransition>
-      <div className="space-y-5">
-        <PageHeader title="Schedule & Dispatch" subtitle="Manage job scheduling, partner assignments and dispatch.">
+    <PageTransition className="flex min-h-0 flex-col gap-2 overflow-hidden sm:gap-3 h-[calc(100dvh-7rem)] max-h-[calc(100dvh-7rem)] lg:h-[calc(100dvh-8rem)] lg:max-h-[calc(100dvh-8rem)]">
+        <PageHeader
+          className="shrink-0 flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between"
+          title="Schedule & Dispatch"
+          subtitle="Manage job scheduling, partner assignments and dispatch."
+        >
+          <Tabs
+            tabs={[
+              { id: "calendar", label: "Calendar" },
+              { id: "live_map", label: "Live map", count: liveMapPoints.length },
+            ]}
+            activeTab={view}
+            onChange={(id) => setView(id as "calendar" | "live_map")}
+            variant="pills"
+          />
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
             Export
           </Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />}>New Booking</Button>
         </PageHeader>
 
-        <div className="rounded-xl border border-border-light bg-card/60 px-4 py-2">
-          <button
-            type="button"
-            onClick={() => setLegendBarChipsOpen((o) => !o)}
-            className="flex w-full items-center justify-between gap-2 rounded-lg py-1.5 text-left -mx-1 px-1 hover:bg-surface-hover/60 transition-colors"
-            aria-expanded={legendBarChipsOpen}
-          >
-            <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Legend — bar chips</span>
-            <ChevronRight
-              className={cn(
-                "h-4 w-4 shrink-0 text-text-tertiary transition-transform duration-200",
-                legendBarChipsOpen && "rotate-90",
+        {view === "calendar" && (
+          <div className="shrink-0 rounded-xl border border-border-light bg-card/60 px-3 py-1.5 sm:px-4 sm:py-2">
+            <button
+              type="button"
+              onClick={() => setLegendBarChipsOpen((o) => !o)}
+              className="flex w-full items-center justify-between gap-2 rounded-lg py-1.5 text-left -mx-1 px-1 hover:bg-surface-hover/60 transition-colors"
+              aria-expanded={legendBarChipsOpen}
+            >
+              <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Legend — bar chips</span>
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 shrink-0 text-text-tertiary transition-transform duration-200",
+                  legendBarChipsOpen && "rotate-90",
+                )}
+                aria-hidden
+              />
+            </button>
+            <AnimatePresence initial={false}>
+              {legendBarChipsOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                >
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-1.5 text-[11px] text-text-secondary pt-2 pb-1">
+                    {Object.entries(SCHEDULE_TYPE_ABBR).map(([label, abbr]) => (
+                      <div key={label} className="flex items-baseline gap-2 min-w-0">
+                        <span className="font-mono font-semibold text-text-primary shrink-0 tabular-nums">{abbr}</span>
+                        <span className="truncate">{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
               )}
-              aria-hidden
-            />
-          </button>
-          <AnimatePresence initial={false}>
-            {legendBarChipsOpen && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="overflow-hidden"
-              >
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-1.5 text-[11px] text-text-secondary pt-2 pb-1">
-                  {Object.entries(SCHEDULE_TYPE_ABBR).map(([label, abbr]) => (
-                    <div key={label} className="flex items-baseline gap-2 min-w-0">
-                      <span className="font-mono font-semibold text-text-primary shrink-0 tabular-nums">{abbr}</span>
-                      <span className="truncate">{label}</span>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+            </AnimatePresence>
+          </div>
+        )}
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StaggerContainer className="grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4">
           <KpiCard title="Jobs this month" value={activeCount} format="number" icon={Briefcase} accent="blue" />
           <KpiCard title="In progress" value={inProgressCount} format="number" icon={RefreshCw} accent="emerald" />
           <KpiCard
@@ -485,6 +559,7 @@ export default function SchedulePage() {
                     : `${liveMapPoints.length} with location`
                   : undefined
             }
+            descriptionAsTooltip
           />
           <KpiCard
             title="Unassigned"
@@ -501,41 +576,29 @@ export default function SchedulePage() {
           />
         </StaggerContainer>
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Tabs
-            tabs={[
-              { id: "calendar", label: "Calendar" },
-              { id: "live_map", label: "Live map", count: liveMapPoints.length },
-            ]}
-            activeTab={view}
-            onChange={(id) => setView(id as "calendar" | "live_map")}
-            variant="pills"
-          />
-          {view === "live_map" && (
-            <Button variant="ghost" size="sm" onClick={() => void loadLiveMap()} icon={<RefreshCw className={cn("h-3.5 w-3.5", loadingLiveMap && "animate-spin")} />}>
-              Refresh
-            </Button>
-          )}
-        </div>
-
         {view === "calendar" ? (
-          <motion.div variants={fadeInUp} initial="hidden" animate="visible">
-            <Card padding="none">
+          <motion.div
+            variants={fadeInUp}
+            initial="hidden"
+            animate="visible"
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          >
+            <Card padding="none" className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {/* Calendar Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border-light">
-              <div className="flex items-center gap-3">
+            <div className="flex shrink-0 flex-col gap-2 border-b border-border-light px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-2.5">
+              <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start sm:gap-3">
                 <button
                   onClick={goPrev}
-                  className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
+                  className="h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
-                <h3 className="text-base font-semibold text-text-primary min-w-[160px] text-center">
+                <h3 className="min-w-0 text-center text-sm font-semibold text-text-primary sm:min-w-[140px] sm:text-base">
                   {MONTHS[month]} {year}
                 </h3>
                 <button
                   onClick={goNext}
-                  className="h-8 w-8 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
+                  className="h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
@@ -543,72 +606,90 @@ export default function SchedulePage() {
                   <Button variant="ghost" size="sm" onClick={goToday}>Today</Button>
                 )}
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center gap-2 sm:justify-end sm:gap-3">
                 {loading && (
                   <span className="text-xs text-text-tertiary animate-pulse">Loading...</span>
                 )}
-                <div className="flex items-center gap-2 text-xs text-text-tertiary">
+                <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary sm:text-xs">
                   <span className="flex items-center gap-1">
-                    <span className="h-2 w-2 rounded-full bg-primary" />
-                    {jobs.length} jobs this month
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />
+                    <span className="whitespace-nowrap">{jobs.length} jobs this month</span>
                   </span>
                 </div>
               </div>
             </div>
 
             {/* Day Headers */}
-            <div className="grid grid-cols-7">
+            <div className="grid shrink-0 grid-cols-7 border-b border-border-light">
               {DAYS_OF_WEEK.map((day) => (
-                <div key={day} className="px-3 py-2 text-center text-[11px] font-semibold text-text-tertiary uppercase tracking-wider border-b border-border-light">
+                <div key={day} className="px-1 py-1.5 text-center text-[10px] font-semibold text-text-tertiary uppercase tracking-wider sm:px-2 sm:text-[11px]">
                   {day}
                 </div>
               ))}
             </div>
 
-            {/* Calendar Grid */}
-            <div className="grid grid-cols-7">
+            {/* Calendar Grid — rows share remaining height */}
+            <div
+              className="grid min-h-0 flex-1 grid-cols-7 overflow-hidden"
+              style={{ gridTemplateRows: `repeat(${calendarWeekRowCount}, minmax(0, 1fr))` }}
+            >
               {calendarDays.map((day, index) => {
                 const dayJobs = day ? (jobsByDay[day] || []) : [];
                 const isTodayCell = isToday && day === todayDate;
                 return (
                   <div
                     key={index}
-                    className={`min-h-[110px] p-1.5 border-b border-r border-border-light transition-colors ${
+                    className={`flex min-h-0 min-w-0 flex-col overflow-hidden border-b border-r border-border-light p-1 transition-colors ${
                       isTodayCell ? "bg-primary/[0.03]" : day ? "hover:bg-surface-hover/40" : "bg-surface-hover/20"
                     }`}
                   >
                     {day && (
                       <>
-                        <div className="flex items-center justify-between px-1 mb-1">
-                          <span className={`text-xs font-medium ${
+                        <div className="mb-0.5 flex shrink-0 items-center justify-between px-0.5">
+                          <span className={`text-[10px] font-medium sm:text-xs ${
                             isTodayCell
-                              ? "h-6 w-6 rounded-full bg-primary text-white flex items-center justify-center"
+                              ? "flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-white sm:h-6 sm:w-6"
                               : "text-text-secondary"
                           }`}>
                             {day}
                           </span>
                           {dayJobs.length > 0 && (
-                            <span className="text-[10px] text-text-tertiary">{dayJobs.length}</span>
+                            <span className="text-[9px] text-text-tertiary sm:text-[10px]">{dayJobs.length}</span>
                           )}
                         </div>
-                        <div className="space-y-0.5 min-w-0">
-                          {dayJobs.slice(0, 3).map(({ job, segment }, idx) => (
-                            <motion.div
-                              key={`${job.id}-${day}-${segment}-${idx}`}
-                              whileHover={{ scale: 1.01 }}
-                              whileTap={{ scale: 0.99 }}
-                              onClick={() => setSelectedJob(job)}
-                              title={formatScheduleCalendarBarTooltip(job)}
-                              className={cn(
-                                scheduleBarSegmentClass(segment, scheduleJobStatusColorClasses(job.status)),
-                                scheduleJobBarDoneVisually(job) && "opacity-[0.68] line-through decoration-text-current/90",
-                                scheduleJobNeedsAssignmentHighlight(job) &&
-                                  "ring-2 ring-amber-500/85 ring-offset-1 ring-offset-card shadow-sm",
-                              )}
-                            >
-                              <span className="min-w-0 flex-1 truncate">{formatScheduleCalendarBarCompact(job)}</span>
-                            </motion.div>
-                          ))}
+                        <div className="min-h-0 flex-1 space-y-0.5 overflow-hidden min-w-0">
+                          {dayJobs.slice(0, 3).map(({ job, segment }, idx) => {
+                            const cid = job.client_id?.trim();
+                            const accountLogoUrl = cid ? accountLogoByClientId.get(cid) : null;
+                            return (
+                              <motion.div
+                                key={`${job.id}-${day}-${segment}-${idx}`}
+                                whileHover={{ scale: 1.01 }}
+                                whileTap={{ scale: 0.99 }}
+                                onClick={() => setSelectedJob(job)}
+                                title={formatScheduleCalendarBarTooltip(job)}
+                                className={cn(
+                                  scheduleBarSegmentClass(segment, scheduleJobStatusColorClasses(job.status)),
+                                  scheduleJobBarDoneVisually(job) && "opacity-[0.68] line-through decoration-text-current/90",
+                                  scheduleJobNeedsAssignmentHighlight(job) &&
+                                    "ring-2 ring-amber-500/85 ring-offset-1 ring-offset-card shadow-sm",
+                                )}
+                              >
+                                <span className="flex min-w-0 flex-1 items-center gap-0.5">
+                                  {accountLogoUrl ? (
+                                    <img
+                                      src={accountLogoUrl}
+                                      alt=""
+                                      className="h-[11px] w-[11px] shrink-0 rounded-[2px] object-contain bg-white/80 ring-1 ring-black/[0.08]"
+                                      loading="lazy"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  ) : null}
+                                  <span className="min-w-0 flex-1 truncate">{formatScheduleCalendarBarCompact(job)}</span>
+                                </span>
+                              </motion.div>
+                            );
+                          })}
                           {dayJobs.length > 3 && (
                             <p className="text-[10px] text-text-tertiary px-1">+{dayJobs.length - 3} more</p>
                           )}
@@ -622,62 +703,157 @@ export default function SchedulePage() {
             </Card>
           </motion.div>
         ) : (
-          <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-3">
-            <Card className="p-4">
-              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs">
-                  <Badge variant="success" size="sm" dot>Active now: {liveActiveCount}</Badge>
-                  <Badge variant="warning" size="sm" dot>Inactive (last location): {liveInactiveCount}</Badge>
-                  {liveMapUpdatedAt && (
-                    <span className="text-text-tertiary">
-                      Updated: {new Date(liveMapUpdatedAt).toLocaleTimeString()}
+          <motion.div
+            variants={fadeInUp}
+            initial="hidden"
+            animate="visible"
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          >
+            <Card padding="none" variant="outlined" className="flex min-h-0 flex-1 flex-col overflow-hidden border-[#E4E4E8]">
+              <div
+                className="shrink-0 border-b border-[#E4E4E8] bg-[#FAFAFB] px-[14px] py-[10px]"
+                style={{ borderBottomWidth: 0.5 }}
+              >
+                <div className="flex flex-wrap items-center gap-[10px]">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="inline-flex items-center gap-1.5 text-[11px]">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#1D9E75]" aria-hidden />
+                      <span className="text-[#64748B]">Active</span>
+                      <span className="font-semibold tabular-nums text-[#020040]">{liveActiveCount}</span>
                     </span>
-                  )}
-                </div>
-                <div className="flex w-full min-w-0 flex-col gap-2 sm:max-w-sm lg:w-80 lg:shrink-0">
-                  <Input
-                    type="search"
-                    placeholder="Search partner…"
-                    value={liveMapSearch}
-                    onChange={(e) => setLiveMapSearch(e.target.value)}
-                    icon={<Search className="h-4 w-4" />}
-                    aria-label="Filter partners by name"
-                  />
-                  <div className="flex gap-1 rounded-xl bg-surface-tertiary p-1">
-                    {(
-                      [
-                        { id: "all" as const, label: "All" },
-                        { id: "active" as const, label: "Active" },
-                        { id: "inactive" as const, label: "Inactive" },
-                      ] as const
-                    ).map(({ id, label }) => (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setLiveMapStatusFilter(id)}
-                        className={cn(
-                          "min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
-                          liveMapStatusFilter === id
-                            ? "bg-card text-text-primary shadow-sm"
-                            : "text-text-secondary hover:text-text-primary",
-                        )}
+                    <span className="inline-flex items-center gap-1.5 text-[11px]">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ED4B00]" aria-hidden />
+                      <span className="text-[#64748B]">Inactive</span>
+                      <span className="font-semibold tabular-nums text-[#020040]">{liveInactiveCount}</span>
+                    </span>
+                    {liveMapUpdatedAt && (
+                      <span className="text-[10px] text-[#64748B]">
+                        Updated {new Date(liveMapUpdatedAt).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="w-full min-[520px]:w-auto min-[520px]:min-w-[180px] min-[520px]:max-w-[260px] min-[520px]:flex-1">
+                    <Input
+                      type="search"
+                      placeholder="Search partner…"
+                      value={liveMapSearch}
+                      onChange={(e) => setLiveMapSearch(e.target.value)}
+                      icon={<Search className="h-3.5 w-3.5 text-[#64748B]" />}
+                      aria-label="Filter partners by name"
+                      className="!h-auto !rounded-md !border-[0.5px] !border-[#D8D8DD] !bg-white !py-1.5 !pl-7 !text-sm shadow-none"
+                    />
+                  </div>
+
+                  <div className="flex w-full flex-wrap items-center gap-1.5 min-[900px]:ml-auto min-[900px]:w-auto min-[900px]:flex-1 min-[900px]:justify-end">
+                    <div className="relative flex min-w-0 flex-1 items-center gap-1 sm:max-w-[200px] min-[900px]:flex-none">
+                      <span className="shrink-0 text-[11px] text-[#64748B]">View:</span>
+                      <div className="relative min-w-0 flex-1">
+                        <select
+                          aria-label="Map area"
+                          className={cn(LIVE_MAP_NATIVE_SELECT_CLASS, "w-full")}
+                          value={liveMapRegionPreset}
+                          onChange={(e) => setLiveMapRegionPreset(e.target.value as LiveMapRegionPreset)}
+                        >
+                          {LIVE_MAP_REGION_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
+                      </div>
+                    </div>
+
+                    <div className="relative flex min-w-0 flex-1 items-center gap-1 sm:max-w-[220px] min-[900px]:flex-none">
+                      <span className="shrink-0 text-[11px] text-[#64748B]">Trade:</span>
+                      <div className="relative min-w-0 flex-1">
+                        <select
+                          aria-label="Trade filter"
+                          className={cn(LIVE_MAP_NATIVE_SELECT_CLASS, "w-full")}
+                          value={liveMapTradeFilter}
+                          onChange={(e) => setLiveMapTradeFilter(e.target.value)}
+                        >
+                          {liveMapTradeFilterOptions().map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
+                      </div>
+                    </div>
+
+                    <div className="hidden min-[500px]:inline-flex flex-wrap items-center gap-0.5 rounded-md border-[0.5px] border-[#D8D8DD] bg-[#FAFAFB] p-0.5">
+                      {(
+                        [
+                          { id: "all" as const, label: "All" },
+                          { id: "active" as const, label: "Active" },
+                          { id: "inactive" as const, label: "Inactive" },
+                        ] as const
+                      ).map(({ id, label }) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setLiveMapStatusFilter(id)}
+                          className={cn(
+                            "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                            liveMapStatusFilter === id
+                              ? "bg-[#020040] text-white"
+                              : "border-[0.5px] border-[#D8D8DD] bg-white text-[#020040] hover:bg-white",
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="relative w-full min-[500px]:hidden">
+                      <select
+                        aria-label="Active or inactive location"
+                        className={cn(LIVE_MAP_NATIVE_SELECT_CLASS, "w-full")}
+                        value={liveMapStatusFilter}
+                        onChange={(e) => setLiveMapStatusFilter(e.target.value as LiveMapStatusFilter)}
                       >
-                        {label}
-                      </button>
-                    ))}
+                        <option value="all">Status: All</option>
+                        <option value="active">Status: Active</option>
+                        <option value="inactive">Status: Inactive</option>
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
+                    </div>
                   </div>
                 </div>
               </div>
+
               {filteredLiveMapPoints.length === 0 && liveMapPoints.length > 0 && (
-                <p className="mb-3 text-sm text-text-secondary">
-                  No partners match these filters. Clear search or set status to &quot;All&quot;.
+                <p className="shrink-0 border-b border-[#E4E4E8] bg-[#FAFAFB] px-[14px] py-2 text-sm text-text-secondary">
+                  No partners match these filters. Clear search, set trade to &quot;All trades&quot;, or set status to
+                  &quot;All&quot;.
                 </p>
               )}
-              <ScheduleLiveMap points={filteredLiveMapPoints} />
+
+              <div className="relative min-h-0 flex-1">
+                <ScheduleLiveMap
+                  className="flex h-full min-h-0 flex-col"
+                  points={filteredLiveMapPoints}
+                  regionPreset={liveMapRegionPreset}
+                  tradeFilter={liveMapTradeFilter}
+                  embeddedInCard
+                  toolbarExtra={
+                    <button
+                      type="button"
+                      className={LIVE_MAP_TOOLBAR_BTN_CLASS}
+                      onClick={() => void loadLiveMap()}
+                    >
+                      <RefreshCw className={cn("h-3 w-3 shrink-0", loadingLiveMap && "animate-spin")} aria-hidden />
+                      Refresh
+                    </button>
+                  }
+                />
+              </div>
             </Card>
           </motion.div>
         )}
-      </div>
 
       {/* Job Detail Drawer */}
       <Drawer

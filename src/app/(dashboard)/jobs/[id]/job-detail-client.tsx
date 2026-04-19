@@ -882,7 +882,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (type === "invoice") {
       if (j.invoice_id) return j.invoice_id;
       const amount = Math.max(0, Number(opts?.amount ?? 0));
-      if (amount <= 0.01) return null;
       const inv = await createOrAppendJobInvoice(
         j,
         {

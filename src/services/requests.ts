@@ -1,5 +1,5 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
-import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
+import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
 import type { ServiceRequest } from "@/types/database";
 
 /** Nullable UUID columns: empty string breaks PostgREST (invalid uuid) — coerce to null. */
@@ -47,6 +47,7 @@ function buildServiceRequestInsertPayload(
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...input, reference };
   delete merged.source_account_name;
+  delete merged.source_account_logo_url;
 
   for (const key of UUID_NULLABLE) {
     const v = merged[key];
@@ -71,10 +72,15 @@ function buildServiceRequestInsertPayload(
 async function enrichRequestsWithAccountNames(requests: ServiceRequest[]): Promise<ServiceRequest[]> {
   const clientIds = [...new Set(requests.map((r) => r.client_id).filter(Boolean))] as string[];
   if (clientIds.length === 0) return requests;
-  const labels = await batchResolveLinkedAccountLabels(getSupabase(), clientIds);
+  const supabase = getSupabase();
+  const [labels, logos] = await Promise.all([
+    batchResolveLinkedAccountLabels(supabase, clientIds),
+    batchResolveClientAccountLogoUrls(supabase, clientIds),
+  ]);
   return requests.map((r) => ({
     ...r,
     source_account_name: r.client_id ? labels.get(r.client_id) ?? null : null,
+    source_account_logo_url: r.client_id ? logos.get(r.client_id) ?? null : null,
   }));
 }
 
@@ -174,6 +180,7 @@ export async function updateRequest(
   const supabase = getSupabase();
   const patch: Record<string, unknown> = { ...input };
   delete patch.source_account_name;
+  delete patch.source_account_logo_url;
   for (const key of UUID_NULLABLE) {
     const v = patch[key];
     if (typeof v === "string" && v.trim() === "") {

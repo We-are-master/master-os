@@ -10,6 +10,8 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   subtitle?: string;
+  /** Optional icon or element shown left of the title (e.g. Fixfy header pattern). */
+  headerLeading?: React.ReactNode;
   children: React.ReactNode;
   size?: "sm" | "md" | "lg";
   className?: string;
@@ -29,6 +31,7 @@ export function Modal({
   onClose,
   title,
   subtitle,
+  headerLeading,
   children,
   size = "md",
   className,
@@ -64,9 +67,20 @@ export function Modal({
             )}
           >
             <div className="flex shrink-0 items-start justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4 border-b border-border-light">
-              <div className="min-w-0 flex-1 pr-1">
-                <h2 className="text-base font-semibold text-text-primary leading-snug">{title}</h2>
-                {subtitle && <p className="text-xs text-text-tertiary mt-0.5 leading-relaxed">{subtitle}</p>}
+              <div className="flex min-w-0 flex-1 items-start gap-2.5 pr-1">
+                {headerLeading ? (
+                  <span className="mt-0.5 shrink-0 text-[#020040]" aria-hidden>
+                    {headerLeading}
+                  </span>
+                ) : null}
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-base font-semibold text-text-primary leading-snug">{title}</h2>
+                  {subtitle && (
+                    <p className="mt-0.5 truncate text-xs leading-snug text-text-tertiary" title={subtitle}>
+                      {subtitle}
+                    </p>
+                  )}
+                </div>
               </div>
               <button
                 type="button"

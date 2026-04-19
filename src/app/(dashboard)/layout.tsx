@@ -55,7 +55,7 @@ export default function DashboardLayout({
               className="flex flex-col h-screen transition-[margin-left] duration-300 ease-in-out"
             >
               <Header />
-              <main className="flex-1 overflow-y-auto p-6 lg:p-8">
+              <main className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6 lg:p-8">
                 {children}
               </main>
               <MasterBrainAssistant />
