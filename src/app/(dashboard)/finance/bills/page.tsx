@@ -605,7 +605,7 @@ export default function BillsPage() {
       <div className="space-y-5 px-1 sm:px-0">
         <PageHeader
           title="Bills & expenses"
-          subtitle="Filter by All, One-off, or Recurring; then by workflow. Period: All · Monthly · Week · Date range (default: current month). KPIs and the list match the bill type and the period."
+          infoTooltip="Filter by All, One-off, or Recurring; then by workflow. Period: All · Monthly · Week · Date range (default: current month). KPIs and the list match the bill type and the period."
         >
           <Button
             size="sm"
@@ -620,25 +620,25 @@ export default function BillsPage() {
         </PageHeader>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="rounded-2xl border border-border-light bg-card p-5">
-            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-red-600">{formatCurrency(headlineKpis.overdueAmount)}</p>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Overdue</p>
-            <p className="mt-3 text-sm text-text-tertiary">{headlineKpis.overdueCount} bills</p>
+          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Overdue</p>
+            <p className="mt-2 text-3xl font-bold tabular-nums text-red-600">{formatCurrency(headlineKpis.overdueAmount)}</p>
+            <p className="mt-auto pt-3 text-sm text-text-tertiary">{headlineKpis.overdueCount} bills</p>
           </div>
-          <div className="rounded-2xl border border-border-light bg-card p-5">
-            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.dueMonthAmount)}</p>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Due this month</p>
-            <p className="mt-3 text-sm text-text-tertiary">{headlineKpis.dueMonthCount} bills</p>
+          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Due this month</p>
+            <p className="mt-2 text-3xl font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.dueMonthAmount)}</p>
+            <p className="mt-auto pt-3 text-sm text-text-tertiary">{headlineKpis.dueMonthCount} bills</p>
           </div>
-          <div className="rounded-2xl border border-border-light bg-card p-5">
-            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.next30Amount)}</p>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Next 30 days</p>
-            <p className="mt-3 text-sm text-text-tertiary">Cashflow</p>
+          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Next 30 days</p>
+            <p className="mt-2 text-3xl font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.next30Amount)}</p>
+            <p className="mt-auto pt-3 text-sm text-text-tertiary">Cashflow</p>
           </div>
-          <div className="rounded-2xl border border-border-light bg-card p-5">
-            <p className="text-3xl sm:text-[30px] font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.recurringMonthlyAmount)}</p>
-            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Recurring / mo</p>
-            <p className="mt-3 text-sm text-text-tertiary">Base burn</p>
+          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
+            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Recurring / mo</p>
+            <p className="mt-2 text-3xl font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.recurringMonthlyAmount)}</p>
+            <p className="mt-auto pt-3 text-sm text-text-tertiary">Base burn</p>
           </div>
         </div>
 
@@ -701,12 +701,20 @@ export default function BillsPage() {
                       <p className="mt-1 truncate text-xs sm:text-sm text-text-tertiary">{row.meta}</p>
                     </div>
                   </div>
-                  <div className="shrink-0 w-full sm:w-auto flex items-center justify-start sm:justify-end gap-2 sm:gap-3">
-                    <p className="text-base font-semibold tabular-nums text-[#111827]">{formatCurrency(row.amount)}</p>
-                    <p className={cn("text-xs sm:text-sm font-medium whitespace-nowrap", row.status === "Approved" ? "text-emerald-600" : "text-text-tertiary")}>
-                      {row.status === "Approved" ? "● " : ""}
+                  <div className="shrink-0 w-full sm:w-auto flex items-center justify-start sm:justify-end gap-3">
+                    <p className="text-base font-semibold tabular-nums text-text-primary">{formatCurrency(row.amount)}</p>
+                    <Badge
+                      variant={
+                        row.status === "Approved" || row.status === "Paid" ? "success"
+                        : row.status === "Needs attention" || row.status === "Rejected" ? "danger"
+                        : row.status === "Submitted" ? "warning"
+                        : "default"
+                      }
+                      size="sm"
+                      dot
+                    >
                       {row.status}
-                    </p>
+                    </Badge>
                   </div>
                 </div>
                 {row.expandable && row.expanded ? (
