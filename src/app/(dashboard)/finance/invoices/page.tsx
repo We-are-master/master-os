@@ -2220,7 +2220,7 @@ function InvoiceDetailDrawer({
               </Button>
             )}
             <Button
-              variant="primary"
+              variant="success"
               size="sm"
               className="flex-1"
               onClick={() => {
