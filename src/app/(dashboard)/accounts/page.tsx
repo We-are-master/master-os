@@ -12,7 +12,6 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
-import { Drawer } from "@/components/ui/drawer";
 import { Tabs } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
@@ -374,9 +373,10 @@ export default function AccountsPage() {
     {
       key: "payment_terms",
       label: "Terms",
-      render: (item) => (
-        <Badge variant="outline" size="sm">{item.payment_terms}</Badge>
-      ),
+      render: (item) => {
+        const label = shortenPaymentTerms(item.payment_terms);
+        return <Badge variant="outline" size="sm" className="max-w-[7rem] truncate block">{label}</Badge>;
+      },
     },
     {
       key: "payment_terms",
@@ -756,7 +756,7 @@ function AccountDetailDrawer({
   // pagination controls inside the tab trigger loadClientsPage directly
 
   if (!account) {
-    return <Drawer open={false} onClose={onClose}><div /></Drawer>;
+    return null;
   }
 
   const st = cfg[account.status] ?? cfg.onboarding;
@@ -853,56 +853,36 @@ function AccountDetailDrawer({
   const overdueAmt  = invoices.filter((i) => i.status === "overdue").reduce((s, i) => s + Number(i.amount), 0);
 
   return (
-    <Drawer
+    <Modal
       open
       onClose={onClose}
       title={account.company_name}
       subtitle={`Corporate account · ${clientsTotal} clients · ${jobs.length} jobs`}
-      width="w-[min(580px,calc(100vw-1rem))]"
-      footer={
-        isAdmin && tab === "overview" ? (
-          <div className="flex items-center justify-between px-5 py-4">
-            <button
-              type="button"
-              className="flex items-center gap-1.5 text-sm font-medium text-[#ED4B00] hover:text-[#ED4B00]/80 transition-colors"
-              onClick={() => toast.info("Archive not yet implemented")}
-            >
-              <Archive className="h-3.5 w-3.5" />
-              Archive account
-            </button>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
-              <Button
-                size="sm"
-                disabled={saving}
-                onClick={() => void handleSave()}
-                icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              >
-                {saving ? "Saving…" : "Save changes"}
-              </Button>
-            </div>
-          </div>
-        ) : undefined
-      }
+      size="lg"
+      className="max-w-2xl"
+      scrollBody={false}
     >
-      {/* ── Tabs ─────────────────────────────────────────────────────── */}
-      <div className="sticky top-0 z-10 bg-surface border-b border-border-light px-4 sm:px-5 pt-1 pb-0">
-        <Tabs
-          variant="default"
-          className="w-full"
-          activeTab={tab}
-          onChange={setTab}
-          tabs={[
-            { id: "overview", label: "Overview" },
-            { id: "clients",  label: "Clients",  count: clientsTotal || undefined },
-            { id: "jobs",     label: "Jobs",      count: jobs.length || undefined },
-            { id: "finance",  label: "Finance",   count: invoices.length || undefined },
-            { id: "portal",   label: "Portal users" },
-          ]}
-        />
-      </div>
+      <div className="flex flex-col" style={{ maxHeight: "calc(min(85vh, 860px) - 4rem)" }}>
+        {/* ── Tabs ──────────────────────────────────────────────────── */}
+        <div className="shrink-0 border-b border-border-light px-4 sm:px-5 pt-1 pb-0 bg-surface">
+          <Tabs
+            variant="default"
+            className="w-full"
+            activeTab={tab}
+            onChange={setTab}
+            tabs={[
+              { id: "overview", label: "Overview" },
+              { id: "clients",  label: "Clients",  count: clientsTotal || undefined },
+              { id: "jobs",     label: "Jobs",      count: jobs.length || undefined },
+              { id: "finance",  label: "Finance",   count: invoices.length || undefined },
+              { id: "portal",   label: "Portal users" },
+            ]}
+          />
+        </div>
 
-      <div className="px-4 sm:px-5 py-4 space-y-4">
+        {/* ── Scrollable content ────────────────────────────────────── */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="px-4 sm:px-5 py-4 space-y-4">
 
         {/* ── Overview tab ─────────────────────────────────────────── */}
         {tab === "overview" && (
@@ -1417,8 +1397,36 @@ function AccountDetailDrawer({
           <PortalUsersTabSection accountId={account.id} accountName={account.company_name} />
         )}
 
-      </div>
-    </Drawer>
+        </div>{/* end scrollable px-5 content */}
+        </div>{/* end flex-1 overflow-y-auto */}
+
+        {/* ── Sticky footer ─────────────────────────────────────────── */}
+        {isAdmin && tab === "overview" && (
+          <div className="shrink-0 border-t border-border-light bg-surface flex items-center justify-between px-5 py-4">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-sm font-medium text-[#ED4B00] hover:text-[#ED4B00]/80 transition-colors"
+              onClick={() => toast.info("Archive not yet implemented")}
+            >
+              <Archive className="h-3.5 w-3.5" />
+              Archive account
+            </button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+              <Button
+                size="sm"
+                disabled={saving}
+                onClick={() => void handleSave()}
+                icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              >
+                {saving ? "Saving…" : "Save changes"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+      </div>{/* end flex-col */}
+    </Modal>
   );
 }
 
@@ -1589,6 +1597,23 @@ function PortalUsersTabSection({ accountId, accountName }: { accountId: string; 
       </div>
     </div>
   );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+function shortenPaymentTerms(t: string | null | undefined): string {
+  if (!t) return "—";
+  const s = t.trim();
+  if (/due\s+on\s+receipt/i.test(s)) return "Due on receipt";
+  if (/monthly\s+cutoff/i.test(s)) return "Monthly cycle";
+  if (/every\s+2\s+weeks?\s+cutoff/i.test(s)) return "Biweekly cycle";
+  if (/every\s+2\s*weeks\s+on\s+friday/i.test(s)) return "Biweekly Fri";
+  if (/every\s+friday/i.test(s)) return "Every Friday";
+  const evN = s.match(/every\s+(\d+)\s+days/i);
+  if (evN) return `Every ${evN[1]}d`;
+  const net = s.match(/net\s+(\d+)/i);
+  if (net) return `Net ${net[1]}`;
+  if (/45\s*days/i.test(s)) return "Net 45";
+  return s.length > 14 ? s.slice(0, 12) + "…" : s;
 }
 
 // ─── PaymentTermsBuilder ───────────────────────────────────────────────────
