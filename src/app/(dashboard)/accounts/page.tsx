@@ -22,6 +22,7 @@ import {
   Info,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
+import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
 import { toast } from "sonner";
 import type { Account, Client, Job, Invoice } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -990,9 +991,6 @@ function AccountDetailDrawer({
                     value={edit.payment_terms}
                     onChange={(v) => setEdit((p) => ({ ...p, payment_terms: v }))}
                   />
-                  <p className="text-[10px] text-text-tertiary mt-1">
-                    Due on receipt · Net 7 · 14 · 30 · 60
-                  </p>
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
@@ -1011,6 +1009,31 @@ function AccountDetailDrawer({
                   </p>
                 </div>
               </div>
+
+              {/* Next payment cycle preview */}
+              {(() => {
+                const terms = edit.payment_terms;
+                if (!terms) return null;
+                const iso = dueDateIsoFromPaymentTerms(new Date(), terms);
+                const label = new Date(iso + "T12:00:00").toLocaleDateString("en-GB", {
+                  weekday: "long", day: "numeric", month: "long", year: "numeric",
+                });
+                const isDor = /due\s+on\s+receipt/i.test(terms);
+                return (
+                  <div className="flex items-center gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
+                    <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">
+                        Next payment date
+                      </p>
+                      <p className="text-sm font-semibold text-[#020040]">{label}</p>
+                      {isDor && (
+                        <p className="text-[10px] text-text-tertiary mt-0.5">Due on receipt — same day as job completion</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* ── ACCOUNT DETAILS card ─────────────────────────────── */}
