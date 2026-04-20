@@ -23,7 +23,7 @@ import {
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus,
-  Home, Sparkles, Link2,
+  Home, Sparkles, Link2, Info,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -3560,17 +3560,17 @@ function PartnerDetailDrawer({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-3 rounded-xl bg-surface-hover">
+              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total Jobs</p>
                 <p className="text-xl font-bold text-text-primary mt-1">{loadingJobs ? "..." : realJobsCount}</p>
                 <p className="text-[10px] text-text-tertiary">{completedJobs} completed, {activeJobs} active</p>
               </div>
-              <div className="p-3 rounded-xl bg-surface-hover">
+              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Total Earned</p>
                 <p className="text-xl font-bold text-text-primary mt-1">{loadingJobs ? "..." : formatCurrency(realEarnings)}</p>
                 <p className="text-[10px] text-text-tertiary">from partner cost</p>
               </div>
-              <div className="p-3 rounded-xl bg-surface-hover">
+              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Job Value</p>
                 <p className="text-xl font-bold text-text-primary mt-1">{loadingJobs ? "..." : formatCurrency(totalJobValue)}</p>
                 <p className="text-[10px] text-text-tertiary">total client value</p>
@@ -3578,7 +3578,7 @@ function PartnerDetailDrawer({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-surface-hover">
+              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
                 <div className="flex items-center gap-1.5 mt-1">
                   <Star className="h-4 w-4 text-amber-400 fill-amber-400" />
@@ -3598,19 +3598,21 @@ function PartnerDetailDrawer({
                   <span className="text-xs text-text-tertiary">/5.0</span>
                 </div>
               </div>
-              <div className="p-3 rounded-xl bg-surface-hover">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Compliance</p>
+              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
+                <div className="flex items-center gap-1">
+                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Compliance</p>
+                  <span title="Profile completeness, required documents, and expired docs (higher penalty)" className="text-text-tertiary cursor-help">
+                    <Info className="h-3 w-3" />
+                  </span>
+                </div>
                 <div className="mt-1">
                   <span className="text-xl font-bold text-text-primary">{computedCompliance}</span>
                   <span className="text-xs text-text-tertiary ml-0.5">/100</span>
-                  <p className="text-[10px] text-text-tertiary mt-1">
-                    Profile completeness, required documents, and expired docs (higher penalty).
-                  </p>
                   <Progress
                     value={computedCompliance}
                     size="sm"
                     color={computedCompliance >= 90 ? "emerald" : computedCompliance >= 70 ? "primary" : "amber"}
-                    className="mt-1"
+                    className="mt-1.5"
                   />
                 </div>
               </div>
@@ -3632,11 +3634,11 @@ function PartnerDetailDrawer({
               </div>
             )}
 
-            <div className="p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 border border-border-light">
+            <div className="rounded-2xl border border-border-light bg-white p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-semibold text-text-primary">Verification Status</p>
-                  <p className="text-xs text-text-tertiary mt-0.5">{partner.verified ? "Verified and approved" : "Not verified yet"}</p>
+                  <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Verification Status</p>
+                  <p className="text-sm text-text-secondary mt-0.5">{partner.verified ? "Verified and approved" : "Not verified yet"}</p>
                 </div>
                 <Button size="sm" variant={partner.verified ? "outline" : "primary"} icon={partner.verified ? <XCircle className="h-3.5 w-3.5" /> : <ShieldCheck className="h-3.5 w-3.5" />} onClick={() => onVerify(partner)}>
                   {partner.verified ? "Revoke" : "Verify"}
@@ -3645,13 +3647,12 @@ function PartnerDetailDrawer({
             </div>
 
             {isAdmin && (
-              <div className="p-4 rounded-xl border border-border-light bg-card space-y-3">
-                <div>
-                  <p className="text-sm font-semibold text-text-primary">Mobile app account</p>
-                  <p className="text-xs text-text-tertiary mt-0.5">
-                    Link this directory partner to their Master Services app login so they show under{" "}
-                    <span className="font-medium text-text-secondary">Team (App)</span> even before the first job.
-                  </p>
+              <div className="rounded-2xl border border-border-light bg-white p-4 space-y-3">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Mobile app account</p>
+                  <span title="Link this partner to their Master Services app login so they show under Team (App) even before their first job" className="text-text-tertiary cursor-help">
+                    <Info className="h-3.5 w-3.5" />
+                  </span>
                 </div>
                 {partner.auth_user_id ? (
                   <div className="space-y-2">
@@ -3664,11 +3665,7 @@ function PartnerDetailDrawer({
                         <span className="text-text-tertiary"> · {linkedAppProfile.email}</span>
                       )}
                     </p>
-                    <p className="text-[11px] text-text-tertiary">
-                      The mobile app reads <span className="font-medium text-text-secondary">public.users</span> (not
-                      only profiles). Use sync if they still see missing profile after linking.
-                    </p>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Button
                         size="sm"
                         variant="outline"
@@ -3688,8 +3685,11 @@ function PartnerDetailDrawer({
                           })();
                         }}
                       >
-                        Sync app profile (users)
+                        Sync app profile
                       </Button>
+                      <span title="The app reads public.users (not only profiles). Use sync if they still see a missing profile after linking." className="text-text-tertiary cursor-help">
+                        <Info className="h-3.5 w-3.5" />
+                      </span>
                       <Button size="sm" variant="outline" disabled={linkBusy} onClick={() => void handleUnlinkAppUser()}>
                         Remove app link
                       </Button>
@@ -3713,12 +3713,12 @@ function PartnerDetailDrawer({
             )}
 
             {isAdmin && (
-              <div className="p-4 rounded-xl border border-border-light bg-card space-y-3">
-                <div>
-                  <p className="text-sm font-semibold text-text-primary">Partner upload portal</p>
-                  <p className="text-xs text-text-tertiary mt-0.5">
-                    Generate a secure link so this partner can upload only the documents you choose (public page, no login).
-                  </p>
+              <div className="rounded-2xl border border-border-light bg-white p-4 space-y-3">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Partner upload portal</p>
+                  <span title="Generate a secure link so this partner can upload only the documents you choose — public page, no login required" className="text-text-tertiary cursor-help">
+                    <Info className="h-3.5 w-3.5" />
+                  </span>
                 </div>
                 <Button
                   size="sm"

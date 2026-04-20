@@ -18,9 +18,11 @@ import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
   Plus, Building, DollarSign, Briefcase, TrendingUp, Mail, User, Calendar,
-  Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2,
+  Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2, Archive,
+  Info,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, cn } from "@/lib/utils";
+import { dueDateIsoFromPaymentTerms } from "@/lib/invoice-payment-terms";
 import { toast } from "sonner";
 import type { Account, Client, Job, Invoice } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -372,9 +374,26 @@ export default function AccountsPage() {
     {
       key: "payment_terms",
       label: "Terms",
-      render: (item) => (
-        <Badge variant="outline" size="sm">{item.payment_terms}</Badge>
-      ),
+      render: (item) => {
+        const label = shortenPaymentTerms(item.payment_terms);
+        return <Badge variant="outline" size="sm" className="max-w-[7rem] truncate block">{label}</Badge>;
+      },
+    },
+    {
+      key: "payment_terms",
+      label: "Next payment",
+      render: (item) => {
+        if (!item.payment_terms) return <span className="text-text-tertiary text-xs">—</span>;
+        const iso = dueDateIsoFromPaymentTerms(new Date(), item.payment_terms);
+        const d = new Date(iso + "T12:00:00");
+        const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+        const isOverdue = d < new Date();
+        return (
+          <span className={cn("text-xs font-medium tabular-nums", isOverdue ? "text-red-500" : "text-text-primary")}>
+            {label}
+          </span>
+        );
+      },
     },
   ];
 
@@ -536,18 +555,19 @@ export default function AccountsPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
             <Select
               label="Industry"
               options={INDUSTRY_OPTIONS}
               value={form.industry}
               onChange={(e) => setForm((f) => ({ ...f, industry: e.target.value }))}
             />
-            <Select
-              label="Payment Terms"
-              options={PAYMENT_TERMS_OPTIONS}
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Payment Terms</label>
+            <PaymentTermsBuilder
               value={form.payment_terms}
-              onChange={(e) => setForm((f) => ({ ...f, payment_terms: e.target.value }))}
+              onChange={(v) => setForm((f) => ({ ...f, payment_terms: v }))}
             />
           </div>
 
@@ -619,6 +639,9 @@ function AccountDetailDrawer({
   const [drawerAssignableUsers, setDrawerAssignableUsers] = useState<AssignableUser[]>([]);
   const logoFileRef = useRef<HTMLInputElement>(null);
   const contractFileRef = useRef<HTMLInputElement>(null);
+  /** Frontend-only until backend adds billing_type column. */
+  const [billingType, setBillingType] = useState<"end_client" | "account">("end_client");
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
   const [edit, setEdit] = useState({
     company_name: "",
     contact_name: "",
@@ -638,6 +661,7 @@ function AccountDetailDrawer({
 
   useEffect(() => {
     if (!account) return;
+    setBillingType(((account as unknown as Record<string, unknown>).billing_type as "end_client" | "account") ?? "end_client");
     setEdit({
       company_name: account.company_name,
       contact_name: account.contact_name,
@@ -734,7 +758,7 @@ function AccountDetailDrawer({
   // pagination controls inside the tab trigger loadClientsPage directly
 
   if (!account) {
-    return <Drawer open={false} onClose={onClose}><div /></Drawer>;
+    return null;
   }
 
   const st = cfg[account.status] ?? cfg.onboarding;
@@ -825,61 +849,409 @@ function AccountDetailDrawer({
     }
   };
 
+  // Invoice breakdown for account value hero
+  const invoicedAmt = invoices.filter((i) => i.status === "paid").reduce((s, i) => s + Number(i.amount), 0);
+  const awaitingAmt = invoices.filter((i) => ["draft", "pending", "partially_paid"].includes(i.status)).reduce((s, i) => s + Number(i.amount), 0);
+  const overdueAmt  = invoices.filter((i) => i.status === "overdue").reduce((s, i) => s + Number(i.amount), 0);
+
   return (
+    <>
     <Drawer
       open
       onClose={onClose}
       title={account.company_name}
-      subtitle="Corporate account"
-      width="w-[min(560px,calc(100vw-1rem))]"
-    >
-      <div className="px-4 sm:px-6 py-4 space-y-4">
-        <div className="flex items-start gap-3">
-          <Avatar name={account.company_name} size="lg" src={account.logo_url ?? undefined} />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-text-primary truncate">{account.company_name}</p>
-            <p className="text-xs text-text-tertiary truncate">{account.contact_name}</p>
-            {accountOwnerLabel(account.account_owner_id, account.owner_name, drawerAssignableUsers) !== "—" ? (
-              <p className="text-[11px] text-text-secondary mt-1 inline-flex items-center gap-1">
-                <User className="h-3 w-3 shrink-0" />
-                <span className="font-medium text-text-primary">Account owner:</span>{" "}
-                {accountOwnerLabel(account.account_owner_id, account.owner_name, drawerAssignableUsers)}
-              </p>
-            ) : null}
-            <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-text-tertiary">
-              <span className="inline-flex items-center gap-1">
-                <Users className="h-3 w-3" />
-                {clientsTotal > 0 ? `${clientsTotal} client${clientsTotal !== 1 ? "s" : ""} linked` : "0 clients linked"}
-              </span>
-              <span className="text-border">·</span>
-              <span>{jobs.length} job{jobs.length !== 1 ? "s" : ""}</span>
+      subtitle={`Corporate account · ${clientsTotal} clients · ${jobs.length} jobs`}
+      width="w-[min(580px,calc(100vw-1rem))]"
+      footer={
+        isAdmin && tab === "overview" ? (
+          <div className="flex items-center justify-between px-5 py-4">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-sm font-medium text-[#ED4B00] hover:text-[#ED4B00]/80 transition-colors"
+              onClick={() => toast.info("Archive not yet implemented")}
+            >
+              <Archive className="h-3.5 w-3.5" />
+              Archive account
+            </button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+              <Button
+                size="sm"
+                disabled={saving}
+                onClick={() => void handleSave()}
+                icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              >
+                {saving ? "Saving…" : "Save changes"}
+              </Button>
             </div>
-            {(loading || loadingExtras) && (
-              <p className="text-[11px] text-primary mt-1 inline-flex items-center gap-1">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Updating…
-              </p>
-            )}
           </div>
-        </div>
-
+        ) : undefined
+      }
+    >
+      {/* ── Tabs ─────────────────────────────────────────────────────── */}
+      <div className="sticky top-0 z-10 bg-surface border-b border-border-light px-4 sm:px-5 pt-1 pb-0">
         <Tabs
-          variant="pills"
+          variant="default"
           className="w-full"
           activeTab={tab}
           onChange={setTab}
           tabs={[
             { id: "overview", label: "Overview" },
-            { id: "clients", label: "Clients", count: clientsTotal || undefined },
-            { id: "jobs", label: "Jobs", count: jobs.length || undefined },
-            { id: "finance", label: "Finance", count: invoices.length || undefined },
-            { id: "portal", label: "Portal users" },
+            { id: "clients",  label: "Clients",  count: clientsTotal || undefined },
+            { id: "jobs",     label: "Jobs",      count: jobs.length || undefined },
+            { id: "finance",  label: "Finance",   count: invoices.length || undefined },
+            { id: "portal",   label: "Portal users" },
           ]}
         />
+      </div>
 
-        {/* ── Portal users tab ─────────────────────────────────────── */}
-        {tab === "portal" && account && (
-          <PortalUsersTabSection accountId={account.id} accountName={account.company_name} />
+      <div className="px-4 sm:px-5 py-4 space-y-4">
+
+        {/* ── Overview tab ─────────────────────────────────────────── */}
+        {tab === "overview" && (
+          <>
+            {/* Account value hero */}
+            <div className="rounded-2xl border border-border-light bg-white p-5">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-text-tertiary mb-2">
+                Account value · All time
+              </p>
+              <div className="flex items-baseline gap-2 mb-3">
+                <span className="text-3xl font-bold tabular-nums text-text-primary">
+                  {formatCurrency(account.total_revenue)}
+                </span>
+                {(loading || loadingExtras) && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-text-tertiary" />
+                )}
+              </div>
+              <div className="h-[2px] rounded-full bg-[#ED4B00] mb-3" />
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
+                <span className="flex items-center gap-1.5 text-text-secondary">
+                  <span className="h-2 w-2 rounded-full bg-[#020040] shrink-0" />
+                  Invoiced <strong className="tabular-nums">{formatCurrency(invoicedAmt)}</strong>
+                </span>
+                <span className="flex items-center gap-1.5 text-text-secondary">
+                  <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
+                  Awaiting <strong className="tabular-nums">{formatCurrency(awaitingAmt)}</strong>
+                </span>
+                <span className="flex items-center gap-1.5 text-text-secondary">
+                  <span className="h-2 w-2 rounded-full bg-red-400 shrink-0" />
+                  Overdue <strong className="tabular-nums">{formatCurrency(overdueAmt)}</strong>
+                </span>
+                <span className="ml-auto text-text-tertiary text-xs tabular-nums">
+                  Total <strong className="text-text-primary">{formatCurrency(account.total_revenue)}</strong>
+                </span>
+              </div>
+            </div>
+
+            {/* ── BILLING card ─────────────────────────────────────── */}
+            <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Billing</p>
+                  <span title="Changes apply to new invoices only" className="text-text-tertiary cursor-help">
+                    <Info className="h-3.5 w-3.5" />
+                  </span>
+                </div>
+                <p className="text-[10px] text-text-tertiary">Changes apply to new invoices only</p>
+              </div>
+
+              {/* Bill invoices to */}
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">
+                  Bill invoices to <span className="text-[#ED4B00]">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {(["end_client", "account"] as const).map((bt) => {
+                    const selected = billingType === bt;
+                    return (
+                      <button
+                        key={bt}
+                        type="button"
+                        onClick={() => setBillingType(bt)}
+                        className={cn(
+                          "rounded-xl border-2 p-3.5 text-left transition-all",
+                          selected ? "border-[#020040] bg-[#020040]/[0.04]" : "border-border-light bg-white hover:border-border",
+                        )}
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div className={cn(
+                            "mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0",
+                            selected ? "border-[#020040]" : "border-border",
+                          )}>
+                            {selected && <div className="h-2 w-2 rounded-full bg-[#020040]" />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-text-primary leading-tight">
+                              {bt === "end_client" ? "End client" : "This account"}
+                            </p>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-text-tertiary mt-0.5">
+                              {bt === "end_client" ? "B2C" : "B2B2C"}
+                            </p>
+                            <p className="text-[11px] text-text-secondary mt-1 leading-snug">
+                              {bt === "end_client"
+                                ? "Invoice goes to the final customer. Ex: Checkatrade"
+                                : "Invoice goes to this account. Ex: Housekeep"}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Payment Terms + Billing Email */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
+                    Payment Terms <span className="text-[#ED4B00]">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setTermsModalOpen(true)}
+                    className="w-full flex items-center justify-between rounded-xl border border-border-light bg-surface-hover px-3 py-2.5 hover:bg-surface-tertiary transition-colors text-left"
+                  >
+                    <span className="text-sm font-medium text-text-primary">
+                      {edit.payment_terms ? shortenPaymentTerms(edit.payment_terms) : <span className="text-text-tertiary">Set payment terms…</span>}
+                    </span>
+                    <span className="text-[10px] font-semibold text-primary uppercase tracking-wide">Edit</span>
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
+                    Billing Email <span className="text-[#ED4B00]">*</span>
+                  </label>
+                  <Input
+                    type="email"
+                    value={edit.finance_email}
+                    onChange={(e) => setEdit((p) => ({ ...p, finance_email: e.target.value }))}
+                    placeholder="billing@company.com"
+                  />
+                  <p className="text-[10px] text-text-tertiary mt-1">
+                    {billingType === "account"
+                      ? "Required for account-direct billing"
+                      : "Optional — overrides client email on invoices"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Next payment cycle preview */}
+              {(() => {
+                const terms = edit.payment_terms;
+                if (!terms) return null;
+                const iso = dueDateIsoFromPaymentTerms(new Date(), terms);
+                const label = new Date(iso + "T12:00:00").toLocaleDateString("en-GB", {
+                  weekday: "long", day: "numeric", month: "long", year: "numeric",
+                });
+                const isDor = /due\s+on\s+receipt/i.test(terms);
+                return (
+                  <div className="flex items-center gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
+                    <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">
+                        Next payment date
+                      </p>
+                      <p className="text-sm font-semibold text-[#020040]">{label}</p>
+                      {isDor && (
+                        <p className="text-[10px] text-text-tertiary mt-0.5">Due on receipt — same day as job completion</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* ── ACCOUNT DETAILS card ─────────────────────────────── */}
+            <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
+              <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Account details</p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Company</label>
+                  <Input value={edit.company_name} onChange={(e) => setEdit((p) => ({ ...p, company_name: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Contact</label>
+                  <Input value={edit.contact_name} onChange={(e) => setEdit((p) => ({ ...p, contact_name: e.target.value }))} />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Account owner</label>
+                <JobOwnerSelect
+                  value={edit.account_owner_id || undefined}
+                  fallbackName={editOwnerLabel === "—" ? undefined : editOwnerLabel}
+                  users={drawerAssignableUsers}
+                  emptyLabel="No internal owner"
+                  disabled={saving}
+                  onChange={(id) => setEdit((p) => ({ ...p, account_owner_id: id ?? "" }))}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Email</label>
+                  <Input type="email" value={edit.email} onChange={(e) => setEdit((p) => ({ ...p, email: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Contact number</label>
+                  <Input value={edit.contact_number} onChange={(e) => setEdit((p) => ({ ...p, contact_number: e.target.value }))} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">CRN</label>
+                  <Input value={edit.crn} onChange={(e) => setEdit((p) => ({ ...p, crn: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Credit limit</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={edit.credit_limit}
+                    onChange={(e) => setEdit((p) => ({ ...p, credit_limit: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1">Address</label>
+                <Input value={edit.address} onChange={(e) => setEdit((p) => ({ ...p, address: e.target.value }))} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Select
+                  label="Industry"
+                  options={INDUSTRY_OPTIONS}
+                  value={edit.industry}
+                  onChange={(e) => setEdit((p) => ({ ...p, industry: e.target.value }))}
+                />
+                <Select
+                  label="Status"
+                  options={ACCOUNT_STATUS_OPTIONS}
+                  value={edit.status}
+                  onChange={(e) => setEdit((p) => ({ ...p, status: e.target.value as Account["status"] }))}
+                />
+              </div>
+            </div>
+
+            {/* ── ASSETS card ─────────────────────────────────────── */}
+            <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
+              <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Assets</p>
+
+              <div className="grid grid-cols-2 gap-5">
+                {/* Contract */}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">Contract</label>
+                  <input
+                    ref={contractFileRef}
+                    type="file"
+                    accept="application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    className="hidden"
+                    onChange={async (ev) => {
+                      const file = ev.target.files?.[0];
+                      ev.target.value = "";
+                      if (!file || !account || !isAdmin) return;
+                      setUploadingContract(true);
+                      try {
+                        const url = await uploadAccountContract(account.id, file);
+                        const updated = await updateAccount(account.id, { contract_url: url });
+                        const fresh = await getAccount(account.id);
+                        onAccountUpdated(fresh ?? updated);
+                        setEdit((p) => ({ ...p, contract_url: url }));
+                        toast.success("Contract uploaded");
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Upload failed");
+                      } finally {
+                        setUploadingContract(false);
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full justify-center"
+                    disabled={uploadingContract || saving}
+                    onClick={() => contractFileRef.current?.click()}
+                    icon={uploadingContract ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  >
+                    {uploadingContract ? "Uploading…" : "Upload contract"}
+                  </Button>
+                  {edit.contract_url.trim() && (
+                    <div className="flex gap-2 mt-2">
+                      <Button type="button" variant="outline" size="sm" className="flex-1 justify-center"
+                        onClick={() => window.open(edit.contract_url, "_blank", "noopener,noreferrer")}
+                        icon={<ExternalLink className="h-3.5 w-3.5" />}>
+                        Preview
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" disabled={uploadingContract}
+                        onClick={async () => {
+                          if (!account || !isAdmin) return;
+                          setUploadingContract(true);
+                          try {
+                            try { await removeAccountContractFromStorage(account.id); } catch { /* ok */ }
+                            const updated = await updateAccount(account.id, { contract_url: null });
+                            const fresh = await getAccount(account.id);
+                            onAccountUpdated(fresh ?? updated);
+                            setEdit((p) => ({ ...p, contract_url: "" }));
+                            toast.success("Contract removed");
+                          } catch (err) {
+                            toast.error(err instanceof Error ? err.message : "Failed");
+                          } finally {
+                            setUploadingContract(false);
+                          }
+                        }}
+                        icon={<Trash2 className="h-3.5 w-3.5" />}>
+                      </Button>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-text-tertiary mt-1.5">PDF · DOC · DOCX · max 10MB</p>
+                </div>
+
+                {/* Logo */}
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">Logo</label>
+                  <input
+                    ref={logoFileRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png,image/webp,image/gif,image/svg+xml"
+                    className="hidden"
+                    onChange={(ev) => void handleLogoUpload(ev)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full justify-center"
+                    disabled={uploadingLogo || saving}
+                    onClick={() => logoFileRef.current?.click()}
+                    icon={uploadingLogo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  >
+                    {uploadingLogo ? "Uploading…" : "Upload logo"}
+                  </Button>
+                  {(edit.logo_url.trim() || account.logo_url) && (
+                    <div className="mt-2 flex items-center gap-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={(edit.logo_url.trim() || account.logo_url) ?? ""}
+                        alt=""
+                        className="h-10 w-10 object-contain rounded-lg border border-border-light bg-card p-0.5 shrink-0"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                      <Button type="button" variant="outline" size="sm" disabled={uploadingLogo}
+                        onClick={() => void handleRemoveLogo()}
+                        icon={<Trash2 className="h-3.5 w-3.5" />}>
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-text-tertiary mt-1.5">PNG · SVG · max 5MB</p>
+                </div>
+              </div>
+            </div>
+          </>
         )}
 
         {/* ── Clients tab ─────────────────────────────────────────── */}
@@ -923,9 +1295,7 @@ function AccountDetailDrawer({
                           <Avatar name={c.full_name} size="sm" />
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-text-primary truncate">{c.full_name}</p>
-                            <p className="text-[11px] text-text-tertiary truncate">
-                              {c.email || c.phone || c.address || "—"}
-                            </p>
+                            <p className="text-[11px] text-text-tertiary truncate">{c.email || c.phone || c.address || "—"}</p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             {c.status && (
@@ -942,29 +1312,15 @@ function AccountDetailDrawer({
                     ))}
                   </ul>
                 </div>
-
-                {/* Pagination controls */}
                 {Math.ceil(clientsTotal / CLIENTS_PAGE_SIZE) > 1 && (
                   <div className="flex items-center justify-between pt-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={clientsPage === 0 || clientsLoading}
-                      onClick={() => loadClientsPage(account, clientsPage - 1)}
-                    >
-                      ← Previous
-                    </Button>
+                    <Button variant="outline" size="sm" disabled={clientsPage === 0 || clientsLoading}
+                      onClick={() => loadClientsPage(account, clientsPage - 1)}>← Previous</Button>
                     <span className="text-xs text-text-tertiary">
                       {clientsPage * CLIENTS_PAGE_SIZE + 1}–{Math.min((clientsPage + 1) * CLIENTS_PAGE_SIZE, clientsTotal)} of {clientsTotal}
                     </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={(clientsPage + 1) * CLIENTS_PAGE_SIZE >= clientsTotal || clientsLoading}
-                      onClick={() => loadClientsPage(account, clientsPage + 1)}
-                    >
-                      Next →
-                    </Button>
+                    <Button variant="outline" size="sm" disabled={(clientsPage + 1) * CLIENTS_PAGE_SIZE >= clientsTotal || clientsLoading}
+                      onClick={() => loadClientsPage(account, clientsPage + 1)}>Next →</Button>
                   </div>
                 )}
               </>
@@ -972,298 +1328,7 @@ function AccountDetailDrawer({
           </div>
         )}
 
-        {tab === "overview" && (
-          <div className="space-y-4">
-            {isAdmin ? (
-              <div className="rounded-xl border border-border-light bg-surface-hover/50 p-4 space-y-3">
-                <p className="text-xs font-semibold text-text-secondary">Edit account</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Company</label>
-                    <Input value={edit.company_name} onChange={(e) => setEdit((p) => ({ ...p, company_name: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contact</label>
-                    <Input value={edit.contact_name} onChange={(e) => setEdit((p) => ({ ...p, contact_name: e.target.value }))} />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Account owner</label>
-                  <JobOwnerSelect
-                    value={edit.account_owner_id || undefined}
-                    fallbackName={editOwnerLabel === "—" ? undefined : editOwnerLabel}
-                    users={drawerAssignableUsers}
-                    emptyLabel="No internal owner"
-                    disabled={saving}
-                    onChange={(id) => {
-                      setEdit((p) => ({
-                        ...p,
-                        account_owner_id: id ?? "",
-                      }));
-                    }}
-                  />
-                  <p className="text-[10px] text-text-tertiary mt-1">
-                    Stored as the selected user&apos;s profile id — used for dashboards and rollups.
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contract</label>
-                  <input
-                    ref={contractFileRef}
-                    type="file"
-                    accept="application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    className="hidden"
-                    onChange={async (ev) => {
-                      const file = ev.target.files?.[0];
-                      ev.target.value = "";
-                      if (!file || !account || !isAdmin) return;
-                      setUploadingContract(true);
-                      try {
-                        const url = await uploadAccountContract(account.id, file);
-                        const updated = await updateAccount(account.id, { contract_url: url });
-                        const fresh = await getAccount(account.id);
-                        const next = fresh ?? updated;
-                        onAccountUpdated(next);
-                        setEdit((p) => ({ ...p, contract_url: url }));
-                        toast.success("Contract uploaded and saved");
-                      } catch (err) {
-                        toast.error(err instanceof Error ? err.message : "Contract upload failed");
-                      } finally {
-                        setUploadingContract(false);
-                      }
-                    }}
-                  />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={uploadingContract || saving}
-                      onClick={() => contractFileRef.current?.click()}
-                      icon={
-                        uploadingContract ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Upload className="h-3.5 w-3.5" />
-                        )
-                      }
-                    >
-                      {uploadingContract ? "Uploading…" : "Upload contract"}
-                    </Button>
-                    {edit.contract_url.trim() && (
-                      <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => window.open(edit.contract_url, "_blank", "noopener,noreferrer")}
-                          icon={<ExternalLink className="h-3.5 w-3.5" />}
-                        >
-                          Preview
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={uploadingContract || saving}
-                          onClick={async () => {
-                            if (!account || !isAdmin) return;
-                            setUploadingContract(true);
-                            try {
-                              try {
-                                await removeAccountContractFromStorage(account.id);
-                              } catch {
-                                /* ignore storage cleanup issue, still clear DB value */
-                              }
-                              const updated = await updateAccount(account.id, { contract_url: null });
-                              const fresh = await getAccount(account.id);
-                              const next = fresh ?? updated;
-                              onAccountUpdated(next);
-                              setEdit((p) => ({ ...p, contract_url: "" }));
-                              toast.success("Contract removed");
-                            } catch (err) {
-                              toast.error(err instanceof Error ? err.message : "Failed to remove contract");
-                            } finally {
-                              setUploadingContract(false);
-                            }
-                          }}
-                          icon={<Trash2 className="h-3.5 w-3.5" />}
-                        >
-                          Remove
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-text-tertiary mt-1.5">
-                    Saves to bucket <code className="text-[10px]">company-assets</code> at <code className="text-[10px]">accounts/&lt;id&gt;/contract.*</code> (PDF/DOC/DOCX, max 10 MB).
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Email</label>
-                  <Input type="email" value={edit.email} onChange={(e) => setEdit((p) => ({ ...p, email: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Finance email (invoices)</label>
-                  <Input type="email" value={edit.finance_email} onChange={(e) => setEdit((p) => ({ ...p, finance_email: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Address</label>
-                  <Input value={edit.address} onChange={(e) => setEdit((p) => ({ ...p, address: e.target.value }))} />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">CRN</label>
-                    <Input value={edit.crn} onChange={(e) => setEdit((p) => ({ ...p, crn: e.target.value }))} />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Contact number</label>
-                    <Input value={edit.contact_number} onChange={(e) => setEdit((p) => ({ ...p, contact_number: e.target.value }))} />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Logo</label>
-                  <input
-                    ref={logoFileRef}
-                    type="file"
-                    accept="image/jpeg,image/jpg,image/png,image/webp,image/gif,image/svg+xml"
-                    className="hidden"
-                    onChange={(ev) => void handleLogoUpload(ev)}
-                  />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={uploadingLogo || saving}
-                      onClick={() => logoFileRef.current?.click()}
-                      icon={
-                        uploadingLogo ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Upload className="h-3.5 w-3.5" />
-                        )
-                      }
-                    >
-                      {uploadingLogo ? "Uploading…" : "Upload to bucket"}
-                    </Button>
-                    {(edit.logo_url.trim() || account.logo_url) && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={uploadingLogo || saving}
-                        onClick={() => void handleRemoveLogo()}
-                        icon={<Trash2 className="h-3.5 w-3.5" />}
-                      >
-                        Remove
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-text-tertiary mt-1.5 mb-2">
-                    Saves to bucket <code className="text-[10px]">company-assets</code> at{" "}
-                    <code className="text-[10px]">accounts/&lt;id&gt;/logo.*</code> and updates this account. Max 5&nbsp;MB. You can also paste an external URL below.
-                  </p>
-                  <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Logo image URL (optional)</label>
-                  <Input
-                    value={edit.logo_url}
-                    onChange={(e) => setEdit((p) => ({ ...p, logo_url: e.target.value }))}
-                    placeholder="https://example.com/logo.png"
-                  />
-                  {(edit.logo_url.trim() || account.logo_url) ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={(edit.logo_url.trim() || account.logo_url) ?? ""}
-                      alt=""
-                      className="mt-2 h-14 max-w-full object-contain rounded-lg border border-border-light bg-card p-1"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  ) : null}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Select
-                    label="Industry"
-                    options={INDUSTRY_OPTIONS}
-                    value={edit.industry}
-                    onChange={(e) => setEdit((p) => ({ ...p, industry: e.target.value }))}
-                  />
-                  <Select
-                    label="Status"
-                    options={ACCOUNT_STATUS_OPTIONS}
-                    value={edit.status}
-                    onChange={(e) => setEdit((p) => ({ ...p, status: e.target.value as Account["status"] }))}
-                  />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Select
-                    label="Payment terms"
-                    options={PAYMENT_TERMS_OPTIONS}
-                    value={edit.payment_terms}
-                    onChange={(e) => setEdit((p) => ({ ...p, payment_terms: e.target.value }))}
-                  />
-                  <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Credit limit</label>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={edit.credit_limit}
-                      onChange={(e) => setEdit((p) => ({ ...p, credit_limit: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end pt-1">
-                  <Button
-                    size="sm"
-                    disabled={saving}
-                    onClick={() => void handleSave()}
-                    icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                  >
-                    {saving ? "Saving…" : "Save changes"}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-border-light bg-surface-hover/50 divide-y divide-border-light">
-                <DetailRow icon={User} label="Contact">{account.contact_name}</DetailRow>
-                <DetailRow icon={User} label="Account owner">
-                  {accountOwnerLabel(account.account_owner_id, account.owner_name, drawerAssignableUsers)}
-                </DetailRow>
-                <DetailRow icon={Mail} label="Email">
-                  <a href={`mailto:${account.email}`} className="text-primary hover:underline break-all">{account.email}</a>
-                </DetailRow>
-                <DetailRow icon={Mail} label="Finance email">
-                  {account.finance_email?.trim() ? (
-                    <a href={`mailto:${account.finance_email}`} className="text-primary hover:underline break-all">{account.finance_email}</a>
-                  ) : "—"}
-                </DetailRow>
-                <DetailRow label="Contact number">{account.contact_number || "—"}</DetailRow>
-                <DetailRow label="CRN">{account.crn || "—"}</DetailRow>
-                <DetailRow label="Address">{account.address || "—"}</DetailRow>
-                <DetailRow icon={Building} label="Industry">{account.industry}</DetailRow>
-                <DetailRow label="Status"><Badge variant={st.variant} dot>{st.label}</Badge></DetailRow>
-              </div>
-            )}
-
-            <div className="rounded-xl border border-border-light bg-surface-hover/30 p-4 space-y-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Read-only (from system)</p>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-[10px] text-text-tertiary uppercase">Active jobs</p>
-                  <p className="font-semibold tabular-nums">{account.active_jobs}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-text-tertiary uppercase">Total revenue</p>
-                  <p className="font-bold tabular-nums text-text-primary">{formatCurrency(account.total_revenue)}</p>
-                </div>
-              </div>
-              <DetailRow icon={Calendar} label="Created">
-                {new Date(account.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-              </DetailRow>
-            </div>
-          </div>
-        )}
-
+        {/* ── Jobs tab ─────────────────────────────────────────────── */}
         {tab === "jobs" && (
           <div className="space-y-2">
             {loadingExtras ? (
@@ -1271,35 +1336,30 @@ function AccountDetailDrawer({
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>
             ) : jobs.length === 0 ? (
-              <p className="text-sm text-text-tertiary text-center py-8">No jobs linked yet. Link clients to this account under Clients, then create jobs for those clients.</p>
+              <p className="text-sm text-text-tertiary text-center py-8">No jobs linked yet.</p>
             ) : (
               <div className="rounded-xl border border-border-light overflow-hidden max-h-[50vh] overflow-y-auto">
                 {jobs.map((j) => {
                   const schedLine = formatJobScheduleLine(j);
                   return (
-                  <Link
-                    key={j.id}
-                    href={`/jobs/${j.id}`}
-                    className="flex items-start gap-3 px-3 py-3 border-b border-border-light last:border-0 hover:bg-surface-hover transition-colors"
-                  >
-                    <Briefcase className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-semibold text-text-primary">{j.reference}</span>
-                        {jobStatusBadge(j.status)}
-                        <Badge variant="outline" size="sm">{j.finance_status}</Badge>
+                    <Link key={j.id} href={`/jobs/${j.id}`}
+                      className="flex items-start gap-3 px-3 py-3 border-b border-border-light last:border-0 hover:bg-surface-hover transition-colors">
+                      <Briefcase className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-text-primary">{j.reference}</span>
+                          {jobStatusBadge(j.status)}
+                          <Badge variant="outline" size="sm">{j.finance_status}</Badge>
+                        </div>
+                        <p className="text-xs text-text-secondary truncate">{j.title}</p>
+                        <p className="text-[11px] text-text-tertiary truncate">{j.client_name} · {j.property_address}</p>
+                        {schedLine
+                          ? <p className="text-[10px] text-text-secondary mt-1 leading-snug line-clamp-2">{schedLine}</p>
+                          : <p className="text-[10px] text-text-tertiary mt-1">No schedule set</p>}
+                        <p className="text-xs font-medium text-text-primary mt-1">{formatCurrency(j.client_price)}</p>
                       </div>
-                      <p className="text-xs text-text-secondary truncate">{j.title}</p>
-                      <p className="text-[11px] text-text-tertiary truncate">{j.client_name} · {j.property_address}</p>
-                      {schedLine ? (
-                        <p className="text-[10px] text-text-secondary mt-1 leading-snug line-clamp-2">{schedLine}</p>
-                      ) : (
-                        <p className="text-[10px] text-text-tertiary mt-1">No schedule set</p>
-                      )}
-                      <p className="text-xs font-medium text-text-primary mt-1">{formatCurrency(j.client_price)}</p>
-                    </div>
-                    <ExternalLink className="h-4 w-4 text-text-tertiary shrink-0" />
-                  </Link>
+                      <ExternalLink className="h-4 w-4 text-text-tertiary shrink-0" />
+                    </Link>
                   );
                 })}
               </div>
@@ -1307,6 +1367,7 @@ function AccountDetailDrawer({
           </div>
         )}
 
+        {/* ── Finance tab ──────────────────────────────────────────── */}
         {tab === "finance" && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
@@ -1319,7 +1380,7 @@ function AccountDetailDrawer({
                 <p className="text-sm font-semibold mt-1">{account.payment_terms}</p>
               </div>
               <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Total revenue (account)</p>
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Total revenue</p>
                 <p className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(account.total_revenue)}</p>
               </div>
               <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
@@ -1359,8 +1420,23 @@ function AccountDetailDrawer({
             )}
           </div>
         )}
+
+        {/* ── Portal users tab ─────────────────────────────────────── */}
+        {tab === "portal" && account && (
+          <PortalUsersTabSection accountId={account.id} accountName={account.company_name} />
+        )}
+
       </div>
     </Drawer>
+
+    {/* ── Payment Terms Modal ───────────────────────────────────────── */}
+    <PaymentTermsModal
+      open={termsModalOpen}
+      value={edit.payment_terms}
+      onClose={() => setTermsModalOpen(false)}
+      onSave={(v) => { setEdit((p) => ({ ...p, payment_terms: v })); setTermsModalOpen(false); }}
+    />
+    </>
   );
 }
 
@@ -1529,6 +1605,239 @@ function PortalUsersTabSection({ accountId, accountName }: { accountId: string; 
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+function shortenPaymentTerms(t: string | null | undefined): string {
+  if (!t) return "—";
+  const s = t.trim();
+  if (/due\s+on\s+receipt/i.test(s)) return "Due on receipt";
+  if (/monthly\s+cutoff/i.test(s)) return "Monthly cycle";
+  if (/every\s+2\s+weeks?\s+cutoff/i.test(s)) return "Biweekly cycle";
+  if (/every\s+2\s*weeks\s+on\s+friday/i.test(s)) return "Biweekly Fri";
+  if (/every\s+friday/i.test(s)) return "Every Friday";
+  const evN = s.match(/every\s+(\d+)\s+days/i);
+  if (evN) return `Every ${evN[1]}d`;
+  const net = s.match(/net\s+(\d+)/i);
+  if (net) return `Net ${net[1]}`;
+  if (/45\s*days/i.test(s)) return "Net 45";
+  return s.length > 14 ? s.slice(0, 12) + "…" : s;
+}
+
+// ─── PaymentTermsModal ────────────────────────────────────────────────────
+function PaymentTermsModal({
+  open, value, onClose, onSave,
+}: { open: boolean; value: string; onClose: () => void; onSave: (v: string) => void }) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => { if (open) setLocal(value); }, [open, value]);
+
+  const iso = local ? dueDateIsoFromPaymentTerms(new Date(), local) : null;
+  const nextLabel = iso
+    ? new Date(iso + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+    : null;
+
+  return (
+    <Modal open={open} onClose={onClose} title="Payment Terms" size="md" rootClassName="z-[60]">
+      <div className="px-5 py-4 space-y-4">
+        <PaymentTermsBuilder value={local} onChange={setLocal} />
+
+        {nextLabel && (
+          <div className="flex items-center gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
+            <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0" />
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">Next payment date</p>
+              <p className="text-sm font-semibold text-[#020040]">{nextLabel}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => onSave(local)}>Apply</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── PaymentTermsBuilder ───────────────────────────────────────────────────
+const WEEKDAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
+const WEEKDAY_LABELS: Record<string, string> = {
+  monday: "Monday", tuesday: "Tuesday", wednesday: "Wednesday",
+  thursday: "Thursday", friday: "Friday", saturday: "Saturday", sunday: "Sunday",
+};
+
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function buildCycleString(
+  freq: "monthly" | "biweekly",
+  cutoffDay: string,
+  cutoffWeekday: string,
+  payWeekday: string,
+  refDate?: string,
+): string {
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  if (freq === "monthly") return `Monthly cutoff ${cutoffDay} pay ${cap(payWeekday)}`;
+  const base = `Every 2 weeks cutoff ${cap(cutoffWeekday)} pay ${cap(payWeekday)}`;
+  return refDate ? `${base} ref ${refDate}` : base;
+}
+
+function parseCycleValue(value: string) {
+  const isCycle = /monthly\s+cutoff/i.test(value) || /every\s+2\s+weeks?\s+cutoff/i.test(value);
+  if (!isCycle) return null;
+  const isbi   = /every\s+2\s+weeks/i.test(value);
+  const dMatch = value.match(/monthly\s+cutoff\s+(\d+)/i);
+  const wMatch = value.match(/every\s+2\s+weeks?\s+cutoff\s+(\w+)/i);
+  const pMatch = value.match(/pay\s+(\w+)/i);
+  const rMatch = value.match(/ref\s+(\d{4}-\d{2}-\d{2})/i);
+  return {
+    freq: (isbi ? "biweekly" : "monthly") as "monthly" | "biweekly",
+    cutoffDay:     dMatch ? dMatch[1] : "26",
+    cutoffWeekday: wMatch ? wMatch[1].toLowerCase() : "wednesday",
+    payWeekday:    pMatch ? pMatch[1].toLowerCase() : "friday",
+    refDate:       rMatch ? rMatch[1] : undefined,
+  };
+}
+
+function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const parsed = parseCycleValue(value);
+  const [mode,          setMode]          = useState<"standard" | "cycle">(parsed ? "cycle" : "standard");
+  const [freq,          setFreq]          = useState<"monthly" | "biweekly">(parsed?.freq ?? "monthly");
+  const [cutoffDay,     setCutoffDay]     = useState(parsed?.cutoffDay ?? "26");
+  const [cutoffWeekday, setCutoffWeekday] = useState(parsed?.cutoffWeekday ?? "wednesday");
+  const [payWeekday,    setPayWeekday]    = useState(parsed?.payWeekday ?? "friday");
+  const [refDate,       setRefDate]       = useState(parsed?.refDate ?? "");
+
+  useEffect(() => {
+    const p = parseCycleValue(value);
+    if (p) {
+      setMode("cycle");
+      setFreq(p.freq);
+      setCutoffDay(p.cutoffDay);
+      setCutoffWeekday(p.cutoffWeekday);
+      setPayWeekday(p.payWeekday);
+      if (p.refDate) setRefDate(p.refDate);
+    } else {
+      setMode("standard");
+    }
+  }, [value]);
+
+  const emit = (
+    f = freq, cd = cutoffDay, cw = cutoffWeekday, pw = payWeekday, rd = refDate,
+  ) => onChange(buildCycleString(f, cd, cw, pw, rd || undefined));
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex gap-1.5">
+        {(["standard", "cycle"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => {
+              setMode(m);
+              if (m === "standard") onChange("Net 30");
+              else emit();
+            }}
+            className={cn(
+              "px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors",
+              mode === m
+                ? "bg-[#020040] text-white border-[#020040]"
+                : "bg-white text-text-secondary border-border-light hover:bg-surface-hover",
+            )}
+          >
+            {m === "standard" ? "Standard" : "Cycle-based"}
+          </button>
+        ))}
+      </div>
+
+      {mode === "standard" ? (
+        <Select
+          options={PAYMENT_TERMS_OPTIONS}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : (
+        <div className="rounded-xl border border-border-light bg-white p-3.5 space-y-3">
+          <div>
+            <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Billing cycle</label>
+            <Select
+              options={[
+                { value: "monthly",   label: "Monthly" },
+                { value: "biweekly",  label: "Every 2 weeks" },
+              ]}
+              value={freq}
+              onChange={(e) => {
+                const f = e.target.value as "monthly" | "biweekly";
+                setFreq(f);
+                emit(f);
+              }}
+            />
+          </div>
+
+          {freq === "monthly" ? (
+            <div>
+              <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Cut-off day of month</label>
+              <Select
+                options={Array.from({ length: 28 }, (_, i) => ({
+                  value: String(i + 1),
+                  label: `Day ${i + 1}`,
+                }))}
+                value={cutoffDay}
+                onChange={(e) => { setCutoffDay(e.target.value); emit(freq, e.target.value); }}
+              />
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Cut-off weekday</label>
+                <Select
+                  options={WEEKDAYS.map((w) => ({ value: w, label: WEEKDAY_LABELS[w] }))}
+                  value={cutoffWeekday}
+                  onChange={(e) => { setCutoffWeekday(e.target.value); emit(freq, cutoffDay, e.target.value); }}
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">
+                  Last cutoff date
+                  <span className="ml-1 normal-case font-normal text-text-tertiary">(sets the exact 2-week rhythm)</span>
+                </label>
+                <Input
+                  type="date"
+                  value={refDate}
+                  onChange={(e) => { setRefDate(e.target.value); emit(freq, cutoffDay, cutoffWeekday, payWeekday, e.target.value); }}
+                  className={cn(!refDate && "border-amber-400")}
+                />
+                {!refDate && (
+                  <p className="text-[10px] text-amber-600 mt-1">
+                    Without a reference date the cycle rhythm may be off by a week — enter the last {WEEKDAY_LABELS[cutoffWeekday]} when this client was billed.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+
+          <div>
+            <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Pay on weekday</label>
+            <Select
+              options={WEEKDAYS.map((w) => ({ value: w, label: WEEKDAY_LABELS[w] }))}
+              value={payWeekday}
+              onChange={(e) => { setPayWeekday(e.target.value); emit(freq, cutoffDay, cutoffWeekday, e.target.value); }}
+            />
+          </div>
+
+          <div className="rounded-lg bg-[#020040]/5 border border-[#020040]/15 px-3 py-2">
+            <p className="text-[10px] font-medium text-[#020040]/60 uppercase mb-0.5">Encoded as</p>
+            <p className="text-xs font-mono font-semibold text-[#020040]">
+              {buildCycleString(freq, cutoffDay, cutoffWeekday, payWeekday, refDate || undefined)}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

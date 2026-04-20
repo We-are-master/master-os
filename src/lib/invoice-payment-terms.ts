@@ -1,8 +1,12 @@
 /**
- * Maps account payment terms (Accounts UI: Net 7/15/30/60, Due on Receipt, Every N days, Fridays, 45 days)
- * to due dates. "Every N days" uses the same offset as Net N for due-date purposes; weekly consolidation is handled separately.
- * Unknown or empty strings default to Net 30.
+ * Maps account payment terms to due dates.
+ * Supports:
+ *   - Standard: Net 7/15/30/60/45, Due on Receipt, Every N days, Every Friday, Every 2 weeks on Friday
+ *   - Cycle-based: "Monthly cutoff N pay Weekday" and "Every 2 weeks cutoff Weekday pay Weekday"
+ * Unknown/empty strings default to Net 30.
  */
+
+const WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
 
 function isoDateFromLocalDate(d: Date): string {
   const y = d.getFullYear();
@@ -17,16 +21,19 @@ function addDaysLocal(base: Date, n: number): Date {
   return d;
 }
 
-/** Next Friday on or after `base` (local calendar). If `base` is Friday, returns that day. */
-export function nextFridayOnOrAfter(base: Date): string {
+/** Next occurrence of `weekdayName` on or after `base` (local calendar). Returns base if already that day. */
+function nextWeekdayOnOrAfter(base: Date, weekdayName: string): string {
+  const target = WEEKDAY_NAMES.indexOf(weekdayName.toLowerCase() as typeof WEEKDAY_NAMES[number]);
+  if (target === -1) return nextFridayOnOrAfter(base);
   const d = new Date(base.getFullYear(), base.getMonth(), base.getDate());
-  const dow = d.getDay(); // 0 Sun … 5 Fri … 6 Sat
-  let add = 0;
-  if (dow === 5) add = 0;
-  else if (dow < 5) add = 5 - dow;
-  else add = 5 - dow + 7;
+  const add = (target - d.getDay() + 7) % 7;
   d.setDate(d.getDate() + add);
   return isoDateFromLocalDate(d);
+}
+
+/** Next Friday on or after `base` (local calendar). If `base` is Friday, returns that day. */
+export function nextFridayOnOrAfter(base: Date): string {
+  return nextWeekdayOnOrAfter(base, "friday");
 }
 
 export function daysFromPaymentTerms(paymentTerms: string | null | undefined): number {
@@ -47,7 +54,7 @@ export function daysFromPaymentTerms(paymentTerms: string | null | undefined): n
   return 30;
 }
 
-/** True when account terms mean one consolidated invoice per calendar week (all jobs on that account). */
+/** True when account terms mean one consolidated invoice per calendar week. */
 export function isWeeklyConsolidatedTerms(paymentTerms: string | null | undefined): boolean {
   const t = paymentTerms?.trim() ?? "";
   if (/every\s+\d+\s+days/i.test(t)) return true;
@@ -59,6 +66,58 @@ export function isWeeklyConsolidatedTerms(paymentTerms: string | null | undefine
 export function dueDateIsoFromPaymentTerms(base: Date, paymentTerms: string | null | undefined): string {
   const raw = paymentTerms?.trim() ?? "";
 
+  // ── Cycle-based: "Monthly cutoff N pay Weekday" ──────────────────────────
+  // e.g. "Monthly cutoff 26 pay Friday"
+  // Jobs completed ≤ day N → next Weekday after day N this month
+  // Jobs completed > day N → next Weekday after day N next month
+  const monthlyCutoff = raw.match(/monthly\s+cutoff\s+(\d+)\s+pay\s+(\w+)/i);
+  if (monthlyCutoff) {
+    const cutoffDay = Math.min(28, Math.max(1, parseInt(monthlyCutoff[1], 10)));
+    const payWeekday = monthlyCutoff[2].toLowerCase();
+    let cycleMonth = base.getMonth();
+    let cycleYear = base.getFullYear();
+    if (base.getDate() > cutoffDay) {
+      cycleMonth++;
+      if (cycleMonth > 11) { cycleMonth = 0; cycleYear++; }
+    }
+    const cutoffDate = new Date(cycleYear, cycleMonth, cutoffDay);
+    return nextWeekdayOnOrAfter(cutoffDate, payWeekday);
+  }
+
+  // ── Cycle-based: "Every 2 weeks cutoff Weekday pay Weekday [ref YYYY-MM-DD]"
+  // Optional "ref" anchor date makes the 14-day rhythm deterministic.
+  // Without it, falls back to weekday-comparison heuristic (may be off by a week).
+  const biweeklyCutoff = raw.match(/every\s+2\s+weeks?\s+cutoff\s+(\w+)\s+pay\s+(\w+)(?:\s+ref\s+(\d{4}-\d{2}-\d{2}))?/i);
+  if (biweeklyCutoff) {
+    const cutoffWeekday = biweeklyCutoff[1].toLowerCase();
+    const payWeekday   = biweeklyCutoff[2].toLowerCase();
+    const refStr       = biweeklyCutoff[3];
+
+    if (refStr) {
+      // Precise path: count 14-day periods from refDate to base
+      const refDate  = new Date(refStr + "T00:00:00");
+      const baseLocal = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+      const daysDiff  = Math.round((baseLocal.getTime() - refDate.getTime()) / 86_400_000);
+      if (daysDiff >= 0) {
+        const periods   = Math.ceil(daysDiff / 14);  // 0 when base==refDate
+        const nextCutoff = addDaysLocal(refDate, periods * 14);
+        return nextWeekdayOnOrAfter(nextCutoff, payWeekday);
+      }
+      // base is before refDate — fall through to heuristic
+    }
+
+    // Heuristic fallback (no ref date stored)
+    const cutoffNum = WEEKDAY_NAMES.indexOf(cutoffWeekday as typeof WEEKDAY_NAMES[number]);
+    if (cutoffNum !== -1) {
+      // Mon-based comparison: Mon=0…Sun=6
+      const normalBase   = (base.getDay() + 6) % 7;
+      const normalCutoff = (cutoffNum + 6) % 7;
+      const anchor = normalBase > normalCutoff ? addDaysLocal(base, 14) : base;
+      return nextWeekdayOnOrAfter(anchor, payWeekday);
+    }
+  }
+
+  // ── Legacy patterns ───────────────────────────────────────────────────────
   if (/every\s+2\s*weeks\s+on\s+friday/i.test(raw)) {
     return nextFridayOnOrAfter(addDaysLocal(base, 14));
   }
@@ -70,6 +129,5 @@ export function dueDateIsoFromPaymentTerms(base: Date, paymentTerms: string | nu
   }
 
   const days = daysFromPaymentTerms(paymentTerms);
-  const d = addDaysLocal(base, days);
-  return isoDateFromLocalDate(d);
+  return isoDateFromLocalDate(addDaysLocal(base, days));
 }

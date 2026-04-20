@@ -90,6 +90,14 @@ export function OverviewExecutiveBundle() {
   const [grossProfit, setGrossProfit] = useState(0);
   const [billsCost, setBillsCost] = useState(0);
   const [payrollCost, setPayrollCost] = useState(0);
+
+  // Monthly KPI block — always locked to current calendar month, ignores dashboard filter
+  const [monthlyLoading, setMonthlyLoading] = useState(true);
+  const [monthlyRevenue, setMonthlyRevenue] = useState(0);
+  const [monthlyDirectCost, setMonthlyDirectCost] = useState(0);
+  const [monthlyBills, setMonthlyBills] = useState(0);
+  const [monthlyPayroll, setMonthlyPayroll] = useState(0);
+  const currentMonthLabel = useMemo(() => localCalendarMonthYmdBounds(new Date()).monthLabel, []);
   const [billingForTier, setBillingForTier] = useState(0);
   const [tierMonthLabel, setTierMonthLabel] = useState("");
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
@@ -602,6 +610,72 @@ export function OverviewExecutiveBundle() {
     return () => window.removeEventListener("master-os-company-settings", refreshGoal);
   }, []);
 
+  // Load current-month data independently of the dashboard date filter
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMonthly() {
+      const supabase = getSupabase();
+      setMonthlyLoading(true);
+      try {
+        const { fromDay, toDay } = localCalendarMonthYmdBounds(new Date());
+        const monthBounds = {
+          fromIso: `${fromDay}T00:00:00.000Z`,
+          toIso: `${toDay}T23:59:59.999Z`,
+        };
+        const MONTHLY_STATUSES = [
+          "unassigned", "auto_assigning", "scheduled", "late",
+          "in_progress_phase1", "in_progress_phase2", "in_progress_phase3",
+          "final_check", "awaiting_payment", "need_attention", "completed",
+        ];
+        const jobsRes = await supabase
+          .from("jobs")
+          .select("id, client_price, extras_amount, partner_cost, materials_cost, scheduled_date, scheduled_finish_date")
+          .is("deleted_at", null)
+          .in("status", MONTHLY_STATUSES)
+          .gte("scheduled_date", fromDay)
+          .lte("scheduled_date", toDay);
+        const rows = (jobsRes.data ?? []) as OverviewPipelineJobRow[];
+        const [, billsRes, payrollRes] = await Promise.all([
+          Promise.resolve(),
+          supabase.from("bills").select("amount").is("archived_at", null).neq("status", "rejected")
+            .gte("due_date", fromDay).lte("due_date", toDay),
+          supabase.from("payroll_internal_costs").select("amount").not("due_date", "is", null)
+            .gte("due_date", fromDay).lte("due_date", toDay),
+        ]);
+        let rev = 0;
+        let direct = 0;
+        for (const r of rows) {
+          rev += jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]);
+          direct += jobDirectCost(r as OverviewPipelineJobRow);
+        }
+        const bills = (billsRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
+        const payroll = (payrollRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
+        if (!cancelled) {
+          setMonthlyRevenue(rev);
+          setMonthlyDirectCost(direct);
+          setMonthlyBills(bills);
+          setMonthlyPayroll(payroll);
+        }
+      } catch {
+        if (!cancelled) {
+          setMonthlyRevenue(0);
+          setMonthlyDirectCost(0);
+          setMonthlyBills(0);
+          setMonthlyPayroll(0);
+        }
+      } finally {
+        if (!cancelled) setMonthlyLoading(false);
+      }
+    }
+    void loadMonthly();
+    return () => { cancelled = true; };
+  }, []);
+
+  const monthlyGross = monthlyRevenue - monthlyDirectCost;
+  const monthlyNet = monthlyRevenue - monthlyDirectCost - monthlyBills - monthlyPayroll;
+  const monthlyGrossPct = monthlyRevenue > 0 ? Math.round((monthlyGross / monthlyRevenue) * 1000) / 10 : 0;
+  const monthlyNetPct = monthlyRevenue > 0 ? Math.round((monthlyNet / monthlyRevenue) * 1000) / 10 : 0;
+
   const revenuePeriodSubtext = useMemo(() => {
     if (!bounds) return "Booked pipeline · no date filter (all open pipeline jobs)";
     return `Booked pipeline · schedule start in ${rangeLabel} (same filter as Jobs → schedule window)`;
@@ -650,13 +724,6 @@ export function OverviewExecutiveBundle() {
     [forecastWeeks],
   );
 
-  const conversionPct =
-    funnel.quotesSentInPeriod > 0
-      ? Math.min(100, Math.round((1000 * funnel.jobsFromQuotesInPeriod) / funnel.quotesSentInPeriod) / 10)
-      : funnel.jobsFromQuotesInPeriod > 0
-        ? 100
-        : 0;
-
   const rankBadgeClass = (i: number) =>
     cn(
       "h-6 w-6 rounded-md flex items-center justify-center text-[10px] font-bold shrink-0",
@@ -674,38 +741,50 @@ export function OverviewExecutiveBundle() {
   return (
     <div className="space-y-4">
       <Card padding="none" className="overflow-hidden border-border-light bg-[#FAFAFB] shadow-sm ring-1 ring-border-light/20">
+        {/* Header — always locked to current month */}
+        <div className="px-4 py-2.5 border-b border-border-light flex items-center justify-between gap-2 bg-[#FAFAFB]">
+          <p className="text-xs font-bold text-text-primary tracking-tight">
+            Monthly Overview — <span className="text-primary">{currentMonthLabel}</span>
+          </p>
+          <p className="text-[10px] text-text-tertiary">Always locked to current calendar month</p>
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-border-light border-b border-border-light">
           {[
             {
               label: "Revenue",
-              value: revenue,
-              sub: loading ? "—" : revenuePeriodSubtext,
+              value: monthlyRevenue,
+              sub: `Jobs scheduled in ${currentMonthLabel}`,
               accent: "text-emerald-600",
             },
-            { label: "Costs", value: partnerDirect, sub: "Direct cost on those jobs", accent: "text-amber-600" },
+            {
+              label: "Costs",
+              value: monthlyDirectCost,
+              sub: "Direct cost on those jobs",
+              accent: "text-amber-600",
+            },
             {
               label: "Gross margin",
-              value: grossProfit,
-              sub: `${grossPct}% of revenue`,
-              accent: grossPct >= 20 ? "text-emerald-600" : "text-rose-600",
+              value: monthlyGross,
+              sub: `${monthlyGrossPct}% of revenue`,
+              accent: monthlyGrossPct >= 20 ? "text-emerald-600" : "text-rose-600",
             },
             {
               label: "Net margin",
-              value: netProfit,
-              sub: `${netPct}% · after bills & payroll`,
-              accent: netPct >= 15 ? "text-sky-600" : "text-rose-600",
+              value: monthlyNet,
+              sub: `${monthlyNetPct}% · after bills & payroll`,
+              accent: monthlyNetPct >= 0 ? "text-sky-600" : "text-rose-600",
             },
           ].map((cell) => (
             <div key={cell.label} className="p-3 sm:p-4">
               <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">{cell.label}</p>
               <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", cell.accent)}>
-                {loading ? "—" : formatCurrency(cell.value)}
+                {monthlyLoading ? "—" : formatCurrency(cell.value)}
               </p>
               <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">{cell.sub}</p>
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 divide-y sm:divide-y-0 divide-border-light sm:divide-x">
+        <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 divide-border-light sm:divide-x">
           <div className="p-3 sm:p-4">
             <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
               Quotes awaiting customer
@@ -718,44 +797,38 @@ export function OverviewExecutiveBundle() {
             </p>
           </div>
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">Sales</p>
-            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-emerald-600")}>
-              {loading ? "—" : formatCurrency(funnel.salesBookedValue)}
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+              Workforce cost
+            </p>
+            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-orange-600")}>
+              {monthlyLoading ? "—" : formatCurrency(monthlyPayroll)}
             </p>
             <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              {loading ? "—" : `${funnel.salesJobCount} jobs on calendar`}
+              Internal payroll · {currentMonthLabel}
             </p>
           </div>
-          {[
-            {
-              label: "Conversion rate",
-              display: loading ? "—" : `${conversionPct}%`,
-              sub: loading
-                ? "—"
-                : `${funnel.jobsFromQuotesInPeriod} jobs from quotes ÷ ${funnel.quotesSentInPeriod} quotes sent`,
-              accent: "text-violet-600",
-            },
-            {
-              label: "Fixed overhead",
-              display: loading ? "—" : formatCurrency(funnel.fixedMonthlyOverhead),
-              sub: loading
-                ? "—"
-                : `Bills + workforce (internal payroll) · due ${funnel.overheadMonthLabel || "in period"}`,
-              accent: "text-rose-600",
-            },
-            {
-              label: "Collected",
-              display: loading ? "—" : formatCurrency(funnel.collectedCash),
-              sub: "Client payments (deposit + final) · job ledger",
-              accent: "text-amber-600",
-            },
-          ].map((cell) => (
-            <div key={cell.label} className="p-3 sm:p-4">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">{cell.label}</p>
-              <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", cell.accent)}>{cell.display}</p>
-              <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">{cell.sub}</p>
-            </div>
-          ))}
+          <div className="p-3 sm:p-4">
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+              Total bills
+            </p>
+            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-rose-600")}>
+              {monthlyLoading ? "—" : formatCurrency(monthlyBills)}
+            </p>
+            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
+              Supplier bills · {currentMonthLabel}
+            </p>
+          </div>
+          <div className="p-3 sm:p-4">
+            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+              Total overhead
+            </p>
+            <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-purple-600")}>
+              {monthlyLoading ? "—" : formatCurrency(monthlyPayroll + monthlyBills)}
+            </p>
+            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
+              Workforce + bills · {currentMonthLabel}
+            </p>
+          </div>
         </div>
       </Card>
 
