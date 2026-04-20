@@ -2327,10 +2327,10 @@ function InvoiceDetailDrawer({
                           <button
                             type="button"
                             onClick={() => { setDueDateModalDate(String(invoice.due_date ?? "").slice(0, 10)); setDueDateModalReason(""); setDueDateModalOpen(true); }}
-                            className="shrink-0 rounded p-0.5 text-text-tertiary/50 hover:text-primary transition-colors"
+                            className="shrink-0 rounded border border-border bg-white px-1 py-0.5 text-[9px] font-medium text-text-secondary hover:border-primary/40 hover:text-primary transition-colors"
                             title="Change due date"
                           >
-                            <PenLine className="h-3 w-3" />
+                            Edit
                           </button>
                         )}
                       </div>
@@ -2357,26 +2357,28 @@ function InvoiceDetailDrawer({
                           <button type="button" onClick={() => setEditingAmount(false)} className="rounded px-1 py-0.5 text-[11px] text-text-tertiary hover:text-text-secondary">✕</button>
                         </div>
                       ) : (
-                        <div className="group/amt flex items-baseline gap-[6px]">
-                          <span
-                            className="tabular-nums text-[13px] font-semibold text-[#1C1917]"
-                            style={{ letterSpacing: "-0.2px" }}
-                          >
-                            {formatCurrency(invoice.amount)}
-                          </span>
+                        <div className="flex flex-col items-end gap-0.5">
+                          <div className="flex items-center gap-1">
+                            <span
+                              className="tabular-nums text-[13px] font-semibold text-[#1C1917]"
+                              style={{ letterSpacing: "-0.2px" }}
+                            >
+                              {formatCurrency(invoice.amount)}
+                            </span>
+                            {canEditFields && (
+                              <button
+                                type="button"
+                                onClick={() => { setEditAmountValue(String(Number(invoice.amount ?? 0))); setEditingAmount(true); }}
+                                className="rounded border border-border bg-white px-1 py-0.5 text-[9px] font-medium text-text-secondary hover:border-primary/40 hover:text-primary transition-colors"
+                                title="Edit amount"
+                              >
+                                Edit
+                              </button>
+                            )}
+                          </div>
                           <span className="whitespace-nowrap text-[9px] text-text-tertiary">
                             incl. {formatCurrency(breakdownVat)} VAT
                           </span>
-                          {canEditFields && (
-                            <button
-                              type="button"
-                              onClick={() => { setEditAmountValue(String(Number(invoice.amount ?? 0))); setEditingAmount(true); }}
-                              className="rounded p-0.5 text-text-tertiary/50 hover:text-primary transition-colors"
-                              title="Edit amount"
-                            >
-                              <PenLine className="h-3 w-3" />
-                            </button>
-                          )}
                         </div>
                       )}
                     </div>
