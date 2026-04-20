@@ -378,6 +378,22 @@ export default function AccountsPage() {
         <Badge variant="outline" size="sm">{item.payment_terms}</Badge>
       ),
     },
+    {
+      key: "payment_terms",
+      label: "Next payment",
+      render: (item) => {
+        if (!item.payment_terms) return <span className="text-text-tertiary text-xs">—</span>;
+        const iso = dueDateIsoFromPaymentTerms(new Date(), item.payment_terms);
+        const d = new Date(iso + "T12:00:00");
+        const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+        const isOverdue = d < new Date();
+        return (
+          <span className={cn("text-xs font-medium tabular-nums", isOverdue ? "text-red-500" : "text-text-primary")}>
+            {label}
+          </span>
+        );
+      },
+    },
   ];
 
   return (
