@@ -12,6 +12,7 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { SearchInput, Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
+import { Drawer } from "@/components/ui/drawer";
 import { Tabs } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
@@ -640,6 +641,7 @@ function AccountDetailDrawer({
   const contractFileRef = useRef<HTMLInputElement>(null);
   /** Frontend-only until backend adds billing_type column. */
   const [billingType, setBillingType] = useState<"end_client" | "account">("end_client");
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
   const [edit, setEdit] = useState({
     company_name: "",
     contact_name: "",
@@ -853,36 +855,57 @@ function AccountDetailDrawer({
   const overdueAmt  = invoices.filter((i) => i.status === "overdue").reduce((s, i) => s + Number(i.amount), 0);
 
   return (
-    <Modal
+    <>
+    <Drawer
       open
       onClose={onClose}
       title={account.company_name}
       subtitle={`Corporate account · ${clientsTotal} clients · ${jobs.length} jobs`}
-      size="lg"
-      className="max-w-2xl"
-      scrollBody={false}
+      width="w-[min(580px,calc(100vw-1rem))]"
+      footer={
+        isAdmin && tab === "overview" ? (
+          <div className="flex items-center justify-between px-5 py-4">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-sm font-medium text-[#ED4B00] hover:text-[#ED4B00]/80 transition-colors"
+              onClick={() => toast.info("Archive not yet implemented")}
+            >
+              <Archive className="h-3.5 w-3.5" />
+              Archive account
+            </button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+              <Button
+                size="sm"
+                disabled={saving}
+                onClick={() => void handleSave()}
+                icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              >
+                {saving ? "Saving…" : "Save changes"}
+              </Button>
+            </div>
+          </div>
+        ) : undefined
+      }
     >
-      <div className="flex flex-col" style={{ maxHeight: "calc(min(85vh, 860px) - 4rem)" }}>
-        {/* ── Tabs ──────────────────────────────────────────────────── */}
-        <div className="shrink-0 border-b border-border-light px-4 sm:px-5 pt-1 pb-0 bg-surface">
-          <Tabs
-            variant="default"
-            className="w-full"
-            activeTab={tab}
-            onChange={setTab}
-            tabs={[
-              { id: "overview", label: "Overview" },
-              { id: "clients",  label: "Clients",  count: clientsTotal || undefined },
-              { id: "jobs",     label: "Jobs",      count: jobs.length || undefined },
-              { id: "finance",  label: "Finance",   count: invoices.length || undefined },
-              { id: "portal",   label: "Portal users" },
-            ]}
-          />
-        </div>
+      {/* ── Tabs ─────────────────────────────────────────────────────── */}
+      <div className="sticky top-0 z-10 bg-surface border-b border-border-light px-4 sm:px-5 pt-1 pb-0">
+        <Tabs
+          variant="default"
+          className="w-full"
+          activeTab={tab}
+          onChange={setTab}
+          tabs={[
+            { id: "overview", label: "Overview" },
+            { id: "clients",  label: "Clients",  count: clientsTotal || undefined },
+            { id: "jobs",     label: "Jobs",      count: jobs.length || undefined },
+            { id: "finance",  label: "Finance",   count: invoices.length || undefined },
+            { id: "portal",   label: "Portal users" },
+          ]}
+        />
+      </div>
 
-        {/* ── Scrollable content ────────────────────────────────────── */}
-        <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="px-4 sm:px-5 py-4 space-y-4">
+      <div className="px-4 sm:px-5 py-4 space-y-4">
 
         {/* ── Overview tab ─────────────────────────────────────────── */}
         {tab === "overview" && (
@@ -983,10 +1006,16 @@ function AccountDetailDrawer({
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
                     Payment Terms <span className="text-[#ED4B00]">*</span>
                   </label>
-                  <PaymentTermsBuilder
-                    value={edit.payment_terms}
-                    onChange={(v) => setEdit((p) => ({ ...p, payment_terms: v }))}
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setTermsModalOpen(true)}
+                    className="w-full flex items-center justify-between rounded-xl border border-border-light bg-surface-hover px-3 py-2.5 hover:bg-surface-tertiary transition-colors text-left"
+                  >
+                    <span className="text-sm font-medium text-text-primary">
+                      {edit.payment_terms ? shortenPaymentTerms(edit.payment_terms) : <span className="text-text-tertiary">Set payment terms…</span>}
+                    </span>
+                    <span className="text-[10px] font-semibold text-primary uppercase tracking-wide">Edit</span>
+                  </button>
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
@@ -1397,36 +1426,17 @@ function AccountDetailDrawer({
           <PortalUsersTabSection accountId={account.id} accountName={account.company_name} />
         )}
 
-        </div>{/* end scrollable px-5 content */}
-        </div>{/* end flex-1 overflow-y-auto */}
+      </div>
+    </Drawer>
 
-        {/* ── Sticky footer ─────────────────────────────────────────── */}
-        {isAdmin && tab === "overview" && (
-          <div className="shrink-0 border-t border-border-light bg-surface flex items-center justify-between px-5 py-4">
-            <button
-              type="button"
-              className="flex items-center gap-1.5 text-sm font-medium text-[#ED4B00] hover:text-[#ED4B00]/80 transition-colors"
-              onClick={() => toast.info("Archive not yet implemented")}
-            >
-              <Archive className="h-3.5 w-3.5" />
-              Archive account
-            </button>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
-              <Button
-                size="sm"
-                disabled={saving}
-                onClick={() => void handleSave()}
-                icon={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              >
-                {saving ? "Saving…" : "Save changes"}
-              </Button>
-            </div>
-          </div>
-        )}
-
-      </div>{/* end flex-col */}
-    </Modal>
+    {/* ── Payment Terms Modal ───────────────────────────────────────── */}
+    <PaymentTermsModal
+      open={termsModalOpen}
+      value={edit.payment_terms}
+      onClose={() => setTermsModalOpen(false)}
+      onSave={(v) => { setEdit((p) => ({ ...p, payment_terms: v })); setTermsModalOpen(false); }}
+    />
+    </>
   );
 }
 
@@ -1614,6 +1624,42 @@ function shortenPaymentTerms(t: string | null | undefined): string {
   if (net) return `Net ${net[1]}`;
   if (/45\s*days/i.test(s)) return "Net 45";
   return s.length > 14 ? s.slice(0, 12) + "…" : s;
+}
+
+// ─── PaymentTermsModal ────────────────────────────────────────────────────
+function PaymentTermsModal({
+  open, value, onClose, onSave,
+}: { open: boolean; value: string; onClose: () => void; onSave: (v: string) => void }) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => { if (open) setLocal(value); }, [open, value]);
+
+  const iso = local ? dueDateIsoFromPaymentTerms(new Date(), local) : null;
+  const nextLabel = iso
+    ? new Date(iso + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+    : null;
+
+  return (
+    <Modal open={open} onClose={onClose} title="Payment Terms" size="md" rootClassName="z-[60]">
+      <div className="px-5 py-4 space-y-4">
+        <PaymentTermsBuilder value={local} onChange={setLocal} />
+
+        {nextLabel && (
+          <div className="flex items-center gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
+            <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0" />
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">Next payment date</p>
+              <p className="text-sm font-semibold text-[#020040]">{nextLabel}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => onSave(local)}>Apply</Button>
+        </div>
+      </div>
+    </Modal>
+  );
 }
 
 // ─── PaymentTermsBuilder ───────────────────────────────────────────────────
