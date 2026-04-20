@@ -68,12 +68,12 @@ export async function POST(req: NextRequest) {
 
   // ── 2. Jobs (reference + scheduled_date + account_id + client_id) ─────────
   const jobRefs = [...new Set(invoices.map((i) => i.job_reference as string))];
-  type JobRow = { reference: string; scheduled_date: string | null; account_id: string | null; client_id: string | null };
+  type JobRow = { reference: string; scheduled_date: string | null; created_at: string | null; account_id: string | null; client_id: string | null };
   const allJobs: JobRow[] = [];
   for (let i = 0; i < jobRefs.length; i += CHUNK) {
     const { data: chunk } = await admin
       .from("jobs")
-      .select("reference, scheduled_date, account_id, client_id")
+      .select("reference, scheduled_date, created_at, account_id, client_id")
       .in("reference", jobRefs.slice(i, i + CHUNK));
     if (chunk) allJobs.push(...(chunk as JobRow[]));
   }
@@ -126,7 +126,8 @@ export async function POST(req: NextRequest) {
 
   for (const inv of invoices) {
     const job = jobByRef[inv.job_reference as string];
-    if (!job?.scheduled_date) { noScheduledDate++; continue; }
+    const anchorStr = job?.scheduled_date ?? job?.created_at ?? null;
+    if (!anchorStr) { noScheduledDate++; continue; }
 
     // Resolve account: invoice direct → job direct → client fallback
     const accountId =
@@ -137,7 +138,7 @@ export async function POST(req: NextRequest) {
     const account = accountId ? accountById[accountId] : undefined;
     if (!account?.payment_terms) { noAccount++; continue; }
 
-    const anchor = new Date(job.scheduled_date + "T12:00:00");
+    const anchor = new Date(anchorStr.length === 10 ? anchorStr + "T12:00:00" : anchorStr);
     const newDueDate = dueDateIsoFromPaymentTerms(anchor, account.payment_terms);
 
     if (newDueDate !== inv.due_date) {
