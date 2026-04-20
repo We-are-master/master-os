@@ -58,17 +58,17 @@ const INDUSTRY_OPTIONS = [
 ];
 
 const PAYMENT_TERMS_OPTIONS = [
-  { value: "Net 7", label: "Net 7" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 60", label: "Net 60" },
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Every 7 days", label: "Every 7 days (weekly invoice)" },
-  { value: "Every 15 days", label: "Every 15 days (weekly invoice)" },
-  { value: "Every 30 days", label: "Every 30 days (weekly invoice)" },
-  { value: "Every Friday", label: "Every Friday (weekly invoice)" },
+  { value: "Due on Receipt",          label: "Due on Receipt" },
+  { value: "Net 7",                   label: "Net 7" },
+  { value: "Net 15",                  label: "Net 15" },
+  { value: "Net 30",                  label: "Net 30" },
+  { value: "Net 45",                  label: "Net 45" },
+  { value: "Net 60",                  label: "Net 60" },
+  { value: "Every 7 days",            label: "Every 7 days" },
+  { value: "Every 15 days",           label: "Every 15 days" },
+  { value: "Every 30 days",           label: "Every 30 days" },
+  { value: "Every Friday",            label: "Every Friday" },
   { value: "Every 2 weeks on Friday", label: "Every 2 weeks on Friday" },
-  { value: "45 days", label: "45 days" },
 ];
 
 const statusConfig: Record<string, { label: string; variant: "success" | "info" | "default" }> = {
