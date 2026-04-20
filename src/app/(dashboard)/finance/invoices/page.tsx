@@ -2134,15 +2134,19 @@ function InvoiceDetailDrawer({
       ? { bg: "#FCEBEB", border: "#EFC7C7", text: "#7A1E1E", dot: "#A32D2D", due: "#A32D2D" }
       : { bg: "var(--status-pending-bg)", border: "var(--status-pending-border)", text: "var(--status-pending-text)", dot: "var(--status-pending-dot)", due: "var(--danger-text)" };
   const statusLead = invoice.status === "paid"
-    ? <span className="inline-flex items-center gap-1"><Check className="h-3 w-3 shrink-0" /> Paid · {formatDate(invoice.paid_date ?? invoice.last_payment_date ?? invoice.due_date)}</span>
+    ? <span className="inline-flex items-center gap-1"><Check className="h-3 w-3 shrink-0" /> Paid</span>
     : invoice.status === "partially_paid"
-      ? `Partial · ${paidPct}% paid`
+      ? `Partial · ${paidPct}%`
       : (invoice.status === "overdue" || isOverdue)
-        ? <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3 w-3 shrink-0" /> Overdue {Math.abs(daysUntilDue)}d</span>
-        : `Pending · Due in ${Math.max(0, daysUntilDue)}d`;
+        ? <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3 w-3 shrink-0" /> Overdue</span>
+        : `Pending`;
   const statusSub = invoice.status === "paid"
-    ? `Paid ${formatDate(invoice.paid_date ?? invoice.last_payment_date ?? invoice.due_date)}`
-    : `Due ${formatDate(invoice.due_date)}`;
+    ? formatDate(invoice.paid_date ?? invoice.last_payment_date ?? invoice.due_date)
+    : (invoice.status === "overdue" || isOverdue)
+      ? `Due ${formatDate(invoice.due_date)} · ${Math.abs(daysUntilDue)}d ago`
+      : daysUntilDue >= 0
+        ? `Due ${formatDate(invoice.due_date)} · ${daysUntilDue}d left`
+        : `Due ${formatDate(invoice.due_date)}`;
   const primaryActionLabel = invoice.status === "paid"
     ? "Send receipt"
     : invoice.status === "partially_paid"
