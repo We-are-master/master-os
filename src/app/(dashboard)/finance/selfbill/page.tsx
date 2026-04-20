@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense, type ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
@@ -231,6 +231,15 @@ type JobLine = Pick<
 // ── Page component ─────────────────────────────────────────────────────────────
 
 export default function SelfBillPage() {
+  // Suspense wrapper required by Next.js for pages that read useSearchParams during prerender.
+  return (
+    <Suspense fallback={null}>
+      <SelfBillPageInner />
+    </Suspense>
+  );
+}
+
+function SelfBillPageInner() {
   const [activeTab, setActiveTab] = useState<SelfBillTab>("draft");
   const [layoutMode, setLayoutMode] = useState<"cards" | "table">("table");
   const [selfBills, setSelfBills] = useState<SelfBill[]>([]);
