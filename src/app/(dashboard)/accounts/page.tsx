@@ -1582,34 +1582,49 @@ const WEEKDAY_LABELS: Record<string, string> = {
   thursday: "Thursday", friday: "Friday", saturday: "Saturday", sunday: "Sunday",
 };
 
-function buildCycleString(freq: "monthly" | "biweekly", cutoffDay: string, cutoffWeekday: string, payWeekday: string): string {
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function buildCycleString(
+  freq: "monthly" | "biweekly",
+  cutoffDay: string,
+  cutoffWeekday: string,
+  payWeekday: string,
+  refDate?: string,
+): string {
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
   if (freq === "monthly") return `Monthly cutoff ${cutoffDay} pay ${cap(payWeekday)}`;
-  return `Every 2 weeks cutoff ${cap(cutoffWeekday)} pay ${cap(payWeekday)}`;
+  const base = `Every 2 weeks cutoff ${cap(cutoffWeekday)} pay ${cap(payWeekday)}`;
+  return refDate ? `${base} ref ${refDate}` : base;
 }
 
 function parseCycleValue(value: string) {
   const isCycle = /monthly\s+cutoff/i.test(value) || /every\s+2\s+weeks?\s+cutoff/i.test(value);
   if (!isCycle) return null;
-  const isbi = /every\s+2\s+weeks/i.test(value);
+  const isbi   = /every\s+2\s+weeks/i.test(value);
   const dMatch = value.match(/monthly\s+cutoff\s+(\d+)/i);
   const wMatch = value.match(/every\s+2\s+weeks?\s+cutoff\s+(\w+)/i);
   const pMatch = value.match(/pay\s+(\w+)/i);
+  const rMatch = value.match(/ref\s+(\d{4}-\d{2}-\d{2})/i);
   return {
     freq: (isbi ? "biweekly" : "monthly") as "monthly" | "biweekly",
-    cutoffDay: dMatch ? dMatch[1] : "26",
+    cutoffDay:     dMatch ? dMatch[1] : "26",
     cutoffWeekday: wMatch ? wMatch[1].toLowerCase() : "wednesday",
-    payWeekday: pMatch ? pMatch[1].toLowerCase() : "friday",
+    payWeekday:    pMatch ? pMatch[1].toLowerCase() : "friday",
+    refDate:       rMatch ? rMatch[1] : undefined,
   };
 }
 
 function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const parsed = parseCycleValue(value);
-  const [mode, setMode] = useState<"standard" | "cycle">(parsed ? "cycle" : "standard");
-  const [freq, setFreq] = useState<"monthly" | "biweekly">(parsed?.freq ?? "monthly");
-  const [cutoffDay, setCutoffDay] = useState(parsed?.cutoffDay ?? "26");
+  const [mode,          setMode]          = useState<"standard" | "cycle">(parsed ? "cycle" : "standard");
+  const [freq,          setFreq]          = useState<"monthly" | "biweekly">(parsed?.freq ?? "monthly");
+  const [cutoffDay,     setCutoffDay]     = useState(parsed?.cutoffDay ?? "26");
   const [cutoffWeekday, setCutoffWeekday] = useState(parsed?.cutoffWeekday ?? "wednesday");
-  const [payWeekday, setPayWeekday] = useState(parsed?.payWeekday ?? "friday");
+  const [payWeekday,    setPayWeekday]    = useState(parsed?.payWeekday ?? "friday");
+  const [refDate,       setRefDate]       = useState(parsed?.refDate ?? "");
 
   useEffect(() => {
     const p = parseCycleValue(value);
@@ -1619,10 +1634,15 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
       setCutoffDay(p.cutoffDay);
       setCutoffWeekday(p.cutoffWeekday);
       setPayWeekday(p.payWeekday);
+      if (p.refDate) setRefDate(p.refDate);
     } else {
       setMode("standard");
     }
   }, [value]);
+
+  const emit = (
+    f = freq, cd = cutoffDay, cw = cutoffWeekday, pw = payWeekday, rd = refDate,
+  ) => onChange(buildCycleString(f, cd, cw, pw, rd || undefined));
 
   return (
     <div className="space-y-2.5">
@@ -1633,11 +1653,8 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
             type="button"
             onClick={() => {
               setMode(m);
-              if (m === "standard") {
-                onChange("Net 30");
-              } else {
-                onChange(buildCycleString(freq, cutoffDay, cutoffWeekday, payWeekday));
-              }
+              if (m === "standard") onChange("Net 30");
+              else emit();
             }}
             className={cn(
               "px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors",
@@ -1663,14 +1680,14 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
             <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Billing cycle</label>
             <Select
               options={[
-                { value: "monthly", label: "Monthly" },
-                { value: "biweekly", label: "Every 2 weeks" },
+                { value: "monthly",   label: "Monthly" },
+                { value: "biweekly",  label: "Every 2 weeks" },
               ]}
               value={freq}
               onChange={(e) => {
                 const f = e.target.value as "monthly" | "biweekly";
                 setFreq(f);
-                onChange(buildCycleString(f, cutoffDay, cutoffWeekday, payWeekday));
+                emit(f);
               }}
             />
           </div>
@@ -1684,24 +1701,37 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
                   label: `Day ${i + 1}`,
                 }))}
                 value={cutoffDay}
-                onChange={(e) => {
-                  setCutoffDay(e.target.value);
-                  onChange(buildCycleString("monthly", e.target.value, cutoffWeekday, payWeekday));
-                }}
+                onChange={(e) => { setCutoffDay(e.target.value); emit(freq, e.target.value); }}
               />
             </div>
           ) : (
-            <div>
-              <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Cut-off weekday</label>
-              <Select
-                options={WEEKDAYS.map((w) => ({ value: w, label: WEEKDAY_LABELS[w] }))}
-                value={cutoffWeekday}
-                onChange={(e) => {
-                  setCutoffWeekday(e.target.value);
-                  onChange(buildCycleString("biweekly", cutoffDay, e.target.value, payWeekday));
-                }}
-              />
-            </div>
+            <>
+              <div>
+                <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">Cut-off weekday</label>
+                <Select
+                  options={WEEKDAYS.map((w) => ({ value: w, label: WEEKDAY_LABELS[w] }))}
+                  value={cutoffWeekday}
+                  onChange={(e) => { setCutoffWeekday(e.target.value); emit(freq, cutoffDay, e.target.value); }}
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-medium text-text-tertiary uppercase mb-1">
+                  Last cutoff date
+                  <span className="ml-1 normal-case font-normal text-text-tertiary">(sets the exact 2-week rhythm)</span>
+                </label>
+                <Input
+                  type="date"
+                  value={refDate}
+                  onChange={(e) => { setRefDate(e.target.value); emit(freq, cutoffDay, cutoffWeekday, payWeekday, e.target.value); }}
+                  className={cn(!refDate && "border-amber-400")}
+                />
+                {!refDate && (
+                  <p className="text-[10px] text-amber-600 mt-1">
+                    Without a reference date the cycle rhythm may be off by a week — enter the last {WEEKDAY_LABELS[cutoffWeekday]} when this client was billed.
+                  </p>
+                )}
+              </div>
+            </>
           )}
 
           <div>
@@ -1709,17 +1739,14 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
             <Select
               options={WEEKDAYS.map((w) => ({ value: w, label: WEEKDAY_LABELS[w] }))}
               value={payWeekday}
-              onChange={(e) => {
-                setPayWeekday(e.target.value);
-                onChange(buildCycleString(freq, cutoffDay, cutoffWeekday, e.target.value));
-              }}
+              onChange={(e) => { setPayWeekday(e.target.value); emit(freq, cutoffDay, cutoffWeekday, e.target.value); }}
             />
           </div>
 
           <div className="rounded-lg bg-[#020040]/5 border border-[#020040]/15 px-3 py-2">
             <p className="text-[10px] font-medium text-[#020040]/60 uppercase mb-0.5">Encoded as</p>
             <p className="text-xs font-mono font-semibold text-[#020040]">
-              {buildCycleString(freq, cutoffDay, cutoffWeekday, payWeekday)}
+              {buildCycleString(freq, cutoffDay, cutoffWeekday, payWeekday, refDate || undefined)}
             </p>
           </div>
         </div>

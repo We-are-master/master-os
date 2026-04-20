@@ -84,18 +84,33 @@ export function dueDateIsoFromPaymentTerms(base: Date, paymentTerms: string | nu
     return nextWeekdayOnOrAfter(cutoffDate, payWeekday);
   }
 
-  // ── Cycle-based: "Every 2 weeks cutoff Weekday pay Weekday" ──────────────
-  // e.g. "Every 2 weeks cutoff Wednesday pay Friday"
-  // Jobs completed ≤ cutoff weekday → next pay weekday of this cycle
-  // Jobs completed > cutoff weekday → skip 14 days → next pay weekday
-  const biweeklyCutoff = raw.match(/every\s+2\s+weeks?\s+cutoff\s+(\w+)\s+pay\s+(\w+)/i);
+  // ── Cycle-based: "Every 2 weeks cutoff Weekday pay Weekday [ref YYYY-MM-DD]"
+  // Optional "ref" anchor date makes the 14-day rhythm deterministic.
+  // Without it, falls back to weekday-comparison heuristic (may be off by a week).
+  const biweeklyCutoff = raw.match(/every\s+2\s+weeks?\s+cutoff\s+(\w+)\s+pay\s+(\w+)(?:\s+ref\s+(\d{4}-\d{2}-\d{2}))?/i);
   if (biweeklyCutoff) {
     const cutoffWeekday = biweeklyCutoff[1].toLowerCase();
-    const payWeekday = biweeklyCutoff[2].toLowerCase();
+    const payWeekday   = biweeklyCutoff[2].toLowerCase();
+    const refStr       = biweeklyCutoff[3];
+
+    if (refStr) {
+      // Precise path: count 14-day periods from refDate to base
+      const refDate  = new Date(refStr + "T00:00:00");
+      const baseLocal = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+      const daysDiff  = Math.round((baseLocal.getTime() - refDate.getTime()) / 86_400_000);
+      if (daysDiff >= 0) {
+        const periods   = Math.ceil(daysDiff / 14);  // 0 when base==refDate
+        const nextCutoff = addDaysLocal(refDate, periods * 14);
+        return nextWeekdayOnOrAfter(nextCutoff, payWeekday);
+      }
+      // base is before refDate — fall through to heuristic
+    }
+
+    // Heuristic fallback (no ref date stored)
     const cutoffNum = WEEKDAY_NAMES.indexOf(cutoffWeekday as typeof WEEKDAY_NAMES[number]);
     if (cutoffNum !== -1) {
       // Mon-based comparison: Mon=0…Sun=6
-      const normalBase = (base.getDay() + 6) % 7;
+      const normalBase   = (base.getDay() + 6) % 7;
       const normalCutoff = (cutoffNum + 6) % 7;
       const anchor = normalBase > normalCutoff ? addDaysLocal(base, 14) : base;
       return nextWeekdayOnOrAfter(anchor, payWeekday);
