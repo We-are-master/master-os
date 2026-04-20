@@ -48,8 +48,8 @@ export function invoiceIsDerivedOverdue(inv: Invoice, todayYmd: string): boolean
 
 export function invoiceMatchesFinanceTab(inv: Invoice, tab: InvoiceFinanceTab): boolean {
   const todayYmd = invoiceFinanceListTodayYmd();
-  /** "All" = every active row except cancelled (cancelled has its own tab). */
-  if (tab === "all") return inv.status !== "cancelled";
+  /** "All" = draft + awaiting + overdue only. Paid and cancelled have their own tabs. */
+  if (tab === "all") return inv.status !== "cancelled" && inv.status !== "paid";
   if (tab === "draft") return inv.status === "draft";
   if (tab === "paid") return inv.status === "paid";
   if (tab === "cancelled") return inv.status === "cancelled";
@@ -68,4 +68,15 @@ export function isAwaitingPaymentTabStatus(status: Invoice["status"]): boolean {
 /** Any invoice still being collected, including DB `overdue` (highlights, quick actions, group totals). */
 export function isAwaitingPaymentInvoiceStatus(status: Invoice["status"]): boolean {
   return AWAITING_STATUSES.has(status) || status === "overdue";
+}
+
+/**
+ * Effective display status: returns `"overdue"` when the invoice is past its due date
+ * even if the DB status is still `"pending"` / `"partially_paid"` / `"audit_required"`.
+ * Does not persist — for UI display and filtering only.
+ */
+export function getEffectiveStatus(inv: Invoice): Invoice["status"] {
+  const todayYmd = invoiceFinanceListTodayYmd();
+  if (invoiceIsDerivedOverdue(inv, todayYmd)) return "overdue";
+  return inv.status;
 }
