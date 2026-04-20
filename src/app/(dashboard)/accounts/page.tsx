@@ -159,7 +159,8 @@ export default function AccountsPage() {
   /** Resolve account_owner_id → name in the main table (same directory as job/account owner pickers). */
   const [accountOwnerDirectory, setAccountOwnerDirectory] = useState<AssignableUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  useProfile();
+  const { profile } = useProfile();
+  const isAdmin = profile?.role === "admin";
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
 
   const [totalRevenue, setTotalRevenue] = useState(0);
@@ -169,6 +170,9 @@ export default function AccountsPage() {
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const loadKpis = useCallback(async () => {
     try {
@@ -202,6 +206,25 @@ export default function AccountsPage() {
   }, [createOpen]);
 
   const avgDeal = totalAccounts > 0 ? Math.round(totalRevenue / totalAccounts) : 0;
+
+  const handleSyncDueDates = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/admin/invoices/recalculate-due-dates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: false }),
+      });
+      const json = await res.json().catch(() => ({})) as { updated?: number; skipped?: number; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Failed");
+      toast.success(`Updated ${json.updated ?? 0} invoice${(json.updated ?? 0) !== 1 ? "s" : ""}${json.skipped ? ` · ${json.skipped} unchanged` : ""}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+      setSyncOpen(false);
+    }
+  };
 
   const accountListTabs = useMemo(
     () =>
@@ -401,6 +424,11 @@ export default function AccountsPage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Accounts" subtitle="Manage corporate client accounts and billing.">
+          {isAdmin && (
+            <Button size="sm" variant="outline" icon={<Receipt className="h-3.5 w-3.5" />} onClick={() => setSyncOpen(true)}>
+              Sync due dates
+            </Button>
+          )}
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Account</Button>
         </PageHeader>
 
@@ -465,6 +493,28 @@ export default function AccountsPage() {
           loadKpis();
         }}
       />
+
+      {/* ── Sync due dates confirmation ───────────────────────────── */}
+      <Modal open={syncOpen} onClose={() => !syncing && setSyncOpen(false)} title="Sync invoice due dates" size="sm">
+        <div className="px-5 py-4 space-y-4">
+          <p className="text-sm text-text-secondary">
+            This will recalculate the <strong>due date</strong> of all unpaid invoices using each job&apos;s scheduled date + the linked account&apos;s payment terms.
+          </p>
+          <ul className="text-xs text-text-tertiary space-y-1 pl-3 list-disc">
+            <li>Only affects invoices with status <strong>draft, pending, overdue</strong></li>
+            <li>Invoices with no linked job or no payment terms are skipped</li>
+            <li>Paid and cancelled invoices are never touched</li>
+          </ul>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={() => setSyncOpen(false)} disabled={syncing}>Cancel</Button>
+            <Button size="sm" disabled={syncing} onClick={() => void handleSyncDueDates()}
+              icon={syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
+            >
+              {syncing ? "Updating…" : "Update all invoices"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Account" subtitle="Add a new corporate client account.">
         <form onSubmit={handleCreate} className="px-6 py-5 space-y-4">
