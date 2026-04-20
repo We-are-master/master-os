@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 const ADMIN_ROLES = new Set(["admin", "manager"]);
 const SKIP_STATUSES = new Set(["paid", "cancelled"]);
+const CHUNK = 200;
 
 /**
  * POST /api/admin/invoices/recalculate-due-dates
@@ -16,8 +17,12 @@ const SKIP_STATUSES = new Set(["paid", "cancelled"]);
  * Recalculates due_date for all non-paid/cancelled invoices using:
  *   job.scheduled_date + account.payment_terms → dueDateIsoFromPaymentTerms
  *
- * Returns { updated, skipped, changes[] } where changes lists every
- * invoice whose due_date was (or would be) modified.
+ * Account resolution order per invoice:
+ *   1. invoice.source_account_id (consolidated weekly invoices)
+ *   2. job.account_id (denormalised shortcut, often null on older jobs)
+ *   3. job.client_id → clients.source_account_id (most reliable fallback)
+ *
+ * Returns { updated, skipped, noAccount, sameDate, changes[] }
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -42,7 +47,7 @@ export async function POST(req: NextRequest) {
 
   const admin = createServiceClient();
 
-  // 1. Fetch all eligible invoices (not paid/cancelled, has job_reference, not deleted)
+  // ── 1. Eligible invoices ──────────────────────────────────────────────────
   const { data: rawInvoices, error: invErr } = await admin
     .from("invoices")
     .select("id, reference, job_reference, due_date, source_account_id, status")
@@ -57,60 +62,80 @@ export async function POST(req: NextRequest) {
   const invoices = (rawInvoices ?? []).filter(
     (i) => !SKIP_STATUSES.has(i.status as string),
   );
-
   if (invoices.length === 0) {
-    return NextResponse.json({ updated: 0, skipped: 0, changes: [] });
+    return NextResponse.json({ updated: 0, skipped: 0, noAccount: 0, sameDate: 0, changes: [] });
   }
 
-  // 2. Fetch jobs for all referenced job references
+  // ── 2. Jobs (reference + scheduled_date + account_id + client_id) ─────────
   const jobRefs = [...new Set(invoices.map((i) => i.job_reference as string))];
-  const JOB_CHUNK = 200;
-  const allJobs: { reference: string; scheduled_date: string | null; account_id: string | null }[] = [];
-  for (let i = 0; i < jobRefs.length; i += JOB_CHUNK) {
-    const slice = jobRefs.slice(i, i + JOB_CHUNK);
+  type JobRow = { reference: string; scheduled_date: string | null; account_id: string | null; client_id: string | null };
+  const allJobs: JobRow[] = [];
+  for (let i = 0; i < jobRefs.length; i += CHUNK) {
     const { data: chunk } = await admin
       .from("jobs")
-      .select("reference, scheduled_date, account_id")
-      .in("reference", slice);
-    if (chunk) allJobs.push(...(chunk as typeof allJobs));
+      .select("reference, scheduled_date, account_id, client_id")
+      .in("reference", jobRefs.slice(i, i + CHUNK));
+    if (chunk) allJobs.push(...(chunk as JobRow[]));
   }
-
   const jobByRef = Object.fromEntries(allJobs.map((j) => [j.reference, j]));
 
-  // 3. Fetch accounts for all account_ids
-  const rawAccountIds = [
-    ...new Set([
-      ...allJobs.map((j) => j.account_id),
-      ...invoices.map((i) => i.source_account_id as string | null | undefined),
-    ].filter((id): id is string => !!id)),
-  ];
+  // ── 3. Clients → source_account_id (fallback for jobs without account_id) ─
+  const clientIds = [...new Set(
+    allJobs.filter((j) => !j.account_id).map((j) => j.client_id).filter((id): id is string => !!id),
+  )];
 
-  const ACC_CHUNK = 200;
-  const allAccounts: { id: string; payment_terms: string | null }[] = [];
-  for (let i = 0; i < rawAccountIds.length; i += ACC_CHUNK) {
-    const slice = rawAccountIds.slice(i, i + ACC_CHUNK);
+  type ClientRow = { id: string; source_account_id: string | null };
+  const allClients: ClientRow[] = [];
+  for (let i = 0; i < clientIds.length; i += CHUNK) {
+    const { data: chunk } = await admin
+      .from("clients")
+      .select("id, source_account_id")
+      .in("id", clientIds.slice(i, i + CHUNK));
+    if (chunk) allClients.push(...(chunk as ClientRow[]));
+  }
+  const accountIdByClientId = Object.fromEntries(
+    allClients
+      .filter((c) => c.source_account_id)
+      .map((c) => [c.id, c.source_account_id as string]),
+  );
+
+  // ── 4. Accounts ───────────────────────────────────────────────────────────
+  const rawAccountIds = [...new Set([
+    ...allJobs.map((j) => j.account_id),
+    ...allClients.map((c) => c.source_account_id),
+    ...invoices.map((i) => i.source_account_id as string | null | undefined),
+  ].filter((id): id is string => !!id))];
+
+  type AccountRow = { id: string; payment_terms: string | null };
+  const allAccounts: AccountRow[] = [];
+  for (let i = 0; i < rawAccountIds.length; i += CHUNK) {
     const { data: chunk } = await admin
       .from("accounts")
       .select("id, payment_terms")
-      .in("id", slice);
-    if (chunk) allAccounts.push(...(chunk as typeof allAccounts));
+      .in("id", rawAccountIds.slice(i, i + CHUNK));
+    if (chunk) allAccounts.push(...(chunk as AccountRow[]));
   }
-
   const accountById = Object.fromEntries(allAccounts.map((a) => [a.id, a]));
 
-  // 4. Compute new due dates
+  // ── 5. Compute new due dates ──────────────────────────────────────────────
   type Change = { id: string; reference: string; old_due_date: string; new_due_date: string };
   const changes: Change[] = [];
-  let skipped = 0;
+  let noScheduledDate = 0;
+  let noAccount = 0;
+  let sameDate = 0;
 
   for (const inv of invoices) {
     const job = jobByRef[inv.job_reference as string];
-    if (!job?.scheduled_date) { skipped++; continue; }
+    if (!job?.scheduled_date) { noScheduledDate++; continue; }
 
-    const account =
-      accountById[job.account_id ?? ""] ??
-      (inv.source_account_id ? accountById[inv.source_account_id as string] : undefined);
-    if (!account?.payment_terms) { skipped++; continue; }
+    // Resolve account: invoice direct → job direct → client fallback
+    const accountId =
+      (inv.source_account_id as string | null) ||
+      job.account_id ||
+      (job.client_id ? accountIdByClientId[job.client_id] : null);
+
+    const account = accountId ? accountById[accountId] : undefined;
+    if (!account?.payment_terms) { noAccount++; continue; }
 
     const anchor = new Date(job.scheduled_date + "T12:00:00");
     const newDueDate = dueDateIsoFromPaymentTerms(anchor, account.payment_terms);
@@ -123,26 +148,25 @@ export async function POST(req: NextRequest) {
         new_due_date: newDueDate,
       });
     } else {
-      skipped++;
+      sameDate++;
     }
   }
 
   if (dryRun) {
-    return NextResponse.json({ updated: 0, skipped, changes, dryRun: true });
+    return NextResponse.json({ updated: 0, noScheduledDate, noAccount, sameDate, changes, dryRun: true });
   }
 
-  // 5. Batch update — update in chunks to avoid long transactions
+  // ── 6. Batch update ───────────────────────────────────────────────────────
   const UPDATE_CHUNK = 50;
   let updatedCount = 0;
   for (let i = 0; i < changes.length; i += UPDATE_CHUNK) {
-    const slice = changes.slice(i, i + UPDATE_CHUNK);
     await Promise.all(
-      slice.map((c) =>
+      changes.slice(i, i + UPDATE_CHUNK).map((c) =>
         admin.from("invoices").update({ due_date: c.new_due_date }).eq("id", c.id),
       ),
     );
-    updatedCount += slice.length;
+    updatedCount += UPDATE_CHUNK;
   }
 
-  return NextResponse.json({ updated: updatedCount, skipped, changes });
+  return NextResponse.json({ updated: updatedCount, noScheduledDate, noAccount, sameDate, changes });
 }
