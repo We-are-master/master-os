@@ -2351,9 +2351,12 @@ function InvoiceDetailDrawer({
                           </div>
                         </div>
                       ) : (
-                        <div className="group/amt flex flex-col items-end gap-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-[22px] font-semibold text-text-primary tabular-nums">{formatCurrency(invoice.amount)}</p>
+                        <div className="group/amt flex flex-col items-end gap-0">
+                          <div className="flex items-center gap-1">
+                            <p className="text-[13px] font-semibold text-text-primary tabular-nums leading-none">
+                              {formatCurrency(invoice.amount).replace(/\.\d{2}$/, '')}
+                              <span className="text-[10px] font-medium text-text-secondary">{formatCurrency(invoice.amount).slice(-3)}</span>
+                            </p>
                             {canEditFields && (
                               <button
                                 type="button"
@@ -2361,11 +2364,11 @@ function InvoiceDetailDrawer({
                                 className="opacity-0 group-hover/amt:opacity-100 rounded p-0.5 text-text-tertiary hover:text-primary transition-opacity"
                                 title="Edit amount"
                               >
-                                <PenLine className="h-3.5 w-3.5" />
+                                <PenLine className="h-3 w-3" />
                               </button>
                             )}
                           </div>
-                          <p className="text-[11px] text-text-secondary">Incl. {formatCurrency(breakdownVat)} VAT</p>
+                          <p className="whitespace-nowrap text-[9px] text-text-tertiary">Incl. {formatCurrency(breakdownVat)} VAT</p>
                         </div>
                       )}
                     </div>
@@ -2375,25 +2378,34 @@ function InvoiceDetailDrawer({
                 <div>
                   <div className="rounded-t-[10px] border border-border border-b-0 bg-card">
                     <div className="grid grid-cols-3 divide-x divide-border">
-                      <div className="px-3 py-3">
-                        <p className="text-[11px] font-semibold uppercase text-[#6B7280]">TOTAL PRICE</p>
-                        <p className="mt-1 text-[22px] font-semibold text-text-primary">{formatCurrency(invoice.amount)}</p>
+                      <div className="px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6B7280]">TOTAL PRICE</p>
+                        <p className="mt-1 text-[14px] font-semibold text-text-primary tabular-nums leading-tight">
+                          {formatCurrency(invoice.amount).replace(/\.\d{2}$/, '')}
+                          <span className="text-[10px] font-medium text-[#9CA3AF]">{formatCurrency(invoice.amount).slice(-3)}</span>
+                        </p>
                       </div>
-                      <div className="px-3 py-3">
-                        <p className="text-[11px] font-semibold uppercase text-[#6B7280]">YOUR COST</p>
-                        <p className="mt-1 text-[22px] font-semibold text-text-primary">{formatCurrency(partnerCostValue)}</p>
+                      <div className="px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6B7280]">YOUR COST</p>
+                        <p className="mt-1 text-[14px] font-semibold text-text-primary tabular-nums leading-tight">
+                          {formatCurrency(partnerCostValue).replace(/\.\d{2}$/, '')}
+                          <span className="text-[10px] font-medium text-[#9CA3AF]">{formatCurrency(partnerCostValue).slice(-3)}</span>
+                        </p>
                       </div>
-                      <div className="bg-[#EFF7F3] px-3 py-3">
-                        <p className="text-[11px] font-semibold uppercase text-[#6B7280]">MARGIN %</p>
-                        <p className="mt-1 text-[20px] sm:text-[22px] font-semibold text-[#0F6E56] leading-tight">
-                          {formatCurrency(feeAmountValue)} · <span className="text-[14px] sm:text-[16px] font-semibold tabular-nums">{marginPct}%</span>
+                      <div className="bg-[#EFF7F3] px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#0F6E56]">MARGIN %</p>
+                        <p className="mt-1 text-[14px] font-semibold text-[#0F6E56] tabular-nums leading-tight">
+                          {formatCurrency(feeAmountValue).replace(/\.\d{2}$/, '')}
+                          <span className="text-[10px] font-medium text-[#0F6E56]/70">{formatCurrency(feeAmountValue).slice(-3)}</span>
+                          {" · "}
+                          <span className="text-[12px] font-semibold">{marginPct}%</span>
                         </p>
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between rounded-b-[10px] border border-border bg-surface-hover/50 px-3 py-2.5">
-                    <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-secondary">
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#EEEDFE] text-[10px] text-[#3C3489]">JS</span>
+                  <div className="flex items-center justify-between rounded-b-[10px] border border-border bg-surface-hover/50 px-4 py-[7px]">
+                    <div className="flex min-w-0 items-center gap-2 text-[10px] text-text-secondary">
+                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-[#EEEDFE] text-[9px] text-[#3C3489]">JS</span>
                       <span className="truncate">
                         Matched SB-{invoice.reference.slice(-4)} · {linkedJob?.partner_name || "Partner"} · <span className="text-emerald-700">✓ Reconciled</span>
                       </span>
