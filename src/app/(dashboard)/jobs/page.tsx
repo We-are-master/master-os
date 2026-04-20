@@ -207,6 +207,8 @@ function ScheduleInProgressLiveSecondary({ job }: { job: Job }) {
     const id = window.setInterval(() => setTick((n) => n + 1), 1000);
     return () => window.clearInterval(id);
   }, [job.id]);
+  // Intentional: 1s setInterval forces a re-render so elapsed seconds stay live.
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
   const secs = jobInProgressDisplayElapsedSeconds(job, now);
   const startIso = job.timer_last_started_at?.trim() || job.partner_timer_started_at?.trim() || "";
@@ -2208,17 +2210,18 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     const targetPct = SUGGESTED_PARTNER_MARGIN_HINT_PCT / 100;
     const nextNum = Math.max(0, Math.round((revenue * (1 - targetPct) - materials) * 100) / 100);
     const next = String(nextNum);
-    setForm((prev) => {
-      const cur = prev.partner_cost.trim();
-      const empty = cur === "";
-      const unchangedFromAuto =
-        lastAutoPartnerCost.current != null && cur === lastAutoPartnerCost.current;
-      if (!empty && !unchangedFromAuto) return prev;
-      if (cur === next) return prev;
-      lastAutoPartnerCost.current = next;
-      return { ...prev, partner_cost: next };
-    });
-  }, [form.job_type, form.client_price, form.materials_cost, accessSurchargePreview]);
+    const cur = form.partner_cost.trim();
+    const empty = cur === "";
+    const unchangedFromAuto =
+      lastAutoPartnerCost.current != null && cur === lastAutoPartnerCost.current;
+    if (!empty && !unchangedFromAuto) return;
+    if (cur === next) return;
+    lastAutoPartnerCost.current = next;
+    // Intentional: syncs the partner_cost field when the suggested 40% margin recomputes.
+    // Guarded by `empty / unchangedFromAuto` so user-edited values are never overwritten.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setForm((prev) => ({ ...prev, partner_cost: next }));
+  }, [form.job_type, form.client_price, form.materials_cost, form.partner_cost, accessSurchargePreview]);
 
   return (
     <Modal
@@ -2436,8 +2439,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                     {!cczEligible && !isHousekeepJob ? "Only EC/WC/W/SW1/SE1 postcodes" : inCczPreview ? "+£15 applied" : "No charge applied"}
                   </p>
                 </div>
-                <span className={cn("h-5 w-9 rounded-full border p-0.5 transition-colors", form.in_ccz && cczEligible ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#cfcac3] bg-white")}>
-                  <span className={cn("block h-3.5 w-3.5 rounded-full bg-white transition-transform", form.in_ccz && cczEligible && "translate-x-4")} />
+                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", form.in_ccz && cczEligible ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
+                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", form.in_ccz && cczEligible && "translate-x-5")} />
                 </span>
               </button>
               <button
@@ -2457,8 +2460,8 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                   <p className="text-sm font-medium text-text-primary">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
                   <p className="text-[11px] text-text-tertiary">{form.has_free_parking ? "No charge applied" : "+£15 applied"}</p>
                 </div>
-                <span className={cn("h-5 w-9 rounded-full border p-0.5 transition-colors", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#cfcac3] bg-white")}>
-                  <span className={cn("block h-3.5 w-3.5 rounded-full bg-white transition-transform", !form.has_free_parking && "translate-x-4")} />
+                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
+                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", !form.has_free_parking && "translate-x-5")} />
                 </span>
               </button>
             </div>

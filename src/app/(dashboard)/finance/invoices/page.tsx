@@ -24,6 +24,8 @@ import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Invoice, InvoiceStatus, Job, JobStatus } from "@/types/database";
 import { createInvoice, updateInvoice, type CreateInvoiceInput } from "@/services/invoices";
+import { updateJob } from "@/services/jobs";
+import { cancelOpenSelfBillsForJobCancellation } from "@/services/self-bills";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
@@ -134,6 +136,9 @@ type InvoiceListJobSnapshot = {
   status: JobStatus;
   scheduled_date?: string | null;
   scheduled_start_at?: string | null;
+  completed_date?: string | null;
+  scheduled_finish_date?: string | null;
+  scheduled_end_at?: string | null;
   property_address?: string | null;
   title?: string | null;
 };
@@ -147,7 +152,7 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, Inv
     const chunk = refs.slice(i, i + CHUNK);
     const { data, error } = await supabase
       .from("jobs")
-      .select("id, reference, status, scheduled_date, scheduled_start_at, property_address, title")
+      .select("id, reference, status, scheduled_date, scheduled_start_at, completed_date, scheduled_finish_date, scheduled_end_at, property_address, title")
       .in("reference", chunk);
     if (error) throw error;
     for (const row of data ?? []) {
@@ -157,6 +162,9 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, Inv
         status?: JobStatus;
         scheduled_date?: string | null;
         scheduled_start_at?: string | null;
+        completed_date?: string | null;
+        scheduled_finish_date?: string | null;
+        scheduled_end_at?: string | null;
         property_address?: string | null;
         title?: string | null;
       };
@@ -168,6 +176,9 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, Inv
           status: r.status,
           scheduled_date: r.scheduled_date,
           scheduled_start_at: r.scheduled_start_at,
+          completed_date: r.completed_date,
+          scheduled_finish_date: r.scheduled_finish_date,
+          scheduled_end_at: r.scheduled_end_at,
           property_address: r.property_address,
           title: r.title,
         };
@@ -242,6 +253,14 @@ function invoiceListCollectedAmount(
 
 function jobDateYmdForInvoiceList(job: InvoiceListJobSnapshot | undefined): string | null {
   if (!job) return null;
+  // Prefer finish date (same anchor as due-date recalculation)
+  const completed = job.completed_date?.trim().slice(0, 10);
+  if (completed && /^\d{4}-\d{2}-\d{2}$/.test(completed)) return completed;
+  const finishDate = job.scheduled_finish_date?.trim().slice(0, 10);
+  if (finishDate && /^\d{4}-\d{2}-\d{2}$/.test(finishDate)) return finishDate;
+  const endAt = job.scheduled_end_at?.trim().slice(0, 10);
+  if (endAt && /^\d{4}-\d{2}-\d{2}$/.test(endAt)) return endAt;
+  // Fallback to start date
   const d = job.scheduled_date?.trim();
   if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
   const iso = job.scheduled_start_at?.trim();
@@ -292,27 +311,22 @@ function computeInvoiceKpis(
   customerPaidByJobId: Record<string, number>,
   todayYmd: string,
 ) {
-  const nonCancelled = all.filter((r) => r.status !== "cancelled");
   const overdue = all.filter(
     (r) => r.status !== "cancelled" && r.status !== "paid" && invoiceIsDerivedOverdue(r, todayYmd),
   );
   const overdueAmount = overdue.reduce((sum, r) => sum + invoiceListBalanceDue(r, jobsByRef, customerPaidByJobId), 0);
-  const openStatuses = new Set<Invoice["status"]>(["pending", "partially_paid", "overdue", "draft", "audit_required"]);
-  const openInvoices = all.filter((r) => openStatuses.has(r.status));
-  const balanceDueOpen = openInvoices.reduce(
-    (sum, r) => sum + invoiceListBalanceDue(r, jobsByRef, customerPaidByJobId),
-    0,
+  // Collected = partial payments received on still-outstanding invoices (awaiting + overdue only)
+  const outstandingForCollected = all.filter(
+    (r) => r.status !== "cancelled" && r.status !== "paid" && r.status !== "draft",
   );
-  const collectedTotal = nonCancelled.reduce(
+  const collectedTotal = outstandingForCollected.reduce(
     (sum, r) => sum + invoiceListCollectedAmount(r, jobsByRef, customerPaidByJobId),
     0,
   );
-  const collectedInvoiceCount = nonCancelled.filter(
+  const collectedInvoiceCount = outstandingForCollected.filter(
     (r) => invoiceListCollectedAmount(r, jobsByRef, customerPaidByJobId) > 0.02,
   ).length;
   return {
-    balanceDueOpen,
-    openInvoiceCount: openInvoices.length,
     overdueAmount,
     overdueCount: overdue.length,
     collectedTotal,
@@ -581,13 +595,12 @@ export default function InvoicesPage() {
     return { sum, count: n };
   }, [allInvoices, jobsByRef, customerPaidByJobId, listTodayYmd]);
 
-  /** Open balance KPI: awaiting (tab) + overdue (balance) − collected — aligned with the four summary cards. */
+  /** Open balance = total balance-due across awaiting + overdue (already nets out partial payments). */
   const openBalanceKpi = useMemo(() => {
-    const raw = awaitingPaymentKpi.sum + kpis.overdueAmount - kpis.collectedTotal;
-    const amount = Math.round(raw * 100) / 100;
+    const amount = Math.round((awaitingPaymentKpi.sum + kpis.overdueAmount) * 100) / 100;
     const countInvoices = awaitingPaymentKpi.count + kpis.overdueCount;
     return { amount, countInvoices };
-  }, [awaitingPaymentKpi.sum, awaitingPaymentKpi.count, kpis.overdueAmount, kpis.overdueCount, kpis.collectedTotal]);
+  }, [awaitingPaymentKpi.sum, awaitingPaymentKpi.count, kpis.overdueAmount, kpis.overdueCount]);
 
   const filteredInvoices = useMemo(() => {
     let rows = allInvoices.filter((inv) => invoiceMatchesFinanceTab(inv, financeTab));
@@ -795,6 +808,11 @@ export default function InvoicesPage() {
         amount_paid: newStatus === "paid" ? Number(invoice.amount) : invoice.amount_paid,
       };
       setSelectedInvoice(nextInv);
+      // syncJobAfterInvoicePaidToLedger MUST run before syncInvoicesFromJobCustomerPayments:
+      // the former creates the job_payment, the latter reads it — wrong order resets the invoice to pending.
+      if (newStatus === "paid") {
+        await syncJobAfterInvoicePaidToLedger(supabase, invoice.id, "Manual");
+      }
       if (invoice.job_reference?.trim()) {
         const { data: jobRow } = await supabase.from("jobs").select("id").eq("reference", invoice.job_reference.trim()).maybeSingle();
         const jid = (jobRow as { id?: string } | null)?.id;
@@ -802,9 +820,6 @@ export default function InvoicesPage() {
           await syncInvoicesFromJobCustomerPayments(supabase, jid);
           await maybeCompleteAwaitingPaymentJob(supabase, jid);
         }
-      }
-      if (newStatus === "paid") {
-        await syncJobAfterInvoicePaidToLedger(supabase, invoice.id, "Manual");
       }
       void loadPageData();
     } catch {
@@ -1076,6 +1091,16 @@ export default function InvoicesPage() {
     listTodayYmd,
   ]);
 
+  const tabSummary = useMemo(() => {
+    let due = 0, paid = 0, total = 0;
+    for (const g of groupedInvoicesByAccount) {
+      due   += g.totalDue;
+      paid  += g.totalPaid;
+      total += g.totalAmount;
+    }
+    return { due, paid, total };
+  }, [groupedInvoicesByAccount]);
+
   const [expandedAccountGroups, setExpandedAccountGroups] = useState<Record<string, boolean>>({});
 
   /** Stable signature of group keys + order — when it changes, reset accordion: só o 1.º aberto. */
@@ -1174,8 +1199,8 @@ export default function InvoicesPage() {
               <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">
                 {formatCurrency(openBalanceKpi.amount)}
               </p>
-              <p className="text-[11px] text-text-secondary" title="Awaiting payment + overdue − collected">
-                Awaiting + overdue − collected · {openBalanceKpi.countInvoices} invoice
+              <p className="text-[11px] text-text-secondary" title="Awaiting payment + overdue">
+                Awaiting + overdue · {openBalanceKpi.countInvoices} invoice
                 {openBalanceKpi.countInvoices === 1 ? "" : "s"}
               </p>
             </div>
@@ -1197,7 +1222,7 @@ export default function InvoicesPage() {
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Collected</p>
               <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(kpis.collectedTotal)}</p>
-              <p className="text-[11px] text-text-secondary">{kpis.collectedInvoiceCount} paid</p>
+              <p className="text-[11px] text-text-secondary">{kpis.collectedInvoiceCount} invoice{kpis.collectedInvoiceCount === 1 ? "" : "s"} partially paid</p>
             </div>
             <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
               <Check className="h-4 w-4" aria-hidden />
@@ -1286,9 +1311,6 @@ export default function InvoicesPage() {
               />
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>
-                Export
-              </Button>
               <SearchInput
                 placeholder="Search ref, client, job…"
                 className="w-full min-w-[10rem] sm:w-52 flex-1 sm:flex-none"
@@ -1307,6 +1329,26 @@ export default function InvoicesPage() {
               No invoices found for this tab.
             </div>
           ) : (
+            <>
+              {/* Tab summary bar */}
+              <div className="flex items-center justify-end gap-x-5 rounded-[10px] border border-border-light bg-card px-4 py-2.5">
+                <div className="flex-1 text-[11px] font-medium text-text-tertiary">
+                  {filteredInvoices.length} invoice{filteredInvoices.length !== 1 ? "s" : ""}
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Due</p>
+                  <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">{formatCurrency(tabSummary.due)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Paid</p>
+                  <p className="text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">{formatCurrency(tabSummary.paid)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total</p>
+                  <p className="text-sm font-semibold tabular-nums text-[#020040] dark:text-text-primary">{formatCurrency(tabSummary.total)}</p>
+                </div>
+              </div>
+
             <div className="space-y-3">
               {groupedInvoicesByAccount.map((group, groupIndex) => {
                 const open = expandedAccountGroups[group.key] ?? groupIndex === 0;
@@ -1351,7 +1393,7 @@ export default function InvoicesPage() {
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-1">
                         <div className="text-right">
-                          <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Pending</p>
+                          <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Due</p>
                           <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">{formatCurrency(group.totalDue)}</p>
                         </div>
                         <div className="text-right">
@@ -1378,7 +1420,7 @@ export default function InvoicesPage() {
                           <span />
                           <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Invoice</p>
                           <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Postcode</p>
-                          <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Start date</p>
+                          <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Finish date</p>
                           <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Pay date</p>
                           <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary text-right">Amount</p>
                           <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary text-center">Status</p>
@@ -1506,7 +1548,7 @@ export default function InvoicesPage() {
                                         : "—"}
                                     </p>
                                   </div>
-                                  {/* Col 3 — start date */}
+                                  {/* Col 3 — finish date */}
                                   <div className="min-w-0">
                                     <p className="text-xs text-text-secondary whitespace-nowrap">
                                       {ymd ? formatDate(ymd) : "—"}
@@ -1644,6 +1686,7 @@ export default function InvoicesPage() {
                 );
               })}
             </div>
+            </>
           )}
         </motion.div>
       </div>
@@ -1735,6 +1778,14 @@ function InvoiceDetailDrawer({
   const [editingAmount, setEditingAmount] = useState(false);
   const [editAmountValue, setEditAmountValue] = useState("");
   const [savingField, setSavingField] = useState<"due_date" | "amount" | null>(null);
+  const [savingBreakdown, setSavingBreakdown] = useState(false);
+  const [reopenModalOpen, setReopenModalOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
+  const [savingReopen, setSavingReopen] = useState(false);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelWithJob, setCancelWithJob] = useState(true);
+  const [savingCancel, setSavingCancel] = useState(false);
   /** Linked Job tab: sales & costs breakdown (collapsed by default). */
   const [linkedJobSalesCostsOpen, setLinkedJobSalesCostsOpen] = useState(false);
   /** Sum of customer_deposit + customer_final on linked job (aligns invoice paid/due with job card). */
@@ -1775,6 +1826,11 @@ function InvoiceDetailDrawer({
     setSavingField(null);
     setLinkedJobSalesCostsOpen(false);
     setJobCustomerPaidSum(null);
+    setReopenModalOpen(false);
+    setReopenReason("");
+    setCancelModalOpen(false);
+    setCancelReason("");
+    setCancelWithJob(true);
 
     const supabase = getSupabase();
 
@@ -1879,6 +1935,27 @@ function InvoiceDetailDrawer({
       cancelled = true;
     };
   }, [invoice]);
+
+  // Realtime: refresh linkedJob + invoice when the job row changes externally
+  useEffect(() => {
+    const jobId = linkedJob?.id;
+    if (!jobId || !invoice) return;
+    const supabase = getSupabase();
+    const channel = supabase
+      .channel(`invoice-drawer-job-${jobId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "jobs", filter: `id=eq.${jobId}` },
+        (payload) => {
+          const fresh = payload.new as LinkedJob;
+          setLinkedJob(fresh);
+        },
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [linkedJob?.id, invoice?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!invoice) return;
@@ -2040,11 +2117,70 @@ function InvoiceDetailDrawer({
     try {
       const updated = await updateInvoice(invoice.id, { amount: parsed } as Partial<Invoice>);
       await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "updated", fieldName: "amount", oldValue: String(prev), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name });
+      if (linkedJob?.id) {
+        try {
+          const updatedJob = await updateJob(linkedJob.id, { client_price: parsed } as Partial<Job>);
+          setLinkedJob((prev) => prev ? { ...prev, client_price: parsed, margin_percent: (updatedJob as unknown as LinkedJob).margin_percent } : prev);
+        } catch (e) {
+          console.error("Invoice drawer: sync client_price to job", e);
+        }
+      }
       toast.success("Amount updated");
       onInvoiceUpdated(updated);
       setEditingAmount(false);
     } catch { toast.error("Failed to update amount"); }
     finally { setSavingField(null); }
+  };
+
+  const handleSaveBreakdown = async () => {
+    if (!linkedJob?.id) return;
+    const parsed = Math.max(0, Number(breakdownPartnerCost) || 0);
+    if (Math.abs(parsed - baselinePartnerCost) < 0.001) { setEditingBreakdown(false); return; }
+    setSavingBreakdown(true);
+    try {
+      const updatedJob = await updateJob(linkedJob.id, { partner_cost: parsed } as Partial<Job>);
+      setLinkedJob((prev) => prev ? { ...prev, partner_cost: parsed, margin_percent: (updatedJob as unknown as LinkedJob).margin_percent } : prev);
+      await logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "updated", fieldName: "partner_cost", oldValue: String(baselinePartnerCost), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name });
+      toast.success("Partner cost updated");
+      setEditingBreakdown(false);
+    } catch { toast.error("Failed to update partner cost"); }
+    finally { setSavingBreakdown(false); }
+  };
+
+  const handleReopen = async () => {
+    if (!invoice || !onInvoiceUpdated) return;
+    const reason = reopenReason.trim();
+    if (reason.length < 5) { toast.error("Please enter a reason (min 5 characters)"); return; }
+    setSavingReopen(true);
+    try {
+      await onStatusChange(invoice, "pending");
+      await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: "paid", newValue: "pending", userId: profile?.id, userName: profile?.full_name, metadata: { reason } });
+      setReopenModalOpen(false);
+      setReopenReason("");
+      toast.success("Invoice reopened — awaiting payment");
+    } catch { toast.error("Failed to reopen invoice"); }
+    finally { setSavingReopen(false); }
+  };
+
+  const handleCancelInvoice = async () => {
+    if (!invoice) return;
+    const reason = cancelReason.trim();
+    if (reason.length < 5) { toast.error("Please enter a reason (min 5 characters)"); return; }
+    setSavingCancel(true);
+    try {
+      await updateInvoice(invoice.id, { status: "cancelled", cancellation_reason: reason } as Partial<Invoice>);
+      await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "status_changed", fieldName: "status", oldValue: invoice.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason } });
+      if (cancelWithJob && linkedJob?.id && invoice.job_reference?.trim()) {
+        await updateJob(linkedJob.id, { status: "cancelled" } as Partial<Job>);
+        await cancelOpenSelfBillsForJobCancellation({ jobReference: invoice.job_reference.trim(), primarySelfBillId: linkedJob.self_bill_id });
+        await logAudit({ entityType: "job", entityId: linkedJob.id, entityRef: linkedJob.reference, action: "status_changed", fieldName: "status", oldValue: linkedJob.status, newValue: "cancelled", userId: profile?.id, userName: profile?.full_name, metadata: { reason, triggeredBy: "invoice_cancel" } });
+      }
+      onStatusChange(invoice, "cancelled");
+      setCancelModalOpen(false);
+      setCancelReason("");
+      toast.success(cancelWithJob && linkedJob ? "Invoice, job & self-bill cancelled" : "Invoice cancelled");
+    } catch { toast.error("Failed to cancel invoice"); }
+    finally { setSavingCancel(false); }
   };
 
   if (!invoice) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
@@ -2076,11 +2212,10 @@ function InvoiceDetailDrawer({
     invoice.status !== "draft" &&
     invoice.status !== "audit_required";
 
-  const drawerTabs = [
+  const drawerTabs: Array<{ id: string; label: string; count?: number }> = [
     { id: "details", label: "Details" },
     { id: "stripe", label: "Stripe" },
     { id: "job", label: "Job" },
-    { id: "client-history", label: "Adjust", count: relatedInvoices.length },
     { id: "history", label: "Activity" },
   ];
 
@@ -2099,11 +2234,11 @@ function InvoiceDetailDrawer({
     .map((part) => part[0]?.toUpperCase())
     .join("") || "CL";
   const clientAddress = linkedJob?.property_address?.trim() || "Address unavailable";
-  const accountPillText = accountName || "Unlinked account";
-  const accountLinked = Boolean(accountName.trim());
   const accountIdLabel = invoice.source_account_id?.trim()
     ? `ACC-${invoice.source_account_id.replace(/-/g, "").slice(-4).toUpperCase()}`
     : "ACC-—";
+  const accountLinked = Boolean(invoice.source_account_id?.trim());
+  const accountPillText = accountName.trim() || accountIdLabel;
   const chargedAmount = Math.max(0, Math.round(Number(invoice.amount ?? 0) * 100) / 100);
   const linkedJobPartnerGross = linkedJob
     ? Math.round(
@@ -2194,46 +2329,73 @@ function InvoiceDetailDrawer({
           </div>
         )}
         footer={tab === "details" ? (
-          <div className="flex gap-2 px-4 py-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex-1"
-              onClick={() => {
-                setPaymentMode("full");
-                setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
-                setPaymentModalOpen(true);
-              }}
-            >
-              + Add payment
-            </Button>
-            {(invoice.status === "overdue" || isOverdue) && (
-              <Button
-                variant="danger"
-                size="sm"
-                className="flex-1"
-                onClick={() => toast.error("Invoice escalated to dispute.")}
+          <div className="px-4 pb-3 pt-2 space-y-2">
+            <div className="flex gap-2">
+              {invoice.status === "paid" ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => { setReopenReason(""); setReopenModalOpen(true); }}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <RotateCcw className="h-3.5 w-3.5 shrink-0" /> Reopen invoice
+                  </span>
+                </Button>
+              ) : invoice.status !== "cancelled" ? (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => {
+                      setPaymentMode("full");
+                      setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
+                      setPaymentModalOpen(true);
+                    }}
+                  >
+                    + Add payment
+                  </Button>
+                  {(invoice.status === "overdue" || isOverdue) && (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => toast.error("Invoice escalated to dispute.")}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Escalate
+                      </span>
+                    </Button>
+                  )}
+                  <Button
+                    variant="success"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => {
+                      setPaymentMode("full");
+                      setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
+                      setPaymentModalOpen(true);
+                    }}
+                  >
+                    <span className="inline-flex items-center gap-1.5">
+                      <Check className="h-3.5 w-3.5 shrink-0" /> Mark as paid
+                    </span>
+                  </Button>
+                </>
+              ) : null}
+            </div>
+            {invoice.status !== "cancelled" && invoice.status !== "paid" && (
+              <button
+                type="button"
+                onClick={() => { setCancelReason(""); setCancelWithJob(!!linkedJob); setCancelModalOpen(true); }}
+                className="w-full rounded-[6px] border border-red-200 bg-red-50 py-1.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400"
               >
                 <span className="inline-flex items-center gap-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Escalate
+                  <XCircle className="h-3.5 w-3.5 shrink-0" /> Cancel invoice
                 </span>
-              </Button>
+              </button>
             )}
-            <Button
-              variant="success"
-              size="sm"
-              className="flex-1"
-              onClick={() => {
-                if (invoice.status === "paid") { toast.success("Receipt sent to client."); return; }
-                setPaymentMode("full");
-                setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
-                setPaymentModalOpen(true);
-              }}
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <Check className="h-3.5 w-3.5 shrink-0" /> Mark as paid
-              </span>
-            </Button>
           </div>
         ) : undefined}
       >
@@ -2243,28 +2405,24 @@ function InvoiceDetailDrawer({
               className="flex items-start justify-between gap-3 rounded-[10px] border border-border bg-surface-hover/50 px-4 py-[14px]"
               style={{ boxShadow: "0 1px 3px rgba(10,13,46,0.04)" }}
             >
-              <div className="min-w-0 space-y-2">
+              <div className="min-w-0">
                 <div className="flex items-start gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#E6F1FB] text-[13px] font-semibold text-[#042C53]">
                     {clientInitials}
                   </div>
                   <div className="min-w-0">
                     <p className="truncate text-[14px] font-semibold text-text-primary">{invoice.client_name}</p>
-                    {!accountLinked ? (
-                      <p className="mt-0.5 text-[11px] italic text-text-tertiary">No linked account</p>
+                    {accountLinked ? (
+                      <div className="mt-0.5 flex items-center gap-1.5">
+                        <div className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-[#EEEDFE] text-[8px] font-bold text-[#3C3489]">
+                          {accountPillText.split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("")}
+                        </div>
+                        <span className="truncate text-[11px] font-medium text-[#3C3489]">{accountPillText}</span>
+                        <span className="shrink-0 text-[10px] text-text-tertiary">{accountIdLabel}</span>
+                      </div>
                     ) : null}
                     <p className="mt-0.5 truncate text-[11px] text-text-secondary">{clientAddress}</p>
                   </div>
-                </div>
-                <div className="flex items-center gap-2 pl-[52px]">
-                  {accountLinked ? (
-                    <>
-                      <span className="rounded-full bg-[#EEEDFE] px-2 py-0.5 text-[10px] font-semibold text-[#3C3489]">
-                        {accountPillText}
-                      </span>
-                      <span className="text-[10px] text-text-secondary">{accountIdLabel}</span>
-                    </>
-                  ) : null}
                 </div>
               </div>
               <a
@@ -2434,17 +2592,21 @@ function InvoiceDetailDrawer({
                     <p className="text-[11px] uppercase tracking-[0.5px] text-text-secondary">Invoice Breakdown</p>
                     <button
                       type="button"
+                      disabled={savingBreakdown}
                       onClick={() => {
                         if (editingBreakdown) {
-                          setEditingBreakdown(false);
-                          toast.success("Breakdown changes saved.");
+                          void handleSaveBreakdown();
                         } else {
                           setEditingBreakdown(true);
                         }
                       }}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary disabled:opacity-50"
                     >
-                      <PenLine className="h-[13px] w-[13px] stroke-[2]" />
+                      {savingBreakdown ? (
+                        <Loader2 className="h-[13px] w-[13px] animate-spin" />
+                      ) : (
+                        <PenLine className="h-[13px] w-[13px] stroke-[2]" />
+                      )}
                       {editingBreakdown ? "Save changes" : "Edit"}
                     </button>
                   </div>
@@ -2573,337 +2735,290 @@ function InvoiceDetailDrawer({
 
             {/* ===== STRIPE TAB ===== */}
         {tab === "stripe" && (
-          <div className="p-6 space-y-5">
-            {/* Stripe Status Header */}
-            <div className={`p-4 rounded-xl border ${
-              stripePaid ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200" :
-              stripeState.paymentStatus === "failed" ? "bg-red-50 dark:bg-red-950/30 border-red-200" :
-              stripeState.paymentStatus === "expired" ? "bg-surface-hover border-border" :
-              hasStripeLink ? "bg-blue-50 dark:bg-blue-950/30 border-blue-200" :
-              "bg-surface-hover border-border-light"
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${
-                  stripePaid ? "bg-emerald-100" :
-                  stripeState.paymentStatus === "failed" ? "bg-red-100" :
-                  hasStripeLink ? "bg-blue-100" : "bg-surface-tertiary"
-                }`}>
-                  <CreditCard className={`h-5 w-5 ${
-                    stripePaid ? "text-emerald-600" :
-                    stripeState.paymentStatus === "failed" ? "text-red-600" :
-                    hasStripeLink ? "text-blue-600" : "text-text-tertiary"
-                  }`} />
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-text-primary">
-                    {stripePaid ? "Payment Received via Stripe" :
-                     stripeState.paymentStatus === "failed" ? "Payment Failed" :
-                     stripeState.paymentStatus === "expired" ? "Payment Link Expired" :
-                     hasStripeLink ? "Payment Link Active" :
-                     "No Payment Link"}
+          <div className="space-y-4 p-[22px]">
+            {/* Status row */}
+            <div>
+              <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Stripe status</p>
+              <div
+                className="rounded-[10px]"
+                style={{
+                  backgroundColor: stripePaid ? "#EFF7F3" : stripeState.paymentStatus === "failed" ? "#FEF5F3" : hasStripeLink ? "#EFF4FE" : "#F5F5F7",
+                  border: `0.5px solid ${stripePaid ? "#9FE1CB" : stripeState.paymentStatus === "failed" ? "#F5BFBF" : hasStripeLink ? "#C3D3FB" : "#D8D8DD"}`,
+                  padding: "10px 12px",
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: stripePaid ? "#0F6E56" : stripeState.paymentStatus === "failed" ? "#A32D2D" : hasStripeLink ? "#3C3489" : "#6B6B70" }}
+                  />
+                  <span
+                    className="shrink-0 text-[12px] font-semibold"
+                    style={{ color: stripePaid ? "#0F6E56" : stripeState.paymentStatus === "failed" ? "#A32D2D" : hasStripeLink ? "#3C3489" : "#6B6B70" }}
+                  >
+                    {stripePaid ? "Paid" : stripeState.paymentStatus === "failed" ? "Failed" : stripeState.paymentStatus === "expired" ? "Expired" : hasStripeLink ? "Active" : "Not created"}
+                  </span>
+                  <span className="h-[10px] w-px shrink-0 bg-border" />
+                  <p className="min-w-0 flex-1 truncate text-[11px] font-medium text-[#1C1917]">
+                    {stripePaid && stripeState.paidAt ? `Paid ${formatDate(stripeState.paidAt)}` :
+                     hasStripeLink ? "Link ready to share" :
+                     "No payment link generated"}
                   </p>
-                  <p className="text-xs text-text-tertiary mt-0.5">
-                    {stripePaid && stripeState.paidAt ? `Paid on ${formatDate(stripeState.paidAt)}` :
-                     hasStripeLink ? "Link has been generated and is ready to share" :
-                     "Generate a Stripe payment link to send to the client"}
-                  </p>
+                  {hasStripeLink && stripeState.linkId && (
+                    <span className="shrink-0 rounded border border-border bg-white px-1 py-0.5 text-[9px] font-medium text-text-tertiary font-mono">
+                      {stripeState.linkId.slice(-8)}
+                    </span>
+                  )}
                 </div>
-                <Badge
-                  variant={stripePaid ? "success" : stripeState.paymentStatus === "failed" ? "danger" : hasStripeLink ? "info" : "default"}
-                  dot size="md"
-                >
-                  {stripePaid ? "Paid" :
-                   stripeState.paymentStatus === "failed" ? "Failed" :
-                   stripeState.paymentStatus === "expired" ? "Expired" :
-                   hasStripeLink ? "Active" : "Not Created"}
-                </Badge>
               </div>
             </div>
 
-            {/* Invoice Summary */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-surface-hover">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Invoice</p>
-                <p className="text-sm font-bold text-text-primary mt-0.5">{invoice.reference}</p>
-                <p className="text-xs text-text-tertiary">{invoice.client_name}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-surface-hover">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">
-                  {invoice.status === "partially_paid" || showBalanceHero ? "Balance due" : "Amount"}
-                </p>
-                <p className="text-lg font-bold text-text-primary mt-0.5">
-                  {invoice.status === "partially_paid" || showBalanceHero
-                    ? formatCurrency(useLedgerBridge ? effectiveBalance : invoiceBalanceDue(invoice))
-                    : formatCurrency(invoice.amount)}
-                </p>
-                {invoice.status === "partially_paid" || showBalanceHero ? (
-                  <p className="text-[10px] text-text-tertiary mt-0.5">of {formatCurrency(invoice.amount)}</p>
-                ) : null}
-              </div>
-            </div>
-
-            {/* Payment Link Section */}
-            {hasStripeLink && (
-              <div className="space-y-3">
-                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Payment Link</p>
-                <div className="p-3 rounded-xl border border-border-light bg-card">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs text-text-tertiary truncate font-mono">{stripeState.linkUrl}</p>
-                    </div>
-                    <button
-                      onClick={handleCopyLink}
-                      className="shrink-0 h-8 px-3 rounded-lg text-xs font-medium border border-border text-text-secondary hover:bg-surface-hover transition-colors flex items-center gap-1.5"
-                    >
-                      {linkCopied ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <CreditCard className="h-3.5 w-3.5" />}
-                      {linkCopied ? "Copied!" : "Copy Link"}
-                    </button>
+            {/* Invoice summary */}
+            <div>
+              <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Invoice summary</p>
+              <div className="overflow-hidden rounded-[10px] border border-border bg-surface-hover/50">
+                <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+                  <span className="text-[11px] text-text-secondary">Reference</span>
+                  <span className="text-[12px] font-semibold text-text-primary tabular-nums">{invoice.reference}</span>
+                </div>
+                <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+                  <span className="text-[11px] text-text-secondary">Client</span>
+                  <span className="text-[12px] font-medium text-text-primary">{invoice.client_name}</span>
+                </div>
+                <div className="flex items-center justify-between px-3 py-2.5">
+                  <span className="text-[11px] text-text-secondary">{invoice.status === "partially_paid" || showBalanceHero ? "Balance due" : "Amount"}</span>
+                  <div className="text-right">
+                    <span className="text-[13px] font-semibold text-text-primary tabular-nums" style={{ letterSpacing: "-0.2px" }}>
+                      {invoice.status === "partially_paid" || showBalanceHero
+                        ? formatCurrency(useLedgerBridge ? effectiveBalance : invoiceBalanceDue(invoice))
+                        : formatCurrency(invoice.amount)}
+                    </span>
+                    {(invoice.status === "partially_paid" || showBalanceHero) && (
+                      <p className="text-[9px] text-text-tertiary">of {formatCurrency(invoice.amount)}</p>
+                    )}
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <a
-                    href={stripeState.linkUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 h-9 rounded-lg text-xs font-medium border border-border text-text-secondary hover:bg-surface-hover transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <ArrowRight className="h-3.5 w-3.5" />
-                    Open Link
-                  </a>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    icon={checkingStatus ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <TrendingUp className="h-3.5 w-3.5" />}
-                    onClick={handleCheckStatus}
-                    disabled={checkingStatus}
-                  >
-                    {checkingStatus ? "Checking..." : "Refresh Status"}
-                  </Button>
+              </div>
+            </div>
+
+            {/* Payment link */}
+            {hasStripeLink && (
+              <div>
+                <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Payment link</p>
+                <div className="overflow-hidden rounded-[10px] border border-border bg-surface-hover/50">
+                  <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+                    <p className="min-w-0 flex-1 truncate text-[10px] font-mono text-text-tertiary">{stripeState.linkUrl}</p>
+                    <button
+                      onClick={handleCopyLink}
+                      className="shrink-0 rounded border border-border bg-white px-2 py-0.5 text-[10px] font-medium text-text-secondary hover:text-primary transition-colors flex items-center gap-1"
+                    >
+                      {linkCopied ? <CheckCircle2 className="h-3 w-3 text-emerald-500" /> : <CreditCard className="h-3 w-3" />}
+                      {linkCopied ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <div className="flex gap-2 px-3 py-2.5">
+                    <a
+                      href={stripeState.linkUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-[6px] border border-border bg-white px-2 py-1.5 text-[11px] font-medium text-text-secondary hover:bg-surface-hover transition-colors"
+                    >
+                      <ArrowRight className="h-3 w-3" />
+                      Open link ↗
+                    </a>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      icon={checkingStatus ? <Loader className="h-3 w-3 animate-spin" /> : <TrendingUp className="h-3 w-3" />}
+                      onClick={handleCheckStatus}
+                      disabled={checkingStatus}
+                    >
+                      {checkingStatus ? "Checking…" : "Refresh"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* Stripe Details */}
+            {/* Stripe details */}
             {hasStripeLink && (
-              <div className="space-y-3">
-                <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Stripe Details</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-text-secondary">Payment Link ID</span>
-                    <span className="text-xs font-mono text-text-tertiary">{stripeState.linkId}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-text-secondary">Payment Status</span>
-                    <Badge
-                      variant={stripePaid ? "success" : stripeState.paymentStatus === "failed" ? "danger" : "warning"}
-                      size="sm"
-                    >
+              <div>
+                <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Stripe details</p>
+                <div className="overflow-hidden rounded-[10px] border border-border bg-surface-hover/50 divide-y divide-border">
+                  {stripeState.linkId && (
+                    <div className="flex items-center justify-between px-3 py-2.5">
+                      <span className="text-[11px] text-text-secondary">Link ID</span>
+                      <span className="text-[10px] font-mono text-text-tertiary">{stripeState.linkId}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between px-3 py-2.5">
+                    <span className="text-[11px] text-text-secondary">Status</span>
+                    <Badge variant={stripePaid ? "success" : stripeState.paymentStatus === "failed" ? "danger" : "warning"} size="sm">
                       {stripeState.paymentStatus}
                     </Badge>
                   </div>
                   {stripeState.customerEmail && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-text-secondary">Customer Email</span>
-                      <span className="text-text-primary">{stripeState.customerEmail}</span>
+                    <div className="flex items-center justify-between px-3 py-2.5">
+                      <span className="text-[11px] text-text-secondary">Customer email</span>
+                      <span className="text-[11px] text-text-primary">{stripeState.customerEmail}</span>
                     </div>
                   )}
                   {stripeState.paidAt && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-text-secondary">Paid At</span>
-                      <span className="text-text-primary">{formatDate(stripeState.paidAt)}</span>
+                    <div className="flex items-center justify-between px-3 py-2.5">
+                      <span className="text-[11px] text-text-secondary">Paid at</span>
+                      <span className="text-[11px] text-text-primary">{formatDate(stripeState.paidAt)}</span>
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {/* Generate / Actions */}
-            <div className="pt-4 border-t border-border-light space-y-3">
-              {!hasStripeLink &&
-                invoice.status !== "paid" &&
-                invoice.status !== "cancelled" &&
-                invoice.status !== "audit_required" && (
-                <Button
-                  className="w-full"
-                  icon={generatingLink ? <Loader className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-                  onClick={handleGenerateLink}
-                  disabled={generatingLink}
-                >
-                  {generatingLink ? "Generating Payment Link..." : "Generate Stripe Payment Link"}
-                </Button>
-              )}
-              {hasStripeLink && !stripePaid && stripeState.paymentStatus !== "expired" && (
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  icon={generatingLink ? <Loader className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-                  onClick={handleGenerateLink}
-                  disabled={generatingLink}
-                >
-                  {generatingLink ? "Generating..." : "Generate New Link"}
-                </Button>
-              )}
-              {invoice.status === "paid" && !stripePaid && (
-                <p className="text-xs text-center text-text-tertiary">This invoice was marked as paid manually.</p>
-              )}
-              {invoice.status === "cancelled" && (
-                <p className="text-xs text-center text-text-tertiary">
-                  {invoice.cancellation_reason?.trim()
-                    ? `Cancelled: ${invoice.cancellation_reason.trim()}`
-                    : "This invoice has been cancelled."}
-                </p>
-              )}
-            </div>
+            {/* Actions */}
+            {(!hasStripeLink && invoice.status !== "paid" && invoice.status !== "cancelled" && invoice.status !== "audit_required") && (
+              <Button
+                className="w-full"
+                icon={generatingLink ? <Loader className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+                onClick={handleGenerateLink}
+                disabled={generatingLink}
+              >
+                {generatingLink ? "Generating payment link…" : "Generate Stripe payment link"}
+              </Button>
+            )}
+            {hasStripeLink && !stripePaid && stripeState.paymentStatus !== "expired" && (
+              <Button
+                variant="outline"
+                className="w-full"
+                icon={generatingLink ? <Loader className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+                onClick={handleGenerateLink}
+                disabled={generatingLink}
+              >
+                {generatingLink ? "Generating…" : "Generate new link"}
+              </Button>
+            )}
+            {invoice.status === "paid" && !stripePaid && (
+              <p className="text-[11px] text-center text-text-tertiary">Marked as paid manually — no Stripe record.</p>
+            )}
+            {invoice.status === "cancelled" && (
+              <p className="text-[11px] text-center text-text-tertiary">
+                {invoice.cancellation_reason?.trim() ? `Cancelled: ${invoice.cancellation_reason.trim()}` : "Invoice cancelled."}
+              </p>
+            )}
           </div>
         )}
 
         {/* ===== LINKED JOB TAB ===== */}
         {tab === "job" && (
-          <div className="p-6 space-y-5">
+          <div className="space-y-4 p-[22px]">
             {loadingJob && (
-              <div className="space-y-3">
-                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-12 bg-surface-hover rounded-[10px]" />)}
               </div>
             )}
 
             {!loadingJob && !linkedJob && !invoice.job_reference && (
               <div className="py-16 text-center">
-                <Briefcase className="h-10 w-10 text-text-tertiary mx-auto mb-3" />
-                <p className="text-sm font-medium text-text-secondary">No linked job</p>
-                <p className="text-xs text-text-tertiary mt-1">This invoice doesn&apos;t have a job reference attached</p>
+                <Briefcase className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
+                <p className="text-[12px] font-medium text-text-secondary">No linked job</p>
+                <p className="text-[11px] text-text-tertiary mt-1">This invoice doesn&apos;t have a job reference attached</p>
               </div>
             )}
 
             {!loadingJob && !linkedJob && invoice.job_reference && (
               <div className="py-16 text-center">
-                <Briefcase className="h-10 w-10 text-text-tertiary mx-auto mb-3" />
-                <p className="text-sm font-medium text-text-secondary">Job not found</p>
-                <p className="text-xs text-text-tertiary mt-1">Reference &quot;{invoice.job_reference}&quot; could not be matched to a job</p>
+                <Briefcase className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
+                <p className="text-[12px] font-medium text-text-secondary">Job not found</p>
+                <p className="text-[11px] text-text-tertiary mt-1">Reference &quot;{invoice.job_reference}&quot; could not be matched</p>
               </div>
             )}
 
             {!loadingJob && linkedJob && (
               <>
-                {/* Job Header */}
-                <div className="p-4 rounded-xl border border-border-light bg-card shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-bold text-text-primary">{linkedJob.reference}</p>
-                        <Badge variant={
-                          linkedJob.status === "completed" ? "success" :
-                          linkedJob.status === "in_progress" ? "primary" :
-                          linkedJob.status === "on_hold" ? "warning" : "default"
-                        } dot size="sm">
-                          {linkedJob.status.replace("_", " ")}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-text-tertiary mt-0.5">{linkedJob.title}</p>
+                {/* Job header */}
+                <div className="overflow-hidden rounded-[10px] border border-border bg-surface-hover/50">
+                  <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <p className="text-[12px] font-bold text-text-primary">{linkedJob.reference}</p>
+                      <Badge variant={
+                        linkedJob.status === "completed" ? "success" :
+                        linkedJob.status === "in_progress" ? "primary" :
+                        linkedJob.status === "on_hold" ? "warning" : "default"
+                      } dot size="sm">
+                        {linkedJob.status.replace("_", " ")}
+                      </Badge>
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-3 mt-3">
+                  <div className="px-3 py-2.5 border-b border-border">
+                    <p className="text-[11px] text-text-secondary truncate">{linkedJob.title}</p>
+                  </div>
+                  <div className="flex items-center gap-3 px-3 py-2.5">
                     <Progress value={linkedJob.progress} size="sm" color={linkedJob.progress === 100 ? "emerald" : "primary"} className="flex-1" />
-                    <span className="text-xs font-medium text-text-tertiary">{linkedJob.progress}%</span>
+                    <span className="text-[11px] font-medium text-text-tertiary">{linkedJob.progress}%</span>
                     <span className="text-[10px] text-text-tertiary">Phase {Math.min(linkedJob.current_phase, 2)}/{Math.min(linkedJob.total_phases, 2)}</span>
                   </div>
                 </div>
 
-                {/* Financial snapshot — directly under job card */}
-                <div className="p-4 rounded-xl border border-border-light bg-surface-hover/60 dark:bg-surface-hover space-y-3">
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Job financial snapshot</p>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="p-3 rounded-xl bg-card border border-border-light shadow-sm">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Job Amount</p>
-                      <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJob.client_price)}</p>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-card border border-border-light shadow-sm">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Total Cost</p>
-                      <p className="text-lg font-bold text-text-primary mt-0.5">{formatCurrency(linkedJobTotalCost)}</p>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-card border border-border-light shadow-sm">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Margin</p>
-                      <p
-                        className={`text-lg font-bold mt-0.5 ${
-                          linkedJobMarginAmount >= 0 ? "text-emerald-600" : "text-red-500"
-                        }`}
-                      >
-                        {formatCurrency(linkedJobMarginAmount)}
-                      </p>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-card border border-border-light shadow-sm">
-                      <p className="text-[10px] font-semibold text-text-tertiary uppercase">Margin %</p>
-                      <p
-                        className={`text-lg font-bold mt-0.5 ${
-                          linkedJob.margin_percent >= 0 ? "text-emerald-600" : "text-red-500"
-                        }`}
-                      >
-                        {linkedJob.margin_percent.toFixed(1)}%
-                      </p>
-                    </div>
+                {/* Financial snapshot */}
+                <div>
+                  <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Financial snapshot</p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { label: "Job amount", value: formatCurrency(linkedJob.client_price), color: "text-text-primary" },
+                      { label: "Total cost", value: formatCurrency(linkedJobTotalCost), color: "text-text-primary" },
+                      { label: "Margin", value: formatCurrency(linkedJobMarginAmount), color: linkedJobMarginAmount >= 0 ? "text-[#0F6E56]" : "text-red-500" },
+                      { label: "Margin %", value: `${linkedJob.margin_percent.toFixed(1)}%`, color: linkedJob.margin_percent >= 0 ? "text-[#0F6E56]" : "text-red-500" },
+                    ].map((kpi) => (
+                      <div key={kpi.label} className="rounded-[8px] border border-border bg-card px-2.5 py-2">
+                        <p className="text-[9px] uppercase tracking-[0.4px] text-text-tertiary">{kpi.label}</p>
+                        <p className={`mt-0.5 text-[13px] font-bold tabular-nums ${kpi.color}`} style={{ letterSpacing: "-0.2px" }}>{kpi.value}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
-                {/* Sales & costs — collapsed by default */}
-                <div className="rounded-xl border border-border-light bg-card overflow-hidden shadow-sm">
+                {/* Sales & costs — collapsible */}
+                <div className="overflow-hidden rounded-[10px] border border-border bg-surface-hover/50">
                   <button
                     type="button"
                     aria-expanded={linkedJobSalesCostsOpen}
                     onClick={() => setLinkedJobSalesCostsOpen((o) => !o)}
-                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-hover/80"
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover/80"
                   >
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-text-primary">Linked job · sales &amp; costs</p>
-                      <p className="text-[11px] text-text-tertiary mt-0.5 truncate">
-                        Ticket + extras, partner &amp; materials — {linkedJobSalesCostsOpen ? "hide" : "show"} line-by-line breakdown
-                      </p>
-                    </div>
+                    <p className="text-[11px] font-semibold text-text-secondary uppercase tracking-[0.5px]">Sales &amp; costs breakdown</p>
                     <ChevronRight
-                      className={cn(
-                        "h-5 w-5 shrink-0 text-text-tertiary transition-transform duration-200",
-                        linkedJobSalesCostsOpen && "rotate-90",
-                      )}
+                      className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform duration-200", linkedJobSalesCostsOpen && "rotate-90")}
                       aria-hidden
                     />
                   </button>
                   {linkedJobSalesCostsOpen && (
-                    <div className="border-t border-border-light px-4 pb-4 pt-1 space-y-3">
-                      <p className="text-[11px] text-text-secondary leading-relaxed">
-                        Customer billable (ticket + extras) and what you pay the partner — same basis as the job finance card.
-                      </p>
-                      <div className="rounded-lg border border-border-light divide-y divide-border-light overflow-hidden bg-surface-hover/30">
-                        <div className="flex justify-between items-center px-3 py-2.5 text-sm">
-                          <span className="text-text-secondary">Customer total (ticket + extras)</span>
-                          <span className="font-semibold text-text-primary tabular-nums">{formatCurrency(linkedJobCustomerTotal)}</span>
-                        </div>
-                        <div className="flex justify-between items-center px-3 py-2.5 text-sm">
-                          <span className="text-text-secondary">Partner cost</span>
-                          <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.partner_cost)}</span>
-                        </div>
-                        <div className="flex justify-between items-center px-3 py-2.5 text-sm">
-                          <span className="text-text-secondary">Materials</span>
-                          <span className="font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.materials_cost)}</span>
-                        </div>
-                        <div className="flex justify-between items-center px-3 py-2.5 text-sm bg-card">
-                          <span className="font-semibold text-text-primary">Gross margin</span>
-                          <span className={`font-bold tabular-nums ${linkedJobMarginPct >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                            {formatCurrency(linkedJobMarginAmount)}{" "}
-                            <span className="text-xs font-semibold">({linkedJobMarginPct.toFixed(1)}%)</span>
-                          </span>
-                        </div>
+                    <div className="border-t border-border divide-y divide-border">
+                      <div className="flex justify-between items-center px-3 py-2.5">
+                        <span className="text-[11px] text-text-secondary">Customer total (ticket + extras)</span>
+                        <span className="text-[12px] font-semibold text-text-primary tabular-nums">{formatCurrency(linkedJobCustomerTotal)}</span>
+                      </div>
+                      <div className="flex justify-between items-center px-3 py-2.5">
+                        <span className="text-[11px] text-text-secondary">Partner cost</span>
+                        <span className="text-[12px] font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.partner_cost)}</span>
+                      </div>
+                      <div className="flex justify-between items-center px-3 py-2.5">
+                        <span className="text-[11px] text-text-secondary">Materials</span>
+                        <span className="text-[12px] font-medium text-red-500 tabular-nums">−{formatCurrency(linkedJob.materials_cost)}</span>
+                      </div>
+                      <div className="flex justify-between items-center bg-card px-3 py-2.5">
+                        <span className="text-[12px] font-semibold text-text-primary">Gross margin</span>
+                        <span className={`text-[12px] font-bold tabular-nums ${linkedJobMarginPct >= 0 ? "text-[#0F6E56]" : "text-red-500"}`}>
+                          {formatCurrency(linkedJobMarginAmount)}{" "}
+                          <span className="text-[10px] font-semibold">({linkedJobMarginPct.toFixed(1)}%)</span>
+                        </span>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Job Details */}
-                <div className="space-y-3">
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Job Information</p>
-                  <div className="grid grid-cols-2 gap-3">
+                {/* Job information */}
+                <div>
+                  <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Job information</p>
+                  <div className="grid grid-cols-2 gap-2">
                     <InfoRow icon={Building2} label="Client" value={linkedJob.client_name} />
                     <InfoRow icon={MapPin} label="Property" value={linkedJob.property_address} />
                     {linkedJob.partner_name && <InfoRow icon={User} label="Partner" value={linkedJob.partner_name} />}
@@ -2911,32 +3026,29 @@ function InvoiceDetailDrawer({
                     {linkedJob.scheduled_date && <InfoRow icon={Calendar} label="Scheduled" value={formatDate(linkedJob.scheduled_date)} />}
                     {linkedJob.completed_date && <InfoRow icon={CheckCircle2} label="Completed" value={formatDate(linkedJob.completed_date)} />}
                   </div>
-                  {linkedJobForcedPaidBySystemOwner ? (
-                    <p className="mt-2 text-xs font-semibold text-red-600">
-                      Forced and guaranteed by system owner.
-                    </p>
-                  ) : null}
+                  {linkedJobForcedPaidBySystemOwner && (
+                    <p className="mt-2 text-[11px] font-semibold text-red-600">Forced and guaranteed by system owner.</p>
+                  )}
                   <LocationMiniMap address={linkedJob.property_address} className="mt-3" />
                 </div>
 
-                {/* Invoiced vs Job Value comparison */}
-                <div className="p-4 rounded-xl border border-border-light">
-                  <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-3">Invoice vs Job Value</p>
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1">
-                      <p className="text-xs text-text-tertiary">Invoiced</p>
-                      <p className="text-lg font-bold text-text-primary">{formatCurrency(invoice.amount)}</p>
+                {/* Invoice vs job value */}
+                <div>
+                  <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Invoice vs job value</p>
+                  <div className="overflow-hidden rounded-[10px] border border-border bg-surface-hover/50">
+                    <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+                      <span className="text-[11px] text-text-secondary">Invoiced</span>
+                      <span className="text-[13px] font-semibold text-text-primary tabular-nums">{formatCurrency(invoice.amount)}</span>
                     </div>
-                    <ArrowRight className="h-4 w-4 text-text-tertiary" />
-                    <div className="flex-1">
-                      <p className="text-xs text-text-tertiary">Client Price</p>
-                      <p className="text-lg font-bold text-text-primary">{formatCurrency(linkedJob.client_price)}</p>
+                    <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+                      <span className="text-[11px] text-text-secondary">Client price</span>
+                      <span className="text-[13px] font-semibold text-text-primary tabular-nums">{formatCurrency(linkedJob.client_price)}</span>
                     </div>
-                    <div className="flex-1 text-right">
-                      <p className="text-xs text-text-tertiary">Difference</p>
-                      <p className={`text-lg font-bold ${invoice.amount >= linkedJob.client_price ? "text-emerald-600" : "text-amber-600"}`}>
+                    <div className="flex items-center justify-between px-3 py-2.5">
+                      <span className="text-[11px] text-text-secondary">Difference</span>
+                      <span className={`text-[13px] font-bold tabular-nums ${invoice.amount >= linkedJob.client_price ? "text-[#0F6E56]" : "text-amber-600"}`}>
                         {formatCurrency(invoice.amount - linkedJob.client_price)}
-                      </p>
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -3027,9 +3139,9 @@ function InvoiceDetailDrawer({
 
         {/* ===== HISTORY TAB (payment timeline + audit) ===== */}
         {tab === "history" && (
-          <div className="p-6 space-y-8">
-            <div className="space-y-3">
-              <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Timeline</p>
+          <div className="space-y-4 p-[22px]">
+            <div>
+              <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Timeline</p>
               <div className="space-y-0">
                 <TimelineStep done label="Invoice Created" date={formatDate(invoice.created_at)} />
                 <TimelineStep done={invoice.status !== "cancelled"} label="Sent to Client" date={formatDate(invoice.created_at)} />
@@ -3057,8 +3169,8 @@ function InvoiceDetailDrawer({
                 />
               </div>
             </div>
-            <div className="space-y-3 pt-2 border-t border-border-light">
-              <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Activity</p>
+            <div className="border-t border-border pt-4">
+              <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Activity log</p>
               <AuditTimeline entityType="invoice" entityId={invoice.id} />
             </div>
           </div>
@@ -3209,6 +3321,112 @@ function InvoiceDetailDrawer({
               onClick={() => void handleSaveDueDate()}
             >
               {savingDueDate ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Cancel invoice modal */}
+      <Modal
+        open={cancelModalOpen}
+        onClose={() => { setCancelModalOpen(false); setCancelReason(""); }}
+        title="Cancel invoice"
+        size="sm"
+      >
+        <div className="space-y-4 p-4">
+          <p className="text-[12px] text-text-secondary">
+            Cancelling <span className="font-semibold text-text-primary">{invoice.reference}</span> is permanent. This cannot be undone.
+          </p>
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">Reason</p>
+            <textarea
+              rows={3}
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              disabled={savingCancel}
+              placeholder="e.g. Job cancelled by client"
+              className="w-full resize-none rounded-md border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-50"
+            />
+            {cancelReason.length > 0 && cancelReason.trim().length < 5 && (
+              <p className="text-[11px] text-red-500">{5 - cancelReason.trim().length} more characters needed</p>
+            )}
+          </div>
+          {linkedJob && (
+            <label className="flex cursor-pointer items-start gap-3 rounded-[8px] border border-border bg-surface-hover/50 px-3 py-2.5 transition-colors hover:bg-surface-hover">
+              <input
+                type="checkbox"
+                checked={cancelWithJob}
+                onChange={(e) => setCancelWithJob(e.target.checked)}
+                disabled={savingCancel}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-red-600"
+              />
+              <div className="min-w-0">
+                <p className="text-[12px] font-semibold text-text-primary">Also cancel job &amp; partner payment</p>
+                <p className="text-[11px] text-text-secondary mt-0.5">
+                  Cancels <span className="font-medium">{linkedJob.reference}</span> and voids any open self-bill payout for {linkedJob.partner_name || "the partner"}.
+                </p>
+              </div>
+            </label>
+          )}
+          <div className="flex gap-2 border-t border-border-light pt-3">
+            <Button variant="outline" className="flex-1" onClick={() => { setCancelModalOpen(false); setCancelReason(""); }} disabled={savingCancel}>
+              Keep invoice
+            </Button>
+            <Button
+              variant="danger"
+              className="flex-1"
+              disabled={savingCancel || cancelReason.trim().length < 5}
+              loading={savingCancel}
+              onClick={() => void handleCancelInvoice()}
+            >
+              {savingCancel ? "Cancelling…" : "Cancel invoice"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Reopen invoice modal */}
+      <Modal
+        open={reopenModalOpen}
+        onClose={() => { setReopenModalOpen(false); setReopenReason(""); }}
+        title="Reopen invoice"
+        size="sm"
+      >
+        <div className="space-y-4 p-4">
+          <p className="text-[12px] text-text-secondary">
+            This will move <span className="font-semibold text-text-primary">{invoice.reference}</span> back to awaiting payment. The paid date and collected amounts will be cleared.
+          </p>
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">Reason for reopening</p>
+            <textarea
+              rows={3}
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+              disabled={savingReopen}
+              placeholder="e.g. Payment was reversed by the bank"
+              className="w-full resize-none rounded-md border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-50"
+            />
+            {reopenReason.length > 0 && reopenReason.trim().length < 5 && (
+              <p className="text-[11px] text-red-500">{5 - reopenReason.trim().length} more characters needed</p>
+            )}
+          </div>
+          <div className="flex gap-2 border-t border-border-light pt-3">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => { setReopenModalOpen(false); setReopenReason(""); }}
+              disabled={savingReopen}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              className="flex-1"
+              disabled={savingReopen || reopenReason.trim().length < 5}
+              loading={savingReopen}
+              onClick={() => void handleReopen()}
+            >
+              {savingReopen ? "Reopening…" : "Reopen invoice"}
             </Button>
           </div>
         </div>

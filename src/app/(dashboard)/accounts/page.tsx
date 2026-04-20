@@ -689,6 +689,7 @@ function AccountDetailDrawer({
   const [clientsUsedFallback, setClientsUsedFallback] = useState(false);
   const CLIENTS_PAGE_SIZE = 20;
   const [saving, setSaving] = useState(false);
+  const [syncingAccount, setSyncingAccount] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingContract, setUploadingContract] = useState(false);
   const [drawerAssignableUsers, setDrawerAssignableUsers] = useState<AssignableUser[]>([]);
@@ -820,6 +821,29 @@ function AccountDetailDrawer({
   const outstandingInvoices = invoices
     .filter((i) => i.status !== "paid" && i.status !== "cancelled")
     .reduce((s, i) => s + Number(i.amount), 0);
+
+  const handleSyncAccount = async () => {
+    if (!isAdmin) return;
+    setSyncingAccount(true);
+    try {
+      const res = await fetch("/api/admin/invoices/recalculate-due-dates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: false, accountId: account.id }),
+      });
+      const json = await res.json().catch(() => ({})) as { updated?: number; sameDate?: number; noAccount?: number; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Failed");
+      const parts = [];
+      if ((json.sameDate ?? 0) > 0) parts.push(`${json.sameDate} already correct`);
+      if ((json.noAccount ?? 0) > 0) parts.push(`${json.noAccount} skipped`);
+      const detail = parts.length ? ` · ${parts.join(" · ")}` : "";
+      toast.success(`Updated ${json.updated ?? 0} invoice${(json.updated ?? 0) !== 1 ? "s" : ""} for ${account.company_name}${detail}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncingAccount(false);
+    }
+  };
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1448,9 +1472,24 @@ function AccountDetailDrawer({
                 <Receipt className="h-3.5 w-3.5" />
                 Invoices linked to jobs above
               </p>
-              <Link href="/finance/invoices" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                All invoices <ExternalLink className="h-3 w-3" />
-              </Link>
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <button
+                    type="button"
+                    disabled={syncingAccount}
+                    onClick={() => void handleSyncAccount()}
+                    className="flex items-center gap-1 text-xs font-semibold text-primary hover:text-primary/80 disabled:opacity-50 transition-colors"
+                  >
+                    {syncingAccount
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : <Receipt className="h-3 w-3" />}
+                    {syncingAccount ? "Syncing…" : "Sync due dates"}
+                  </button>
+                )}
+                <Link href="/finance/invoices" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                  All invoices <ExternalLink className="h-3 w-3" />
+                </Link>
+              </div>
             </div>
             {loadingExtras ? (
               <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-text-tertiary" /></div>
