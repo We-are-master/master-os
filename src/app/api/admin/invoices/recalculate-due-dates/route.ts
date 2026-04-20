@@ -18,7 +18,7 @@ const CHUNK = 200;
  *   1. invoice.source_account_id (direct, consolidated invoices)
  *   2. job.client_id → clients.source_account_id → accounts.payment_terms
  *
- * Anchor date: invoice.created_at (when the invoice was issued)
+ * Anchor date: job.scheduled_date → job.scheduled_start_at → invoice.created_at
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -36,19 +36,25 @@ export async function POST(req: NextRequest) {
   }
 
   let dryRun = false;
+  let scopeAccountId: string | null = null;
   try {
     const body = await req.json().catch(() => ({}));
     dryRun = body.dryRun === true;
+    scopeAccountId = typeof body.accountId === "string" ? body.accountId : null;
   } catch { /* no body */ }
 
   const admin = createServiceClient();
 
-  // ── 1. Eligible invoices (include created_at as anchor) ───────────────────
-  const { data: rawInvoices, error: invErr } = await admin
+  // ── 1. Eligible invoices ──────────────────────────────────────────────────
+  let invoicesQuery = admin
     .from("invoices")
     .select("id, reference, job_reference, due_date, source_account_id, status, created_at")
     .not("job_reference", "is", null)
     .is("deleted_at", null);
+  if (scopeAccountId) {
+    invoicesQuery = invoicesQuery.eq("source_account_id", scopeAccountId);
+  }
+  const { data: rawInvoices, error: invErr } = await invoicesQuery;
 
   if (invErr) {
     console.error("[recalculate-due-dates] fetch invoices:", invErr);
@@ -62,23 +68,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ updated: 0, noAccount: 0, sameDate: 0, changes: [], debug: { invoicesTotal: 0 } });
   }
 
-  // ── 2. Jobs → client_id (only needed to resolve account when invoice has no source_account_id) ──
+  // ── 2. Jobs → client_id + scheduled dates (all invoices need the date for the anchor) ──
   const jobRefs = [...new Set(
-    invoices
-      .filter((i) => !i.source_account_id)
-      .map((i) => (i.job_reference as string).trim()),
+    invoices.map((i) => (i.job_reference as string).trim()),
   )];
 
-  type JobRow = { reference: string; client_id: string | null };
+  type JobRow = {
+    reference: string;
+    client_id: string | null;
+    completed_date: string | null;
+    scheduled_finish_date: string | null;
+    scheduled_end_at: string | null;
+    scheduled_start_at: string | null;
+  };
   const allJobs: JobRow[] = [];
   for (let i = 0; i < jobRefs.length; i += CHUNK) {
     const { data: chunk, error: jobErr } = await admin
       .from("jobs")
-      .select("reference, client_id")
+      .select("reference, client_id, completed_date, scheduled_finish_date, scheduled_end_at, scheduled_start_at")
       .in("reference", jobRefs.slice(i, i + CHUNK));
     if (jobErr) console.error("[recalculate-due-dates] jobs query error:", jobErr);
     if (chunk) allJobs.push(...(chunk as JobRow[]));
   }
+  const jobByRef = Object.fromEntries(allJobs.map((j) => [j.reference, j]));
   const clientIdByJobRef = Object.fromEntries(
     allJobs.filter((j) => j.client_id).map((j) => [j.reference, j.client_id as string]),
   );
@@ -132,9 +144,16 @@ export async function POST(req: NextRequest) {
     const account = accountId ? accountById[accountId] : undefined;
     if (!account?.payment_terms) { noAccount++; continue; }
 
-    // Anchor = invoice creation date (when it was issued)
-    const anchorStr = (inv.created_at as string | null) ?? new Date().toISOString();
-    const anchor = new Date(anchorStr);
+    // Anchor = actual completion → planned finish → scheduled end → start → invoice created_at
+    const job = jobByRef[jobRef];
+    const anchorStr =
+      job?.completed_date?.slice(0, 10) ??
+      job?.scheduled_finish_date?.slice(0, 10) ??
+      (job?.scheduled_end_at ? job.scheduled_end_at.slice(0, 10) : null) ??
+      (job?.scheduled_start_at ? job.scheduled_start_at.slice(0, 10) : null) ??
+      (inv.created_at as string | null) ??
+      new Date().toISOString();
+    const anchor = new Date(anchorStr + (anchorStr.length === 10 ? "T00:00:00" : ""));
 
     const newDueDate = dueDateIsoFromPaymentTerms(anchor, account.payment_terms);
 
