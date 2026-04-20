@@ -58,17 +58,17 @@ const INDUSTRY_OPTIONS = [
 ];
 
 const PAYMENT_TERMS_OPTIONS = [
-  { value: "Net 7", label: "Net 7" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 60", label: "Net 60" },
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Every 7 days", label: "Every 7 days (weekly invoice)" },
-  { value: "Every 15 days", label: "Every 15 days (weekly invoice)" },
-  { value: "Every 30 days", label: "Every 30 days (weekly invoice)" },
-  { value: "Every Friday", label: "Every Friday (weekly invoice)" },
+  { value: "Due on Receipt",          label: "Due on Receipt" },
+  { value: "Net 7",                   label: "Net 7" },
+  { value: "Net 15",                  label: "Net 15" },
+  { value: "Net 30",                  label: "Net 30" },
+  { value: "Net 45",                  label: "Net 45" },
+  { value: "Net 60",                  label: "Net 60" },
+  { value: "Every 7 days",            label: "Every 7 days" },
+  { value: "Every 15 days",           label: "Every 15 days" },
+  { value: "Every 30 days",           label: "Every 30 days" },
+  { value: "Every Friday",            label: "Every Friday" },
   { value: "Every 2 weeks on Friday", label: "Every 2 weeks on Friday" },
-  { value: "45 days", label: "45 days" },
 ];
 
 const statusConfig: Record<string, { label: string; variant: "success" | "info" | "default" }> = {
@@ -159,7 +159,8 @@ export default function AccountsPage() {
   /** Resolve account_owner_id → name in the main table (same directory as job/account owner pickers). */
   const [accountOwnerDirectory, setAccountOwnerDirectory] = useState<AssignableUser[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  useProfile();
+  const { profile } = useProfile();
+  const isAdmin = profile?.role === "admin";
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
 
   const [totalRevenue, setTotalRevenue] = useState(0);
@@ -169,6 +170,9 @@ export default function AccountsPage() {
 
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const loadKpis = useCallback(async () => {
     try {
@@ -202,6 +206,30 @@ export default function AccountsPage() {
   }, [createOpen]);
 
   const avgDeal = totalAccounts > 0 ? Math.round(totalRevenue / totalAccounts) : 0;
+
+  const handleSyncDueDates = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/admin/invoices/recalculate-due-dates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: false }),
+      });
+      const json = await res.json().catch(() => ({})) as { updated?: number; sameDate?: number; noAccount?: number; error?: string; debug?: Record<string, number> };
+      if (!res.ok) throw new Error(json.error ?? "Failed");
+      console.info("[sync-due-dates] result:", json.debug);
+      const parts = [];
+      if ((json.sameDate ?? 0) > 0) parts.push(`${json.sameDate} already correct`);
+      if ((json.noAccount ?? 0) > 0) parts.push(`${json.noAccount} no account/terms`);
+      const detail = parts.length ? ` · ${parts.join(" · ")}` : "";
+      toast.success(`Updated ${json.updated ?? 0} invoice${(json.updated ?? 0) !== 1 ? "s" : ""}${detail}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+      setSyncOpen(false);
+    }
+  };
 
   const accountListTabs = useMemo(
     () =>
@@ -380,7 +408,7 @@ export default function AccountsPage() {
       },
     },
     {
-      key: "payment_terms",
+      key: "next_payment",
       label: "Next payment",
       render: (item) => {
         if (!item.payment_terms) return <span className="text-text-tertiary text-xs">—</span>;
@@ -401,6 +429,11 @@ export default function AccountsPage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader title="Accounts" subtitle="Manage corporate client accounts and billing.">
+          {isAdmin && (
+            <Button size="sm" variant="outline" icon={<Receipt className="h-3.5 w-3.5" />} onClick={() => setSyncOpen(true)}>
+              Sync due dates
+            </Button>
+          )}
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Account</Button>
         </PageHeader>
 
@@ -465,6 +498,28 @@ export default function AccountsPage() {
           loadKpis();
         }}
       />
+
+      {/* ── Sync due dates confirmation ───────────────────────────── */}
+      <Modal open={syncOpen} onClose={() => !syncing && setSyncOpen(false)} title="Sync invoice due dates" size="sm">
+        <div className="px-5 py-4 space-y-4">
+          <p className="text-sm text-text-secondary">
+            This will recalculate the <strong>due date</strong> of all unpaid invoices using each job&apos;s scheduled date + the linked account&apos;s payment terms.
+          </p>
+          <ul className="text-xs text-text-tertiary space-y-1 pl-3 list-disc">
+            <li>Only affects invoices with status <strong>draft, pending, overdue</strong></li>
+            <li>Invoices with no linked job or no payment terms are skipped</li>
+            <li>Paid and cancelled invoices are never touched</li>
+          </ul>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={() => setSyncOpen(false)} disabled={syncing}>Cancel</Button>
+            <Button size="sm" disabled={syncing} onClick={() => void handleSyncDueDates()}
+              icon={syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Receipt className="h-3.5 w-3.5" />}
+            >
+              {syncing ? "Updating…" : "Update all invoices"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Account" subtitle="Add a new corporate client account.">
         <form onSubmit={handleCreate} className="px-6 py-5 space-y-4">
@@ -634,6 +689,7 @@ function AccountDetailDrawer({
   const [clientsUsedFallback, setClientsUsedFallback] = useState(false);
   const CLIENTS_PAGE_SIZE = 20;
   const [saving, setSaving] = useState(false);
+  const [syncingAccount, setSyncingAccount] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingContract, setUploadingContract] = useState(false);
   const [drawerAssignableUsers, setDrawerAssignableUsers] = useState<AssignableUser[]>([]);
@@ -765,6 +821,29 @@ function AccountDetailDrawer({
   const outstandingInvoices = invoices
     .filter((i) => i.status !== "paid" && i.status !== "cancelled")
     .reduce((s, i) => s + Number(i.amount), 0);
+
+  const handleSyncAccount = async () => {
+    if (!isAdmin) return;
+    setSyncingAccount(true);
+    try {
+      const res = await fetch("/api/admin/invoices/recalculate-due-dates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: false, accountId: account.id }),
+      });
+      const json = await res.json().catch(() => ({})) as { updated?: number; sameDate?: number; noAccount?: number; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Failed");
+      const parts = [];
+      if ((json.sameDate ?? 0) > 0) parts.push(`${json.sameDate} already correct`);
+      if ((json.noAccount ?? 0) > 0) parts.push(`${json.noAccount} skipped`);
+      const detail = parts.length ? ` · ${parts.join(" · ")}` : "";
+      toast.success(`Updated ${json.updated ?? 0} invoice${(json.updated ?? 0) !== 1 ? "s" : ""} for ${account.company_name}${detail}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncingAccount(false);
+    }
+  };
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1393,9 +1472,24 @@ function AccountDetailDrawer({
                 <Receipt className="h-3.5 w-3.5" />
                 Invoices linked to jobs above
               </p>
-              <Link href="/finance/invoices" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                All invoices <ExternalLink className="h-3 w-3" />
-              </Link>
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <button
+                    type="button"
+                    disabled={syncingAccount}
+                    onClick={() => void handleSyncAccount()}
+                    className="flex items-center gap-1 text-xs font-semibold text-primary hover:text-primary/80 disabled:opacity-50 transition-colors"
+                  >
+                    {syncingAccount
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : <Receipt className="h-3 w-3" />}
+                    {syncingAccount ? "Syncing…" : "Sync due dates"}
+                  </button>
+                )}
+                <Link href="/finance/invoices" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                  All invoices <ExternalLink className="h-3 w-3" />
+                </Link>
+              </div>
             </div>
             {loadingExtras ? (
               <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-text-tertiary" /></div>

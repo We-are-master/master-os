@@ -200,11 +200,13 @@ export async function updateInvoice(id: string, input: Partial<Invoice>): Promis
   const msg = (error as { message?: string }).message ?? "";
   const maybeCompatIssue =
     code === "23514" ||
+    code === "PGRST204" ||
     msg.includes("invoice") ||
     msg.includes("collection_stage") ||
     msg.includes("collection_stage_locked") ||
     msg.includes("invoice_kind") ||
     msg.includes("amount_paid") ||
+    msg.includes("cancellation_reason") ||
     msg.includes("Could not find the") ||
     msg.includes("does not exist");
   if (!maybeCompatIssue) throw error;
@@ -214,6 +216,7 @@ export async function updateInvoice(id: string, input: Partial<Invoice>): Promis
   delete legacyPatch.collection_stage_locked;
   delete legacyPatch.invoice_kind;
   delete legacyPatch.amount_paid;
+  delete legacyPatch.cancellation_reason;
   const { data: legacyData, error: legacyErr } = await supabase
     .from("invoices")
     .update(legacyPatch)
@@ -255,7 +258,7 @@ export async function softDeleteInvoicesForArchivedJobs(
   }
 }
 
-const OPEN_INVOICE_STATUSES: InvoiceStatus[] = ["draft", "pending", "partially_paid", "overdue"];
+const OPEN_INVOICE_STATUSES: InvoiceStatus[] = ["draft", "pending", "awaiting_payment", "partially_paid", "overdue"];
 
 /**
  * When a job is cancelled, cancel open invoices tied to that job and store the same reason as on the job.

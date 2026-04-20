@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
-import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { getWeekBoundsForDate, partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 
 function uniqueRef(weekLabel: string, jobRef: string): string {
   const short = jobRef.replace(/\s/g, "").slice(0, 8);
@@ -77,6 +77,20 @@ export async function POST() {
     groups.set(key, list);
   }
 
+  // Pre-fetch payment_terms for all involved partners
+  const partnerIds = [...new Set(toProcess.map((j) => j.partner_id).filter(Boolean))];
+  const partnerTermsMap = new Map<string, string | null>();
+  if (partnerIds.length > 0) {
+    const { data: partnerRows } = await supabase
+      .from("partners")
+      .select("id, payment_terms")
+      .in("id", partnerIds);
+    for (const p of partnerRows ?? []) {
+      const pr = p as { id: string; payment_terms?: string | null };
+      partnerTermsMap.set(pr.id, pr.payment_terms ?? null);
+    }
+  }
+
   let billsCreated = 0;
   let jobsLinked = 0;
   const today = new Date().toISOString().slice(0, 10);
@@ -98,6 +112,8 @@ export async function POST() {
     if (!sbId) {
       const ref = uniqueRef(weekLabel, first.reference);
       const status = weekEnd < today ? "pending_review" : "accumulating";
+      const paymentTerms = partnerTermsMap.get(first.partner_id) ?? null;
+      const dueDate = partnerFieldSelfBillPaymentDueDate(weekEnd, paymentTerms);
       const { data: ins, error: insErr } = await supabase
         .from("self_bills")
         .insert({
@@ -115,6 +131,7 @@ export async function POST() {
           net_payout: 0,
           status,
           payment_cadence: "weekly",
+          due_date: dueDate,
         })
         .select("id")
         .single();

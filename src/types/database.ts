@@ -54,6 +54,7 @@ export type InvoiceStatus =
   | "draft"
   | "paid"
   | "pending"
+  | "awaiting_payment"
   | "partially_paid"
   | "overdue"
   | "cancelled"
@@ -459,6 +460,8 @@ export interface Partner {
   bank_account_number?: string | null;
   bank_account_holder?: string | null;
   bank_name?: string | null;
+  /** Payout schedule — same format as accounts.payment_terms. Null = default Friday-after-week-end. */
+  payment_terms?: string | null;
 }
 
 /** Tokenized self-service link sent to partners so they can refresh docs + profile data without login. */
@@ -597,6 +600,8 @@ export interface SelfBill {
   payout_void_reason?: string | null;
   /** Partner-facing label: Archived, Lost, Cancelled. */
   partner_status_label?: string | null;
+  /** Computed payout due date (YYYY-MM-DD). Null = compute from week_end + partner.payment_terms at runtime. */
+  due_date?: string | null;
 }
 
 /** Custos internos (payroll, despesas operacionais pontuais) */

@@ -8,6 +8,7 @@ import { applyJobDbCompat, prepareJobRowForInsert } from "@/lib/job-schema-compa
 import { capJobImagesArray, coerceJobImagesArray } from "@/lib/job-images";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { ensureWeeklySelfBillForJob } from "@/services/self-bills";
 
 function getServiceSupabase() {
   return createClient(
@@ -256,7 +257,7 @@ export async function POST(req: NextRequest) {
           client_name: quote.client_name ?? "",
           job_reference: job.reference,
           amount: depositRequired,
-          status: "pending",
+          status: "draft",
           due_date: dueDateStr,
           collection_stage: "awaiting_deposit",
           collection_stage_locked: false,
@@ -336,7 +337,7 @@ export async function POST(req: NextRequest) {
           client_name: quote.client_name ?? "",
           job_reference: job.reference,
           amount: finalBalance,
-          status: "pending",
+          status: "draft",
           due_date: dueDateStr,
           collection_stage: "awaiting_deposit",
           collection_stage_locked: false,
@@ -356,6 +357,13 @@ export async function POST(req: NextRequest) {
           console.error("Quote accept: downstream sync failed", e);
         }
       })();
+      if (hasPartner) {
+        void ensureWeeklySelfBillForJob({ ...baseJobRow, id: job.id, reference: job.reference } as Parameters<typeof ensureWeeklySelfBillForJob>[0])
+          .then((sbId) => {
+            if (sbId) void supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
+          })
+          .catch((e) => console.error("Quote accept: self-bill create failed", e));
+      }
       void supabase.from("audit_logs").insert({
         entity_type: "quote",
         entity_id: quoteId,

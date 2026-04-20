@@ -7,7 +7,6 @@ import { getInvoiceDueDateIsoForClient } from "./invoice-due-date";
 import { createOrAppendJobInvoice } from "./weekly-account-invoice";
 import {
   cancelOpenSelfBillsForJobCancellation,
-  createSelfBillFromJob,
   ensureWeeklySelfBillForJob,
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
@@ -444,10 +443,13 @@ export async function createJob(
 ): Promise<Job> {
   const supabase = getSupabase();
   /** Every job gets a paired draft invoice in Finance (amount may be 0 until pricing is set). */
-  const [jobRefRes, invRefRes, coords] = await Promise.all([
+  const [jobRefRes, invRefRes, coords, dueDateStrPre] = await Promise.all([
     supabase.rpc("next_job_ref"),
     supabase.rpc("next_invoice_ref"),
     resolveJobGeocode(input.property_address),
+    getInvoiceDueDateIsoForClient(input.client_id ?? null).catch(
+      () => new Date().toISOString().slice(0, 10),
+    ),
   ]);
   if (jobRefRes.error) throw jobRefRes.error;
   if (invRefRes.error) throw invRefRes.error;
@@ -520,15 +522,15 @@ export async function createJob(
   const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
   const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
-  if (!job.invoice_id) {
+
+  /**
+   * Invoice draft + weekly self-bill run in parallel after the insert — the two are
+   * independent docs and were previously serialized, costing ~1–2s per job create.
+   * Invoice stays `draft`; the self-bill helper also updates `jobs.self_bill_id` itself.
+   */
+  const invoiceTask: Promise<string | null> = (async () => {
+    if (job.invoice_id) return job.invoice_id;
     try {
-      let dueDateStr = "";
-      try {
-        dueDateStr = await getInvoiceDueDateIsoForClient(job.client_id ?? null);
-      } catch {
-        // Do not block invoice creation when payment-terms lookup fails.
-        dueDateStr = new Date().toISOString().slice(0, 10);
-      }
       const hasDeposit = Number(job.customer_deposit ?? 0) > 0.01;
       const inv = await createInvoice(
         {
@@ -536,21 +538,15 @@ export async function createJob(
           job_reference: job.reference,
           amount: invoiceTotal,
           status: "draft",
-          due_date: dueDateStr,
+          due_date: dueDateStrPre,
           invoice_kind: "combined",
           collection_stage: hasDeposit ? "awaiting_deposit" : "awaiting_final",
         },
         { reference: invoiceRefPre },
       );
-      const { error: linkErr } = await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
-      if (!linkErr) {
-        job = { ...job, invoice_id: inv.id };
-      } else {
-        console.error("createJob invoice link failed:", linkErr);
-      }
+      return inv.id;
     } catch (e) {
       console.error("createJob invoice auto-create failed:", e);
-      // Fallback to the same invoice helper used in approval/manual flows.
       try {
         const inv = await createOrAppendJobInvoice(job, {
           client_name: job.client_name ?? "Client",
@@ -558,50 +554,44 @@ export async function createJob(
           status: "draft",
           invoice_kind: "final",
         });
-        const { error: linkErr } = await supabase.from("jobs").update({ invoice_id: inv.id }).eq("id", job.id);
-        if (!linkErr) {
-          job = { ...job, invoice_id: inv.id };
-        } else {
-          console.error("createJob invoice fallback link failed:", linkErr);
-        }
+        return inv.id;
       } catch (fallbackErr) {
         console.error("createJob invoice fallback create failed:", fallbackErr);
+        return null;
       }
     }
-  }
+  })();
 
-  /**
-   * Auto-link the weekly self-bill when a partner is assigned. Idempotent — reuses the
-   * partner's bill for the current week or creates a new one. Failure is non-fatal: the
-   * Jobs detail page has a "Link weekly self bill" button as a manual fallback.
-   */
-  if (job.partner_id?.trim() && !job.self_bill_id) {
+  const selfBillTask: Promise<string | null> = (async () => {
+    if (!job.partner_id?.trim() || job.self_bill_id) return job.self_bill_id ?? null;
     try {
-      const sbId = await ensureWeeklySelfBillForJob(job);
-      if (sbId) job = { ...job, self_bill_id: sbId };
+      return (await ensureWeeklySelfBillForJob(job)) ?? null;
     } catch (e) {
       console.error(
         "createJob: auto-link weekly self-bill failed",
         { jobId: job.id, ref: job.reference, partnerId: job.partner_id },
         e,
       );
+      return null;
+    }
+  })();
+
+  const [invoiceIdCreated, selfBillIdCreated] = await Promise.all([invoiceTask, selfBillTask]);
+
+  // `ensureWeeklySelfBillForJob` already writes `jobs.self_bill_id`; only the invoice FK needs linking here.
+  if (invoiceIdCreated && !job.invoice_id) {
+    const { error: linkErr } = await supabase
+      .from("jobs")
+      .update({ invoice_id: invoiceIdCreated })
+      .eq("id", job.id);
+    if (!linkErr) {
+      job = { ...job, invoice_id: invoiceIdCreated };
+    } else {
+      console.error("createJob invoice link failed:", linkErr);
     }
   }
-
-  if (!job.self_bill_id && job.partner_id?.trim()) {
-    try {
-      const sb = await createSelfBillFromJob({
-        id: job.id,
-        reference: job.reference,
-        partner_name: job.partner_name ?? "Unassigned",
-        partner_cost: job.partner_cost,
-        materials_cost: job.materials_cost,
-      });
-      await supabase.from("jobs").update({ self_bill_id: sb.id }).eq("id", job.id);
-      job = { ...job, self_bill_id: sb.id };
-    } catch {
-      /* self-bill can be linked manually from job/finance */
-    }
+  if (selfBillIdCreated && !job.self_bill_id) {
+    job = { ...job, self_bill_id: selfBillIdCreated };
   }
 
   /**

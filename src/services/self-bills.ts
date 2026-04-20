@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { Job, SelfBill, SelfBillStatus } from "@/types/database";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
-import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { isSupabaseMissingColumnError, parsePostgrestUnknownColumnName } from "@/lib/supabase-schema-compat";
 
 const JOB_LINE_FOR_SB_FULL =
   "id, reference, title, partner_cost, partner_agreed_value, materials_cost, status, property_address, deleted_at, partner_cancelled_at";
@@ -65,6 +65,15 @@ export const SELF_BILL_PAYOUT_VOID_STATUSES: SelfBillStatus[] = [
   "payout_archived",
   "payout_cancelled",
   "payout_lost",
+];
+
+/**
+ * Terminal statuses: a new job must never be linked to a self-bill in one of these states.
+ * Instead, a fresh self-bill is created so the new job has no history with the old one.
+ */
+export const SELF_BILL_TERMINAL_STATUSES: SelfBillStatus[] = [
+  ...SELF_BILL_PAYOUT_VOID_STATUSES,
+  "rejected",
 ];
 
 export function isSelfBillPayoutVoided(sb: Pick<SelfBill, "status">): boolean {
@@ -244,20 +253,46 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
         ? prevNet
         : null;
 
-  const { error: voidErr } = await supabase
-    .from("self_bills")
-    .update({
-      status: nextStatus,
-      jobs_count: 0,
-      job_value: 0,
-      materials: 0,
-      commission: 0,
-      net_payout: 0,
-      payout_void_reason: reason,
-      partner_status_label: partnerLabel,
-      ...(originalNetPayout != null ? { original_net_payout: originalNetPayout } : {}),
-    })
-    .eq("id", selfBillId);
+  /**
+   * Progressively drop columns that the DB's schema cache doesn't know about (migration 100
+   * adds `payout_void_reason` / `partner_status_label` / `original_net_payout`; older DBs
+   * return PGRST204 for those). Without this retry, the whole status transition was getting
+   * swallowed by the caller's try/catch, leaving bills stuck in their pre-cancel status
+   * with zeroed totals.
+   */
+  const voidPatch: Record<string, unknown> = {
+    status: nextStatus,
+    jobs_count: 0,
+    job_value: 0,
+    materials: 0,
+    commission: 0,
+    net_payout: 0,
+    payout_void_reason: reason,
+    partner_status_label: partnerLabel,
+    ...(originalNetPayout != null ? { original_net_payout: originalNetPayout } : {}),
+  };
+  let voidErr: unknown = null;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const { error } = await supabase.from("self_bills").update(voidPatch).eq("id", selfBillId);
+    if (!error) {
+      voidErr = null;
+      break;
+    }
+    voidErr = error;
+    const col = parsePostgrestUnknownColumnName(error);
+    if (col && col in voidPatch && col !== "status") {
+      delete voidPatch[col];
+      continue;
+    }
+    if (isSupabaseMissingColumnError(error)) {
+      // Drop the optional partner-facing columns and retry with the minimum set.
+      delete voidPatch.payout_void_reason;
+      delete voidPatch.partner_status_label;
+      delete voidPatch.original_net_payout;
+      continue;
+    }
+    break;
+  }
   if (voidErr) throw voidErr;
 }
 
@@ -314,7 +349,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
 
   const { data: existing, error: selErr } = await supabase
     .from("self_bills")
-    .select("id")
+    .select("id, status")
     .eq("partner_id", partnerId)
     .eq("week_start", weekStart)
     .limit(1)
@@ -322,7 +357,13 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
 
   if (selErr) throw selErr;
 
-  let sbId = existing?.id as string | undefined;
+  const existingRow = existing as { id: string; status: string } | null;
+  // Terminal self-bills (voided / rejected) belong to their own history.
+  // New jobs always get a fresh self-bill so they have no link to cancelled/rejected ones.
+  const isTerminal = existingRow
+    ? SELF_BILL_TERMINAL_STATUSES.includes(existingRow.status as SelfBillStatus)
+    : false;
+  let sbId = existingRow && !isTerminal ? (existingRow.id as string) : undefined;
 
   if (!sbId) {
     const ref = uniqueRef(weekLabel, job.reference);
@@ -371,23 +412,25 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
         } else if (insErr2) {
           const { data: race } = await supabase
             .from("self_bills")
-            .select("id")
+            .select("id, status")
             .eq("partner_id", partnerId)
             .eq("week_start", weekStart)
+            .not("status", "in", `(${SELF_BILL_TERMINAL_STATUSES.join(",")})`)
             .limit(1)
             .maybeSingle();
-          sbId = race?.id as string | undefined;
+          sbId = (race as { id: string } | null)?.id;
           if (!sbId) throw insErr2;
         }
       } else {
         const { data: race } = await supabase
           .from("self_bills")
-          .select("id")
+          .select("id, status")
           .eq("partner_id", partnerId)
           .eq("week_start", weekStart)
+          .not("status", "in", `(${SELF_BILL_TERMINAL_STATUSES.join(",")})`)
           .limit(1)
           .maybeSingle();
-        sbId = race?.id as string | undefined;
+        sbId = (race as { id: string } | null)?.id;
         if (!sbId) throw insErr;
       }
     } else {
@@ -473,20 +516,42 @@ export async function cancelOpenSelfBillsForJobCancellation(options: {
   primarySelfBillId?: string | null;
 }): Promise<void> {
   const linked = await listSelfBillsLinkedToJob(options.jobReference, options.primarySelfBillId);
-  const ids = linked
-    .filter((sb) => {
-      if (sb.status === "paid") return false;
-      if (sb.status === "payout_cancelled" || sb.status === "payout_lost" || sb.status === "payout_archived") return false;
-      return true;
-    })
-    .map((sb) => sb.id);
-  if (ids.length === 0) return;
+  const eligible = linked.filter((sb) => {
+    if (sb.status === "paid") return false;
+    if (SELF_BILL_TERMINAL_STATUSES.includes(sb.status)) return false;
+    return true;
+  });
+  if (eligible.length === 0) return;
+
   const supabase = getSupabase();
-  const { error } = await supabase
-    .from("self_bills")
-    .update({ status: "payout_cancelled" as const, partner_status_label: "Cancelled" })
-    .in("id", ids);
-  if (error) throw error;
+
+  // For weekly self-bills with multiple jobs, only void when no active jobs remain.
+  await Promise.all(eligible.map(async (sb) => {
+    const { data: activeJobs } = await supabase
+      .from("jobs")
+      .select("id")
+      .eq("self_bill_id", sb.id)
+      .not("status", "in", "(cancelled,deleted)")
+      .is("deleted_at", null)
+      .limit(1);
+    if (activeJobs?.length) return; // other active jobs remain — leave self-bill intact
+    const patch: Record<string, unknown> = {
+      status: "payout_cancelled" as const,
+      partner_status_label: "Cancelled",
+    };
+    const { error } = await supabase.from("self_bills").update(patch).eq("id", sb.id);
+    if (!error) return;
+    // Older DB schemas may not have partner_status_label — retry with status only.
+    if (isSupabaseMissingColumnError(error)) {
+      const { error: retryErr } = await supabase
+        .from("self_bills")
+        .update({ status: "payout_cancelled" as const })
+        .eq("id", sb.id);
+      if (retryErr) throw retryErr;
+      return;
+    }
+    throw error;
+  }));
 }
 
 export type CreateSelfBillFromJobOptions = {

@@ -2250,6 +2250,8 @@ function PartnerDetailDrawer({
   const [bankAccountHolder, setBankAccountHolder] = useState("");
   const [bankName, setBankName] = useState("");
   const [bankSaving, setBankSaving] = useState(false);
+  const [partnerPaymentTerms, setPartnerPaymentTerms] = useState("");
+  const [paymentTermsSaving, setPaymentTermsSaving] = useState(false);
   const [partnerLocation, setPartnerLocation] = useState<Awaited<ReturnType<typeof getLatestLocation>>>(null);
   const [addDocOpen, setAddDocOpen] = useState(false);
   const [addDocSubmitting, setAddDocSubmitting] = useState(false);
@@ -2407,12 +2409,14 @@ function PartnerDetailDrawer({
     setBankAccountNumberInput(partner.bank_account_number ?? "");
     setBankAccountHolder(partner.bank_account_holder ?? "");
     setBankName(partner.bank_name ?? "");
+    setPartnerPaymentTerms(partner.payment_terms ?? "");
   }, [
     partner?.id,
     partner?.bank_sort_code,
     partner?.bank_account_number,
     partner?.bank_account_holder,
     partner?.bank_name,
+    partner?.payment_terms,
   ]);
 
   const bankDirty = useMemo(() => {
@@ -2461,6 +2465,17 @@ function PartnerDetailDrawer({
       setBankSaving(false);
     }
   }, [partner, bankSortCodeInput, bankAccountNumberInput, bankAccountHolder, bankName, onPartnerPatch]);
+
+  const handleSavePaymentTerms = useCallback(async () => {
+    if (!partner) return;
+    setPaymentTermsSaving(true);
+    try {
+      await onPartnerPatch({ payment_terms: partnerPaymentTerms.trim() || null });
+      toast.success("Payment terms saved.");
+    } finally {
+      setPaymentTermsSaving(false);
+    }
+  }, [partner, partnerPaymentTerms, onPartnerPatch]);
 
   const syncAppUserRow = useCallback(async (userId: string, partnerRowId: string) => {
     const res = await fetch("/api/admin/partner/sync-app-user", {
@@ -4154,6 +4169,61 @@ function PartnerDetailDrawer({
               <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-100">
                 <p className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide">Earned (Jobs)</p>
                 <p className="text-lg font-bold text-blue-700 mt-1">{formatCurrency(realEarnings)}</p>
+              </div>
+            </div>
+
+            {/* Payout terms */}
+            <div className="rounded-xl border border-border-light bg-card p-4 sm:p-5 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="rounded-lg bg-surface-hover p-2 shrink-0" aria-hidden>
+                  <DollarSign className="h-5 w-5 text-text-secondary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-text-primary">Payout terms</p>
+                  <p className="text-xs text-text-tertiary mt-0.5">
+                    Controls the due date on self-bills. Leave blank to use the default (Friday after week close).
+                  </p>
+                </div>
+              </div>
+              <div>
+                <label htmlFor="partner-payment-terms" className="block text-xs font-medium text-text-secondary mb-1">
+                  Payment terms
+                </label>
+                <select
+                  id="partner-payment-terms"
+                  value={partnerPaymentTerms}
+                  onChange={(e) => setPartnerPaymentTerms(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value="">Default (Friday after week close)</option>
+                  <option value="Net 7">Net 7 — 7 days after week end</option>
+                  <option value="Net 14">Net 14 — 14 days after week end</option>
+                  <option value="Net 30">Net 30 — 30 days after week end</option>
+                  <option value="Every Friday">Weekly — every Friday</option>
+                  <option value="Every 2 weeks on Friday">Biweekly — every 2nd Friday</option>
+                  <option value="Monthly cutoff 26 pay Friday">Monthly — cutoff 26th, pay Friday</option>
+                  <option value="Monthly cutoff 15 pay Friday">Monthly — cutoff 15th, pay Friday</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={partnerPaymentTerms === (partner?.payment_terms ?? "") || paymentTermsSaving}
+                  onClick={() => setPartnerPaymentTerms(partner?.payment_terms ?? "")}
+                >
+                  Reset
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={partnerPaymentTerms === (partner?.payment_terms ?? "") || paymentTermsSaving}
+                  loading={paymentTermsSaving}
+                  onClick={() => void handleSavePaymentTerms()}
+                >
+                  Save terms
+                </Button>
               </div>
             </div>
 

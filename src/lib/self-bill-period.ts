@@ -8,6 +8,7 @@ import {
   parseISO,
   isValid,
 } from "date-fns";
+import { dueDateIsoFromPaymentTerms } from "./invoice-payment-terms";
 
 /** UK-style business week: Monday 00:00 → Sunday end-of-day (displayed as week_end date). */
 export function getWeekBoundsForDate(d: Date): { weekStart: string; weekEnd: string; weekLabel: string } {
@@ -26,13 +27,17 @@ export function weekPeriodHelpText(): string {
 
 /**
  * Partner field self-bill: the bucket is Monday 00:00 – Sunday 23:59 (`week_end` is that Sunday, YYYY-MM-DD).
- * Office payment to the partner is **due on the following Friday** (5 days after `week_end`).
+ * Office payment to the partner is **due on the following Friday** (5 days after `week_end`) by default.
+ * When `paymentTerms` is provided it uses the same engine as account invoice due dates.
  */
-export function partnerFieldSelfBillPaymentDueDate(weekEndYmd: string): string {
+export function partnerFieldSelfBillPaymentDueDate(weekEndYmd: string, paymentTerms?: string | null): string {
   const s = weekEndYmd?.trim() ?? "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const d = parseISO(s);
   if (!isValid(d)) return s;
+  if (paymentTerms?.trim()) {
+    return dueDateIsoFromPaymentTerms(d, paymentTerms);
+  }
   return format(addDays(d, 5), "yyyy-MM-dd");
 }
 
