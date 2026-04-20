@@ -18,7 +18,7 @@ const variantStyles: Record<ButtonVariant, string> = {
   danger:
     "bg-red-600 text-white hover:bg-red-700 shadow-sm",
   success:
-    "bg-[#0F6E56] text-white hover:bg-[#0a5a46] shadow-sm shadow-[#0F6E56]/20",
+    "bg-[#16A34A] text-white hover:bg-[#15803D] shadow-sm shadow-[#16A34A]/20",
   outline:
     "bg-white text-[#020040] border-[0.5px] border-[#D8D8DD] hover:bg-surface-hover hover:border-[#D8D8DD] shadow-sm dark:bg-card dark:text-text-primary dark:border-border",
 };
