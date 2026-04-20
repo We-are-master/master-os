@@ -408,7 +408,7 @@ export default function AccountsPage() {
       },
     },
     {
-      key: "payment_terms",
+      key: "next_payment",
       label: "Next payment",
       render: (item) => {
         if (!item.payment_terms) return <span className="text-text-tertiary text-xs">—</span>;
