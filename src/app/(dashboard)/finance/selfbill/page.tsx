@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -194,6 +195,10 @@ export default function SelfBillPage() {
   const [editForm, setEditForm] = useState({ job_value: "", materials: "", commission: "" });
   const [savingEdit, setSavingEdit] = useState(false);
   const [originFilter, setOriginFilter] = useState<"all" | "partner" | "internal">("all");
+
+  const searchParams = useSearchParams();
+  const autoOpenSbId = searchParams.get("open");
+  const autoOpenFiredRef = useRef(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -492,6 +497,16 @@ export default function SelfBillPage() {
       setLoadingJobs(false);
     }
   };
+
+  /** Auto-open the SB drawer when the page is reached via ?open={selfBillId} */
+  useEffect(() => {
+    if (!autoOpenSbId || autoOpenFiredRef.current || selfBills.length === 0) return;
+    const match = selfBills.find((sb) => sb.id === autoOpenSbId);
+    if (!match) return;
+    autoOpenFiredRef.current = true;
+    void openJobsModal(match);
+  // openJobsModal is stable enough; autoOpenSbId comes from URL so doesn't change
+  }, [autoOpenSbId, selfBills]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const tabs = useMemo(
     () =>

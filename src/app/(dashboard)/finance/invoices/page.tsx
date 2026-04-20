@@ -370,6 +370,7 @@ interface LinkedJob {
   margin_percent: number;
   scheduled_date?: string;
   completed_date?: string;
+  self_bill_id?: string | null;
 }
 
 /** Compare fields job→invoice sync may change — avoids a loop when parent replaces `invoice` after an identical refetch. */
@@ -2129,17 +2130,21 @@ function InvoiceDetailDrawer({
   const paidPct = invAmt > 0.01 ? Math.max(0, Math.min(100, Math.round((effectivePaid / invAmt) * 100))) : 0;
   const hasDueBalance = effectiveBalance > 0.01;
   const statusTone = invoice.status === "paid"
-    ? { bg: "#F0F9EC", border: "#D6EAC8", text: "#173404", dot: "#3B6D11", due: "#3B6D11" }
+    ? { bg: "#EFF7F3", border: "#9FE1CB", text: "#0F6E56", dot: "#0F6E56" }
     : (invoice.status === "overdue" || isOverdue)
-      ? { bg: "#FCEBEB", border: "#EFC7C7", text: "#7A1E1E", dot: "#A32D2D", due: "#A32D2D" }
-      : { bg: "var(--status-pending-bg)", border: "var(--status-pending-border)", text: "var(--status-pending-text)", dot: "var(--status-pending-dot)", due: "var(--danger-text)" };
+      ? { bg: "#FEF5F3", border: "#F5BFBF", text: "#A32D2D", dot: "#A32D2D" }
+      : invoice.status === "cancelled"
+        ? { bg: "#F5F5F7", border: "#D8D8DD", text: "#6B6B70", dot: "#6B6B70" }
+        : { bg: "#FFF8F3", border: "#F5CFB8", text: "#ED4B00", dot: "#ED4B00" };
   const statusLead = invoice.status === "paid"
-    ? <span className="inline-flex items-center gap-1"><Check className="h-3 w-3 shrink-0" /> Paid</span>
+    ? "Paid"
     : invoice.status === "partially_paid"
       ? `Partial · ${paidPct}%`
       : (invoice.status === "overdue" || isOverdue)
-        ? <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3 w-3 shrink-0" /> Overdue</span>
-        : `Pending`;
+        ? "Overdue"
+        : invoice.status === "cancelled"
+          ? "Cancelled"
+          : "Pending";
   const statusSub = invoice.status === "paid"
     ? formatDate(invoice.paid_date ?? invoice.last_payment_date ?? invoice.due_date)
     : (invoice.status === "overdue" || isOverdue)
@@ -2302,22 +2307,24 @@ function InvoiceDetailDrawer({
             {/* ===== DETAILS TAB ===== */}
             {tab === "details" && (
               <div className="space-y-4 p-[22px]">
+                {/* ── Status row ── */}
                 <div
-                  className="rounded-[10px] border px-4"
-                  style={{ backgroundColor: statusTone.bg, borderColor: statusTone.border, minHeight: 40 }}
+                  className="rounded-[6px]"
+                  style={{ backgroundColor: statusTone.bg, border: `0.5px solid ${statusTone.border}`, padding: "10px 12px" }}
                 >
-                  <div className="flex h-10 items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex items-center gap-3">
+                    {/* LEFT */}
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: statusTone.dot }} />
-                      <p className="shrink-0 text-[13px] font-semibold" style={{ color: statusTone.text }}>{statusLead}</p>
-                      <span className="text-[11px] text-text-secondary">·</span>
-                      <div className="flex items-center gap-1 group/due">
-                        <p className="text-[11px] text-text-secondary">{statusSub}</p>
+                      <span className="shrink-0 text-[12px] font-semibold" style={{ color: statusTone.text }}>{statusLead}</span>
+                      <span className="h-[10px] w-px shrink-0" style={{ backgroundColor: statusTone.border }} />
+                      <div className="flex min-w-0 items-center gap-1 group/due">
+                        <p className="min-w-0 truncate text-[11px] font-medium text-[#1C1917]">{statusSub}</p>
                         {canEditFields && (
                           <button
                             type="button"
                             onClick={() => { setDueDateModalDate(String(invoice.due_date ?? "").slice(0, 10)); setDueDateModalReason(""); setDueDateModalOpen(true); }}
-                            className="opacity-0 group-hover/due:opacity-100 rounded p-0.5 text-text-tertiary hover:text-primary transition-opacity"
+                            className="shrink-0 rounded p-0.5 text-text-tertiary/50 hover:text-primary transition-colors"
                             title="Change due date"
                           >
                             <PenLine className="h-3 w-3" />
@@ -2325,50 +2332,48 @@ function InvoiceDetailDrawer({
                         )}
                       </div>
                     </div>
-                    {/* Amount — inline editable */}
-                    <div className="shrink-0 text-right">
+                    {/* RIGHT */}
+                    <div className="shrink-0">
                       {editingAmount ? (
-                        <div className="flex flex-col items-end gap-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-semibold text-text-secondary">£</span>
-                            <input
-                              type="number"
-                              autoFocus
-                              min={0}
-                              step="0.01"
-                              value={editAmountValue}
-                              onChange={(e) => setEditAmountValue(e.target.value)}
-                              onKeyDown={(e) => { if (e.key === "Enter") void handleSaveAmount(); if (e.key === "Escape") setEditingAmount(false); }}
-                              disabled={savingField === "amount"}
-                              className="h-8 w-28 rounded-md border border-border bg-card px-2 text-right text-sm font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-primary/40 tabular-nums"
-                            />
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <button type="button" onClick={() => void handleSaveAmount()} disabled={savingField === "amount"} className="rounded px-2 py-0.5 text-[11px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50">
-                              {savingField === "amount" ? "…" : "Save"}
-                            </button>
-                            <button type="button" onClick={() => setEditingAmount(false)} className="rounded px-1.5 py-0.5 text-[11px] text-text-tertiary hover:text-text-secondary">✕</button>
-                          </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-text-secondary">£</span>
+                          <input
+                            type="number"
+                            autoFocus
+                            min={0}
+                            step="0.01"
+                            value={editAmountValue}
+                            onChange={(e) => setEditAmountValue(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") void handleSaveAmount(); if (e.key === "Escape") setEditingAmount(false); }}
+                            disabled={savingField === "amount"}
+                            className="h-7 w-24 rounded-md border border-border bg-card px-2 text-right text-[12px] font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-primary/40 tabular-nums"
+                          />
+                          <button type="button" onClick={() => void handleSaveAmount()} disabled={savingField === "amount"} className="rounded px-1.5 py-0.5 text-[11px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50">
+                            {savingField === "amount" ? "…" : "Save"}
+                          </button>
+                          <button type="button" onClick={() => setEditingAmount(false)} className="rounded px-1 py-0.5 text-[11px] text-text-tertiary hover:text-text-secondary">✕</button>
                         </div>
                       ) : (
-                        <div className="group/amt flex flex-col items-end gap-0">
-                          <div className="flex items-center gap-1">
-                            <p className="text-[13px] font-semibold text-text-primary tabular-nums leading-none">
-                              {formatCurrency(invoice.amount).replace(/\.\d{2}$/, '')}
-                              <span className="text-[10px] font-medium text-text-secondary">{formatCurrency(invoice.amount).slice(-3)}</span>
-                            </p>
-                            {canEditFields && (
-                              <button
-                                type="button"
-                                onClick={() => { setEditAmountValue(String(Number(invoice.amount ?? 0))); setEditingAmount(true); }}
-                                className="opacity-0 group-hover/amt:opacity-100 rounded p-0.5 text-text-tertiary hover:text-primary transition-opacity"
-                                title="Edit amount"
-                              >
-                                <PenLine className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                          <p className="whitespace-nowrap text-[9px] text-text-tertiary">Incl. {formatCurrency(breakdownVat)} VAT</p>
+                        <div className="group/amt flex items-baseline gap-[6px]">
+                          <span
+                            className="tabular-nums text-[13px] font-semibold text-[#1C1917]"
+                            style={{ letterSpacing: "-0.2px" }}
+                          >
+                            {formatCurrency(invoice.amount)}
+                          </span>
+                          <span className="whitespace-nowrap text-[9px] text-text-tertiary">
+                            incl. {formatCurrency(breakdownVat)} VAT
+                          </span>
+                          {canEditFields && (
+                            <button
+                              type="button"
+                              onClick={() => { setEditAmountValue(String(Number(invoice.amount ?? 0))); setEditingAmount(true); }}
+                              className="rounded p-0.5 text-text-tertiary/50 hover:text-primary transition-colors"
+                              title="Edit amount"
+                            >
+                              <PenLine className="h-3 w-3" />
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2411,7 +2416,7 @@ function InvoiceDetailDrawer({
                       </span>
                     </div>
                     <a
-                      href="/finance/selfbill"
+                      href={linkedJob?.self_bill_id ? `/finance/selfbill?open=${linkedJob.self_bill_id}` : "/finance/selfbill"}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="shrink-0 text-[11px] font-semibold text-primary"
