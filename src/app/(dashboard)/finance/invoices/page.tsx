@@ -17,8 +17,8 @@ import {
   Plus, Download, Receipt, Clock, AlertTriangle, AlertCircle,
   FileText, Send, Calendar, CalendarRange, MapPin, User, Briefcase, ArrowRight, RefreshCw,
   CheckCircle2, XCircle, CreditCard, Building2, Hash, TrendingUp,
-  Banknote, RotateCcw, Loader, Lock, ChevronDown, ChevronUp, ChevronRight,
-  ShieldAlert, CircleAlert, Check, PenLine,
+  Banknote, RotateCcw, Loader, Loader2, Lock, ChevronDown, ChevronUp, ChevronRight,
+  ShieldAlert, CircleAlert, Check, PenLine, Tag, Mail,
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -134,6 +134,8 @@ type InvoiceListJobSnapshot = {
   status: JobStatus;
   scheduled_date?: string | null;
   scheduled_start_at?: string | null;
+  property_address?: string | null;
+  title?: string | null;
 };
 
 async function fetchJobsByReferences(refs: string[]): Promise<Record<string, InvoiceListJobSnapshot>> {
@@ -145,7 +147,7 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, Inv
     const chunk = refs.slice(i, i + CHUNK);
     const { data, error } = await supabase
       .from("jobs")
-      .select("id, reference, status, scheduled_date, scheduled_start_at")
+      .select("id, reference, status, scheduled_date, scheduled_start_at, property_address, title")
       .in("reference", chunk);
     if (error) throw error;
     for (const row of data ?? []) {
@@ -155,6 +157,8 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, Inv
         status?: JobStatus;
         scheduled_date?: string | null;
         scheduled_start_at?: string | null;
+        property_address?: string | null;
+        title?: string | null;
       };
       const ref = (r.reference ?? "").trim();
       const jid = r.id?.trim();
@@ -164,11 +168,19 @@ async function fetchJobsByReferences(refs: string[]): Promise<Record<string, Inv
           status: r.status,
           scheduled_date: r.scheduled_date,
           scheduled_start_at: r.scheduled_start_at,
+          property_address: r.property_address,
+          title: r.title,
         };
       }
     }
   }
   return map;
+}
+
+function extractPostcode(address: string | null | undefined): string | null {
+  if (!address) return null;
+  const m = address.trim().match(/([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})$/i);
+  return m ? m[1].toUpperCase().replace(/\s+/, " ") : null;
 }
 
 /** Same aggregation as `InvoiceDetailDrawer` (customer_deposit + customer_final, minus legacy rows). */
@@ -401,6 +413,7 @@ export default function InvoicesPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [savingDueDateId, setSavingDueDateId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkSaving, setBulkSaving] = useState(false);
   const [accountNameById, setAccountNameById] = useState<Record<string, string>>({});
   /** `accounts.id` → `logo_url` (HTTPS) for group header */
   const [accountLogoById, setAccountLogoById] = useState<Record<string, string | null>>({});
@@ -606,78 +619,88 @@ export default function InvoicesPage() {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
+  // Single effect: resolves job→client→account and direct account lookups in one async flow,
+  // then flushes all four maps in one setState batch — eliminates the intermediate "Loading account..." flicker.
   useEffect(() => {
     let cancelled = false;
-    const REF_CHUNK = 80;
-    const NAME_CHUNK = 80;
+    const CHUNK = 100;
     (async () => {
       const refMap: Record<string, string> = {};
       const nameMap: Record<string, string> = {};
+      const nameById: Record<string, string> = {};
+      const logoById: Record<string, string | null> = {};
       try {
         const supabase = getSupabase();
-        const refs = [
-          ...new Set(allInvoicesForAux.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x))),
-        ];
-        for (let i = 0; i < refs.length; i += REF_CHUNK) {
-          const chunk = refs.slice(i, i + REF_CHUNK);
-          const { data: jobs, error } = await supabase
-            .from("jobs")
-            .select("reference, client_id")
-            .in("reference", chunk);
-          if (error) throw error;
-          const cids = [
-            ...new Set(
-              (jobs ?? [])
-                .map((j) => (j as { client_id?: string | null }).client_id)
-                .filter((x): x is string => Boolean(x && String(x).trim())),
-            ),
-          ];
-          if (cids.length === 0) continue;
-          const { data: clients, error: cErr } = await supabase.from("clients").select("id, source_account_id").in("id", cids);
-          if (cErr) throw cErr;
-          const cmap = new Map<string, string>();
-          for (const c of clients ?? []) {
-            const row = c as { id: string; source_account_id?: string | null };
-            const aid = (row.source_account_id ?? "").trim();
-            if (aid) cmap.set(row.id, aid);
-          }
-          for (const j of jobs ?? []) {
-            const row = j as { reference?: string | null; client_id?: string | null };
-            const ref = row.reference?.trim();
-            const cid = row.client_id?.trim();
-            if (!ref || !cid) continue;
-            const acc = cmap.get(cid);
-            if (acc) refMap[ref] = acc;
-          }
+
+        const refs = [...new Set(
+          allInvoicesForAux.map((inv) => inv.job_reference?.trim()).filter((x): x is string => Boolean(x)),
+        )];
+        const namesNeeding = [...new Set(
+          allInvoicesForAux
+            .filter((inv) => !inv.source_account_id?.trim() && !inv.job_reference?.trim())
+            .map((inv) => inv.client_name.trim())
+            .filter(Boolean),
+        )];
+        const directAccountIds = [...new Set(
+          allInvoicesForAux.map((inv) => inv.source_account_id?.trim()).filter((x): x is string => Boolean(x)),
+        )];
+
+        // ── Step 1: jobs + client-name lookup in parallel ─────────────────────
+        const [jobRows, clientNameRows] = await Promise.all([
+          (async () => {
+            const all: Array<{ reference: string; client_id: string | null }> = [];
+            for (let i = 0; i < refs.length; i += CHUNK) {
+              const { data } = await supabase.from("jobs").select("reference, client_id").in("reference", refs.slice(i, i + CHUNK));
+              if (data) all.push(...(data as typeof all));
+            }
+            return all;
+          })(),
+          (async () => {
+            const all: Array<{ full_name: string; source_account_id: string | null }> = [];
+            for (let i = 0; i < namesNeeding.length; i += CHUNK) {
+              const { data } = await supabase.from("clients").select("full_name, source_account_id").in("full_name", namesNeeding.slice(i, i + CHUNK)).is("deleted_at", null);
+              if (data) all.push(...(data as typeof all));
+            }
+            return all;
+          })(),
+        ]);
+
+        for (const r of clientNameRows) {
+          const fn = r.full_name?.trim(); const aid = r.source_account_id?.trim();
+          if (fn && aid) nameMap[fn] = aid;
         }
 
-        const namesNeeding = [
-          ...new Set(
-            allInvoicesForAux
-              .filter((inv) => !inv.source_account_id?.trim() && !inv.job_reference?.trim())
-              .map((inv) => inv.client_name.trim())
-              .filter(Boolean),
-          ),
-        ];
-        for (let i = 0; i < namesNeeding.length; i += NAME_CHUNK) {
-          const nc = namesNeeding.slice(i, i + NAME_CHUNK);
-          const { data: clin, error: nErr } = await supabase
-            .from("clients")
-            .select("full_name, source_account_id")
-            .in("full_name", nc)
-            .is("deleted_at", null);
-          if (nErr) throw nErr;
-          for (const row of clin ?? []) {
-            const r = row as { full_name?: string | null; source_account_id?: string | null };
-            const fn = (r.full_name ?? "").trim();
-            const aid = (r.source_account_id ?? "").trim();
-            if (fn && aid) nameMap[fn] = aid;
+        // ── Step 2: clients for job client_ids ────────────────────────────────
+        const cids = [...new Set(jobRows.map((j) => j.client_id?.trim()).filter((x): x is string => Boolean(x)))];
+        const clientRows: Array<{ id: string; source_account_id: string | null }> = [];
+        for (let i = 0; i < cids.length; i += CHUNK) {
+          const { data } = await supabase.from("clients").select("id, source_account_id").in("id", cids.slice(i, i + CHUNK));
+          if (data) clientRows.push(...(data as typeof clientRows));
+        }
+        const cidToAcc = new Map<string, string>();
+        for (const c of clientRows) { const aid = c.source_account_id?.trim(); if (c.id && aid) cidToAcc.set(c.id, aid); }
+        for (const j of jobRows) {
+          const ref = j.reference?.trim(); const cid = j.client_id?.trim();
+          if (!ref || !cid) continue;
+          const acc = cidToAcc.get(cid); if (acc) refMap[ref] = acc;
+        }
+
+        // ── Step 3: fetch all accounts in one pass ────────────────────────────
+        const allAccountIds = [...new Set([...directAccountIds, ...Object.values(refMap), ...Object.values(nameMap)])];
+        for (let i = 0; i < allAccountIds.length; i += CHUNK) {
+          const { data } = await supabase.from("accounts").select("id, company_name, logo_url").in("id", allAccountIds.slice(i, i + CHUNK));
+          for (const r of data ?? []) {
+            const row = r as { id: string; company_name?: string | null; logo_url?: string | null };
+            nameById[row.id] = (row.company_name ?? "").trim() || "—";
+            logoById[row.id] = (row.logo_url ?? "").trim() || null;
           }
         }
 
         if (!cancelled) {
           setJobRefToSourceAccountId(refMap);
           setClientNameToSourceAccountId(nameMap);
+          setAccountNameById((prev) => ({ ...prev, ...nameById }));
+          setAccountLogoById((prev) => ({ ...prev, ...logoById }));
         }
       } catch {
         if (!cancelled) {
@@ -686,52 +709,8 @@ export default function InvoicesPage() {
         }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [allInvoicesForAux]);
-
-  useEffect(() => {
-    const idSet = new Set<string>();
-    for (const inv of allInvoicesForAux) {
-      const eid = effectiveInvoiceSourceAccountId(inv, jobRefToSourceAccountId, clientNameToSourceAccountId);
-      if (eid) idSet.add(eid);
-    }
-    const ids = [...idSet];
-    if (ids.length === 0) return;
-    let cancelled = false;
-    const CHUNK = 50;
-    (async () => {
-      const map: Record<string, string> = {};
-      const logos: Record<string, string | null> = {};
-      try {
-        for (let i = 0; i < ids.length; i += CHUNK) {
-          const chunk = ids.slice(i, i + CHUNK);
-          const { data: rows, error } = await getSupabase()
-            .from("accounts")
-            .select("id, company_name, logo_url")
-            .in("id", chunk);
-          if (error) throw error;
-          for (const row of rows ?? []) {
-            const r = row as { id: string; company_name?: string | null; logo_url?: string | null };
-            const nm = (r.company_name ?? "").trim();
-            map[r.id] = nm || "—";
-            const lu = (r.logo_url ?? "").trim();
-            logos[r.id] = lu || null;
-          }
-        }
-        if (!cancelled) {
-          setAccountNameById((prev) => ({ ...prev, ...map }));
-          setAccountLogoById((prev) => ({ ...prev, ...logos }));
-        }
-      } catch {
-        /* keep previous cache */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [allInvoicesForAux, jobRefToSourceAccountId, clientNameToSourceAccountId]);
 
   const kpiPeriodDesc = useMemo(
     () => formatFinancePeriodKpiDescription(periodMode, weekAnchor, rangeFrom, rangeTo, monthAnchor),
@@ -1037,6 +1016,7 @@ export default function InvoicesPage() {
         totalDue: number;
         totalPaid: number;
         awaitingInvoiceCount: number;
+        overdueInvoiceCount: number;
         paidInvoiceCount: number;
       }
     >();
@@ -1059,6 +1039,7 @@ export default function InvoicesPage() {
           totalDue: 0,
           totalPaid: 0,
           awaitingInvoiceCount: 0,
+          overdueInvoiceCount: 0,
           paidInvoiceCount: 0,
         };
       row.invoices.push(inv);
@@ -1066,6 +1047,7 @@ export default function InvoicesPage() {
       row.totalDue += due;
       row.totalPaid += paid;
       if (inv.status === "paid") row.paidInvoiceCount += 1;
+      else if (invoiceIsDerivedOverdue(inv, listTodayYmd)) row.overdueInvoiceCount += 1;
       else if (invoiceMatchesFinanceTab(inv, "awaiting_payment")) row.awaitingInvoiceCount += 1;
       groups.set(key, row);
     }
@@ -1362,7 +1344,7 @@ export default function InvoicesPage() {
                         <div className="min-w-0">
                           <p className="text-[13px] font-medium text-[#020040] truncate">{group.accountName}</p>
                           <p className="text-[10px] text-text-tertiary">
-                            {group.awaitingInvoiceCount} awaiting · {group.paidInvoiceCount} paid
+                            {group.awaitingInvoiceCount} awaiting · {group.overdueInvoiceCount} overdue
                           </p>
                         </div>
                       </div>
@@ -1390,6 +1372,17 @@ export default function InvoicesPage() {
                     </button>
                     {open ? (
                       <div className="divide-y divide-border-light">
+                        {/* Column headers — desktop only */}
+                        <div className="hidden min-[900px]:grid grid-cols-[16px_2fr_minmax(64px,1fr)_minmax(80px,1fr)_minmax(110px,1.4fr)_minmax(76px,1fr)_minmax(70px,1fr)_40px] gap-3 px-4 py-1 bg-surface-hover/40 items-center">
+                          <span />
+                          <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Invoice</p>
+                          <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Postcode</p>
+                          <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Start date</p>
+                          <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Pay date</p>
+                          <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary text-right">Amount</p>
+                          <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary text-center">Status</p>
+                          <span />
+                        </div>
                         {group.invoices.map((inv) => {
                           const ref = inv.job_reference?.trim();
                           const job = ref ? jobsByRef[ref] : undefined;
@@ -1471,109 +1464,124 @@ export default function InvoicesPage() {
                                   setSelectedInvoice(inv);
                                 }
                               }}
-                              className="w-full bg-white px-3 py-2.5 text-left transition-colors cursor-pointer hover:bg-surface-hover/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:px-4 min-[900px]:py-3"
+                              className="w-full bg-white px-3 py-1.5 text-left transition-colors cursor-pointer hover:bg-surface-hover/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:px-4"
                             >
-                              {isSimpleStatus ? (
-                                <div className="flex items-center justify-between gap-3 min-w-0">
-                                  <div className="min-w-0 flex-1">
-                                    <p className="text-sm font-semibold text-text-primary truncate">{inv.reference}</p>
-                                    <p className="text-sm font-medium text-text-primary truncate">{inv.client_name}</p>
-                                    <p className="mt-0.5 truncate text-[11px] text-text-tertiary">
-                                      {inv.job_reference ? `${inv.job_reference} · ` : ""}
+                              <>
+                                {/* Desktop grid — unified layout for all row types */}
+                                <div className="hidden min-[900px]:grid grid-cols-[16px_2fr_minmax(64px,1fr)_minmax(80px,1fr)_minmax(110px,1.4fr)_minmax(76px,1fr)_minmax(70px,1fr)_40px] items-center gap-3">
+                                  {/* Checkbox — hidden for paid/cancelled */}
+                                  <div onClick={(e) => e.stopPropagation()}>
+                                    {!isSimpleStatus && (
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedIds.has(inv.id)}
+                                        onChange={(e) => {
+                                          setSelectedIds((prev) => {
+                                            const next = new Set(prev);
+                                            if (e.target.checked) next.add(inv.id);
+                                            else next.delete(inv.id);
+                                            return next;
+                                          });
+                                        }}
+                                        className="h-3.5 w-3.5 rounded border-border accent-[#020040] cursor-pointer"
+                                      />
+                                    )}
+                                  </div>
+                                  {/* Col 1 — invoice ref + client + job */}
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
+                                    <p className="text-xs text-text-secondary truncate">{inv.client_name}</p>
+                                    {inv.job_reference && (
+                                      <p className="text-[10px] text-text-tertiary truncate">
+                                        {inv.job_reference}{job?.title ? ` · ${job.title}` : ""}
+                                      </p>
+                                    )}
+                                  </div>
+                                  {/* Col 2 — postcode */}
+                                  <div className="min-w-0">
+                                    <p className="text-xs text-text-secondary truncate">
+                                      {job?.property_address
+                                        ? (extractPostcode(job.property_address) ?? job.property_address.split(",").pop()?.trim() ?? "—")
+                                        : "—"}
+                                    </p>
+                                  </div>
+                                  {/* Col 3 — start date */}
+                                  <div className="min-w-0">
+                                    <p className="text-xs text-text-secondary whitespace-nowrap">
                                       {ymd ? formatDate(ymd) : "—"}
                                     </p>
                                   </div>
-                                  <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-                                    {inv.status === "paid" ? (
-                                      <div className="text-right">
-                                        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">
-                                          Paid
-                                        </p>
-                                        <p className="text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                                          {formatCurrency(paidRow)}
-                                        </p>
-                                      </div>
-                                    ) : (
-                                      <Badge variant="default" size="sm">
-                                        Cancelled
-                                      </Badge>
-                                    )}
-                                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />
-                                  </div>
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="hidden min-[900px]:grid grid-cols-[1fr_minmax(0,138px)_minmax(0,120px)_minmax(0,92px)_60px] items-center gap-2 min-[1200px]:gap-3">
-                                    <div className="min-w-0">
-                                      <p className="text-sm font-semibold text-text-primary truncate">{inv.reference}</p>
-                                      <p className="text-sm font-medium text-text-primary truncate">{inv.client_name}</p>
-                                      <p className="mt-0.5 truncate text-[11px] text-text-tertiary">
-                                        {inv.job_reference ? `${inv.job_reference} · ` : ""}
-                                        {ymd ? formatDate(ymd) : "—"}
+                                  {/* Col 4 — pay date (no overdue indicator for paid/cancelled) */}
+                                  <div className="min-w-0">
+                                    {isSimpleStatus ? (
+                                      <p className="text-xs text-text-secondary whitespace-nowrap">
+                                        {expYmd ? formatExpectedDayMonth(expYmd) : "—"}
                                       </p>
-                                    </div>
-                                    <div className="min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0">
-                                      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">
-                                        Expected
-                                      </span>
-                                      {!expYmd ? (
-                                        <span className="text-sm text-text-tertiary">—</span>
-                                      ) : listTodayYmd > expYmd ? (
-                                        <span className="inline-flex min-w-0 items-center gap-0.5 whitespace-nowrap text-sm font-medium text-red-700 dark:text-red-400">
-                                          <AlertCircle
-                                            className="h-3.5 w-3.5 shrink-0 text-red-500"
-                                            strokeWidth={2.5}
-                                            aria-hidden
-                                          />
-                                          {formatExpectedDayMonth(expYmd)} · {calendarDaysDiff(expYmd, listTodayYmd)}d late
-                                        </span>
-                                      ) : (
-                                        <span className="whitespace-nowrap text-sm text-text-secondary">
-                                          {formatExpectedDayMonth(expYmd)} · {calendarDaysDiff(listTodayYmd, expYmd)}d
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="min-w-0 text-right">
-                                      <div className="inline-flex flex-col items-end gap-0.5">
-                                        <span className="text-sm font-semibold tabular-nums text-text-primary">
-                                          {formatCurrency(inv.amount)}
-                                        </span>
-                                        {due > 0.02 ? (
-                                          <span className="text-[11px] tabular-nums font-medium text-amber-700 dark:text-amber-400">
-                                            Due {formatCurrency(due)}
-                                          </span>
-                                        ) : null}
-                                        {paidRow > 0.02 ? (
-                                          <span className="text-[11px] tabular-nums font-medium text-emerald-700 dark:text-emerald-400">
-                                            Paid {formatCurrency(paidRow)}
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                    <div className="flex justify-center">
-                                      <Badge variant={statusDisp.variant} dot size="sm">
-                                        {statusDisp.label}
-                                      </Badge>
-                                    </div>
-                                    <div className="flex min-w-[60px] items-center justify-end gap-1">
-                                      <div className="hidden min-[700px]:flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                    ) : !expYmd ? (
+                                      <p className="text-xs text-text-tertiary">—</p>
+                                    ) : listTodayYmd > expYmd ? (
+                                      <p className="inline-flex min-w-0 items-center gap-0.5 whitespace-nowrap text-xs font-medium text-red-600 dark:text-red-400">
+                                        <AlertCircle className="h-3 w-3 shrink-0 text-red-500" strokeWidth={2.5} aria-hidden />
+                                        {formatExpectedDayMonth(expYmd)} · {calendarDaysDiff(expYmd, listTodayYmd)}d late
+                                      </p>
+                                    ) : (
+                                      <p className="whitespace-nowrap text-xs text-text-secondary">
+                                        {formatExpectedDayMonth(expYmd)} · {calendarDaysDiff(listTodayYmd, expYmd)}d
+                                      </p>
+                                    )}
+                                  </div>
+                                  {/* Col 5 — amount */}
+                                  <div className="min-w-0 text-right">
+                                    {isSimpleStatus && inv.status === "paid" ? (
+                                      <p className="text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">{formatCurrency(paidRow)}</p>
+                                    ) : (
+                                      <>
+                                        <p className="text-xs font-semibold tabular-nums text-text-primary">{formatCurrency(inv.amount)}</p>
+                                        {due > 0.02 && (
+                                          <p className="text-[10px] tabular-nums font-medium text-amber-700 dark:text-amber-400">Due {formatCurrency(due)}</p>
+                                        )}
+                                        {paidRow > 0.02 && (
+                                          <p className="text-[10px] tabular-nums font-medium text-emerald-700 dark:text-emerald-400">Paid {formatCurrency(paidRow)}</p>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+                                  {/* Col 6 — status badge */}
+                                  <div className="flex justify-center">
+                                    <Badge variant={statusDisp.variant} dot size="sm">{statusDisp.label}</Badge>
+                                  </div>
+                                  {/* Col 7 — action buttons (only for active rows) */}
+                                  <div className="flex items-center justify-end gap-0.5">
+                                    {!isSimpleStatus && (
+                                      <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                                         {actionIcons}
                                       </div>
-                                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />
-                                    </div>
+                                    )}
+                                    <ChevronRight className="h-3 w-3 shrink-0 text-text-tertiary" aria-hidden />
                                   </div>
+                                </div>
 
-                                  <div className="min-[900px]:hidden space-y-1.5">
-                                    <div className="flex justify-between gap-2">
-                                      <div className="min-w-0">
-                                        <p className="text-sm font-semibold text-text-primary">{inv.reference}</p>
-                                        <p className="text-sm font-medium text-text-primary">{inv.client_name}</p>
-                                        <p className="mt-0.5 text-[11px] text-text-tertiary">
-                                          {inv.job_reference ? `${inv.job_reference} · ` : ""}
-                                          {ymd ? formatDate(ymd) : "—"}
-                                        </p>
-                                      </div>
-                                      <div className="shrink-0 self-start text-right">
+                                {/* Mobile */}
+                                <div className="min-[900px]:hidden space-y-1.5">
+                                  <div className="flex justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-semibold text-text-primary">{inv.reference}</p>
+                                      <p className="text-sm font-medium text-text-primary">{inv.client_name}</p>
+                                      <p className="mt-0.5 text-[11px] text-text-tertiary">
+                                        {inv.job_reference ? `${inv.job_reference}${job?.title ? ` · ${job.title}` : ""} · ` : ""}
+                                        {ymd ? formatDate(ymd) : "—"}
+                                        {job?.property_address ? ` · ${extractPostcode(job.property_address) ?? job.property_address.split(",").pop()?.trim() ?? ""}` : ""}
+                                      </p>
+                                    </div>
+                                    <div className="shrink-0 self-start text-right">
+                                      {isSimpleStatus && inv.status === "paid" ? (
+                                        <div>
+                                          <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-tight">Paid</p>
+                                          <p className="text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">{formatCurrency(paidRow)}</p>
+                                        </div>
+                                      ) : isSimpleStatus ? (
+                                        <Badge variant="default" size="sm">Cancelled</Badge>
+                                      ) : (
                                         <div className="inline-flex flex-col items-end gap-0.5">
                                           <span className="text-sm font-semibold tabular-nums text-text-primary">
                                             {formatCurrency(inv.amount)}
@@ -1589,11 +1597,13 @@ export default function InvoicesPage() {
                                             </span>
                                           ) : null}
                                         </div>
-                                      </div>
+                                      )}
                                     </div>
+                                  </div>
+                                  {!isSimpleStatus && (
                                     <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 text-left">
                                       <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">
-                                        Expected
+                                        Pay date
                                       </span>
                                       {!expYmd ? (
                                         <span className="text-sm text-text-tertiary">—</span>
@@ -1608,20 +1618,22 @@ export default function InvoicesPage() {
                                         </span>
                                       )}
                                     </div>
-                                    <div className="flex items-center justify-between gap-2">
-                                      <Badge variant={statusDisp.variant} dot size="sm">
-                                        {statusDisp.label}
-                                      </Badge>
-                                      <div className="flex shrink-0 items-center gap-1">
+                                  )}
+                                  <div className="flex items-center justify-between gap-2">
+                                    <Badge variant={statusDisp.variant} dot size="sm">
+                                      {statusDisp.label}
+                                    </Badge>
+                                    <div className="flex shrink-0 items-center gap-1">
+                                      {!isSimpleStatus && (
                                         <div className="hidden min-[700px]:flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                                           {actionIcons}
                                         </div>
-                                        <ChevronRight className="h-3.5 w-3.5 text-text-tertiary" aria-hidden />
-                                      </div>
+                                      )}
+                                      <ChevronRight className="h-3.5 w-3.5 text-text-tertiary" aria-hidden />
                                     </div>
                                   </div>
-                                </>
-                              )}
+                                </div>
+                              </>
                             </div>
                           );
                         })}
@@ -1646,6 +1658,36 @@ export default function InvoicesPage() {
       />
 
       <CreateInvoiceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl border border-border-light bg-[#020040] px-5 py-3 shadow-xl">
+          <span className="text-sm font-semibold text-white/80 tabular-nums">
+            {selectedIds.size} selected
+          </span>
+          <div className="h-4 w-px bg-white/20" />
+          <button
+            type="button"
+            disabled={bulkSaving}
+            onClick={async () => {
+              setBulkSaving(true);
+              await handleBulkStatusChange("paid");
+              setBulkSaving(false);
+            }}
+            className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-600 disabled:opacity-60 transition-colors"
+          >
+            {bulkSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={2.5} />}
+            Mark as paid
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedIds(new Set())}
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white/60 hover:text-white transition-colors"
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </PageTransition>
   );
 }
@@ -1685,6 +1727,13 @@ function InvoiceDetailDrawer({
   const [breakdownPartnerCost, setBreakdownPartnerCost] = useState("");
   const [partnerVatRegistered, setPartnerVatRegistered] = useState(false);
   const [accountName, setAccountName] = useState("");
+  const [dueDateModalOpen, setDueDateModalOpen] = useState(false);
+  const [dueDateModalDate, setDueDateModalDate] = useState("");
+  const [dueDateModalReason, setDueDateModalReason] = useState("");
+  const [savingDueDate, setSavingDueDate] = useState(false);
+  const [editingAmount, setEditingAmount] = useState(false);
+  const [editAmountValue, setEditAmountValue] = useState("");
+  const [savingField, setSavingField] = useState<"due_date" | "amount" | null>(null);
   /** Linked Job tab: sales & costs breakdown (collapsed by default). */
   const [linkedJobSalesCostsOpen, setLinkedJobSalesCostsOpen] = useState(false);
   /** Sum of customer_deposit + customer_final on linked job (aligns invoice paid/due with job card). */
@@ -1716,6 +1765,13 @@ function InvoiceDetailDrawer({
     setEditingBreakdown(false);
     setPartnerVatRegistered(false);
     setAccountName("");
+    setDueDateModalOpen(false);
+    setDueDateModalDate("");
+    setDueDateModalReason("");
+    setSavingDueDate(false);
+    setEditingAmount(false);
+    setEditAmountValue("");
+    setSavingField(null);
     setLinkedJobSalesCostsOpen(false);
     setJobCustomerPaidSum(null);
 
@@ -1939,6 +1995,57 @@ function InvoiceDetailDrawer({
     toast.success(`Recorded ${formatCurrency(amountToRecord)} via ${paymentMethod.replace("_", " ")}.`);
   };
 
+  const canEditFields =
+    !!onInvoiceUpdated &&
+    invoice?.status !== "paid" &&
+    invoice?.status !== "cancelled";
+
+  const handleSaveDueDate = async () => {
+    if (!invoice || !onInvoiceUpdated) return;
+    const trimmed = dueDateModalDate.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) { toast.error("Invalid date"); return; }
+    const reason = dueDateModalReason.trim();
+    if (reason.length < 10) { toast.error("Reason must be at least 10 characters"); return; }
+    setSavingDueDate(true);
+    try {
+      const res = await fetch(`/api/invoices/${invoice.id}/due-date`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: trimmed, reason }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Failed to update due date");
+      }
+      const updated = await res.json() as Invoice;
+      onInvoiceUpdated(updated);
+      setDueDateModalOpen(false);
+      setDueDateModalReason("");
+      toast.success("Due date updated");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update due date");
+    } finally {
+      setSavingDueDate(false);
+    }
+  };
+
+  const handleSaveAmount = async () => {
+    if (!invoice || !onInvoiceUpdated) return;
+    const parsed = parseFloat(editAmountValue);
+    if (!Number.isFinite(parsed) || parsed < 0) { toast.error("Invalid amount"); return; }
+    const prev = Number(invoice.amount ?? 0);
+    if (Math.abs(parsed - prev) < 0.001) { setEditingAmount(false); return; }
+    setSavingField("amount");
+    try {
+      const updated = await updateInvoice(invoice.id, { amount: parsed } as Partial<Invoice>);
+      await logAudit({ entityType: "invoice", entityId: invoice.id, entityRef: invoice.reference, action: "updated", fieldName: "amount", oldValue: String(prev), newValue: String(parsed), userId: profile?.id, userName: profile?.full_name });
+      toast.success("Amount updated");
+      onInvoiceUpdated(updated);
+      setEditingAmount(false);
+    } catch { toast.error("Failed to update amount"); }
+    finally { setSavingField(null); }
+  };
+
   if (!invoice) return <Drawer open={false} onClose={onClose}><div /></Drawer>;
 
   const isOverdue =
@@ -1973,7 +2080,7 @@ function InvoiceDetailDrawer({
     { id: "stripe", label: "Stripe" },
     { id: "job", label: "Job" },
     { id: "client-history", label: "Adjust", count: relatedInvoices.length },
-    { id: "history", label: "Activity", count: 3 },
+    { id: "history", label: "Activity" },
   ];
 
   const linkedJobTotalCost = linkedJob ? linkedJob.partner_cost + linkedJob.materials_cost : 0;
@@ -2027,11 +2134,11 @@ function InvoiceDetailDrawer({
       ? { bg: "#FCEBEB", border: "#EFC7C7", text: "#7A1E1E", dot: "#A32D2D", due: "#A32D2D" }
       : { bg: "var(--status-pending-bg)", border: "var(--status-pending-border)", text: "var(--status-pending-text)", dot: "var(--status-pending-dot)", due: "var(--danger-text)" };
   const statusLead = invoice.status === "paid"
-    ? `✓ Paid · ${formatDate(invoice.paid_date ?? invoice.last_payment_date ?? invoice.due_date)}`
+    ? <span className="inline-flex items-center gap-1"><Check className="h-3 w-3 shrink-0" /> Paid · {formatDate(invoice.paid_date ?? invoice.last_payment_date ?? invoice.due_date)}</span>
     : invoice.status === "partially_paid"
       ? `Partial · ${paidPct}% paid`
       : (invoice.status === "overdue" || isOverdue)
-        ? `⚠ Overdue ${Math.abs(daysUntilDue)}d`
+        ? <span className="inline-flex items-center gap-1"><AlertTriangle className="h-3 w-3 shrink-0" /> Overdue {Math.abs(daysUntilDue)}d</span>
         : `Pending · Due in ${Math.max(0, daysUntilDue)}d`;
   const statusSub = invoice.status === "paid"
     ? `Paid ${formatDate(invoice.paid_date ?? invoice.last_payment_date ?? invoice.due_date)}`
@@ -2039,10 +2146,10 @@ function InvoiceDetailDrawer({
   const primaryActionLabel = invoice.status === "paid"
     ? "Send receipt"
     : invoice.status === "partially_paid"
-      ? `💳 Collect ${formatCurrency(effectiveBalance)}`
+      ? <span className="inline-flex items-center gap-1.5"><CreditCard className="h-4 w-4 shrink-0" /> Collect {formatCurrency(effectiveBalance)}</span>
       : (invoice.status === "overdue" || isOverdue)
-        ? "⚠ Escalate to dispute"
-        : "✓ Mark as paid";
+        ? <span className="inline-flex items-center gap-1.5"><AlertTriangle className="h-4 w-4 shrink-0" /> Escalate to dispute</span>
+        : <span className="inline-flex items-center gap-1.5"><Check className="h-4 w-4 shrink-0" /> Mark as paid</span>;
   const canEditPartnerCost = onInvoiceUpdated && !!invoice.job_reference;
   const modalRecordAmount = paymentMode === "full" ? effectiveBalance : Number(partialAmount || 0);
   const paymentMethodOptions: Array<{ id: "stripe" | "bank_transfer" | "cash" | "other"; label: string }> = [
@@ -2060,100 +2167,106 @@ function InvoiceDetailDrawer({
         subtitle={undefined}
         width="w-[580px]"
         headerExtra={(
-          <div className="flex items-center gap-1 text-[11px] text-[var(--fixfy-text-muted)]">
+          <div className="flex items-center gap-1 text-[11px] text-text-secondary">
             <span>Issued {issuedLabel}</span>
             {invoice.job_reference ? (
               <>
                 <span aria-hidden>·</span>
-                <button
-                  type="button"
-                  onClick={() => setTab("job")}
-                  className="font-semibold text-[var(--link-text)]"
+                <a
+                  href={`/schedule?job=${encodeURIComponent(invoice.job_reference)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-primary"
                 >
                   {invoice.job_reference} ↗
-                </button>
+                </a>
               </>
             ) : null}
           </div>
         )}
         footer={tab === "details" ? (
-          <div className="bg-[var(--fixfy-surface)] px-[14px] py-[14px]">
-            <div className="grid grid-cols-2 gap-[10px]">
-              <button
-                type="button"
-                onClick={() => {
+          <div className="flex gap-2.5 px-4 py-3">
+            <Button
+              variant="outline"
+              size="lg"
+              className="w-full"
+              onClick={() => {
+                setPaymentMode("full");
+                setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
+                setPaymentModalOpen(true);
+              }}
+            >
+              + Add payment
+            </Button>
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full"
+              onClick={() => {
+                if (invoice.status === "paid") {
+                  toast.success("Receipt sent to client.");
+                  return;
+                }
+                if (invoice.status === "partially_paid") {
                   setPaymentMode("full");
                   setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
                   setPaymentModalOpen(true);
-                }}
-                className="rounded-[10px] border border-[var(--fixfy-border-strong)] bg-[var(--fixfy-white)] px-3 py-[12px] text-[14px] font-semibold text-[var(--fixfy-text)]"
-              >
-                + Add payment
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (invoice.status === "paid") {
-                    toast.success("Receipt sent to client.");
-                    return;
-                  }
-                  if (invoice.status === "partially_paid") {
-                    setPaymentMode("full");
-                    setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
-                    setPaymentModalOpen(true);
-                    return;
-                  }
-                  if (invoice.status === "overdue" || isOverdue) {
-                    toast.error("Invoice escalated to dispute.");
-                    return;
-                  }
-                  onStatusChange(invoice, "paid");
-                }}
-                className="rounded-[10px] border border-[var(--fixfy-orange)] bg-[var(--fixfy-orange)] px-3 py-[12px] text-[14px] font-semibold text-white"
-              >
-                {primaryActionLabel}
-              </button>
-            </div>
+                  return;
+                }
+                if (invoice.status === "overdue" || isOverdue) {
+                  toast.error("Invoice escalated to dispute.");
+                  return;
+                }
+                onStatusChange(invoice, "paid");
+              }}
+            >
+              {primaryActionLabel}
+            </Button>
           </div>
         ) : undefined}
       >
-        <div className="min-h-full bg-[var(--fixfy-cream)]">
+        <div className="min-h-full bg-surface-hover/50">
           <div className="px-[22px] pb-4 pt-4">
             <div
-              className="flex items-start justify-between gap-3 rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-4 py-[14px]"
+              className="flex items-start justify-between gap-3 rounded-[10px] border border-border bg-surface-hover/50 px-4 py-[14px]"
               style={{ boxShadow: "0 1px 3px rgba(10,13,46,0.04)" }}
             >
               <div className="min-w-0 space-y-2">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--client-avatar-bg)] text-[13px] font-semibold text-[var(--client-avatar-text)]">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#E6F1FB] text-[13px] font-semibold text-[#042C53]">
                     {clientInitials}
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-[14px] font-semibold text-[var(--fixfy-text)]">{invoice.client_name}</p>
+                    <p className="truncate text-[14px] font-semibold text-text-primary">{invoice.client_name}</p>
                     {!accountLinked ? (
-                      <p className="mt-0.5 text-[11px] italic text-[var(--fixfy-text-tertiary)]">No linked account</p>
+                      <p className="mt-0.5 text-[11px] italic text-text-tertiary">No linked account</p>
                     ) : null}
-                    <p className="mt-0.5 truncate text-[11px] text-[var(--fixfy-text-muted)]">{clientAddress}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-text-secondary">{clientAddress}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 pl-[52px]">
                   {accountLinked ? (
                     <>
-                      <span className="rounded-full bg-[var(--partner-avatar-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--partner-dot)]">
+                      <span className="rounded-full bg-[#EEEDFE] px-2 py-0.5 text-[10px] font-semibold text-[#3C3489]">
                         {accountPillText}
                       </span>
-                      <span className="text-[10px] text-[var(--fixfy-text-muted)]">{accountIdLabel}</span>
+                      <span className="text-[10px] text-text-secondary">{accountIdLabel}</span>
                     </>
                   ) : null}
                 </div>
               </div>
-              <button type="button" className="shrink-0 text-[11px] font-semibold text-[var(--link-text)]">
+              <a
+                href={`/clients?search=${encodeURIComponent(invoice.client_name)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 text-[11px] font-semibold text-primary"
+              >
                 View ↗
-              </button>
+              </a>
             </div>
           </div>
 
-          <div className="border-b border-[var(--fixfy-border)] px-[22px]">
+          <div className="border-b border-border px-[22px]">
             <div className="w-full min-w-0 overflow-x-auto [scrollbar-width:thin]">
               <div className="inline-flex flex-nowrap items-stretch gap-0">
                 {drawerTabs.map((tb) => (
@@ -2163,13 +2276,13 @@ function InvoiceDetailDrawer({
                     onClick={() => setTab(tb.id)}
                     className={cn(
                       "relative shrink-0 whitespace-nowrap px-4 py-2.5 text-left text-sm transition-colors",
-                      tab === tb.id ? "font-semibold text-[#ED4B00]" : "font-medium text-[var(--fixfy-text-muted)]",
+                      tab === tb.id ? "font-semibold text-[#ED4B00]" : "font-medium text-text-secondary",
                     )}
                   >
                     <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
                       {tb.label}
                       {tb.count !== undefined ? (
-                        <span className="shrink-0 rounded-md bg-[#F0F2F7] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--fixfy-text-tertiary)]">
+                        <span className="shrink-0 rounded-md bg-[#F0F2F7] px-1.5 py-0.5 text-[10px] font-semibold text-text-tertiary">
                           {tb.count}
                         </span>
                       ) : null}
@@ -2186,57 +2299,113 @@ function InvoiceDetailDrawer({
             {tab === "details" && (
               <div className="space-y-4 p-[22px]">
                 <div
-                  className="rounded-[10px] border px-4 py-3"
-                  style={{ backgroundColor: statusTone.bg, borderColor: statusTone.border }}
+                  className="rounded-[10px] border px-4"
+                  style={{ backgroundColor: statusTone.bg, borderColor: statusTone.border, minHeight: 40 }}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: statusTone.dot }} />
-                        <p className="text-[13px] font-semibold" style={{ color: statusTone.text }}>{statusLead}</p>
+                  <div className="flex h-10 items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: statusTone.dot }} />
+                      <p className="shrink-0 text-[13px] font-semibold" style={{ color: statusTone.text }}>{statusLead}</p>
+                      <span className="text-[11px] text-text-secondary">·</span>
+                      <div className="flex items-center gap-1 group/due">
+                        <p className="text-[11px] text-text-secondary">{statusSub}</p>
+                        {canEditFields && (
+                          <button
+                            type="button"
+                            onClick={() => { setDueDateModalDate(String(invoice.due_date ?? "").slice(0, 10)); setDueDateModalReason(""); setDueDateModalOpen(true); }}
+                            className="opacity-0 group-hover/due:opacity-100 rounded p-0.5 text-text-tertiary hover:text-primary transition-opacity"
+                            title="Change due date"
+                          >
+                            <PenLine className="h-3 w-3" />
+                          </button>
+                        )}
                       </div>
-                      <p className="mt-1 text-[11px] text-[var(--fixfy-text-muted)]">{statusSub}</p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-[22px] font-semibold text-[var(--fixfy-text)] tabular-nums">{formatCurrency(invoice.amount)}</p>
-                      <p className="text-[11px] text-[var(--fixfy-text-muted)]">Incl. {formatCurrency(breakdownVat)} VAT</p>
+                    {/* Amount — inline editable */}
+                    <div className="shrink-0 text-right">
+                      {editingAmount ? (
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-semibold text-text-secondary">£</span>
+                            <input
+                              type="number"
+                              autoFocus
+                              min={0}
+                              step="0.01"
+                              value={editAmountValue}
+                              onChange={(e) => setEditAmountValue(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") void handleSaveAmount(); if (e.key === "Escape") setEditingAmount(false); }}
+                              disabled={savingField === "amount"}
+                              className="h-8 w-28 rounded-md border border-border bg-card px-2 text-right text-sm font-semibold text-text-primary focus:outline-none focus:ring-1 focus:ring-primary/40 tabular-nums"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button type="button" onClick={() => void handleSaveAmount()} disabled={savingField === "amount"} className="rounded px-2 py-0.5 text-[11px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50">
+                              {savingField === "amount" ? "…" : "Save"}
+                            </button>
+                            <button type="button" onClick={() => setEditingAmount(false)} className="rounded px-1.5 py-0.5 text-[11px] text-text-tertiary hover:text-text-secondary">✕</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="group/amt flex flex-col items-end gap-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-[22px] font-semibold text-text-primary tabular-nums">{formatCurrency(invoice.amount)}</p>
+                            {canEditFields && (
+                              <button
+                                type="button"
+                                onClick={() => { setEditAmountValue(String(Number(invoice.amount ?? 0))); setEditingAmount(true); }}
+                                className="opacity-0 group-hover/amt:opacity-100 rounded p-0.5 text-text-tertiary hover:text-primary transition-opacity"
+                                title="Edit amount"
+                              >
+                                <PenLine className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-text-secondary">Incl. {formatCurrency(breakdownVat)} VAT</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <div className="rounded-t-[10px] border border-[var(--fixfy-border)] border-b-0 bg-[var(--fixfy-white)]">
-                    <div className="grid grid-cols-3 divide-x divide-[var(--fixfy-border)]">
+                  <div className="rounded-t-[10px] border border-border border-b-0 bg-card">
+                    <div className="grid grid-cols-3 divide-x divide-border">
                       <div className="px-3 py-3">
                         <p className="text-[11px] font-semibold uppercase text-[#6B7280]">TOTAL PRICE</p>
-                        <p className="mt-1 text-[22px] font-semibold text-[var(--fixfy-text)]">{formatCurrency(invoice.amount)}</p>
+                        <p className="mt-1 text-[22px] font-semibold text-text-primary">{formatCurrency(invoice.amount)}</p>
                       </div>
                       <div className="px-3 py-3">
                         <p className="text-[11px] font-semibold uppercase text-[#6B7280]">YOUR COST</p>
-                        <p className="mt-1 text-[22px] font-semibold text-[var(--fixfy-text)]">{formatCurrency(partnerCostValue)}</p>
+                        <p className="mt-1 text-[22px] font-semibold text-text-primary">{formatCurrency(partnerCostValue)}</p>
                       </div>
-                      <div className="bg-emerald-50 px-3 py-3">
+                      <div className="bg-[#EFF7F3] px-3 py-3">
                         <p className="text-[11px] font-semibold uppercase text-[#6B7280]">MARGIN %</p>
-                        <p className="mt-1 text-[20px] sm:text-[22px] font-semibold text-[var(--margin-text)] leading-tight">
+                        <p className="mt-1 text-[20px] sm:text-[22px] font-semibold text-[#0F6E56] leading-tight">
                           {formatCurrency(feeAmountValue)} · <span className="text-[14px] sm:text-[16px] font-semibold tabular-nums">{marginPct}%</span>
                         </p>
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between rounded-b-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-3 py-2.5">
-                    <div className="flex min-w-0 items-center gap-2 text-[11px] text-[var(--fixfy-text-muted)]">
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--partner-avatar-bg)] text-[10px] text-[var(--partner-dot)]">JS</span>
+                  <div className="flex items-center justify-between rounded-b-[10px] border border-border bg-surface-hover/50 px-3 py-2.5">
+                    <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-secondary">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#EEEDFE] text-[10px] text-[#3C3489]">JS</span>
                       <span className="truncate">
-                        Matched SB-{invoice.reference.slice(-4)} · {linkedJob?.partner_name || "Partner"} · <span className="text-[var(--reconciled-text)]">✓ Reconciled</span>
+                        Matched SB-{invoice.reference.slice(-4)} · {linkedJob?.partner_name || "Partner"} · <span className="text-emerald-700">✓ Reconciled</span>
                       </span>
                     </div>
-                    <button type="button" className="shrink-0 text-[11px] font-semibold text-[var(--link-text)]">Open ↗</button>
+                    <a
+                      href="/finance/selfbill"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 text-[11px] font-semibold text-primary"
+                    >Open ↗</a>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Invoice Breakdown</p>
+                    <p className="text-[11px] uppercase tracking-[0.5px] text-text-secondary">Invoice Breakdown</p>
                     <button
                       type="button"
                       onClick={() => {
@@ -2247,27 +2416,27 @@ function InvoiceDetailDrawer({
                           setEditingBreakdown(true);
                         }
                       }}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-[var(--fixfy-text-muted)] transition-colors hover:bg-[var(--fixfy-border)] hover:text-[var(--fixfy-text)]"
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
                     >
                       <PenLine className="h-[13px] w-[13px] stroke-[2]" />
                       {editingBreakdown ? "Save changes" : "Edit"}
                     </button>
                   </div>
-                  <div className="overflow-hidden rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)]">
-                    <div className="flex items-start justify-between border-b border-[var(--fixfy-border)] px-3 py-3">
+                  <div className="overflow-hidden rounded-[10px] border border-border bg-surface-hover/50">
+                    <div className="flex items-start justify-between border-b border-border px-3 py-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--partner-dot)]" />
-                          <p className="text-[13px] font-semibold text-[var(--fixfy-text)]">Partner cost</p>
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#3C3489]" />
+                          <p className="text-[13px] font-semibold text-text-primary">Partner cost</p>
                           <span className="rounded-[3px] bg-[#F3F4F6] px-[6px] py-[1px] text-[10px] font-semibold text-[#6B7280]">
                             [{partnerVatRegistered ? "inc VAT" : "no VAT"}]
                           </span>
                         </div>
-                        <p className="mt-0.5 text-[11px] text-[var(--fixfy-text-muted)]">
+                        <p className="mt-0.5 text-[11px] text-text-secondary">
                           Paid to {linkedJob?.partner_name || "partner"} via SB-{invoice.reference.slice(-4)}
                         </p>
                         {editingBreakdown && canEditPartnerCost && Math.abs(partnerCostValue - baselinePartnerCost) > 0.01 ? (
-                          <p className="mt-1 text-[11px] text-[var(--danger-text)]">This will adjust self-bill SB-{invoice.reference.slice(-4)}</p>
+                          <p className="mt-1 text-[11px] text-red-600">This will adjust self-bill SB-{invoice.reference.slice(-4)}</p>
                         ) : null}
                       </div>
                       {editingBreakdown && canEditPartnerCost ? (
@@ -2280,35 +2449,35 @@ function InvoiceDetailDrawer({
                           className="h-8 w-28 text-right"
                         />
                       ) : (
-                        <p className="text-[13px] font-semibold text-[var(--fixfy-text)] tabular-nums">{formatCurrency(partnerCostValue)}</p>
+                        <p className="text-[13px] font-semibold text-text-primary tabular-nums">{formatCurrency(partnerCostValue)}</p>
                       )}
                     </div>
-                    <div className="flex items-start justify-between border-b border-[var(--fixfy-border)] px-3 py-3">
+                    <div className="flex items-start justify-between border-b border-border px-3 py-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="h-1.5 w-1.5 rounded-full bg-[var(--fixfy-orange)]" />
-                          <p className="text-[13px] font-semibold text-[var(--fixfy-text)]">Master fee</p>
+                          <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                          <p className="text-[13px] font-semibold text-text-primary">Master fee</p>
                           <span className="rounded-[3px] bg-[#FEF3C7] px-[6px] py-[1px] text-[10px] font-semibold text-[#78350F]">
                             [inc VAT]
                           </span>
                         </div>
-                        <p className="mt-0.5 text-[11px] text-[var(--fixfy-text-muted)]">
+                        <p className="mt-0.5 text-[11px] text-text-secondary">
                           Platform commission ({formatCurrency(feeNetPortion)} net + {formatCurrency(feeVatPortion)} VAT)
                         </p>
                       </div>
-                      <p className="text-[13px] font-semibold text-[var(--fixfy-text)] tabular-nums">{formatCurrency(feeAmountValue)}</p>
+                      <p className="text-[13px] font-semibold text-text-primary tabular-nums">{formatCurrency(feeAmountValue)}</p>
                     </div>
-                    <div className="flex items-center justify-between border-b border-[var(--fixfy-border)] bg-[var(--fixfy-white)] px-3 py-2.5">
-                      <p className="text-[11px] text-[var(--fixfy-text-muted)]">Subtotal</p>
-                      <p className="text-[12px] text-[var(--fixfy-text)] tabular-nums">{formatCurrency(breakdownSubtotal)}</p>
+                    <div className="flex items-center justify-between border-b border-border bg-card px-3 py-2.5">
+                      <p className="text-[11px] text-text-secondary">Subtotal</p>
+                      <p className="text-[12px] text-text-primary tabular-nums">{formatCurrency(breakdownSubtotal)}</p>
                     </div>
-                    <div className="flex items-center justify-between border-b border-[var(--fixfy-border)] bg-[var(--fixfy-white)] px-3 py-2.5">
-                      <p className="text-[11px] text-[var(--fixfy-text-muted)]">
+                    <div className="flex items-center justify-between border-b border-border bg-card px-3 py-2.5">
+                      <p className="text-[11px] text-text-secondary">
                         VAT 20% <span className="text-[#9CA3AF]">· on Master fee only</span>
                       </p>
-                      <p className="text-[12px] text-[var(--fixfy-text)] tabular-nums">{formatCurrency(breakdownVat)}</p>
+                      <p className="text-[12px] text-text-primary tabular-nums">{formatCurrency(breakdownVat)}</p>
                     </div>
-                    <div className="flex items-center justify-between bg-[var(--fixfy-navy)] px-3 py-2.5">
+                    <div className="flex items-center justify-between bg-[#020040] px-3 py-2.5">
                       <p className="text-[13px] font-semibold text-white">Customer charged</p>
                       <p className="text-[15px] font-semibold text-white tabular-nums">{formatCurrency(breakdownCharged)}</p>
                     </div>
@@ -2321,7 +2490,7 @@ function InvoiceDetailDrawer({
                           setEditingBreakdown(false);
                           setBreakdownPartnerCost(String(baselinePartnerCost));
                         }}
-                        className="rounded-md px-2 py-1 text-[12px] text-[var(--fixfy-text-muted)]"
+                        className="rounded-md px-2 py-1 text-[12px] text-text-secondary"
                       >
                         Cancel
                       </button>
@@ -2330,25 +2499,28 @@ function InvoiceDetailDrawer({
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Balance</p>
-                  <div className="rounded-[10px] border border-[var(--fixfy-border)] bg-[var(--fixfy-surface)] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-[0.5px] text-text-secondary">Balance</p>
+                  <div className="rounded-[10px] border border-border bg-surface-hover/50 px-3 py-2">
                     <div className="space-y-1 text-[13px]">
                       <div className="flex items-center justify-between">
-                        <span className="text-[var(--fixfy-text-muted)]">Invoice</span>
-                        <span className="tabular-nums text-[var(--fixfy-text)]">{formatCurrency(invoice.amount)}</span>
+                        <span className="text-text-secondary">Invoice</span>
+                        <span className="tabular-nums text-text-primary">{formatCurrency(invoice.amount)}</span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-[var(--fixfy-text-muted)]">Received</span>
-                        <span className="tabular-nums text-[var(--fixfy-text)]">{formatCurrency(effectivePaid)}</span>
+                        <span className="text-text-secondary">Received</span>
+                        <span className="tabular-nums text-text-primary">{formatCurrency(effectivePaid)}</span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-[var(--fixfy-text-muted)]">Adjustments</span>
-                        <span className="tabular-nums text-[var(--fixfy-text-muted)]">—</span>
+                        <span className="text-text-secondary">Adjustments</span>
+                        <span className="tabular-nums text-text-secondary">—</span>
                       </div>
-                      <div className="my-1 border-t border-[var(--fixfy-border)]" />
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-[var(--fixfy-text)]">Due</span>
-                        <span className="font-semibold tabular-nums" style={{ color: hasDueBalance ? "var(--danger-text)" : "var(--reconciled-text)" }}>
+                      <div className="my-1 border-t border-border" />
+                      <div className={cn(
+                        "flex items-center justify-between rounded-md px-2 py-1 -mx-2",
+                        hasDueBalance ? "bg-[#FEF5F3]" : ""
+                      )}>
+                        <span className={cn("font-semibold", hasDueBalance ? "text-[#A32D2D]" : "text-text-primary")}>Due</span>
+                        <span className={cn("font-semibold tabular-nums", hasDueBalance ? "text-[#A32D2D]" : "text-emerald-700")}>
                           {formatCurrency(effectiveBalance)}
                         </span>
                       </div>
@@ -2357,17 +2529,17 @@ function InvoiceDetailDrawer({
                 </div>
 
                 <div className="space-y-2 pb-3">
-                  <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Quick Actions</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {["📄 View PDF", "🏷 Discount", "🎁 Goodwill", "✉ Remind"].map((label) => (
-                      <button
-                        key={label}
-                        type="button"
-                        className="rounded-[10px] border border-[var(--fixfy-border-strong)] bg-[var(--fixfy-white)] px-3 py-3 text-[13px] font-semibold text-[var(--fixfy-text)]"
-                      >
-                        {label}
-                      </button>
-                    ))}
+                  <p className="text-[11px] uppercase tracking-[0.5px] text-text-secondary">Quick Actions</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button variant="outline" size="sm" className="w-full justify-start gap-1.5">
+                      <FileText className="h-3.5 w-3.5 shrink-0" /> View PDF
+                    </Button>
+                    <Button variant="outline" size="sm" className="w-full justify-start gap-1.5">
+                      <Tag className="h-3.5 w-3.5 shrink-0" /> Discount
+                    </Button>
+                    <Button variant="outline" size="sm" className="w-full justify-start gap-1.5">
+                      <Mail className="h-3.5 w-3.5 shrink-0" /> Remind
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -2875,30 +3047,36 @@ function InvoiceDetailDrawer({
         title="Record payment"
         size="sm"
       >
-        <div className="space-y-4 p-4">
+        <div className="space-y-5 p-4">
+          {/* Amount */}
           <div className="space-y-2">
-            <label className="flex items-start gap-2 rounded-md border border-[var(--fixfy-border)] bg-[var(--fixfy-white)] px-3 py-2 text-[13px] text-[var(--fixfy-text)]">
-              <input
-                type="radio"
-                name="paymentMode"
-                checked={paymentMode === "full"}
-                onChange={() => {
-                  setPaymentMode("full");
-                  setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
-                }}
-              />
-              <span>Full remaining ({formatCurrency(effectiveBalance)})</span>
-            </label>
-            <label className="flex items-start gap-2 rounded-md border border-[var(--fixfy-border)] bg-[var(--fixfy-white)] px-3 py-2 text-[13px] text-[var(--fixfy-text)]">
-              <input
-                type="radio"
-                name="paymentMode"
-                checked={paymentMode === "partial"}
-                onChange={() => setPaymentMode("partial")}
-              />
-              <span>Partial amount</span>
-            </label>
-            {paymentMode === "partial" ? (
+            {[
+              { value: "full" as const, label: `Full remaining (${formatCurrency(effectiveBalance)})` },
+              { value: "partial" as const, label: "Partial amount" },
+            ].map((opt) => (
+              <label
+                key={opt.value}
+                className={cn(
+                  "flex cursor-pointer items-center gap-3 rounded-lg border px-3.5 py-2.5 text-sm transition-colors",
+                  paymentMode === opt.value
+                    ? "border-primary/40 bg-primary/5 text-text-primary"
+                    : "border-border bg-card text-text-secondary hover:bg-surface-hover",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="paymentMode"
+                  checked={paymentMode === opt.value}
+                  onChange={() => {
+                    setPaymentMode(opt.value);
+                    if (opt.value === "full") setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
+                  }}
+                  className="accent-primary h-4 w-4 shrink-0"
+                />
+                <span className="font-medium">{opt.label}</span>
+              </label>
+            ))}
+            {paymentMode === "partial" && (
               <Input
                 type="number"
                 min={0}
@@ -2907,22 +3085,23 @@ function InvoiceDetailDrawer({
                 value={partialAmount}
                 onChange={(e) => setPartialAmount(e.target.value)}
               />
-            ) : null}
+            )}
           </div>
 
+          {/* Method */}
           <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Method</p>
-            <div className="grid grid-cols-2 gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">Method</p>
+            <div className="grid grid-cols-3 gap-2">
               {paymentMethodOptions.map((method) => (
                 <button
                   key={method.id}
                   type="button"
                   onClick={() => setPaymentMethod(method.id)}
                   className={cn(
-                    "rounded-md border px-3 py-2 text-[12px]",
+                    "rounded-lg border px-3 py-2 text-xs font-medium transition-colors",
                     paymentMethod === method.id
-                      ? "border-[var(--fixfy-orange)] bg-[var(--fixfy-orange)] text-white"
-                      : "border-[var(--fixfy-border)] bg-[var(--fixfy-white)] text-[var(--fixfy-text)]",
+                      ? "border-primary bg-primary text-white shadow-sm"
+                      : "border-border bg-card text-text-secondary hover:bg-surface-hover hover:text-text-primary",
                   )}
                 >
                   {method.label}
@@ -2931,27 +3110,80 @@ function InvoiceDetailDrawer({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <p className="text-[11px] uppercase tracking-[0.5px] text-[var(--fixfy-text-muted)]">Date</p>
+          {/* Date */}
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">Date</p>
             <Input type="date" value={partialPaymentDate} onChange={(e) => setPartialPaymentDate(e.target.value)} />
           </div>
 
-          <div className="grid grid-cols-2 gap-2 border-t border-[var(--fixfy-border)] pt-3">
-            <button
-              type="button"
-              onClick={() => setPaymentModalOpen(false)}
-              className="rounded-[10px] border border-[var(--fixfy-border-strong)] bg-[var(--fixfy-white)] px-3 py-[10px] text-[13px] text-[var(--fixfy-text)]"
+          {/* Actions */}
+          <div className="flex gap-2 border-t border-border-light pt-4">
+            <Button variant="outline" className="flex-1" onClick={() => setPaymentModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              className="flex-1"
+              disabled={savingPartial || !Number.isFinite(modalRecordAmount) || modalRecordAmount <= 0}
+              loading={savingPartial}
+              onClick={() => void handleRecordPayment()}
+            >
+              {savingPartial ? "Recording…" : `Record ${formatCurrency(modalRecordAmount)}`}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={dueDateModalOpen}
+        onClose={() => { setDueDateModalOpen(false); setDueDateModalReason(""); }}
+        title="Change due date"
+        size="sm"
+      >
+        <div className="space-y-4 p-4">
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">New due date</label>
+            <Input
+              type="date"
+              value={dueDateModalDate}
+              onChange={(e) => setDueDateModalDate(e.target.value)}
+              disabled={savingDueDate}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">
+              Reason <span className="font-normal normal-case text-text-tertiary">(min 10 characters)</span>
+            </label>
+            <textarea
+              rows={3}
+              value={dueDateModalReason}
+              onChange={(e) => setDueDateModalReason(e.target.value)}
+              disabled={savingDueDate}
+              placeholder="Why is the due date changing?"
+              className="w-full resize-none rounded-md border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-primary/40 disabled:opacity-50"
+            />
+            {dueDateModalReason.length > 0 && dueDateModalReason.length < 10 && (
+              <p className="text-[11px] text-red-500">{10 - dueDateModalReason.length} more characters needed</p>
+            )}
+          </div>
+          <div className="flex gap-2 border-t border-border-light pt-3">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => { setDueDateModalOpen(false); setDueDateModalReason(""); }}
+              disabled={savingDueDate}
             >
               Cancel
-            </button>
-            <button
-              type="button"
-              disabled={savingPartial || !Number.isFinite(modalRecordAmount) || modalRecordAmount <= 0}
-              onClick={() => void handleRecordPayment()}
-              className="rounded-[10px] border border-[var(--fixfy-orange)] bg-[var(--fixfy-orange)] px-3 py-[10px] text-[13px] font-medium text-white disabled:opacity-50"
+            </Button>
+            <Button
+              variant="primary"
+              className="flex-1"
+              disabled={savingDueDate || dueDateModalReason.trim().length < 10 || !/^\d{4}-\d{2}-\d{2}$/.test(dueDateModalDate)}
+              loading={savingDueDate}
+              onClick={() => void handleSaveDueDate()}
             >
-              {savingPartial ? "Recording..." : `Record ${formatCurrency(modalRecordAmount)}`}
-            </button>
+              {savingDueDate ? "Saving…" : "Save"}
+            </Button>
           </div>
         </div>
       </Modal>
