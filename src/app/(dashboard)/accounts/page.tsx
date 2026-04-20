@@ -215,12 +215,12 @@ export default function AccountsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dryRun: false }),
       });
-      const json = await res.json().catch(() => ({})) as { updated?: number; sameDate?: number; noAccount?: number; noScheduledDate?: number; error?: string };
+      const json = await res.json().catch(() => ({})) as { updated?: number; sameDate?: number; noAccount?: number; error?: string; debug?: Record<string, number> };
       if (!res.ok) throw new Error(json.error ?? "Failed");
+      console.info("[sync-due-dates] result:", json.debug);
       const parts = [];
       if ((json.sameDate ?? 0) > 0) parts.push(`${json.sameDate} already correct`);
       if ((json.noAccount ?? 0) > 0) parts.push(`${json.noAccount} no account/terms`);
-      if ((json.noScheduledDate ?? 0) > 0) parts.push(`${json.noScheduledDate} no scheduled date`);
       const detail = parts.length ? ` · ${parts.join(" · ")}` : "";
       toast.success(`Updated ${json.updated ?? 0} invoice${(json.updated ?? 0) !== 1 ? "s" : ""}${detail}`);
     } catch (e) {
