@@ -2194,11 +2194,11 @@ function InvoiceDetailDrawer({
           </div>
         )}
         footer={tab === "details" ? (
-          <div className="flex gap-2.5 px-4 py-3">
+          <div className="flex gap-2 px-4 py-3">
             <Button
               variant="outline"
-              size="lg"
-              className="w-full"
+              size="sm"
+              className="flex-1"
               onClick={() => {
                 setPaymentMode("full");
                 setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
@@ -2207,29 +2207,32 @@ function InvoiceDetailDrawer({
             >
               + Add payment
             </Button>
+            {(invoice.status === "overdue" || isOverdue) && (
+              <Button
+                variant="danger"
+                size="sm"
+                className="flex-1"
+                onClick={() => toast.error("Invoice escalated to dispute.")}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Escalate
+                </span>
+              </Button>
+            )}
             <Button
               variant="primary"
-              size="lg"
-              className="w-full"
+              size="sm"
+              className="flex-1"
               onClick={() => {
-                if (invoice.status === "paid") {
-                  toast.success("Receipt sent to client.");
-                  return;
-                }
-                if (invoice.status === "partially_paid") {
-                  setPaymentMode("full");
-                  setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
-                  setPaymentModalOpen(true);
-                  return;
-                }
-                if (invoice.status === "overdue" || isOverdue) {
-                  toast.error("Invoice escalated to dispute.");
-                  return;
-                }
-                onStatusChange(invoice, "paid");
+                if (invoice.status === "paid") { toast.success("Receipt sent to client."); return; }
+                setPaymentMode("full");
+                setPartialAmount(String(Math.round(effectiveBalance * 100) / 100));
+                setPaymentModalOpen(true);
               }}
             >
-              {primaryActionLabel}
+              <span className="inline-flex items-center gap-1.5">
+                <Check className="h-3.5 w-3.5 shrink-0" /> Mark as paid
+              </span>
             </Button>
           </div>
         ) : undefined}
@@ -2552,13 +2555,13 @@ function InvoiceDetailDrawer({
                 <div className="space-y-2 pb-3">
                   <p className="text-[11px] uppercase tracking-[0.5px] text-text-secondary">Quick Actions</p>
                   <div className="grid grid-cols-3 gap-2">
-                    <Button variant="outline" size="sm" className="w-full justify-start gap-1.5">
+                    <Button variant="outline" size="sm" className="w-full justify-center gap-1.5">
                       <FileText className="h-3.5 w-3.5 shrink-0" /> View PDF
                     </Button>
-                    <Button variant="outline" size="sm" className="w-full justify-start gap-1.5">
+                    <Button variant="outline" size="sm" className="w-full justify-center gap-1.5">
                       <Tag className="h-3.5 w-3.5 shrink-0" /> Discount
                     </Button>
-                    <Button variant="outline" size="sm" className="w-full justify-start gap-1.5">
+                    <Button variant="outline" size="sm" className="w-full justify-center gap-1.5">
                       <Mail className="h-3.5 w-3.5 shrink-0" /> Remind
                     </Button>
                   </div>
