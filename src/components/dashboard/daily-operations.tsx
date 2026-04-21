@@ -11,27 +11,31 @@ import type { OverviewPipelineJobRow } from "@/lib/dashboard-overview-jobs";
 import { CalendarDays, ArrowUp, ArrowDown } from "lucide-react";
 
 /**
- * Fixfy palette — locked to 5 colors. Any new accent must re-use these.
+ * Fixfy brand palette — locked to 5 colors. Any new accent must re-use these.
  *   NEUTRAL  #1C1917  — values, neutral text
  *   NAVY     #020040  — labels, primary emphasis
  *   ORANGE   #ED4B00  — below-target warnings, gap to healthy
- *   GREEN    #0F6E56  — profit / success / healthy
- *   RED      #A32D2D  — losses / overdue
+ *   GREEN    #2B9966  — profit / success / healthy (brand green)
+ *   RED      #ED073F  — losses / overdue (brand red)
+ *
+ * Soft tints (profitBg / lossBg / warnBg / profitBorder / lossBorder) are
+ * sampled from the brand green/red at ~95% lightness so row/tile
+ * backgrounds read as the same family, not as arbitrary pastel.
  */
 const PALETTE = {
   neutral: "#1C1917",
   navy: "#020040",
   orange: "#ED4B00",
-  green: "#0F6E56",
-  red: "#A32D2D",
+  green: "#2B9966",
+  red: "#ED073F",
   subtleGray: "#6B6B70",
-  profitBg: "#EFF7F3",
-  profitBgHover: "#E7F2EC",
-  profitBorder: "#9FE1CB",
-  lossBg: "#FEF5F3",
-  lossBgHover: "#FCE5E5",
-  lossBorder: "#F5BFBF",
-  warnBg: "#FFF8F3",
+  profitBg: "#E8F4EE",
+  profitBgHover: "#DEEEE4",
+  profitBorder: "#A5D8BE",
+  lossBg: "#FEEBEF",
+  lossBgHover: "#FBD9E0",
+  lossBorder: "#F4A8B8",
+  warnBg: "#FFF4ED",
   railBg: "#F5F5F7",
 } as const;
 
@@ -445,58 +449,54 @@ export function DailyOperationsTable({
 
   return (
     <Card padding="none" className="overflow-hidden border-border-light">
-      {/* Header with calendar icon, title/subtitle and legend */}
-      <div className="px-4 pt-3 pb-2.5 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-2.5 min-w-0">
-          <div
-            className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
-            style={{ background: PALETTE.profitBg }}
-          >
-            <CalendarDays className="h-4 w-4" style={{ color: PALETTE.green }} strokeWidth={2} />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <h3
-                className="text-sm font-semibold tracking-tight"
-                style={{ color: PALETTE.neutral }}
-              >
-                Daily Operations <span style={{ color: PALETTE.subtleGray }}>· {monthLabel}</span>
-              </h3>
-              <FixfyHintIcon
-                text={`Revenue, service cost and daily overhead · Mon–Sat · overhead split evenly across ${workingDays} working days`}
-              />
+      {/* Header — mirrors DailyOperationsTodayTile structure for visual consistency */}
+      <CardHeader className="px-4 pt-3 pb-2">
+        <div className="flex items-start justify-between gap-2.5 flex-wrap">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <div
+              className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0"
+              style={{ background: PALETTE.profitBg }}
+            >
+              <CalendarDays className="h-3.5 w-3.5" style={{ color: PALETTE.green }} strokeWidth={2} />
             </div>
-            <p className="text-[11px] mt-0.5" style={{ color: PALETTE.subtleGray }}>
-              Overhead <span className="tabular-nums font-semibold" style={{ color: PALETTE.neutral }}>{formatCurrency(dailyOverhead)}/day</span> · based on fixed monthly costs
-            </p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <CardTitle className="text-sm font-semibold">
+                  Daily Operations <span className="text-text-tertiary font-normal">· {monthLabel}</span>
+                </CardTitle>
+                <FixfyHintIcon
+                  text={`Revenue, service cost and daily overhead · Mon–Sat · overhead split evenly across ${workingDays} working days`}
+                />
+              </div>
+              <p className="text-[10px] text-text-tertiary mt-0.5">
+                Overhead <span className="tabular-nums font-semibold text-text-primary">{formatCurrency(dailyOverhead)}/day</span> · based on fixed monthly costs
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-text-tertiary">
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-sm"
+                style={{ background: PALETTE.profitBg, border: `1px solid ${PALETTE.profitBorder}` }}
+                aria-hidden
+              />
+              Profit day
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-sm"
+                style={{ background: PALETTE.lossBg, border: `1px solid ${PALETTE.lossBorder}` }}
+                aria-hidden
+              />
+              Loss day
+            </span>
           </div>
         </div>
-        <div className="flex items-center gap-3 text-[11px]" style={{ color: PALETTE.subtleGray }}>
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className="inline-block h-3 w-3 rounded-sm"
-              style={{ background: PALETTE.profitBg, border: `1px solid ${PALETTE.profitBorder}` }}
-              aria-hidden
-            />
-            Profit day
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className="inline-block h-3 w-3 rounded-sm"
-              style={{ background: PALETTE.lossBg, border: `1px solid ${PALETTE.lossBorder}` }}
-              aria-hidden
-            />
-            Loss day
-          </span>
-        </div>
-      </div>
+      </CardHeader>
 
       {/* 5-KPI grid (top placement only). Desktop: 5 cols; tablet: 3+2; mobile: 2-col stack. */}
       {summaryPlacement === "top" ? (
-        <div
-          className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 border-y divide-x divide-y"
-          style={{ borderColor: "#E7E7EB", borderLeftStyle: "none", borderRightStyle: "none" }}
-        >
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 divide-y sm:divide-y-0 divide-border-light lg:divide-x border-t border-border-light">
           {/* Month revenue */}
           <KpiTile
             label="Month revenue"
@@ -596,10 +596,10 @@ export function DailyOperationsTable({
       ) : null}
 
       {/* Daily breakdown table */}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto border-t border-border-light">
         <table className="w-full text-xs min-w-[640px]">
           <thead>
-            <tr style={{ background: "#FAFAFB", borderTop: "1px solid #E7E7EB", borderBottom: "1px solid #E7E7EB" }}>
+            <tr className="bg-surface-secondary border-b border-border-light">
               <th className="text-left px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>Day</th>
               <th className="text-right px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>Revenue</th>
               <th className="text-right px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>Service cost</th>
@@ -608,10 +608,10 @@ export function DailyOperationsTable({
               <th className="text-right px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>%</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-border-light">
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #E7E7EB" }}>
+                <tr key={i}>
                   <td colSpan={6} className="px-3 py-2">
                     <div className="h-5 animate-pulse rounded bg-surface-hover" />
                   </td>
@@ -623,7 +623,7 @@ export function DailyOperationsTable({
           </tbody>
           {summaryPlacement === "bottom" && !loading && rows.length > 0 ? (
             <tfoot>
-              <tr style={{ background: "#FAFAFB", borderTop: "1px solid #E7E7EB" }}>
+              <tr className="bg-surface-secondary border-t border-border-light">
                 <td className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide" style={{ color: PALETTE.subtleGray }}>Month total</td>
                 <td className="px-3 py-2 text-right tabular-nums font-semibold" style={{ color: PALETTE.neutral }}>
                   {formatCurrency(totals.revenue)}
@@ -766,7 +766,6 @@ function DayRow({ row }: { row: DailyOpsRow }) {
       onMouseLeave={() => setHover(false)}
       style={{
         background: bg,
-        borderBottom: "1px solid rgba(0,0,0,0.04)",
         opacity: row.isFuture ? 0.55 : 1,
       }}
     >
@@ -873,7 +872,7 @@ function HealthInsightsPanel({
   const fillColor = pastHealthy ? PALETTE.green : PALETTE.orange;
 
   return (
-    <div className="px-4 py-3" style={{ background: "#FBFBFC", borderTop: "1px solid #E7E7EB", borderBottom: "1px solid #E7E7EB" }}>
+    <div className="px-4 py-3 bg-surface-secondary/40 border-t border-border-light">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-1.5">
           <p
@@ -912,10 +911,7 @@ function HealthInsightsPanel({
         </div>
       </div>
 
-      <div
-        className="rounded-lg px-3 py-2.5"
-        style={{ background: "#FFFFFF", border: "1px solid #E7E7EB" }}
-      >
+      <div className="rounded-lg px-3 py-2.5 bg-surface border border-border-light">
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1.5 mb-2">
           <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
             <InlineMetric

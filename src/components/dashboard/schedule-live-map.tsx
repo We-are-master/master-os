@@ -7,7 +7,13 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import { MapPin, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { buildLiveMapPopupHtml, createLiveMapMarkerElement } from "@/components/dashboard/live-map-marker-icons";
+import {
+  buildLiveMapJobPopupHtml,
+  buildLiveMapPopupHtml,
+  createLiveMapJobMarkerElement,
+  createLiveMapMarkerElement,
+  type LiveMapJobStatusCategory,
+} from "@/components/dashboard/live-map-marker-icons";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
 
@@ -23,6 +29,30 @@ export interface ScheduleLiveMapPoint {
   /** Primary trade label from partners (or inferred). */
   trade?: string;
   trades?: string[] | null;
+  /** Optional stats for the hover preview — caller computes from jobs. */
+  jobsCompleted?: number;
+  jobsInWindow?: number;
+}
+
+/**
+ * Jobs-of-the-day overlay point. Rendered alongside partner pins in the
+ * same Mapbox map without affecting the existing partner marker logic.
+ */
+export interface ScheduleLiveMapJobPoint {
+  id: string;
+  latitude: number;
+  longitude: number;
+  /** Summary fields used for the popup — keeps this component pure. */
+  reference: string;
+  title: string;
+  partnerName: string | null;
+  clientName?: string;
+  propertyAddress: string;
+  statusLabel: string;
+  /** Status bucket that drives the pin color (unassigned/scheduled/in_progress/attention). */
+  statusCategory: LiveMapJobStatusCategory;
+  tradeLabel: string;
+  scheduleLine: string;
 }
 
 interface ScheduleLiveMapProps {
@@ -36,6 +66,12 @@ interface ScheduleLiveMapProps {
   toolbarExtra?: ReactNode;
   /** When true, map sits flush under a filter bar (no top radius / top border). */
   embeddedInCard?: boolean;
+  /** Optional job overlay — renders extra markers for jobs of a selected day. */
+  jobPoints?: ScheduleLiveMapJobPoint[];
+  /** Currently selected jobs (for manual dispatch). Selected = thicker ring. */
+  selectedJobIds?: ReadonlySet<string>;
+  /** Fired when a job pin is clicked. Caller decides: toggle selection, open drawer, etc. */
+  onJobMarkerClick?: (jobId: string) => void;
 }
 
 const LONDON_CENTER: [number, number] = [-0.1276, 51.5072];
@@ -86,10 +122,14 @@ export function ScheduleLiveMap({
   tradeFilter = "all",
   toolbarExtra,
   embeddedInCard = false,
+  jobPoints,
+  selectedJobIds,
+  onJobMarkerClick,
 }: ScheduleLiveMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
+  const jobMarkersRef = useRef<mapboxgl.Marker[]>([]);
   const [fullscreen, setFullscreen] = useState(false);
   const prevRegionRef = useRef<LiveMapRegionPreset | null>(null);
 
@@ -145,12 +185,16 @@ export function ScheduleLiveMap({
     return () => {
       markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
+      jobMarkersRef.current.forEach((m) => m.remove());
+      jobMarkersRef.current = [];
       map.remove();
       mapRef.current = null;
     };
   }, []);
 
-  /** Markers + popups — refresh when locations or trade icon mode changes. */
+  /** Markers + popups — refresh when locations or trade icon mode changes.
+   *  Popups are hover-triggered (mouseenter/mouseleave) so ops can skim the
+   *  map and preview partner info without having to click each pin. */
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -167,23 +211,103 @@ export function ScheduleLiveMap({
         trade: point.trade,
         trades: point.trades ?? null,
       });
+      const popup = new mapboxgl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 14,
+      }).setHTML(
+        buildLiveMapPopupHtml({
+          name: point.name,
+          inactive: point.inactive,
+          lastUpdateIso: point.lastUpdateIso,
+          trade: point.trade,
+          trades: point.trades ?? null,
+          jobsCompleted: point.jobsCompleted,
+          jobsInWindow: point.jobsInWindow,
+        }),
+      );
+      const lngLat: [number, number] = [point.longitude, point.latitude];
       const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
-        .setLngLat([point.longitude, point.latitude])
-        .setPopup(
-          new mapboxgl.Popup({ closeButton: false, offset: 12 }).setHTML(
-            buildLiveMapPopupHtml({
-              name: point.name,
-              inactive: point.inactive,
-              lastUpdateIso: point.lastUpdateIso,
-              trade: point.trade,
-              trades: point.trades ?? null,
-            }),
-          ),
-        )
+        .setLngLat(lngLat)
+        .setPopup(popup)
         .addTo(map);
+      /** Hover-to-preview — popup opens on mouseenter and closes on leave
+       *  so the map stays scannable without needing to click each pin.
+       *  Explicit addTo/remove (not togglePopup) avoids state-drift bugs. */
+      el.addEventListener("mouseenter", () => {
+        popup.setLngLat(lngLat).addTo(map);
+      });
+      el.addEventListener("mouseleave", () => {
+        popup.remove();
+      });
       markersRef.current.push(marker);
     }
   }, [validPoints, tradeFilter]);
+
+  /** Jobs-of-the-day overlay — mounted separately from partner markers so the
+   *  existing dispatch logic / partner marker code path remains untouched. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    jobMarkersRef.current.forEach((m) => m.remove());
+    jobMarkersRef.current = [];
+
+    const list = (jobPoints ?? []).filter(
+      (j) =>
+        Number.isFinite(Number(j.latitude)) &&
+        Number.isFinite(Number(j.longitude)) &&
+        Math.abs(Number(j.latitude)) <= 90 &&
+        Math.abs(Number(j.longitude)) <= 180,
+    );
+    if (list.length === 0) return;
+
+    for (const job of list) {
+      const selected = selectedJobIds?.has(job.id) ?? false;
+      const el = createLiveMapJobMarkerElement({
+        selected,
+        statusCategory: job.statusCategory,
+      });
+      if (onJobMarkerClick) {
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onJobMarkerClick(job.id);
+        });
+      }
+      const popup = new mapboxgl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 14,
+      }).setHTML(
+        buildLiveMapJobPopupHtml({
+          reference: job.reference,
+          title: job.title,
+          partnerName: job.partnerName,
+          clientName: job.clientName,
+          propertyAddress: job.propertyAddress,
+          statusLabel: job.statusLabel,
+          statusCategory: job.statusCategory,
+          tradeLabel: job.tradeLabel,
+          scheduleLine: job.scheduleLine,
+          selected,
+        }),
+      );
+      const lngLat: [number, number] = [job.longitude, job.latitude];
+      const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
+        .setLngLat(lngLat)
+        .setPopup(popup)
+        .addTo(map);
+      /** Hover-to-preview: matches partner-marker behaviour so ops can skim
+       *  the map (click still toggles the dispatch selection separately). */
+      el.addEventListener("mouseenter", () => {
+        popup.setLngLat(lngLat).addTo(map);
+      });
+      el.addEventListener("mouseleave", () => {
+        popup.remove();
+      });
+      jobMarkersRef.current.push(marker);
+    }
+  }, [jobPoints, selectedJobIds, onJobMarkerClick]);
 
   /** Fixed regions: only when the user changes the preset (not when filters change). */
   useEffect(() => {

@@ -17,16 +17,22 @@ import {
   ScheduleLiveMap,
   LIVE_MAP_TOOLBAR_BTN_CLASS,
   type LiveMapRegionPreset,
+  type ScheduleLiveMapJobPoint,
   type ScheduleLiveMapPoint,
 } from "@/components/dashboard/schedule-live-map";
-import { liveMapTradeFilterOptions } from "@/components/dashboard/live-map-marker-icons";
+import {
+  liveMapJobStatusLegend,
+  liveMapTradeFilterOptions,
+  type LiveMapJobStatusCategory,
+} from "@/components/dashboard/live-map-marker-icons";
 import { liveMapPointMatchesTradeFilter } from "@/lib/live-map-trade-filter";
+import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { motion, AnimatePresence } from "framer-motion";
 import { staggerContainer, staggerItem, fadeInUp } from "@/lib/motion";
 import {
   Plus, ChevronLeft, ChevronRight, Calendar as CalIcon,
-  Briefcase, AlertTriangle, MapPin, DollarSign, User, RefreshCw, Search, Download, ChevronDown,
+  Briefcase, AlertTriangle, MapPin, DollarSign, User, Users, RefreshCw, Search, Download, ChevronDown,
 } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
@@ -140,6 +146,24 @@ function scheduleBarSegmentClass(segment: ScheduleBarSegment, colorClasses: stri
   }
 }
 
+/**
+ * Buckets a job.status value into one of the four live-map color categories
+ * so the map pins mirror the Fixfy semantic palette:
+ *   unassigned / auto_assigning → red
+ *   scheduled                   → green
+ *   in_progress_phase1/2/3      → blue
+ *   late / need_attention / awaiting_payment / final_check / on_hold → orange
+ *
+ * Anything else (e.g. completed / cancelled) is filtered out upstream before
+ * reaching this helper, but falls back to "attention" defensively.
+ */
+function liveMapCategoryForStatus(status: string): LiveMapJobStatusCategory {
+  if (status === "unassigned" || status === "auto_assigning") return "unassigned";
+  if (status === "scheduled") return "scheduled";
+  if (status.startsWith("in_progress")) return "in_progress";
+  return "attention";
+}
+
 function jobCalendarSortKey(job: Job): string {
   const start = jobScheduleYmd(job);
   const prefix = start
@@ -167,6 +191,15 @@ export default function SchedulePage() {
   const [liveMapStatusFilter, setLiveMapStatusFilter] = useState<LiveMapStatusFilter>("all");
   const [liveMapRegionPreset, setLiveMapRegionPreset] = useState<LiveMapRegionPreset>("london");
   const [liveMapTradeFilter, setLiveMapTradeFilter] = useState<"all" | string>("all");
+  // Live-map dispatch overlay: date layer + per-job selection for manual ops.
+  // Defaults to today so the map opens with "jobs scheduled today" pinned.
+  const [liveMapDateMode, setLiveMapDateMode] = useState<"today" | "tomorrow" | "custom">("today");
+  // Custom mode accepts a range. Both default to today so it behaves like a
+  // single-day pick until the operator widens the window.
+  const [liveMapCustomFrom, setLiveMapCustomFrom] = useState<string>(() => formatLocalYmd(new Date()));
+  const [liveMapCustomTo, setLiveMapCustomTo] = useState<string>(() => formatLocalYmd(new Date()));
+  const [liveMapSelectedJobIds, setLiveMapSelectedJobIds] = useState<Set<string>>(() => new Set());
+  const [liveMapPartnerFilter, setLiveMapPartnerFilter] = useState<string>("all");
   const [exportOpen, setExportOpen] = useState(false);
   const scheduleVisibleFields = ["reference", "title", "client_name", "property_address", "status", "partner_name", "scheduled_date", "scheduled_start_at", "scheduled_finish_date"];
   const scheduleAllFields = useMemo(
@@ -478,6 +511,190 @@ export default function SchedulePage() {
     liveMapStatusFilter !== "all" ||
     liveMapTradeFilter !== "all" ||
     liveMapRegionPreset !== "london";
+
+  /**
+   * Date layer for the live map — always expressed as an inclusive
+   * [fromMs, toMs] window so Today/Tomorrow (1 day) and Custom (range)
+   * share the same filter code path. Invalid custom inputs fall back to
+   * a single-day window on today so the overlay never empties on typos.
+   */
+  const liveMapSelectedWindow = useMemo<{ fromMs: number; toMs: number }>(() => {
+    const today = new Date();
+    const todayMs = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    if (liveMapDateMode === "today") return { fromMs: todayMs, toMs: todayMs };
+    if (liveMapDateMode === "tomorrow") {
+      const t = new Date();
+      t.setDate(t.getDate() + 1);
+      const ms = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
+      return { fromMs: ms, toMs: ms };
+    }
+    /** Parse yyyy-MM-dd into a local-midnight timestamp, tolerating bad input. */
+    const parse = (s: string): number | null => {
+      const [yy, mm, dd] = s.split("-").map(Number);
+      if (!yy || !mm || !dd) return null;
+      return new Date(yy, mm - 1, dd).getTime();
+    };
+    const a = parse(liveMapCustomFrom) ?? todayMs;
+    const b = parse(liveMapCustomTo) ?? a;
+    /** Normalise reversed pickers so "From > To" still yields a usable window. */
+    return { fromMs: Math.min(a, b), toMs: Math.max(a, b) };
+  }, [liveMapDateMode, liveMapCustomFrom, liveMapCustomTo]);
+
+  const liveMapIsRange =
+    liveMapDateMode === "custom" && liveMapSelectedWindow.fromMs !== liveMapSelectedWindow.toMs;
+
+  const liveMapSelectedLabel = useMemo(() => {
+    const from = new Date(liveMapSelectedWindow.fromMs);
+    const to = new Date(liveMapSelectedWindow.toMs);
+    const sameDay = liveMapSelectedWindow.fromMs === liveMapSelectedWindow.toMs;
+    if (sameDay) {
+      return from.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    }
+    const sameMonth = from.getMonth() === to.getMonth() && from.getFullYear() === to.getFullYear();
+    if (sameMonth) {
+      return `${from.getDate()}–${to.toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+    }
+    return `${from.toLocaleDateString(undefined, { day: "numeric", month: "short" })} – ${to.toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+  }, [liveMapSelectedWindow]);
+
+  /**
+   * Jobs overlapping the selected window, with a geocoded location. Uses
+   * interval-overlap (jobEnd >= windowFrom AND jobStart <= windowTo) so
+   * multi-day jobs show up when any of their days fall in the range.
+   * Reuses the already-loaded `jobs` state — no new fetch, no new calc.
+   */
+  const jobsForSelectedDay = useMemo<Job[]>(() => {
+    if (view !== "live_map") return [];
+    const { fromMs, toMs } = liveMapSelectedWindow;
+    return jobs.filter((j) => {
+      const s = jobScheduleYmd(j);
+      if (!s) return false;
+      const e = jobFinishYmd(j) ?? s;
+      const jobStart = new Date(s.y, s.m - 1, s.d).getTime();
+      const jobEnd = new Date(e.y, e.m - 1, e.d).getTime();
+      if (jobEnd < fromMs || jobStart > toMs) return false;
+      if (typeof j.latitude !== "number" || typeof j.longitude !== "number") return false;
+      if (liveMapTradeFilter !== "all") {
+        const jobTrade = normalizeTypeOfWork(resolveScheduleJobTypeKey(j.title)) || "";
+        const wanted = normalizeTypeOfWork(liveMapTradeFilter) || liveMapTradeFilter;
+        if (jobTrade !== wanted) return false;
+      }
+      if (liveMapPartnerFilter !== "all") {
+        if (liveMapPartnerFilter === "__unassigned__") {
+          if (j.partner_id || j.partner_name) return false;
+        } else if (j.partner_id !== liveMapPartnerFilter) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [view, jobs, liveMapSelectedWindow, liveMapTradeFilter, liveMapPartnerFilter]);
+
+  /**
+   * Per-partner stats used by the hover popup on partner pins:
+   *   - completed: lifetime completed jobs within the loaded month window
+   *     (good enough proxy for "jobs done" in the ops view — avoids an
+   *     extra query and resets monthly alongside the rest of the page data).
+   *   - inWindow:  jobs assigned to that partner whose schedule falls in
+   *     the currently selected Today / Tomorrow / Custom-range window.
+   */
+  const partnerStatsById = useMemo(() => {
+    const stats = new Map<string, { completed: number; inWindow: number }>();
+    const ensure = (id: string) => {
+      let s = stats.get(id);
+      if (!s) {
+        s = { completed: 0, inWindow: 0 };
+        stats.set(id, s);
+      }
+      return s;
+    };
+    for (const j of jobs) {
+      const pid = j.partner_id?.trim();
+      if (!pid) continue;
+      if (j.status === "completed") ensure(pid).completed += 1;
+    }
+    for (const j of jobsForSelectedDay) {
+      const pid = j.partner_id?.trim();
+      if (!pid) continue;
+      ensure(pid).inWindow += 1;
+    }
+    return stats;
+  }, [jobs, jobsForSelectedDay]);
+
+  /** Partner points enriched with hover-popup stats (completed / in window).
+   *  Kept after partnerStatsById's declaration so the memo can read from it. */
+  const partnerPointsForMap = useMemo<ScheduleLiveMapPoint[]>(() => {
+    return filteredLiveMapPoints.map((p) => {
+      const s = partnerStatsById.get(p.id);
+      return {
+        ...p,
+        jobsCompleted: s?.completed,
+        jobsInWindow: s?.inWindow,
+      };
+    });
+  }, [filteredLiveMapPoints, partnerStatsById]);
+
+  /** Unique partner choices for the dispatch partner filter, taken from the
+   *  jobs list so ops can narrow the overlay to one partner's day. */
+  const liveMapPartnerOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const j of jobs) {
+      const pid = j.partner_id?.trim();
+      if (!pid) continue;
+      const name = (j.partner_name ?? "").trim() || "Partner";
+      if (!seen.has(pid)) seen.set(pid, name);
+    }
+    return Array.from(seen.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [jobs]);
+
+  const liveMapJobPoints = useMemo<ScheduleLiveMapJobPoint[]>(() => {
+    return jobsForSelectedDay.map((j) => ({
+      id: j.id,
+      latitude: Number(j.latitude ?? 0),
+      longitude: Number(j.longitude ?? 0),
+      reference: j.reference,
+      title: j.title,
+      partnerName: j.partner_name?.trim() ? j.partner_name : null,
+      clientName: j.client_name?.trim() || undefined,
+      propertyAddress: j.property_address,
+      statusLabel: statusConfig[j.status]?.label ?? j.status,
+      /** Drives the pin colour + icon (red/green/blue/orange) — matches the
+       *  Fixfy badge semantics used elsewhere in the app. */
+      statusCategory: liveMapCategoryForStatus(j.status),
+      tradeLabel: resolveScheduleJobTypeKey(j.title),
+      scheduleLine: formatJobScheduleLine(j) ?? "",
+    }));
+  }, [jobsForSelectedDay]);
+
+  const toggleJobSelection = useCallback((id: string) => {
+    setLiveMapSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearJobSelection = useCallback(() => setLiveMapSelectedJobIds(new Set()), []);
+
+  /** Stable set reference for the map overlay so marker re-renders are cheap. */
+  const liveMapSelectedJobSet = liveMapSelectedJobIds;
+  const liveMapJobsWithLocation = jobsForSelectedDay.length;
+  const liveMapJobsMissingLocation = useMemo(() => {
+    if (view !== "live_map") return 0;
+    const { fromMs, toMs } = liveMapSelectedWindow;
+    return jobs.filter((j) => {
+      const s = jobScheduleYmd(j);
+      if (!s) return false;
+      const e = jobFinishYmd(j) ?? s;
+      const jobStart = new Date(s.y, s.m - 1, s.d).getTime();
+      const jobEnd = new Date(e.y, e.m - 1, e.d).getTime();
+      if (jobEnd < fromMs || jobStart > toMs) return false;
+      return typeof j.latitude !== "number" || typeof j.longitude !== "number";
+    }).length;
+  }, [view, jobs, liveMapSelectedWindow]);
 
   return (
     <PageTransition className="flex min-h-0 flex-col gap-2 overflow-hidden sm:gap-3 h-[calc(100dvh-7rem)] max-h-[calc(100dvh-7rem)] lg:h-[calc(100dvh-8rem)] lg:max-h-[calc(100dvh-8rem)]">
@@ -825,6 +1042,141 @@ export default function SchedulePage() {
                 </div>
               </div>
 
+              {/* Dispatch layer — date selector + partner filter + selection summary.
+                   Sits under the partner filter bar so the original layout is kept. */}
+              <div
+                className="shrink-0 border-b border-[#E4E4E8] bg-white px-[14px] py-[8px]"
+                style={{ borderBottomWidth: 0.5 }}
+              >
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#020040]">
+                    <CalIcon className="h-3 w-3 text-[#ED4B00]" aria-hidden />
+                    Jobs of the day
+                  </span>
+
+                  <div className="inline-flex items-center gap-0.5 rounded-md border-[0.5px] border-[#D8D8DD] bg-[#FAFAFB] p-0.5">
+                    {(
+                      [
+                        { id: "today" as const, label: "Today" },
+                        { id: "tomorrow" as const, label: "Tomorrow" },
+                        { id: "custom" as const, label: "Custom" },
+                      ] as const
+                    ).map(({ id, label }) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setLiveMapDateMode(id)}
+                        className={cn(
+                          "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                          liveMapDateMode === id
+                            ? "bg-[#ED4B00] text-white"
+                            : "border-[0.5px] border-[#D8D8DD] bg-white text-[#020040] hover:bg-white",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {liveMapDateMode === "custom" && (
+                    <div className="inline-flex items-center gap-1">
+                      <input
+                        type="date"
+                        aria-label="Range start"
+                        value={liveMapCustomFrom}
+                        onChange={(e) => setLiveMapCustomFrom(e.target.value)}
+                        max={liveMapCustomTo || undefined}
+                        className="h-8 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
+                      />
+                      <span className="text-[11px] text-[#64748B]">→</span>
+                      <input
+                        type="date"
+                        aria-label="Range end"
+                        value={liveMapCustomTo}
+                        onChange={(e) => setLiveMapCustomTo(e.target.value)}
+                        min={liveMapCustomFrom || undefined}
+                        className="h-8 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
+                      />
+                    </div>
+                  )}
+
+                  <div className="relative flex items-center gap-1">
+                    <span className="shrink-0 text-[11px] text-[#64748B]">Partner:</span>
+                    <div className="relative">
+                      <select
+                        aria-label="Filter jobs by partner"
+                        value={liveMapPartnerFilter}
+                        onChange={(e) => setLiveMapPartnerFilter(e.target.value)}
+                        className={cn(LIVE_MAP_NATIVE_SELECT_CLASS, "min-w-[150px]")}
+                      >
+                        <option value="all">All partners</option>
+                        <option value="__unassigned__">Unassigned only</option>
+                        {liveMapPartnerOptions.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
+                    </div>
+                  </div>
+
+                  <span className="inline-flex items-center gap-1 rounded-md bg-[#FFF4ED] px-2 py-1 text-[11px] font-medium text-[#ED4B00]">
+                    <Briefcase className="h-3 w-3" aria-hidden />
+                    {liveMapJobsWithLocation} {liveMapJobsWithLocation === 1 ? "job" : "jobs"}
+                    {liveMapIsRange ? ` · ${liveMapSelectedLabel}` : ` · ${liveMapSelectedLabel}`}
+                    {liveMapTradeFilter !== "all" && (
+                      <span className="ml-1 text-[10px] text-[#ED4B00]/80">· {liveMapTradeFilter} only</span>
+                    )}
+                  </span>
+
+                  {liveMapTradeFilter !== "all" && (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-[#EEF2FF] px-2 py-1 text-[11px] font-medium text-[#020040]">
+                      <Users className="h-3 w-3" aria-hidden />
+                      {filteredLiveMapPoints.length} {liveMapTradeFilter}{filteredLiveMapPoints.length === 1 ? "" : "s"} on map
+                    </span>
+                  )}
+
+                  {liveMapJobsMissingLocation > 0 && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-md bg-[#FEF3C7] px-2 py-1 text-[11px] font-medium text-[#92400E]"
+                      title="These jobs have no geocoded address so they can't be placed on the map."
+                    >
+                      <AlertTriangle className="h-3 w-3" aria-hidden />
+                      {liveMapJobsMissingLocation} without location
+                    </span>
+                  )}
+
+                  {liveMapSelectedJobIds.size > 0 && (
+                    <span className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-[#020040] px-2.5 py-1 text-[11px] font-semibold text-white">
+                      {liveMapSelectedJobIds.size} selected for dispatch
+                      <button
+                        type="button"
+                        onClick={clearJobSelection}
+                        className="ml-1 rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-white/25"
+                      >
+                        Clear
+                      </button>
+                    </span>
+                  )}
+                </div>
+
+                {/* Job-pin status legend — tells ops what each colour means.
+                     Uses the shared helper so the palette stays in sync with
+                     the map markers themselves. */}
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#64748B]">
+                  <span className="font-semibold uppercase tracking-wide text-[#94A3B8]">Job pins:</span>
+                  {liveMapJobStatusLegend().map((entry) => (
+                    <span key={entry.key} className="inline-flex items-center gap-1">
+                      <span
+                        className="inline-block h-2.5 w-2.5 rounded-[3px] ring-1 ring-white"
+                        style={{ background: entry.color }}
+                        aria-hidden
+                      />
+                      {entry.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
               {filteredLiveMapPoints.length === 0 && liveMapPoints.length > 0 && (
                 <p className="shrink-0 border-b border-[#E4E4E8] bg-[#FAFAFB] px-[14px] py-2 text-sm text-text-secondary">
                   No partners match these filters. Clear search, set trade to &quot;All trades&quot;, or set status to
@@ -835,10 +1187,13 @@ export default function SchedulePage() {
               <div className="relative min-h-0 flex-1">
                 <ScheduleLiveMap
                   className="flex h-full min-h-0 flex-col"
-                  points={filteredLiveMapPoints}
+                  points={partnerPointsForMap}
                   regionPreset={liveMapRegionPreset}
                   tradeFilter={liveMapTradeFilter}
                   embeddedInCard
+                  jobPoints={liveMapJobPoints}
+                  selectedJobIds={liveMapSelectedJobSet}
+                  onJobMarkerClick={toggleJobSelection}
                   toolbarExtra={
                     <button
                       type="button"

@@ -296,13 +296,13 @@ export function Sidebar() {
                       [group.label]: !prev[group.label],
                     }))
                   }
-                  className="mb-2 flex w-full items-center justify-between px-3 text-[10px] font-bold uppercase tracking-[0.08em] text-sidebar-text-muted transition-colors hover:text-sidebar-text"
+                  className="group mb-2 flex w-full items-center justify-between px-3 text-[10px] font-bold uppercase tracking-[0.08em] text-sidebar-text-muted transition-colors hover:text-sidebar-text"
                 >
                   <span>{group.label}</span>
                   {collapsedSections[group.label] ? (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
                   ) : (
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
                   )}
                 </motion.button>
               )}
