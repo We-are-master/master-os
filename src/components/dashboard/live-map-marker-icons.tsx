@@ -302,8 +302,14 @@ export function createLiveMapJobMarkerElement(opts: {
   const ring = selected ? "#020040" : "rgba(255,255,255,0.95)";
   const ringWidth = selected ? 3 : 2;
 
-  /** Prefer trade icon; fall back to status icon when trade is unknown. */
-  const Icon = trade ? iconForCanonicalTrade(trade) : style.icon;
+  /** Use the trade icon only when we know a *specific* trade (i.e. the title
+   *  contained a recognisable keyword). When the title-parser fell back to
+   *  "General Maintenance" it means the trade is unknown — fall back to the
+   *  status-semantic icon so ops still see meaningful visual variety on the map. */
+  const Icon =
+    trade && trade !== GENERAL_MAINTENANCE_LABEL
+      ? iconForCanonicalTrade(trade)
+      : style.icon;
   const iconHtml = staticIcon(Icon);
 
   const el = document.createElement("div");
