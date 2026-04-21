@@ -529,25 +529,19 @@ export function OverviewExecutiveBundle() {
           ),
         );
 
-        let invForecastFromIso = fromIso;
-        if (bounds) {
-          const days = Math.max(
-            1,
-            Math.round(
-              (new Date(bounds.toIso).getTime() - new Date(bounds.fromIso).getTime()) / 86400000,
-            ) + 1,
-          );
-          if (days > 400) {
-            const cap = new Date(bounds.toIso);
-            cap.setDate(cap.getDate() - 52 * 7);
-            invForecastFromIso = cap.toISOString();
-          }
-        } else {
-          const cap = new Date(toBound);
-          cap.setDate(cap.getDate() - 26 * 7);
-          invForecastFromIso = cap.toISOString();
-        }
-        setInvoiceDueForecastWeeks(buildWeeklyOpenInvoiceDueForecast(invoiceRows, invForecastFromIso, toBound));
+        /**
+         * Invoice due forecast is always anchored to "now" so it behaves like a
+         * cash-flow planner: show the last 3 weeks (context — what's already overdue /
+         * collected into the bucket) plus 7 weeks forward = 10-week rolling window.
+         * Ignoring the dashboard bounds deliberately — this widget is about the
+         * near-term cash horizon, not the audit date range.
+         */
+        const forecastAnchor = new Date();
+        const forecastStart = new Date(forecastAnchor.getTime() - 3 * 7 * 86400000);
+        const forecastEnd = new Date(forecastAnchor.getTime() + 7 * 7 * 86400000);
+        const invForecastFromIso = forecastStart.toISOString();
+        const invForecastToIso = forecastEnd.toISOString();
+        setInvoiceDueForecastWeeks(buildWeeklyOpenInvoiceDueForecast(invoiceRows, invForecastFromIso, invForecastToIso));
 
         const payrollOutstanding = (payrollPendingRes.error ? [] : payrollPendingRes.data ?? []) as {
           amount?: number;
