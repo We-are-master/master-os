@@ -373,11 +373,11 @@ export function DailyOperationsTable({
             <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-sky-500/10 flex items-center justify-center shrink-0">
               <CalendarDays className="h-3.5 w-3.5 text-emerald-600" />
             </div>
-            <div>
+            <div className="flex items-center gap-1.5">
               <CardTitle className="text-sm font-semibold">Daily Operations — {monthLabel}</CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">
-                Revenue, service cost and daily overhead · Mon–Sat · overhead split evenly across {workingDays} working days
-              </p>
+              <FixfyHintIcon
+                text={`Revenue, service cost and daily overhead · Mon–Sat · overhead split evenly across ${workingDays} working days`}
+              />
             </div>
           </div>
           <p className="text-[10px] text-text-tertiary whitespace-nowrap">
@@ -473,7 +473,111 @@ export function DailyOperationsTable({
           ) : null}
         </table>
       </div>
+
+      {/* Health insights strip — derived from month totals so it updates live. */}
+      {!loading && rows.length > 0 ? <InsightsStrip totals={totals} /> : null}
     </Card>
+  );
+}
+
+/**
+ * Compact row of health metrics below the table:
+ *  - Breakeven revenue      = overhead / (1 − service-cost ratio)
+ *  - Gap to breakeven       = breakeven − current revenue (positive = still short)
+ *  - Healthy target (40%)   = overhead / (1 − service-cost ratio − 0.40)
+ *  - Daily to healthy       = healthy target / working days remaining context
+ *
+ * All ratios are derived from the same month totals the table shows so the
+ * strip moves with the view — no extra fetches.
+ */
+function InsightsStrip({ totals }: { totals: DailyOpsData["totals"] }) {
+  const serviceCostRatio = totals.revenue > 0 ? totals.cost / totals.revenue : 0;
+  const scrCapped = Math.min(0.95, Math.max(0, serviceCostRatio));
+  const breakevenDenom = 1 - scrCapped;
+  const breakevenRevenue = breakevenDenom > 0.01 ? totals.overhead / breakevenDenom : 0;
+  const healthyDenom = 1 - scrCapped - 0.40;
+  const healthyRevenue = healthyDenom > 0.01 ? totals.overhead / healthyDenom : 0;
+  const gapToBreakeven = breakevenRevenue - totals.revenue;
+  const gapToHealthy = healthyRevenue - totals.revenue;
+  const past = gapToBreakeven <= 0;
+
+  return (
+    <div className="border-t border-border-light bg-gradient-to-r from-[#FAFAFB] via-card to-[#FAFAFB] px-3 py-2.5 sm:px-4">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1.5 flex items-center gap-1.5">
+        Health insights
+        <FixfyHintIcon text="Derived from the month totals above. Service-cost ratio is kept as-is, overhead is treated as fixed; healthy target assumes a 40% net margin after service cost and overhead." />
+      </p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <InsightCell
+          label="Breakeven revenue"
+          value={breakevenRevenue > 0 ? formatCurrency(breakevenRevenue) : "—"}
+          hint={`Revenue required so net margin hits zero given current service-cost ratio (${Math.round(scrCapped * 1000) / 10}%)`}
+          accent="text-[#020040]"
+        />
+        <InsightCell
+          label={past ? "Past breakeven by" : "Gap to breakeven"}
+          value={
+            breakevenRevenue <= 0
+              ? "—"
+              : past
+                ? `+${formatCurrency(Math.abs(gapToBreakeven))}`
+                : formatCurrency(gapToBreakeven)
+          }
+          hint={
+            past
+              ? "You've already covered costs this month. Everything above is real margin."
+              : "Revenue still needed this month to cover service cost + overhead."
+          }
+          accent={past ? "text-emerald-700" : "text-rose-600"}
+        />
+        <InsightCell
+          label="Healthy target · 40% margin"
+          value={healthyRevenue > 0 ? formatCurrency(healthyRevenue) : "—"}
+          hint="Revenue required to hit a 40% net margin after service cost and overhead — use as a stretch goal for monthly faturamento."
+          accent="text-emerald-700"
+        />
+        <InsightCell
+          label="Gap to healthy"
+          value={
+            healthyRevenue <= 0
+              ? "—"
+              : gapToHealthy > 0
+                ? formatCurrency(gapToHealthy)
+                : `+${formatCurrency(Math.abs(gapToHealthy))}`
+          }
+          hint={
+            gapToHealthy > 0
+              ? "Additional revenue needed this month to reach the 40% margin target."
+              : "You're already past the healthy target — the company is running above the 40% margin mark."
+          }
+          accent={gapToHealthy > 0 ? "text-amber-700" : "text-emerald-700"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function InsightCell({
+  label,
+  value,
+  hint,
+  accent,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  accent: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-1">
+        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary truncate">
+          {label}
+        </p>
+        <FixfyHintIcon text={hint} />
+      </div>
+      <p className={cn("text-sm font-bold tabular-nums leading-tight mt-0.5", accent)}>{value}</p>
+    </div>
   );
 }
 

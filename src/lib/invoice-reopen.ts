@@ -7,21 +7,51 @@ import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-pa
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 /**
- * Older DBs don't have a `deleted_at` column on `job_payments`. PostgREST
- * surfaces this as error 42703 / "undefined column". We probe once per call
- * with a tiny read so the rest of the reopen flow knows whether to soft-delete
- * (update deleted_at) or hard-delete the matching payments.
+ * Some DBs don't have `deleted_at` on `job_payments`. Instead of a probe (which
+ * can false-positive through a cache layer), try the soft-delete aware query
+ * first and fall back to the no-filter version on the specific PostgREST
+ * "undefined column" error (42703). Returns the matching ids.
  */
-async function probeJobPaymentsDeletedAt(client: SupabaseClient): Promise<boolean> {
-  const { error } = await client.from("job_payments").select("deleted_at").limit(1);
-  if (!error) return true;
-  const code = (error as { code?: string }).code;
-  const msg = (error as { message?: string }).message ?? "";
-  if (code === "42703" || msg.includes("deleted_at") || isSupabaseMissingColumnError(error, "deleted_at")) {
-    return false;
+function isUndefinedDeletedAt(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code;
+  const msg = (err as { message?: string } | null)?.message ?? "";
+  if (code === "42703") return true;
+  if (msg.includes("deleted_at")) return true;
+  return isSupabaseMissingColumnError(err, "deleted_at");
+}
+
+async function findJobPaymentIds(
+  client: SupabaseClient,
+  filter: "linked_invoice_id" | "source_invoice_id",
+  invoiceId: string,
+): Promise<{ ids: string[]; hasDeletedAt: boolean }> {
+  // First attempt: soft-delete aware (filters out already-deleted rows).
+  const aware = await client
+    .from("job_payments")
+    .select("id")
+    .eq(filter, invoiceId)
+    .is("deleted_at", null);
+  if (!aware.error) {
+    const ids = (aware.data ?? []).map((r) => (r as { id: string }).id);
+    return { ids, hasDeletedAt: true };
   }
-  // Any unrelated error — assume the column exists and let the caller surface it.
-  return true;
+  // Column missing on this DB → retry without the filter and treat as hard-delete.
+  if (isUndefinedDeletedAt(aware.error)) {
+    const raw = await client.from("job_payments").select("id").eq(filter, invoiceId);
+    if (raw.error) {
+      if (filter === "source_invoice_id" && isSupabaseMissingColumnError(raw.error, "source_invoice_id")) {
+        return { ids: [], hasDeletedAt: false };
+      }
+      throw raw.error;
+    }
+    const ids = (raw.data ?? []).map((r) => (r as { id: string }).id);
+    return { ids, hasDeletedAt: false };
+  }
+  // source_invoice_id may itself not exist on older DBs — treat as empty result.
+  if (filter === "source_invoice_id" && isSupabaseMissingColumnError(aware.error, "source_invoice_id")) {
+    return { ids: [], hasDeletedAt: true };
+  }
+  throw aware.error;
 }
 
 /**
@@ -31,34 +61,25 @@ async function probeJobPaymentsDeletedAt(client: SupabaseClient): Promise<boolea
 export async function reopenInvoiceToPending(client: SupabaseClient, invoice: Invoice): Promise<void> {
   if (invoice.status !== "paid" && invoice.status !== "partially_paid") return;
 
-  const hasDeletedAt = await probeJobPaymentsDeletedAt(client);
   const now = new Date().toISOString();
 
-  // Linked-invoice rows — payments recorded directly against this invoice.
-  const linkQuery = client.from("job_payments").select("id").eq("linked_invoice_id", invoice.id);
-  const { data: byLink, error: e1 } = hasDeletedAt ? await linkQuery.is("deleted_at", null) : await linkQuery;
-  if (e1) throw e1;
-  for (const row of byLink ?? []) {
-    const id = (row as { id: string }).id;
+  /** Remove the matching ids: soft-delete if the column exists, hard-delete otherwise. */
+  const clearIds = async (ids: string[], hasDeletedAt: boolean) => {
+    if (ids.length === 0) return;
     if (hasDeletedAt) {
-      await client.from("job_payments").update({ deleted_at: now }).eq("id", id);
+      await client.from("job_payments").update({ deleted_at: now }).in("id", ids);
     } else {
-      await client.from("job_payments").delete().eq("id", id);
+      await client.from("job_payments").delete().in("id", ids);
     }
-  }
+  };
+
+  // Linked-invoice rows — payments recorded directly against this invoice.
+  const byLink = await findJobPaymentIds(client, "linked_invoice_id", invoice.id);
+  await clearIds(byLink.ids, byLink.hasDeletedAt);
 
   // Source-invoice rows — payments generated from this invoice (legacy column).
-  const sourceQuery = client.from("job_payments").select("id").eq("source_invoice_id", invoice.id);
-  const { data: bySource, error: e2 } = hasDeletedAt ? await sourceQuery.is("deleted_at", null) : await sourceQuery;
-  if (e2 && !isSupabaseMissingColumnError(e2, "source_invoice_id")) throw e2;
-  for (const row of bySource ?? []) {
-    const id = (row as { id: string }).id;
-    if (hasDeletedAt) {
-      await client.from("job_payments").update({ deleted_at: now }).eq("id", id);
-    } else {
-      await client.from("job_payments").delete().eq("id", id);
-    }
-  }
+  const bySource = await findJobPaymentIds(client, "source_invoice_id", invoice.id);
+  await clearIds(bySource.ids, bySource.hasDeletedAt);
 
   const { error: uErr } = await client
     .from("invoices")
