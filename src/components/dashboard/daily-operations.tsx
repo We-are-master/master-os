@@ -68,7 +68,7 @@ export function useDailyOperations(): DailyOpsData {
           "in_progress_phase1", "in_progress_phase2", "in_progress_phase3",
           "final_check", "awaiting_payment", "need_attention", "completed",
         ];
-        const [jobsRes, billsRes, payrollRes] = await Promise.all([
+        const [jobsRes, billsRes, payrollRes, internalSbRes] = await Promise.all([
           supabase
             .from("jobs")
             .select("id, client_price, extras_amount, partner_cost, materials_cost, scheduled_date, scheduled_finish_date")
@@ -83,12 +83,21 @@ export function useDailyOperations(): DailyOpsData {
             .neq("status", "rejected")
             .gte("due_date", fromDay)
             .lte("due_date", toDay),
+          // Payroll catalog (recurring salary / contract fee rows).
           supabase
             .from("payroll_internal_costs")
-            .select("amount")
+            .select("id, amount")
             .not("due_date", "is", null)
             .gte("due_date", fromDay)
             .lte("due_date", toDay),
+          // Internal self-bills — one-off contractors and orphan rows (no payroll catalog entry).
+          supabase
+            .from("self_bills")
+            .select("internal_cost_id, net_payout")
+            .eq("bill_origin", "internal")
+            .not("status", "in", '("rejected","payout_cancelled","payout_archived","payout_lost")')
+            .gte("week_start", fromDay)
+            .lte("week_start", toDay),
         ]);
         const rows = (jobsRes.data ?? []) as OverviewPipelineJobRow[];
         const perDay: Record<string, { revenue: number; cost: number }> = {};
@@ -100,7 +109,20 @@ export function useDailyOperations(): DailyOpsData {
           perDay[day].cost += jobDirectCost(r);
         }
         const billsTotal = (billsRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
-        const payrollTotal = (payrollRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
+        // Workforce cost = payroll catalog + internal self-bills that aren't already covered by a payroll row.
+        type PayrollRow = { id?: string; amount?: number };
+        type InternalSbRow = { internal_cost_id?: string | null; net_payout?: number };
+        const payrollRows = (payrollRes.data ?? []) as PayrollRow[];
+        const internalSbRows = (internalSbRes.data ?? []) as InternalSbRow[];
+        const payrollIds = new Set(payrollRows.map((p) => p.id).filter(Boolean) as string[]);
+        let payrollTotal = 0;
+        for (const p of payrollRows) payrollTotal += Number(p.amount ?? 0);
+        for (const sb of internalSbRows) {
+          const linkedId = sb.internal_cost_id?.trim();
+          if (!linkedId || !payrollIds.has(linkedId)) {
+            payrollTotal += Number(sb.net_payout ?? 0);
+          }
+        }
         if (!cancelled) {
           setDaily(perDay);
           setBills(billsTotal);

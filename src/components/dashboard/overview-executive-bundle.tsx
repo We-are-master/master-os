@@ -10,9 +10,10 @@ import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financia
 import { listCommissionTiers } from "@/services/tiers";
 import type { CommissionTier } from "@/types/database";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { Layers, Target, Users, CalendarDays, ChevronDown, ChevronRight } from "lucide-react";
+import { Layers, Target, Users, CalendarDays, ChevronDown, ChevronRight, DollarSign } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { DailyOperationsTable, DailyOperationsTodayTile, useDailyOperations } from "./daily-operations";
+import { EditableTitle } from "./editable-title";
 import {
   buildWeeklyCashPositionBuckets,
   buildWeeklyJobSoldSeries,
@@ -117,6 +118,8 @@ export function OverviewExecutiveBundle() {
     { accountId: string; name: string; revenue: number; ownerName?: string | null }[]
   >([]);
   const [cashflow, setCashflow] = useState<WeeklyCashPositionRow[]>([]);
+  /** 10-week rolling cash-flow forecast (3 past + 7 future), independent of dashboard bounds. */
+  const [cashFlowForecast, setCashFlowForecast] = useState<WeeklyCashPositionRow[]>([]);
   const [forecastWeeks, setForecastWeeks] = useState<{ label: string; sold: number }[]>([]);
   const [invoiceDueForecastWeeks, setInvoiceDueForecastWeeks] = useState<WeeklyInvoiceDueForecastRow[]>([]);
   const [funnel, setFunnel] = useState({
@@ -557,6 +560,21 @@ export function OverviewExecutiveBundle() {
           payrollOutstanding,
         );
         setCashflow(buckets);
+
+        /**
+         * Rolling 10-week cash-flow forecast mirrors the invoice-due forecast:
+         * 3 past + 7 future weeks anchored on today, ignoring dashboard bounds.
+         * Reuses the same in/out arrays already fetched — cheap.
+         */
+        const cfForecastBuckets = buildWeeklyCashPositionBuckets(
+          invForecastFromIso,
+          invForecastToIso,
+          customerCashRows,
+          sbOutstanding,
+          billsOutstanding,
+          payrollOutstanding,
+        );
+        setCashFlowForecast(cfForecastBuckets);
       } catch {
         if (!cancelled) {
           setRevenue(0);
@@ -570,6 +588,7 @@ export function OverviewExecutiveBundle() {
           setTopPartners([]);
           setTopAccounts([]);
           setCashflow([]);
+          setCashFlowForecast([]);
           setForecastWeeks([]);
           setInvoiceDueForecastWeeks([]);
           setFunnel({
@@ -637,12 +656,20 @@ export function OverviewExecutiveBundle() {
           .gte("scheduled_date", fromDay)
           .lte("scheduled_date", toDay);
         const rows = (jobsRes.data ?? []) as OverviewPipelineJobRow[];
-        const [, billsRes, payrollRes] = await Promise.all([
+        const [, billsRes, payrollRes, internalSbRes] = await Promise.all([
           Promise.resolve(),
           supabase.from("bills").select("amount").is("archived_at", null).neq("status", "rejected")
             .gte("due_date", fromDay).lte("due_date", toDay),
-          supabase.from("payroll_internal_costs").select("amount").not("due_date", "is", null)
+          // Payroll catalog rows (recurring salary / contract fee lines) — authoritative when present.
+          supabase.from("payroll_internal_costs").select("id, amount").not("due_date", "is", null)
             .gte("due_date", fromDay).lte("due_date", toDay),
+          // Internal self-bills (one-off contractors + anyone not carried by a payroll catalog row this month).
+          supabase.from("self_bills")
+            .select("internal_cost_id, net_payout, status, week_start")
+            .eq("bill_origin", "internal")
+            .not("status", "in", '("rejected","payout_cancelled","payout_archived","payout_lost")')
+            .gte("week_start", fromDay)
+            .lte("week_start", toDay),
         ]);
         let rev = 0;
         let direct = 0;
@@ -651,7 +678,27 @@ export function OverviewExecutiveBundle() {
           direct += jobDirectCost(r as OverviewPipelineJobRow);
         }
         const bills = (billsRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
-        const payroll = (payrollRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
+        /**
+         * Workforce cost covers BOTH sources so contractors on one-off bills and
+         * salaried staff on the payroll catalog are both counted:
+         *  - Start from every payroll_internal_costs row with a due date this month.
+         *  - Add any internal self-bill whose internal_cost_id isn't already counted
+         *    above (handles contractors created without a recurring payroll row).
+         *  - Add internal self-bills with no internal_cost_id at all (truly ad-hoc).
+         */
+        type PayrollRow = { id?: string; amount?: number };
+        type InternalSbRow = { internal_cost_id?: string | null; net_payout?: number };
+        const payrollRows = (payrollRes.data ?? []) as PayrollRow[];
+        const internalSbRows = (internalSbRes.data ?? []) as InternalSbRow[];
+        const payrollIds = new Set(payrollRows.map((p) => p.id).filter(Boolean) as string[]);
+        let payroll = 0;
+        for (const p of payrollRows) payroll += Number(p.amount ?? 0);
+        for (const sb of internalSbRows) {
+          const linkedId = sb.internal_cost_id?.trim();
+          if (!linkedId || !payrollIds.has(linkedId)) {
+            payroll += Number(sb.net_payout ?? 0);
+          }
+        }
         if (!cancelled) {
           setMonthlyRevenue(rev);
           setMonthlyDirectCost(direct);
@@ -888,7 +935,9 @@ export function OverviewExecutiveBundle() {
               <Layers className="h-3.5 w-3.5 text-violet-600" />
             </div>
             <div>
-              <CardTitle className="text-sm font-semibold">Tier vs Revenue</CardTitle>
+              <CardTitle className="text-sm font-semibold">
+                <EditableTitle id="tier-vs-revenue" defaultValue="Tier vs Revenue" />
+              </CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5">
                 Customer payments (job ledger) in <strong className="text-text-secondary">{tierMonthLabel || "this month"}</strong> — ignores dashboard date filter
               </p>
@@ -936,7 +985,9 @@ export function OverviewExecutiveBundle() {
               <CalendarDays className="h-3.5 w-3.5 text-teal-600" />
             </div>
             <div>
-              <CardTitle className="text-sm font-semibold">Invoice due — cash forecast</CardTitle>
+              <CardTitle className="text-sm font-semibold">
+                <EditableTitle id="invoice-due-forecast" defaultValue="Invoice due — cash forecast" />
+              </CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5">
                 Open invoice balance by <strong className="text-text-secondary">week of due date</strong> (uses invoice{" "}
                 <strong className="text-text-secondary">created</strong> when due is missing) · rolling 10-week window
@@ -990,11 +1041,103 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card>
 
+      {/* ── Cash-flow forecast: rolling 10 weeks, green income / red expenses ── */}
+      <Card padding="none" className="overflow-hidden border-border-light">
+        <CardHeader className="px-4 pt-3 pb-2">
+          <div className="flex items-start gap-2.5">
+            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-rose-500/10 flex items-center justify-center shrink-0">
+              <DollarSign className="h-3.5 w-3.5 text-emerald-600" />
+            </div>
+            <div>
+              <CardTitle className="text-sm font-semibold">
+                <EditableTitle id="cash-flow-forecast" defaultValue="Cash flow — 10-week forecast" />
+              </CardTitle>
+              <p className="text-[10px] text-text-tertiary mt-0.5">
+                <strong className="text-emerald-700">Green</strong> = cash in (customer payments) ·{" "}
+                <strong className="text-rose-700">Red</strong> = cash out (partners, bills, workforce) · rolling 10-week window
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+        <div className="px-2 sm:px-3 pb-4">
+          {loading ? (
+            <div className="h-48 animate-pulse rounded-xl bg-surface-hover" />
+          ) : cashFlowForecast.length === 0 ? (
+            <div className="h-32 flex items-center justify-center text-sm text-text-tertiary">No data in range</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart
+                data={cashFlowForecast.map((w) => ({
+                  ...w,
+                  // Render expenses as negative so they draw below the zero line (diverging look).
+                  expensesNeg: -(w.billsToPay + w.partnerToPay + w.workforceToPay),
+                  expensesTotal: w.billsToPay + w.partnerToPay + w.workforceToPay,
+                }))}
+                margin={{ top: 8, right: 8, left: 4, bottom: 8 }}
+                barCategoryGap="16%"
+              >
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border-light/50" />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 9, fill: "var(--color-text-tertiary)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  interval="preserveStartEnd"
+                  height={48}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: "var(--color-text-tertiary)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v) => (Math.abs(v) >= 1000 ? `£${(v / 1000).toFixed(0)}k` : `£${v}`)}
+                />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload?.length) return null;
+                    const w = payload[0]!.payload as WeeklyCashPositionRow & { expensesTotal: number };
+                    const positive = w.net >= 0;
+                    return (
+                      <div
+                        className="rounded-lg border border-border-light px-3 py-2 text-xs shadow-md"
+                        style={{ background: "var(--color-card)" }}
+                      >
+                        <p className="font-semibold text-text-primary mb-1">{String(label)}</p>
+                        <p className={cn("font-bold tabular-nums", positive ? "text-emerald-600" : "text-rose-600")}>
+                          Net {formatCurrency(w.net)}
+                        </p>
+                        <div className="mt-1 space-y-0.5 text-[10px] text-text-tertiary">
+                          <p>
+                            <span className="text-emerald-600 font-semibold">In</span>{" "}
+                            <span className="tabular-nums">{formatCurrency(w.collected)}</span>
+                          </p>
+                          <p>
+                            <span className="text-rose-600 font-semibold">Out</span>{" "}
+                            <span className="tabular-nums">{formatCurrency(w.expensesTotal)}</span>
+                          </p>
+                          <p className="pt-0.5 text-[9px]">
+                            Partners {formatCurrency(w.partnerToPay)} · Bills {formatCurrency(w.billsToPay)} · Workforce{" "}
+                            {formatCurrency(w.workforceToPay)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }}
+                />
+                <Bar dataKey="collected" name="Cash in" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="expensesNeg" name="Cash out" fill="#f43f5e" radius={[0, 0, 4, 4]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <Card padding="none" className="border-border-light h-full flex flex-col min-h-0">
           <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
-              <CardTitle className="text-sm font-semibold">Top 5 — partners</CardTitle>
+              <CardTitle className="text-sm font-semibold">
+                <EditableTitle id="top-5-partners" defaultValue="Top 5 — partners" />
+              </CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5">
                 Gross margin · same booked jobs as Revenue
               </p>
@@ -1023,7 +1166,9 @@ export function OverviewExecutiveBundle() {
         <Card padding="none" className="border-border-light h-full flex flex-col min-h-0">
           <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
             <div>
-              <CardTitle className="text-sm font-semibold">Top 5 — weeks</CardTitle>
+              <CardTitle className="text-sm font-semibold">
+                <EditableTitle id="top-5-weeks" defaultValue="Top 5 — weeks" />
+              </CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5">
                 {revenuePeriodSubtext} · by execution-start week
               </p>
@@ -1052,7 +1197,9 @@ export function OverviewExecutiveBundle() {
         <CardHeader className="px-4 pt-3 pb-2 border-b border-border-light/60 bg-gradient-to-r from-cyan-500/5 to-violet-500/5">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
             <div>
-              <CardTitle className="text-sm font-semibold">Cash flow</CardTitle>
+              <CardTitle className="text-sm font-semibold">
+                <EditableTitle id="cash-flow-detailed" defaultValue="Cash flow" />
+              </CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5 max-w-xl">
                 One column per week: <strong className="text-text-secondary">stacked</strong> cash in (green), bills (violet), partners
                 (amber), workforce (rose). Heights are each line’s amount for that week;{" "}
