@@ -10,7 +10,9 @@ import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financia
 import { listCommissionTiers } from "@/services/tiers";
 import type { CommissionTier } from "@/types/database";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { Building2, Layers, Target, Users, CalendarDays } from "lucide-react";
+import { Layers, Target, Users, CalendarDays } from "lucide-react";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { DailyOperationsTodayTile, useDailyOperations } from "./daily-operations";
 import {
   buildWeeklyCashPositionBuckets,
   buildWeeklyJobSoldSeries,
@@ -98,13 +100,19 @@ export function OverviewExecutiveBundle() {
   const [monthlyBills, setMonthlyBills] = useState(0);
   const [monthlyPayroll, setMonthlyPayroll] = useState(0);
   const currentMonthLabel = useMemo(() => localCalendarMonthYmdBounds(new Date()).monthLabel, []);
+  const dailyOps = useDailyOperations();
   const [billingForTier, setBillingForTier] = useState(0);
   const [tierMonthLabel, setTierMonthLabel] = useState("");
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
+  // Top 5 — account owners and Top 5 — accounts cards were hidden. We keep the
+  // state wired so the derivation query stays consistent, but the values are
+  // unused in the rendered tree. If the cards come back, only JSX changes.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [accountOwnerLeaderboard, setAccountOwnerLeaderboard] = useState<
     { ownerProfileId: string | null; displayName: string; revenue: number }[]
   >([]);
   const [topPartners, setTopPartners] = useState<{ name: string; marginContribution: number }[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [topAccounts, setTopAccounts] = useState<
     { accountId: string; name: string; revenue: number; ownerName?: string | null }[]
   >([]);
@@ -776,57 +784,59 @@ export function OverviewExecutiveBundle() {
             },
           ].map((cell) => (
             <div key={cell.label} className="p-3 sm:p-4">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">{cell.label}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">{cell.label}</p>
+                <FixfyHintIcon text={cell.sub} />
+              </div>
               <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", cell.accent)}>
                 {monthlyLoading ? "—" : formatCurrency(cell.value)}
               </p>
-              <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">{cell.sub}</p>
             </div>
           ))}
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 divide-border-light sm:divide-x">
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
-              Quotes awaiting customer
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+                Quotes awaiting customer
+              </p>
+              <FixfyHintIcon text={loading ? "Awaiting customer response" : `${funnel.quotesAwaitingCount} open (not accepted)`} />
+            </div>
             <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-sky-600")}>
               {loading ? "—" : formatCurrency(funnel.quotesAwaiting)}
             </p>
-            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              {loading ? "—" : `${funnel.quotesAwaitingCount} open (not accepted)`}
-            </p>
           </div>
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
-              Workforce cost
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+                Workforce cost
+              </p>
+              <FixfyHintIcon text={`Internal payroll · ${currentMonthLabel}`} />
+            </div>
             <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-orange-600")}>
               {monthlyLoading ? "—" : formatCurrency(monthlyPayroll)}
             </p>
-            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              Internal payroll · {currentMonthLabel}
-            </p>
           </div>
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
-              Total bills
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+                Total bills
+              </p>
+              <FixfyHintIcon text={`Supplier bills · ${currentMonthLabel}`} />
+            </div>
             <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-rose-600")}>
               {monthlyLoading ? "—" : formatCurrency(monthlyBills)}
             </p>
-            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              Supplier bills · {currentMonthLabel}
-            </p>
           </div>
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
-              Total overhead
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+                Total overhead
+              </p>
+              <FixfyHintIcon text={`Workforce + bills · ${currentMonthLabel}`} />
+            </div>
             <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-purple-600")}>
               {monthlyLoading ? "—" : formatCurrency(monthlyPayroll + monthlyBills)}
-            </p>
-            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              Workforce + bills · {currentMonthLabel}
             </p>
           </div>
         </div>
@@ -872,6 +882,9 @@ export function OverviewExecutiveBundle() {
           )}
         </div>
       </Card> : null}
+
+      {/* Today snapshot — full month breakdown lives on /finance/dashboard */}
+      <DailyOperationsTodayTile data={dailyOps} />
 
       <Card padding="none" className="overflow-hidden border-border-light">
         <CardHeader className="px-4 pt-3 pb-2">
@@ -1006,71 +1019,6 @@ export function OverviewExecutiveBundle() {
                   <p className="text-xs font-bold tabular-nums text-text-primary shrink-0">
                     {formatCurrency(row.marginContribution)}
                   </p>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <Card padding="none" className="border-border-light h-full flex flex-col min-h-0 overflow-hidden">
-          <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-start justify-between gap-2 mb-0 shrink-0">
-            <div className="flex items-start gap-2 min-w-0">
-              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-sky-500/20 to-indigo-500/10 flex items-center justify-center shrink-0">
-                <Users className="h-3.5 w-3.5 text-sky-600" />
-              </div>
-              <div className="min-w-0">
-                <CardTitle className="text-sm font-semibold">Top 5 — account owners</CardTitle>
-                <p className="text-[10px] text-text-tertiary mt-0.5">
-                  By <strong className="text-text-secondary">account_owner_id</strong> · booked revenue ·{" "}
-                  {revenuePeriodSubtext}
-                </p>
-              </div>
-            </div>
-          </CardHeader>
-          <div className="px-3 pb-3 space-y-1 flex-1 min-h-0">
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-8 animate-pulse rounded-md bg-surface-hover" />)
-            ) : accountOwnerLeaderboard.length === 0 ? (
-              <p className="text-xs text-text-tertiary py-3 text-center">No account-linked revenue in this period</p>
-            ) : (
-              accountOwnerLeaderboard.map((row, i) => (
-                <div
-                  key={row.ownerProfileId ?? `unassigned-${i}`}
-                  className="flex items-center gap-2 py-1.5 border-b border-border-light/50 last:border-0"
-                >
-                  <span className={rankBadgeClass(i)}>{i + 1}</span>
-                  <p className="text-xs font-medium text-text-primary truncate flex-1">{row.displayName}</p>
-                  <p className="text-xs font-bold tabular-nums text-text-primary shrink-0">{formatCurrency(row.revenue)}</p>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <Card padding="none" className="border-border-light h-full flex flex-col min-h-0">
-          <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
-            <div>
-              <CardTitle className="text-sm font-semibold">Top 5 — accounts</CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">By account · auto-link clients without account</p>
-            </div>
-            <Building2 className="h-3.5 w-3.5 text-text-tertiary" />
-          </CardHeader>
-          <div className="px-3 pb-3 space-y-1 flex-1 min-h-0">
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-8 animate-pulse rounded-md bg-surface-hover" />)
-            ) : topAccounts.length === 0 ? (
-              <p className="text-xs text-text-tertiary py-3 text-center">No account-linked revenue</p>
-            ) : (
-              topAccounts.map((row, i) => (
-                <div key={row.accountId} className="flex items-center gap-2 py-1.5 border-b border-border-light/50 last:border-0">
-                  <span className={rankBadgeClass(i)}>{i + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-text-primary truncate">{row.name}</p>
-                    {row.ownerName ? (
-                      <p className="text-[10px] text-text-tertiary truncate">Owner: {row.ownerName}</p>
-                    ) : null}
-                  </div>
-                  <p className="text-xs font-bold tabular-nums text-text-primary shrink-0">{formatCurrency(row.revenue)}</p>
                 </div>
               ))
             )}

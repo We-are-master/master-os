@@ -27,7 +27,6 @@ import {
   LayoutGrid,
   List,
   Pencil,
-  XCircle,
   Clock,
   AlertTriangle,
   Check,
@@ -114,7 +113,7 @@ function getSelfBillDisplayStatus(sb: SelfBill, todayYmd: string): SelfBillDispl
   if (isSelfBillPayoutVoided(sb)) return { label: "Void", variant: "default" };
   if (sb.status === "paid") return { label: "Paid", variant: "success" };
   if (sb.status === "audit_required") return { label: "Audit required", variant: "danger" };
-  if (sb.status === "rejected") return { label: "Rejected", variant: "default" };
+  if (sb.status === "rejected") return { label: "Cancelled", variant: "default" };
   if (DRAFT_DB_STATUSES.has(sb.status)) return { label: "Draft", variant: "default" };
   if (READY_DB_STATUSES.has(sb.status)) {
     if (isSelfBillOverdue(sb, todayYmd)) return { label: "Overdue", variant: "danger" };
@@ -144,7 +143,7 @@ const TAB_LABELS: Record<SelfBillTab, string> = {
   overdue: "Overdue",
   paid: "Paid",
   audit_required: "Audit required",
-  rejected: "Cancelled & Rejected",
+  rejected: "Cancelled",
 };
 
 function selfBillMatchesTab(sb: SelfBill, tab: SelfBillTab, todayYmd: string): boolean {
@@ -413,15 +412,6 @@ function SelfBillPageInner() {
     } catch { toast.error("Failed to flag for audit"); }
   };
 
-  const handleRejectSelfBill = async (sb: SelfBill) => {
-    try {
-      await updateSbStatus(sb.id, "rejected");
-      toast.success("Self-bill rejected");
-      refreshDrawer(sb.id, "rejected");
-      loadData();
-    } catch { toast.error("Failed to reject"); }
-  };
-
   const handleReopenSelfBill = async (sb: SelfBill) => {
     try {
       await updateSbStatus(sb.id, "ready_to_pay");
@@ -450,6 +440,61 @@ function SelfBillPageInner() {
       setSelectedIds(new Set());
       loadData();
     } catch { toast.error("Failed to update self-bills"); }
+  };
+
+  const handleBulkCancel = async () => {
+    if (selectedIds.size === 0) return;
+    const eligible = Array.from(selectedIds).filter((id) => {
+      const sb = selfBills.find((s) => s.id === id);
+      return sb && !isSelfBillPayoutVoided(sb) && sb.status !== "paid";
+    });
+    if (eligible.length === 0) {
+      toast.error("Selected self-bills are already void or paid.");
+      return;
+    }
+    if (eligible.length < selectedIds.size) toast.message(`${selectedIds.size - eligible.length} self-bill(s) skipped`);
+    if (!window.confirm(`Cancel ${eligible.length} self-bill(s)? They can be reopened later.`)) return;
+    const supabase = getSupabase();
+    try {
+      const patch: Record<string, unknown> = {
+        status: "payout_cancelled",
+        partner_status_label: "Cancelled",
+        jobs_count: 0,
+        job_value: 0,
+        materials: 0,
+        commission: 0,
+        net_payout: 0,
+      };
+      let lastErr: unknown = null;
+      let triedRejectedFallback = false;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const { error } = await supabase.from("self_bills").update(patch).in("id", eligible);
+        if (!error) { lastErr = null; break; }
+        lastErr = error;
+        const code = (error as { code?: string }).code;
+        const msg = (error as { message?: string }).message ?? "";
+        // schema-cache: drop unknown column and retry
+        if (code === "PGRST204" || msg.includes("schema cache") || msg.includes("Could not find")) {
+          delete patch.partner_status_label;
+          continue;
+        }
+        // check constraint: older DB forbids payout_cancelled — fall back to "rejected"
+        if ((code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint")) && !triedRejectedFallback) {
+          patch.status = "rejected";
+          delete patch.partner_status_label;
+          triedRejectedFallback = true;
+          continue;
+        }
+        break;
+      }
+      if (lastErr) throw lastErr;
+      toast.success(`${eligible.length} self-bill(s) cancelled`);
+      setSelectedIds(new Set());
+      loadData();
+    } catch (e) {
+      console.error("Bulk cancel self-bills failed:", e);
+      toast.error("Failed to cancel self-bills");
+    }
   };
 
   const openEdit = (sb: SelfBill) => {
@@ -900,6 +945,7 @@ function SelfBillPageInner() {
               onSelectionChange={setSelectedIds}
               onRowClick={(item) => void openDrawer(item)}
               handleBulkStatusChange={handleBulkStatusChange}
+              handleBulkCancel={handleBulkCancel}
             />
           ) : (
             <DataTable
@@ -921,6 +967,7 @@ function SelfBillPageInner() {
                   <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
                   <BulkBtn label="Ready to pay" onClick={() => void handleBulkStatusChange("ready_to_pay")} variant="info" />
                   <BulkBtn label="Mark paid" onClick={() => void handleBulkStatusChange("paid")} variant="success" />
+                  <BulkBtn label="Cancel" onClick={() => void handleBulkCancel()} variant="danger" />
                 </div>
               }
             />
@@ -938,7 +985,6 @@ function SelfBillPageInner() {
         onMarkReadyToPay={() => drawerSelfBill && void handleMarkReadyToPay(drawerSelfBill)}
         onMarkPaid={() => drawerSelfBill && void handleMarkPaid(drawerSelfBill)}
         onMarkAuditRequired={() => drawerSelfBill && void handleMarkAuditRequired(drawerSelfBill)}
-        onReject={() => drawerSelfBill && void handleRejectSelfBill(drawerSelfBill)}
         onReopen={() => drawerSelfBill && void handleReopenSelfBill(drawerSelfBill)}
         onEditTotals={() => drawerSelfBill && openEdit(drawerSelfBill)}
       />
@@ -987,7 +1033,6 @@ function SelfBillDetailDrawer({
   onMarkReadyToPay,
   onMarkPaid,
   onMarkAuditRequired,
-  onReject,
   onReopen,
   onEditTotals,
 }: {
@@ -1000,7 +1045,6 @@ function SelfBillDetailDrawer({
   onMarkReadyToPay: () => void;
   onMarkPaid: () => void;
   onMarkAuditRequired: () => void;
-  onReject: () => void;
   onReopen: () => void;
   onEditTotals: () => void;
 }) {
@@ -1079,11 +1123,41 @@ function SelfBillDetailDrawer({
     setCancelSaving(true);
     try {
       const supabase = getSupabase();
-      await supabase.from("self_bills").update({ status: "payout_cancelled" }).eq("id", sb.id);
+      const patch: Record<string, unknown> = {
+        status: "payout_cancelled",
+        partner_status_label: "Cancelled",
+        jobs_count: 0,
+        job_value: 0,
+        materials: 0,
+        commission: 0,
+        net_payout: 0,
+      };
+      let lastErr: unknown = null;
+      let triedRejectedFallback = false;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const { error } = await supabase.from("self_bills").update(patch).eq("id", sb.id);
+        if (!error) { lastErr = null; break; }
+        lastErr = error;
+        const code = (error as { code?: string }).code;
+        const msg = (error as { message?: string }).message ?? "";
+        if (code === "PGRST204" || msg.includes("schema cache") || msg.includes("Could not find")) {
+          delete patch.partner_status_label;
+          continue;
+        }
+        if ((code === "23514" || msg.includes("self_bills_status_check") || msg.includes("violates check constraint")) && !triedRejectedFallback) {
+          patch.status = "rejected";
+          delete patch.partner_status_label;
+          triedRejectedFallback = true;
+          continue;
+        }
+        break;
+      }
+      if (lastErr) throw lastErr;
       toast.success("Self-bill cancelled.");
       setCancelModalOpen(false);
       onReopen(); // refresh
-    } catch {
+    } catch (e) {
+      console.error("Cancel self-bill failed:", e);
       toast.error("Failed to cancel self-bill.");
     } finally {
       setCancelSaving(false);
@@ -1195,18 +1269,11 @@ function SelfBillDetailDrawer({
           ) : null}
           <button
             type="button"
-            onClick={onReject}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-[6px] border border-red-200 bg-red-50 py-1.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400"
-          >
-            <XCircle className="h-3.5 w-3.5 shrink-0" /> Reject
-          </button>
-          <button
-            type="button"
             onClick={() => { setCancelReason(""); setCancelModalOpen(true); }}
-            className="inline-flex items-center justify-center gap-1.5 rounded-[6px] border border-border bg-card px-2 py-1.5 text-[11px] font-medium text-text-secondary transition-colors hover:bg-surface-hover"
+            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-[6px] border border-red-200 bg-red-50 py-1.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400"
             title="Cancel self-bill (does not affect job or invoice)"
           >
-            <Ban className="h-3.5 w-3.5 shrink-0" />
+            <Ban className="h-3.5 w-3.5 shrink-0" /> Cancel
           </button>
         </div>
       )}
@@ -1876,6 +1943,7 @@ function WeekGroupedTable({
   onSelectionChange,
   onRowClick,
   handleBulkStatusChange,
+  handleBulkCancel,
 }: {
   columns: Column<SelfBill>[];
   filtered: SelfBill[];
@@ -1884,6 +1952,7 @@ function WeekGroupedTable({
   onSelectionChange: (ids: Set<string>) => void;
   onRowClick: (item: SelfBill) => void;
   handleBulkStatusChange: (status: string) => Promise<void>;
+  handleBulkCancel: () => Promise<void>;
 }) {
   const groups = useMemo(() => {
     const map = new Map<string, SelfBill[]>();
@@ -1987,6 +2056,7 @@ function WeekGroupedTable({
                   <span className="text-xs font-medium text-white/80">{groupSelected.size} selected</span>
                   <BulkBtn label="Ready to pay" onClick={() => void handleBulkStatusChange("ready_to_pay")} variant="info" />
                   <BulkBtn label="Mark paid" onClick={() => void handleBulkStatusChange("paid")} variant="success" />
+                  <BulkBtn label="Cancel" onClick={() => void handleBulkCancel()} variant="danger" />
                 </div>
               }
             />

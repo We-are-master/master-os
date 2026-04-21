@@ -5994,19 +5994,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
             {/* Financial documents: client invoices (us→client) */}
             <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div className="space-y-1">
-                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
-                  {invoiceLifecycleBadge ? (
-                    <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium", invoiceLifecycleBadge.className)}>
-                      Invoice {invoiceLifecycleBadge.label}
-                    </span>
-                  ) : (
-                    <span className="inline-flex rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">
-                      Invoice not created
-                    </span>
-                  )}
-                </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Financial documents</p>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] shrink-0">
                   <Link href="/finance/invoices" className="text-primary hover:underline inline-flex items-center gap-1">
                     All invoices <ExternalLink className="h-3 w-3" />
@@ -6018,7 +6007,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               <div className="space-y-2">
-                <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client invoices</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Client invoices</p>
+                  {invoiceLifecycleBadge ? (
+                    <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium", invoiceLifecycleBadge.className)}>
+                      {invoiceLifecycleBadge.label}
+                    </span>
+                  ) : (
+                    <span className="inline-flex rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">
+                      Not created
+                    </span>
+                  )}
+                </div>
                 <p className="text-[11px] text-text-tertiary leading-snug">
                   We invoice the <strong className="font-medium text-text-secondary">client</strong> for this job.
                 </p>

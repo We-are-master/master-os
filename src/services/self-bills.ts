@@ -272,7 +272,8 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
     ...(originalNetPayout != null ? { original_net_payout: originalNetPayout } : {}),
   };
   let voidErr: unknown = null;
-  for (let attempt = 0; attempt < 8; attempt++) {
+  let triedRejectedFallback = false;
+  for (let attempt = 0; attempt < 10; attempt++) {
     const { error } = await supabase.from("self_bills").update(voidPatch).eq("id", selfBillId);
     if (!error) {
       voidErr = null;
@@ -289,6 +290,25 @@ export async function refreshSelfBillPayoutState(selfBillId: string): Promise<vo
       delete voidPatch.payout_void_reason;
       delete voidPatch.partner_status_label;
       delete voidPatch.original_net_payout;
+      continue;
+    }
+    /**
+     * DB predates migration 100 (check constraint still forbids payout_* statuses).
+     * Fall back to the "rejected" status — the Cancelled & Rejected tab accepts both,
+     * so the row still moves out of the draft bucket.
+     */
+    const code = (error as { code?: string }).code;
+    const msg = (error as { message?: string }).message ?? "";
+    const isStatusCheck =
+      code === "23514" ||
+      msg.includes("self_bills_status_check") ||
+      msg.includes("violates check constraint");
+    if (isStatusCheck && !triedRejectedFallback) {
+      voidPatch.status = "rejected";
+      delete voidPatch.payout_void_reason;
+      delete voidPatch.partner_status_label;
+      delete voidPatch.original_net_payout;
+      triedRejectedFallback = true;
       continue;
     }
     break;
@@ -444,11 +464,9 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   const { error: linkErr } = await supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
   if (linkErr) throw linkErr;
 
-  try {
-    await refreshSelfBillPayoutState(sbId);
-  } catch (e) {
+  void refreshSelfBillPayoutState(sbId).catch((e) => {
     console.error("refreshSelfBillPayoutState after weekly self-bill link:", e);
-  }
+  });
   return sbId;
 }
 
@@ -538,16 +556,45 @@ export async function cancelOpenSelfBillsForJobCancellation(options: {
     const patch: Record<string, unknown> = {
       status: "payout_cancelled" as const,
       partner_status_label: "Cancelled",
+      jobs_count: 0,
+      job_value: 0,
+      materials: 0,
+      commission: 0,
+      net_payout: 0,
     };
     const { error } = await supabase.from("self_bills").update(patch).eq("id", sb.id);
     if (!error) return;
-    // Older DB schemas may not have partner_status_label — retry with status only.
+    // Older DB schemas may not have partner_status_label — retry without it.
     if (isSupabaseMissingColumnError(error)) {
+      const { partner_status_label: _psl, ...rest } = patch;
       const { error: retryErr } = await supabase
         .from("self_bills")
-        .update({ status: "payout_cancelled" as const })
+        .update(rest)
         .eq("id", sb.id);
-      if (retryErr) throw retryErr;
+      if (!retryErr) return;
+      // fall through to check-constraint fallback below
+    }
+    /**
+     * DB predates migration 100 (status CHECK forbids payout_cancelled).
+     * Fall back to "rejected" — Cancelled & Rejected tab still picks it up.
+     */
+    const code = (error as { code?: string }).code;
+    const msg = (error as { message?: string }).message ?? "";
+    const isStatusCheck =
+      code === "23514" ||
+      msg.includes("self_bills_status_check") ||
+      msg.includes("violates check constraint");
+    if (isStatusCheck) {
+      const fallback: Record<string, unknown> = {
+        status: "rejected" as const,
+        jobs_count: 0,
+        job_value: 0,
+        materials: 0,
+        commission: 0,
+        net_payout: 0,
+      };
+      const { error: fbErr } = await supabase.from("self_bills").update(fallback).eq("id", sb.id);
+      if (fbErr) throw fbErr;
       return;
     }
     throw error;
