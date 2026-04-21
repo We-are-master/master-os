@@ -288,7 +288,8 @@ export function ScheduleLiveMap({
       const popup = new mapboxgl.Popup({
         closeButton: false,
         closeOnClick: false,
-        offset: 14,
+        // anchor "bottom" pin → popup appears above; negative y offset clears the pin body
+        offset: { bottom: [0, -40] as [number, number] },
       }).setHTML(
         buildLiveMapJobPopupHtml({
           reference: job.reference,
@@ -304,7 +305,7 @@ export function ScheduleLiveMap({
         }),
       );
       const lngLat: [number, number] = [job.longitude, job.latitude];
-      const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
+      const marker = new mapboxgl.Marker({ element: el, anchor: "bottom" })
         .setLngLat(lngLat)
         .setPopup(popup)
         .addTo(map);

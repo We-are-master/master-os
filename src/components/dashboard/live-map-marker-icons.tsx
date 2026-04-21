@@ -2,19 +2,17 @@
 
 import type { LucideIcon } from "lucide-react";
 import {
-  Briefcase,
   ClipboardCheck,
-  Droplets,
   FileCheck,
   Flame,
   Hammer,
   HardHat,
-  MapPin,
   Paintbrush,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   Sprout,
+  Wrench,
   Zap,
 } from "lucide-react";
 import { createElement } from "react";
@@ -31,7 +29,7 @@ const ICON_BOX = 18;
 const TRADE_TO_ICON: Record<string, LucideIcon> = {
   Painter: Paintbrush,
   [GENERAL_MAINTENANCE_LABEL]: ShieldCheck,
-  Plumber: Droplets,
+  Plumber: Wrench,
   Electrician: Zap,
   Builder: HardHat,
   Carpenter: Hammer,
@@ -201,7 +199,6 @@ export function createLiveMapMarkerElement(opts: {
     `height:${PARTNER_MARKER_SIZE}px`,
     "position:relative",
     "cursor:pointer",
-    "transition:transform 120ms ease",
   ].join(";");
 
   /** Main circle SVG with initials text. */
@@ -235,22 +232,29 @@ export function createLiveMapMarkerElement(opts: {
 }
 
 /* ───────────────────────── Jobs-of-the-day overlay ────────────────────────
- * Rendered alongside partner markers in the Live Map, only for the Schedule
- * & Dispatch view's date layer. Visually distinct (square-ish, orange) so
- * ops can tell jobs apart from partner pins at a glance without any change
- * to the existing partner icon system.
+ * Map-pin teardrop shape (circle + pointed tail). Color = job status.
+ * Icon = trade type. Tail tip anchored to the job's exact address location.
  */
 
-const JOB_MARKER_SIZE = 30;
+/** Width of the pin element in px. */
+const JOB_PIN_WIDTH = 28;
+/** Height of the pin element in px — tail tip sits at the bottom-center. */
+const JOB_PIN_HEIGHT = 38;
+/**
+ * SVG teardrop path inside a 28×38 viewBox.
+ * Circle centre ≈ (14, 13), radius ≈ 12.  Tail tip at (14, 37).
+ * Anchor for Mapbox must be "bottom" so the tail tip lands on the lat/lng.
+ */
+const JOB_PIN_PATH =
+  "M 14 1 C 7 1 1 7 1 14 C 1 21 7 27 14 37 C 21 27 27 21 27 14 C 27 7 21 1 14 1 Z";
 
 /**
- * Status bucket that drives the job-pin color. Keeps the palette tied to the
- * existing Fixfy semantic system used across badges / KPIs so ops recognises
- * the colors instantly:
- *   unassigned  → red    (#ED073F)  — needs manual dispatch
- *   scheduled   → green  (#2B9966)  — assigned & planned
- *   in_progress → blue   (#2563EB)  — partner actively working
- *   attention   → orange (#ED4B00)  — late / need_attention / awaiting_payment / final_check
+ * Status bucket that drives the job-pin color.
+ * Colors match the Fixfy dispatch spec exactly.
+ *   unassigned  → dark red   (#A32D2D)  — needs manual dispatch
+ *   scheduled   → dark green (#0F6E56)  — assigned & planned
+ *   in_progress → blue       (#378ADD)  — partner actively working
+ *   attention   → orange     (#ED4B00)  — late / on_hold / final_check / etc.
  */
 export type LiveMapJobStatusCategory =
   | "unassigned"
@@ -258,14 +262,11 @@ export type LiveMapJobStatusCategory =
   | "in_progress"
   | "attention";
 
-const JOB_STATUS_STYLE: Record<
-  LiveMapJobStatusCategory,
-  { color: string; icon: LucideIcon }
-> = {
-  unassigned: { color: "#ED073F", icon: MapPin },
-  scheduled: { color: "#2B9966", icon: Briefcase },
-  in_progress: { color: "#2563EB", icon: Hammer },
-  attention: { color: "#ED4B00", icon: ClipboardCheck },
+const JOB_STATUS_STYLE: Record<LiveMapJobStatusCategory, { color: string }> = {
+  unassigned: { color: "#A32D2D" },
+  scheduled:  { color: "#0F6E56" },
+  in_progress:{ color: "#378ADD" },
+  attention:  { color: "#ED4B00" },
 };
 
 export function liveMapJobStatusLegend(): Array<{
@@ -274,18 +275,21 @@ export function liveMapJobStatusLegend(): Array<{
   label: string;
 }> {
   return [
-    { key: "unassigned", color: JOB_STATUS_STYLE.unassigned.color, label: "Unassigned" },
-    { key: "scheduled", color: JOB_STATUS_STYLE.scheduled.color, label: "Scheduled" },
+    { key: "unassigned",  color: JOB_STATUS_STYLE.unassigned.color,  label: "Unassigned" },
+    { key: "scheduled",   color: JOB_STATUS_STYLE.scheduled.color,   label: "Scheduled" },
     { key: "in_progress", color: JOB_STATUS_STYLE.in_progress.color, label: "In progress" },
-    { key: "attention", color: JOB_STATUS_STYLE.attention.color, label: "Needs attention" },
+    { key: "attention",   color: JOB_STATUS_STYLE.attention.color,   label: "Needs attention" },
   ];
 }
 
 /**
- * Square-ish job pin, colored by status category. Shows the job's trade icon
- * so ops can identify the type of work at a glance; falls back to a
- * status-semantic icon when no trade is available.
- * Selected pins get a thicker navy ring + gentle scale for dispatch mode.
+ * Teardrop job pin. Icon always shows the trade type; ShieldCheck is the
+ * fallback for unknown / general-maintenance jobs. Anchor must be "bottom"
+ * in Mapbox so the tail tip lands exactly on the geocoded address.
+ *
+ * No CSS transitions on the outer element — Mapbox positions markers by
+ * setting element.style.transform directly, and any transition there causes
+ * visible drift while zooming/panning.
  */
 export function createLiveMapJobMarkerElement(opts: {
   selected: boolean;
@@ -294,41 +298,32 @@ export function createLiveMapJobMarkerElement(opts: {
   trade?: string;
 }): HTMLDivElement {
   const { selected, statusCategory, trade } = opts;
-  const style = JOB_STATUS_STYLE[statusCategory];
-  const color = style.color;
-  const bg = selected
-    ? `linear-gradient(145deg, ${color} 0%, ${color} 100%)`
-    : `linear-gradient(145deg, ${color}E6 0%, ${color} 100%)`;
-  const ring = selected ? "#020040" : "rgba(255,255,255,0.95)";
-  const ringWidth = selected ? 3 : 2;
+  const { color } = JOB_STATUS_STYLE[statusCategory];
 
-  /** Use the trade icon only when we know a *specific* trade (i.e. the title
-   *  contained a recognisable keyword). When the title-parser fell back to
-   *  "General Maintenance" it means the trade is unknown — fall back to the
-   *  status-semantic icon so ops still see meaningful visual variety on the map. */
-  const Icon =
-    trade && trade !== GENERAL_MAINTENANCE_LABEL
-      ? iconForCanonicalTrade(trade)
-      : style.icon;
+  // Always show the trade icon. ShieldCheck is the fallback for
+  // unknown / general trades — never fall back to a status icon.
+  const Icon = iconForCanonicalTrade(trade || GENERAL_MAINTENANCE_LABEL);
   const iconHtml = staticIcon(Icon);
+
+  const stroke = selected ? "#020040" : "rgba(255,255,255,0.8)";
+  const strokeWidth = selected ? 3 : 1.5;
 
   const el = document.createElement("div");
   el.className = "live-map-job-marker";
   el.style.cssText = [
-    `width:${JOB_MARKER_SIZE}px`,
-    `height:${JOB_MARKER_SIZE}px`,
-    "border-radius:7px",
-    `box-shadow:0 2px 8px rgba(0,0,0,0.22),0 0 0 ${ringWidth}px ${ring}${selected ? ",0 0 0 5px rgba(2,0,64,0.18)" : ""}`,
-    `background:${bg}`,
-    "display:flex",
-    "align-items:center",
-    "justify-content:center",
+    `width:${JOB_PIN_WIDTH}px`,
+    `height:${JOB_PIN_HEIGHT}px`,
+    "position:relative",
     "cursor:pointer",
-    "transition:transform 120ms ease, box-shadow 120ms ease",
-    selected ? "transform:scale(1.08)" : "",
-  ].filter(Boolean).join(";");
+    // drop-shadow follows the pin shape; no transition so Mapbox positioning is instant
+    "filter:drop-shadow(0 2px 5px rgba(0,0,0,0.32))",
+  ].join(";");
 
-  el.innerHTML = `<span style="display:flex;width:70%;height:70%;align-items:center;justify-content:center">${iconHtml}</span>`;
+  el.innerHTML =
+    `<svg width="${JOB_PIN_WIDTH}" height="${JOB_PIN_HEIGHT}" viewBox="0 0 ${JOB_PIN_WIDTH} ${JOB_PIN_HEIGHT}" xmlns="http://www.w3.org/2000/svg" style="display:block;position:absolute;top:0;left:0" fill="none">` +
+    `<path d="${JOB_PIN_PATH}" fill="${color}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"/>` +
+    `</svg>` +
+    `<span style="position:absolute;top:4px;left:50%;transform:translateX(-50%);display:flex;width:${ICON_BOX}px;height:${ICON_BOX}px;align-items:center;justify-content:center;pointer-events:none">${iconHtml}</span>`;
 
   return el;
 }
