@@ -72,6 +72,12 @@ interface ScheduleLiveMapProps {
   selectedJobIds?: ReadonlySet<string>;
   /** Fired when a job pin is clicked. Caller decides: toggle selection, open drawer, etc. */
   onJobMarkerClick?: (jobId: string) => void;
+  /** Filter controls panel — floated below the top-left toolbar on the map. */
+  filterOverlay?: ReactNode;
+  /** Live stats + legend panel — floated at the bottom-left corner of the map. */
+  bottomLeftOverlay?: ReactNode;
+  /** Dispatch / jobs-of-the-day panel — floated at the bottom-right corner of the map. */
+  bottomRightOverlay?: ReactNode;
 }
 
 const LONDON_CENTER: [number, number] = [-0.1276, 51.5072];
@@ -125,6 +131,9 @@ export function ScheduleLiveMap({
   jobPoints,
   selectedJobIds,
   onJobMarkerClick,
+  filterOverlay,
+  bottomLeftOverlay,
+  bottomRightOverlay,
 }: ScheduleLiveMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -412,6 +421,21 @@ export function ScheduleLiveMap({
               <Maximize2 className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
               Full screen
             </button>
+          </div>
+        ) : null}
+        {!fullscreen && filterOverlay ? (
+          <div className="absolute left-3 top-14 z-[2] max-w-[calc(100%-3rem)]">
+            {filterOverlay}
+          </div>
+        ) : null}
+        {!fullscreen && bottomLeftOverlay ? (
+          <div className="absolute bottom-7 left-3 z-[2] max-w-[calc(55%-0.75rem)]">
+            {bottomLeftOverlay}
+          </div>
+        ) : null}
+        {!fullscreen && bottomRightOverlay ? (
+          <div className="absolute bottom-7 right-3 z-[2] max-w-[calc(65%-0.75rem)]">
+            {bottomRightOverlay}
           </div>
         ) : null}
         <div
