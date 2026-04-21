@@ -22,7 +22,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { GENERAL_MAINTENANCE_LABEL, TYPE_OF_WORK_OPTIONS } from "@/lib/type-of-work";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
-const DEFAULT_MARKER_SIZE = 36;
+/** Partner marker canvas — needs extra room for the top-right trade badge. */
+const PARTNER_MARKER_SIZE = 52;
+/** Trade icon rendered inside the badge circle. */
+const BADGE_ICON_SIZE = 13;
 const ICON_BOX = 18;
 
 const TRADE_TO_ICON: Record<string, LucideIcon> = {
@@ -61,6 +64,28 @@ function staticIcon(Icon: LucideIcon) {
       "aria-hidden": true,
     }),
   );
+}
+
+/** Render a lucide icon at arbitrary size/color (used for the trade badge). */
+function staticIconColored(Icon: LucideIcon, size: number, color: string): string {
+  return renderToStaticMarkup(
+    createElement(Icon, {
+      size,
+      strokeWidth: 2,
+      color,
+      "aria-hidden": true,
+    }),
+  );
+}
+
+/** "Hemerson S." → "HS", "Dan L." → "DL" */
+function toInitials(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 function escapeHtml(s: string) {
@@ -124,29 +149,39 @@ ${statsRow}
 }
 
 /**
- * Partner marker — always Fixfy navy (#020040) with the partner's primary
- * trade icon inside. Multi-trade partners get a tiny "+N" badge in the
- * top-right corner so ops can still see the partner covers other trades
- * without cluttering the pin. Active/Inactive is encoded on the ring color.
+ * Partner marker — navy circle showing two-letter initials with a small
+ * trade-icon badge in the top-right corner.
  *
- * When a specific trade filter is active, the icon switches to that trade
- * (keeping the navy background) — highlighting only partners that cover it.
+ * Badge ring color encodes liveness (green = active, gray = inactive).
+ * When a trade filter is active the badge icon switches to that trade so ops
+ * can see at a glance which partners cover it.
+ * Selected partners (dispatch mode) get an orange outline on the main circle.
  */
 export function createLiveMapMarkerElement(opts: {
   inactive: boolean;
   tradeFilter: "all" | string;
   trade?: string;
   trades?: string[] | null;
+  /** Partner display name — used to derive two-letter initials. */
+  name?: string;
+  /** Orange outline on the main circle when selected for dispatch. */
+  selected?: boolean;
 }): HTMLDivElement {
-  const { inactive, tradeFilter } = opts;
-  /** Ring colour still encodes liveness — green = active ping, orange = inactive. */
-  const ring = inactive ? "#ED4B00" : "#2B9966";
+  const { inactive, tradeFilter, selected = false } = opts;
+
   const navy = "#020040";
-  /** When the partner hasn't pinged recently we soften the navy a touch so
-   *  the green/orange ring is the primary cue rather than the fill. */
-  const fill = inactive
-    ? "linear-gradient(145deg, #3A3A63 0%, #2B2A52 100%)"
-    : "linear-gradient(145deg, #0D0B5A 0%, #020040 100%)";
+  const activeColor = "#0F6E56";
+  const inactiveColor = "#9A9AA0";
+
+  /** Badge ring + icon color encodes liveness. */
+  const badgeColor = inactive ? inactiveColor : activeColor;
+  /** Main circle outline: orange when selected, white otherwise. */
+  const circleStroke = selected ? "#ED4B00" : "white";
+  const circleStrokeWidth = selected ? 3 : 2.5;
+  /** Soften circle when inactive so the badge color is the primary cue. */
+  const circleOpacity = inactive ? 0.55 : 1;
+
+  const initials = opts.name ? toInitials(opts.name) : "";
 
   const tradesNorm = (opts.trades?.length ? opts.trades : opts.trade ? [opts.trade] : [])
     .map((t) => normalizeTypeOfWork(String(t).trim()) || String(t).trim())
@@ -154,36 +189,47 @@ export function createLiveMapMarkerElement(opts: {
   const primaryTrade = tradesNorm[0] ?? "";
   const extraTrades = Math.max(0, tradesNorm.length - 1);
 
-  /** Icon: prefer the active trade filter (so "Plumber" filter shows droplets
-   *  on every pin), otherwise the partner's primary trade, fallback ShieldCheck. */
+  /** Badge icon: prefer active trade filter, then primary trade, fallback ShieldCheck. */
   const iconTrade = tradeFilter !== "all" ? tradeFilter : primaryTrade || "";
-  const Icon = iconForCanonicalTrade(iconTrade);
-  const innerHtml = staticIcon(Icon);
+  const TradeIcon = iconForCanonicalTrade(iconTrade);
+  const badgeIconHtml = staticIconColored(TradeIcon, BADGE_ICON_SIZE, badgeColor);
 
   const el = document.createElement("div");
   el.className = "live-map-marker";
   el.style.cssText = [
-    `width:${DEFAULT_MARKER_SIZE}px`,
-    `height:${DEFAULT_MARKER_SIZE}px`,
-    "border-radius:9999px",
-    `box-shadow:0 2px 10px rgba(0,0,0,0.22),0 0 0 3px ${ring}`,
-    `background:${fill}`,
-    "display:flex",
-    "align-items:center",
-    "justify-content:center",
-    "cursor:pointer",
+    `width:${PARTNER_MARKER_SIZE}px`,
+    `height:${PARTNER_MARKER_SIZE}px`,
     "position:relative",
+    "cursor:pointer",
     "transition:transform 120ms ease",
   ].join(";");
-  el.style.setProperty("color", navy); // only used if the icon falls back to currentColor
 
-  /** Multi-trade badge — small pill in top-right showing "+N" other trades. */
+  /** Main circle SVG with initials text. */
+  const circleSvg = `<svg width="${PARTNER_MARKER_SIZE}" height="${PARTNER_MARKER_SIZE}" viewBox="0 0 ${PARTNER_MARKER_SIZE} ${PARTNER_MARKER_SIZE}" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible" fill="none">` +
+    `<circle cx="26" cy="26" r="20" fill="${navy}" stroke="${circleStroke}" stroke-width="${circleStrokeWidth}" opacity="${circleOpacity}"/>` +
+    (initials
+      ? `<text x="26" y="31" text-anchor="middle" fill="white" font-family="system-ui,-apple-system,BlinkMacSystemFont,sans-serif" font-size="13" font-weight="600">${escapeHtml(initials)}</text>`
+      : "") +
+    `</svg>`;
+
+  /** Trade badge — white circle top-right with colored trade icon inside.
+   *  Positioned so its center lands at (41, 11) within the 52×52 canvas. */
+  const badgeDiv =
+    `<div style="position:absolute;top:1px;right:1px;width:20px;height:20px;` +
+    `background:white;border-radius:50%;` +
+    `border:2px solid ${badgeColor};` +
+    `display:flex;align-items:center;justify-content:center;` +
+    `box-shadow:0 1px 4px rgba(0,0,0,0.14)">` +
+    badgeIconHtml +
+    `</div>`;
+
+  /** Multi-trade "+N" pill — bottom-left so it doesn't collide with the badge. */
   const multiBadge =
     extraTrades > 0 && tradeFilter === "all"
-      ? `<span style="position:absolute;top:-4px;right:-4px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:#ED4B00;color:#fff;font-size:9px;font-weight:700;line-height:14px;text-align:center;border:1.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.2)">+${extraTrades}</span>`
+      ? `<span style="position:absolute;bottom:0;left:0;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:#ED4B00;color:#fff;font-size:9px;font-weight:700;line-height:14px;text-align:center;border:1.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.2)">+${extraTrades}</span>`
       : "";
 
-  el.innerHTML = `<span style="display:flex;width:100%;height:100%;align-items:center;justify-content:center">${innerHtml}</span>${multiBadge}`;
+  el.innerHTML = circleSvg + badgeDiv + multiBadge;
 
   return el;
 }
@@ -236,16 +282,18 @@ export function liveMapJobStatusLegend(): Array<{
 }
 
 /**
- * Square-ish job pin, colored by status category. Selected pins get a
- * thicker navy ring + gentle scale so multi-select for dispatch is obvious.
- * The icon hints at status too (map-pin = needs placement, briefcase =
- * scheduled, hammer = in progress, clipboard = needs attention).
+ * Square-ish job pin, colored by status category. Shows the job's trade icon
+ * so ops can identify the type of work at a glance; falls back to a
+ * status-semantic icon when no trade is available.
+ * Selected pins get a thicker navy ring + gentle scale for dispatch mode.
  */
 export function createLiveMapJobMarkerElement(opts: {
   selected: boolean;
   statusCategory: LiveMapJobStatusCategory;
+  /** Trade label (e.g. "Carpenter", "Cleaning") — drives the icon inside the pin. */
+  trade?: string;
 }): HTMLDivElement {
-  const { selected, statusCategory } = opts;
+  const { selected, statusCategory, trade } = opts;
   const style = JOB_STATUS_STYLE[statusCategory];
   const color = style.color;
   const bg = selected
@@ -254,7 +302,9 @@ export function createLiveMapJobMarkerElement(opts: {
   const ring = selected ? "#020040" : "rgba(255,255,255,0.95)";
   const ringWidth = selected ? 3 : 2;
 
-  const iconHtml = staticIcon(style.icon);
+  /** Prefer trade icon; fall back to status icon when trade is unknown. */
+  const Icon = trade ? iconForCanonicalTrade(trade) : style.icon;
+  const iconHtml = staticIcon(Icon);
 
   const el = document.createElement("div");
   el.className = "live-map-job-marker";
