@@ -8,7 +8,47 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { localCalendarMonthYmdBounds } from "@/lib/overview-dashboard-kpis";
 import { jobBillableRevenue, jobDirectCost } from "@/lib/job-financials";
 import type { OverviewPipelineJobRow } from "@/lib/dashboard-overview-jobs";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, ArrowUp, ArrowDown } from "lucide-react";
+
+/**
+ * Fixfy palette — locked to 5 colors. Any new accent must re-use these.
+ *   NEUTRAL  #1C1917  — values, neutral text
+ *   NAVY     #020040  — labels, primary emphasis
+ *   ORANGE   #ED4B00  — below-target warnings, gap to healthy
+ *   GREEN    #0F6E56  — profit / success / healthy
+ *   RED      #A32D2D  — losses / overdue
+ */
+const PALETTE = {
+  neutral: "#1C1917",
+  navy: "#020040",
+  orange: "#ED4B00",
+  green: "#0F6E56",
+  red: "#A32D2D",
+  subtleGray: "#6B6B70",
+  profitBg: "#EFF7F3",
+  profitBgHover: "#E7F2EC",
+  profitBorder: "#9FE1CB",
+  lossBg: "#FEF5F3",
+  lossBgHover: "#FCE5E5",
+  lossBorder: "#F5BFBF",
+  warnBg: "#FFF8F3",
+  railBg: "#F5F5F7",
+} as const;
+
+/** Target net margin used as the "healthy" threshold everywhere in this view. */
+const TARGET_MARGIN_PCT = 40;
+
+/**
+ * Split a formatted currency string into its main and decimal parts so the
+ * decimals can be rendered smaller/dimmer next to the headline figure. Works
+ * with the locale-formatted output of `formatCurrency` (e.g. "£14,770.71").
+ */
+function splitCurrency(n: number): { main: string; decimal: string } {
+  const formatted = formatCurrency(n);
+  const m = formatted.match(/^(.+?)(\.\d+)$/);
+  if (!m) return { main: formatted, decimal: "" };
+  return { main: m[1] ?? formatted, decimal: m[2] ?? "" };
+}
 
 /**
  * Row shape that feeds both the full-month table and the "today only" tile row.
@@ -34,6 +74,10 @@ export interface DailyOpsData {
   workingDays: number;
   dailyOverhead: number;
   monthLabel: string;
+  /** Short label for the previous month (e.g. "Mar") used in MoM trend text. */
+  prevMonthLabel: string;
+  /** Billable revenue for the previous calendar month — powers the MoM trend. */
+  prevMonthRevenue: number;
   /** Pre-computed monthly aggregates for the summary band. */
   totals: {
     revenue: number;
@@ -54,7 +98,19 @@ export function useDailyOperations(): DailyOpsData {
   const [daily, setDaily] = useState<Record<string, { revenue: number; cost: number }>>({});
   const [bills, setBills] = useState(0);
   const [payroll, setPayroll] = useState(0);
+  const [prevMonthRevenue, setPrevMonthRevenue] = useState(0);
   const monthLabel = useMemo(() => localCalendarMonthYmdBounds(new Date()).monthLabel, []);
+  const prevMonthLabel = useMemo(() => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    return d.toLocaleDateString(undefined, { month: "short" });
+  }, []);
+  const prevBounds = useMemo(() => {
+    const d = new Date();
+    const prev = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+    return localCalendarMonthYmdBounds(prev);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +124,7 @@ export function useDailyOperations(): DailyOpsData {
           "in_progress_phase1", "in_progress_phase2", "in_progress_phase3",
           "final_check", "awaiting_payment", "need_attention", "completed",
         ];
-        const [jobsRes, billsRes, payrollRes, internalSbRes] = await Promise.all([
+        const [jobsRes, billsRes, payrollRes, internalSbRes, prevJobsRes] = await Promise.all([
           supabase
             .from("jobs")
             .select("id, client_price, extras_amount, partner_cost, materials_cost, scheduled_date, scheduled_finish_date")
@@ -97,6 +153,16 @@ export function useDailyOperations(): DailyOpsData {
             .not("status", "in", '("rejected","payout_cancelled","payout_archived","payout_lost")')
             .gte("week_start", fromDay)
             .lte("week_start", toDay),
+          // Previous calendar month revenue — purely for the MoM trend arrow
+          // on the Month revenue KPI. No new formula, same jobBillableRevenue
+          // logic applied to a different date window.
+          supabase
+            .from("jobs")
+            .select("client_price, extras_amount, partner_cost, materials_cost, scheduled_date")
+            .is("deleted_at", null)
+            .in("status", MONTHLY_STATUSES)
+            .gte("scheduled_date", prevBounds.fromDay)
+            .lte("scheduled_date", prevBounds.toDay),
         ]);
         const rows = (jobsRes.data ?? []) as OverviewPipelineJobRow[];
         const perDay: Record<string, { revenue: number; cost: number }> = {};
@@ -126,16 +192,22 @@ export function useDailyOperations(): DailyOpsData {
             payrollTotal += Number(sb.net_payout ?? 0);
           }
         }
+        let prevRev = 0;
+        for (const r of (prevJobsRes.data ?? []) as OverviewPipelineJobRow[]) {
+          prevRev += jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]);
+        }
         if (!cancelled) {
           setDaily(perDay);
           setBills(billsTotal);
           setPayroll(payrollTotal);
+          setPrevMonthRevenue(prevRev);
         }
       } catch {
         if (!cancelled) {
           setDaily({});
           setBills(0);
           setPayroll(0);
+          setPrevMonthRevenue(0);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -145,6 +217,10 @@ export function useDailyOperations(): DailyOpsData {
     return () => {
       cancelled = true;
     };
+    // prevBounds is derived from `new Date()` at mount and is stable by design —
+    // the hook deliberately captures "the calendar month at component mount"
+    // so rerunning as the clock ticks past midnight isn't desired here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return useMemo(() => {
@@ -194,6 +270,8 @@ export function useDailyOperations(): DailyOpsData {
       workingDays,
       dailyOverhead,
       monthLabel,
+      prevMonthLabel,
+      prevMonthRevenue,
       totals: {
         revenue: totalRevenue,
         cost: totalCost,
@@ -202,7 +280,7 @@ export function useDailyOperations(): DailyOpsData {
         marginPct: totalMarginPct,
       },
     };
-  }, [daily, bills, payroll, loading, monthLabel]);
+  }, [daily, bills, payroll, loading, monthLabel, prevMonthLabel, prevMonthRevenue]);
 }
 
 /**
@@ -306,17 +384,30 @@ function TodayCell({
   );
 }
 
+/** State bucket for the Margin / Margin % KPI tiles and table row tinting. */
+type MarginState = "loss" | "belowTarget" | "healthy";
+
+function classifyMargin(margin: number, marginPct: number): MarginState {
+  if (margin < 0) return "loss";
+  if (marginPct < TARGET_MARGIN_PCT) return "belowTarget";
+  return "healthy";
+}
+
 /**
- * Row background by performance. Hex values picked for visible-but-soft tint
- * (Tailwind's rose-50 / amber-50 / emerald-50 with opacity modifiers were too
- * faint to read on zebra-free tables — see issue from 2026-04-21 review).
- * Rows with zero revenue still carry the day's overhead, so they land in red.
+ * Row background for the daily breakdown table. Kept simple — profit vs loss
+ * vs break-even (rare). "Below target but positive" days still read as profit
+ * rows; the KPI tile on top handles the "below 40%" warning state.
  */
-function rowToneClass(margin: number, marginPct: number, hasRevenue: boolean): string {
-  if (!hasRevenue) return "bg-[#FDECEC]"; // soft red ~ rose-100
-  if (margin < 0) return "bg-[#FDECEC]";
-  if (marginPct < 20) return "bg-[#FEF5DB]"; // soft amber ~ amber-100
-  return "bg-[#DFF5E8]"; // soft green ~ emerald-100
+function rowBgColor(margin: number, hasRevenue: boolean): string {
+  if (!hasRevenue || margin < 0) return PALETTE.lossBg;
+  if (margin === 0) return "transparent";
+  return PALETTE.profitBg;
+}
+
+function rowHoverBgColor(margin: number, hasRevenue: boolean): string {
+  if (!hasRevenue || margin < 0) return PALETTE.lossBgHover;
+  if (margin === 0) return "#FAFAFB";
+  return PALETTE.profitBgHover;
 }
 
 /**
@@ -327,154 +418,236 @@ function rowToneClass(margin: number, marginPct: number, hasRevenue: boolean): s
  */
 export function DailyOperationsTable({
   data,
-  summaryPlacement = "bottom",
+  summaryPlacement = "top",
 }: {
   data: DailyOpsData;
   summaryPlacement?: "top" | "bottom";
 }) {
-  const { loading, rows, workingDays, dailyOverhead, monthLabel, totals } = data;
+  const { loading, rows, workingDays, dailyOverhead, monthLabel, totals, prevMonthLabel, prevMonthRevenue } = data;
 
-  const footerSummaryRow = rows.length > 0 ? (
-    <tr className="bg-[#FAFAFB] border-y border-border-light">
-      <td className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Month total</td>
-      <td className="px-3 py-2 text-right tabular-nums font-bold text-emerald-700">
-        {formatCurrency(totals.revenue)}
-      </td>
-      <td className="px-3 py-2 text-right tabular-nums font-bold text-amber-700">
-        {formatCurrency(totals.cost)}
-      </td>
-      <td className="px-3 py-2 text-right tabular-nums font-bold text-purple-600">
-        {formatCurrency(totals.overhead)}
-      </td>
-      <td
-        className={cn(
-          "px-3 py-2 text-right tabular-nums font-bold",
-          totals.margin >= 0 ? "text-emerald-700" : "text-rose-600",
-        )}
-      >
-        {formatCurrency(totals.margin)}
-      </td>
-      <td
-        className={cn(
-          "px-3 py-2 text-right tabular-nums font-bold",
-          totals.margin >= 0 ? "text-emerald-700" : "text-rose-600",
-        )}
-      >
-        {totals.revenue > 0 ? `${totals.marginPct}%` : "—"}
-      </td>
-    </tr>
-  ) : null;
+  /** Day-level stats (only past days count — future slots shouldn't skew the scoreboard). */
+  const pastRows = rows.filter((r) => !r.isFuture);
+  const profitDays = pastRows.filter((r) => r.margin > 0).length;
+  // Zero-revenue days still carry overhead, so their margin is already negative.
+  const lossDays = pastRows.filter((r) => r.margin < 0).length;
+  const bestDay = pastRows.reduce<DailyOpsRow | null>(
+    (best, r) => (r.margin > (best?.margin ?? -Infinity) ? r : best),
+    null,
+  );
+
+  /** Month-over-month trend on revenue — undefined while prev fetch is loading. */
+  const trendPct = prevMonthRevenue > 0
+    ? Math.round(((totals.revenue - prevMonthRevenue) / prevMonthRevenue) * 1000) / 10
+    : null;
+
+  const marginState = classifyMargin(totals.margin, totals.marginPct);
+  const gapPp = Math.round((totals.marginPct - TARGET_MARGIN_PCT) * 10) / 10;
 
   return (
     <Card padding="none" className="overflow-hidden border-border-light">
-      <CardHeader className="px-4 pt-3 pb-2">
-        <div className="flex items-start justify-between gap-2.5 flex-wrap">
-          <div className="flex items-start gap-2.5">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-sky-500/10 flex items-center justify-center shrink-0">
-              <CalendarDays className="h-3.5 w-3.5 text-emerald-600" />
-            </div>
+      {/* Header with calendar icon, title/subtitle and legend */}
+      <div className="px-4 pt-3 pb-2.5 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <div
+            className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: PALETTE.profitBg }}
+          >
+            <CalendarDays className="h-4 w-4" style={{ color: PALETTE.green }} strokeWidth={2} />
+          </div>
+          <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <CardTitle className="text-sm font-semibold">Daily Operations — {monthLabel}</CardTitle>
+              <h3
+                className="text-sm font-semibold tracking-tight"
+                style={{ color: PALETTE.neutral }}
+              >
+                Daily Operations <span style={{ color: PALETTE.subtleGray }}>· {monthLabel}</span>
+              </h3>
               <FixfyHintIcon
                 text={`Revenue, service cost and daily overhead · Mon–Sat · overhead split evenly across ${workingDays} working days`}
               />
             </div>
+            <p className="text-[11px] mt-0.5" style={{ color: PALETTE.subtleGray }}>
+              Overhead <span className="tabular-nums font-semibold" style={{ color: PALETTE.neutral }}>{formatCurrency(dailyOverhead)}/day</span> · based on fixed monthly costs
+            </p>
           </div>
-          <p className="text-[10px] text-text-tertiary whitespace-nowrap">
-            Overhead · <span className="tabular-nums font-semibold text-text-secondary">{formatCurrency(dailyOverhead)}</span>/day
-          </p>
         </div>
-      </CardHeader>
+        <div className="flex items-center gap-3 text-[11px]" style={{ color: PALETTE.subtleGray }}>
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-3 w-3 rounded-sm"
+              style={{ background: PALETTE.profitBg, border: `1px solid ${PALETTE.profitBorder}` }}
+              aria-hidden
+            />
+            Profit day
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-3 w-3 rounded-sm"
+              style={{ background: PALETTE.lossBg, border: `1px solid ${PALETTE.lossBorder}` }}
+              aria-hidden
+            />
+            Loss day
+          </span>
+        </div>
+      </div>
 
-      {/* Mini-dash: month-level KPIs above the table (top placement only). */}
+      {/* 5-KPI grid (top placement only). Desktop: 5 cols; tablet: 3+2; mobile: 2-col stack. */}
       {summaryPlacement === "top" ? (
-        <MonthTotalsDash totals={totals} loading={loading} />
+        <div
+          className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 border-y divide-x divide-y"
+          style={{ borderColor: "#E7E7EB", borderLeftStyle: "none", borderRightStyle: "none" }}
+        >
+          {/* Month revenue */}
+          <KpiTile
+            label="Month revenue"
+            hint="Billable revenue summed across jobs scheduled in the current calendar month"
+            loading={loading}
+            value={totals.revenue}
+            subtitle={
+              trendPct != null ? (
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] font-medium"
+                  style={{ color: trendPct >= 0 ? PALETTE.green : PALETTE.red }}
+                >
+                  {trendPct >= 0 ? (
+                    <ArrowUp className="h-3 w-3" strokeWidth={2.5} />
+                  ) : (
+                    <ArrowDown className="h-3 w-3" strokeWidth={2.5} />
+                  )}
+                  <span className="tabular-nums">
+                    {trendPct >= 0 ? "+" : ""}
+                    {trendPct}%
+                  </span>
+                  <span style={{ color: PALETTE.subtleGray }}>vs {prevMonthLabel}</span>
+                </span>
+              ) : (
+                <span style={{ color: PALETTE.subtleGray }}>Jobs scheduled in {monthLabel}</span>
+              )
+            }
+          />
+          {/* Service cost */}
+          <KpiTile
+            label="Service cost"
+            hint="Partner + materials cost on jobs scheduled this month"
+            loading={loading}
+            value={totals.cost}
+            subtitle={
+              <span style={{ color: PALETTE.subtleGray }}>
+                {totals.revenue > 0 ? `${Math.round((totals.cost / totals.revenue) * 1000) / 10}%` : "—"} of revenue
+              </span>
+            }
+          />
+          {/* Overhead */}
+          <KpiTile
+            label="Overhead"
+            hint="Workforce + bills allocated across working days"
+            loading={loading}
+            value={totals.overhead}
+            subtitle={
+              <span style={{ color: PALETTE.subtleGray }}>
+                {workingDays} days × {formatCurrency(dailyOverhead)}
+              </span>
+            }
+          />
+          {/* Margin — state-tinted */}
+          <KpiTile
+            label="Margin"
+            hint="Revenue − service cost − overhead"
+            loading={loading}
+            value={totals.margin}
+            signed
+            state={marginState}
+            subtitle={
+              <span style={{ color: marginStateColor(marginState) }} className="font-medium">
+                {marginState === "loss"
+                  ? "Operating at a loss"
+                  : marginState === "belowTarget"
+                    ? "Below target"
+                    : "Healthy"}
+              </span>
+            }
+          />
+          {/* Margin % — same state as Margin */}
+          <KpiTile
+            label="Margin %"
+            hint={`Margin as a share of month revenue · target ${TARGET_MARGIN_PCT}%`}
+            loading={loading}
+            value={totals.marginPct}
+            valueFormatter={(v) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v)}%`}
+            state={marginState}
+            subtitle={
+              <span style={{ color: marginStateColor(marginState) }}>
+                Target {TARGET_MARGIN_PCT}% · gap {gapPp >= 0 ? "+" : ""}
+                {gapPp}pp
+              </span>
+            }
+          />
+        </div>
       ) : null}
 
-      {/* Health insights live as part of the header region (grouped with the
-          month title + month totals) so breakeven / healthy-target context sits
-          right next to the numbers it's derived from. */}
-      {!loading && rows.length > 0 ? <InsightsStrip totals={totals} /> : null}
+      {/* Health insights — grouped in the same card as the KPIs + table. */}
+      {!loading && rows.length > 0 ? (
+        <HealthInsightsPanel
+          totals={totals}
+          profitDays={profitDays}
+          lossDays={lossDays}
+          bestDay={bestDay}
+        />
+      ) : null}
 
+      {/* Daily breakdown table */}
       <div className="overflow-x-auto">
         <table className="w-full text-xs min-w-[640px]">
           <thead>
-            <tr className="bg-[#FAFAFB] border-y border-border-light">
-              <th className="text-left px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Day</th>
-              <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Revenue</th>
-              <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Service cost</th>
-              <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Overhead</th>
-              <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Margin</th>
-              <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">%</th>
+            <tr style={{ background: "#FAFAFB", borderTop: "1px solid #E7E7EB", borderBottom: "1px solid #E7E7EB" }}>
+              <th className="text-left px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>Day</th>
+              <th className="text-right px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>Revenue</th>
+              <th className="text-right px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>Service cost</th>
+              <th className="text-right px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>Overhead</th>
+              <th className="text-right px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>Margin</th>
+              <th className="text-right px-3 py-2 font-semibold uppercase tracking-wide text-[9px]" style={{ color: PALETTE.subtleGray }}>%</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
-                <tr key={i} className="border-b border-border-light/60 last:border-0">
+                <tr key={i} style={{ borderBottom: "1px solid #E7E7EB" }}>
                   <td colSpan={6} className="px-3 py-2">
                     <div className="h-5 animate-pulse rounded bg-surface-hover" />
                   </td>
                 </tr>
               ))
             ) : (
-              rows.map((r) => {
-                const marginPositive = r.margin >= 0;
-                const hasRevenue = r.revenue > 0;
-                const tone = rowToneClass(r.margin, r.marginPct, hasRevenue);
-                return (
-                  <tr
-                    key={r.ymd}
-                    className={cn(
-                      "border-b border-border-light/60 last:border-0",
-                      tone,
-                      r.isFuture && "opacity-60",
-                    )}
-                  >
-                    <td className="px-3 py-1.5">
-                      <div className="flex items-center gap-1.5">
-                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-surface-hover text-[10px] font-semibold text-text-secondary tabular-nums">
-                          {r.label}
-                        </span>
-                        <span className="text-[11px] text-text-tertiary">{r.weekdayLabel}</span>
-                        {r.isToday ? (
-                          <span className="text-[9px] font-bold text-amber-700 uppercase tracking-wide">Today</span>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td
-                      className={cn(
-                        "px-3 py-1.5 text-right tabular-nums font-semibold",
-                        hasRevenue ? "text-emerald-700" : "text-text-tertiary",
-                      )}
-                    >
-                      {formatCurrency(r.revenue)}
-                    </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-amber-700">{formatCurrency(r.cost)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-purple-600">{formatCurrency(r.overhead)}</td>
-                    <td
-                      className={cn(
-                        "px-3 py-1.5 text-right tabular-nums font-semibold",
-                        marginPositive ? "text-emerald-700" : "text-rose-600",
-                      )}
-                    >
-                      {formatCurrency(r.margin)}
-                    </td>
-                    <td
-                      className={cn(
-                        "px-3 py-1.5 text-right tabular-nums text-[11px] font-semibold",
-                        marginPositive ? "text-emerald-700" : "text-rose-600",
-                      )}
-                    >
-                      {hasRevenue ? `${r.marginPct}%` : "—"}
-                    </td>
-                  </tr>
-                );
-              })
+              rows.map((r) => <DayRow key={r.ymd} row={r} />)
             )}
           </tbody>
-          {summaryPlacement === "bottom" && !loading && footerSummaryRow ? (
-            <tfoot>{footerSummaryRow}</tfoot>
+          {summaryPlacement === "bottom" && !loading && rows.length > 0 ? (
+            <tfoot>
+              <tr style={{ background: "#FAFAFB", borderTop: "1px solid #E7E7EB" }}>
+                <td className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide" style={{ color: PALETTE.subtleGray }}>Month total</td>
+                <td className="px-3 py-2 text-right tabular-nums font-semibold" style={{ color: PALETTE.neutral }}>
+                  {formatCurrency(totals.revenue)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums" style={{ color: PALETTE.neutral }}>
+                  {formatCurrency(totals.cost)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums" style={{ color: PALETTE.neutral }}>
+                  {formatCurrency(totals.overhead)}
+                </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums font-semibold"
+                  style={{ color: totals.margin >= 0 ? PALETTE.green : PALETTE.red }}
+                >
+                  {formatCurrency(totals.margin)}
+                </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums font-semibold"
+                  style={{ color: totals.margin >= 0 ? PALETTE.green : PALETTE.red }}
+                >
+                  {totals.revenue > 0 ? `${totals.marginPct}%` : "—"}
+                </td>
+              </tr>
+            </tfoot>
           ) : null}
         </table>
       </div>
@@ -482,211 +655,375 @@ export function DailyOperationsTable({
   );
 }
 
+/** Map margin state to the right accent color from the locked palette. */
+function marginStateColor(state: MarginState): string {
+  if (state === "loss") return PALETTE.red;
+  if (state === "belowTarget") return PALETTE.orange;
+  return PALETTE.green;
+}
+
+/** Background tint applied to Margin / Margin % tiles to reinforce state. */
+function marginStateBg(state: MarginState): string {
+  if (state === "loss") return PALETTE.lossBg;
+  if (state === "belowTarget") return PALETTE.warnBg;
+  return PALETTE.profitBg;
+}
+
 /**
- * Compact row of health metrics below the table:
- *  - Breakeven revenue      = overhead / (1 − service-cost ratio)
- *  - Gap to breakeven       = breakeven − current revenue (positive = still short)
- *  - Healthy target (40%)   = overhead / (1 − service-cost ratio − 0.40)
- *  - Daily to healthy       = healthy target / working days remaining context
- *
- * All ratios are derived from the same month totals the table shows so the
- * strip moves with the view — no extra fetches.
+ * KPI tile used in the 5-cell grid. Value is rendered with a small bump in
+ * font size for the main integer part and a dimmer ".XX" decimal to match the
+ * Fixfy number hierarchy (figure first, decimal second).
  */
-export function HealthInsightsStrip({
-  totals,
-  compact = false,
-}: {
-  totals: DailyOpsData["totals"];
-  /** Compact mode strips the card chrome so callers can embed in their own section. */
-  compact?: boolean;
-}) {
-  return <InsightsStripInner totals={totals} compact={compact} />;
-}
-
-function InsightsStrip({ totals }: { totals: DailyOpsData["totals"] }) {
-  return <InsightsStripInner totals={totals} compact={false} />;
-}
-
-function InsightsStripInner({
-  totals,
-  compact,
-}: {
-  totals: DailyOpsData["totals"];
-  compact: boolean;
-}) {
-  const serviceCostRatio = totals.revenue > 0 ? totals.cost / totals.revenue : 0;
-  const scrCapped = Math.min(0.95, Math.max(0, serviceCostRatio));
-  const breakevenDenom = 1 - scrCapped;
-  const breakevenRevenue = breakevenDenom > 0.01 ? totals.overhead / breakevenDenom : 0;
-  const healthyDenom = 1 - scrCapped - 0.40;
-  const healthyRevenue = healthyDenom > 0.01 ? totals.overhead / healthyDenom : 0;
-  const gapToBreakeven = breakevenRevenue - totals.revenue;
-  const gapToHealthy = healthyRevenue - totals.revenue;
-  const past = gapToBreakeven <= 0;
-
-  return (
-    <div
-      className={cn(
-        compact
-          ? "rounded-2xl border border-border-light bg-gradient-to-r from-emerald-500/[0.04] via-card to-rose-500/[0.04] px-3 py-2 sm:px-4"
-          : "border-t border-border-light bg-gradient-to-r from-[#FAFAFB] via-card to-[#FAFAFB] px-3 py-2.5 sm:px-4",
-      )}
-    >
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1.5 flex items-center gap-1.5">
-        Health insights
-        <FixfyHintIcon text="Derived from the month totals above. Service-cost ratio is kept as-is, overhead is treated as fixed; healthy target assumes a 40% net margin after service cost and overhead." />
-      </p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <InsightCell
-          label="Breakeven revenue"
-          value={breakevenRevenue > 0 ? formatCurrency(breakevenRevenue) : "—"}
-          hint={`Revenue required so net margin hits zero given current service-cost ratio (${Math.round(scrCapped * 1000) / 10}%)`}
-          accent="text-[#020040]"
-        />
-        <InsightCell
-          label={past ? "Past breakeven by" : "Gap to breakeven"}
-          value={
-            breakevenRevenue <= 0
-              ? "—"
-              : past
-                ? `+${formatCurrency(Math.abs(gapToBreakeven))}`
-                : formatCurrency(gapToBreakeven)
-          }
-          hint={
-            past
-              ? "You've already covered costs this month. Everything above is real margin."
-              : "Revenue still needed this month to cover service cost + overhead."
-          }
-          accent={past ? "text-emerald-700" : "text-rose-600"}
-        />
-        <InsightCell
-          label="Healthy target · 40% margin"
-          value={healthyRevenue > 0 ? formatCurrency(healthyRevenue) : "—"}
-          hint="Revenue required to hit a 40% net margin after service cost and overhead — use as a stretch goal for monthly faturamento."
-          accent="text-emerald-700"
-        />
-        <InsightCell
-          label="Gap to healthy"
-          value={
-            healthyRevenue <= 0
-              ? "—"
-              : gapToHealthy > 0
-                ? formatCurrency(gapToHealthy)
-                : `+${formatCurrency(Math.abs(gapToHealthy))}`
-          }
-          hint={
-            gapToHealthy > 0
-              ? "Additional revenue needed this month to reach the 40% margin target."
-              : "You're already past the healthy target — the company is running above the 40% margin mark."
-          }
-          accent={gapToHealthy > 0 ? "text-amber-700" : "text-emerald-700"}
-        />
-      </div>
-    </div>
-  );
-}
-
-function InsightCell({
+function KpiTile({
   label,
-  value,
   hint,
-  accent,
+  value,
+  subtitle,
+  loading,
+  signed,
+  state,
+  valueFormatter,
 }: {
   label: string;
-  value: string;
   hint: string;
-  accent: string;
+  value: number;
+  subtitle: React.ReactNode;
+  loading: boolean;
+  /** Render negatives as "−£X"; default false. */
+  signed?: boolean;
+  /** Apply margin-state tinting (bg + color). */
+  state?: MarginState;
+  /** For non-currency KPIs (e.g. Margin %). Receives raw numeric value. */
+  valueFormatter?: (v: number) => string;
 }) {
+  const color = state ? marginStateColor(state) : PALETTE.neutral;
+  const bg = state ? marginStateBg(state) : "transparent";
+
+  let mainText: string;
+  let decimalText = "";
+  if (valueFormatter) {
+    mainText = valueFormatter(value);
+  } else if (signed && value < 0) {
+    const parts = splitCurrency(Math.abs(value));
+    mainText = "−" + parts.main;
+    decimalText = parts.decimal;
+  } else {
+    const parts = splitCurrency(value);
+    mainText = parts.main;
+    decimalText = parts.decimal;
+  }
+
   return (
-    <div className="min-w-0">
+    <div className="px-3.5 py-3" style={{ background: bg }}>
       <div className="flex items-center gap-1">
-        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary truncate">
+        <p
+          className="text-[9px] font-medium uppercase tracking-wide"
+          style={{ color: PALETTE.subtleGray }}
+        >
           {label}
         </p>
         <FixfyHintIcon text={hint} />
       </div>
-      <p className={cn("text-sm font-bold tabular-nums leading-tight mt-0.5", accent)}>{value}</p>
+      <p
+        className="mt-1 tabular-nums font-semibold leading-none"
+        style={{ color, fontSize: 18, letterSpacing: "-0.3px" }}
+      >
+        {loading ? (
+          <span style={{ color: PALETTE.subtleGray }}>—</span>
+        ) : (
+          <>
+            {mainText}
+            {decimalText && (
+              <span
+                className="font-medium"
+                style={{ fontSize: 12, color: state ? color : PALETTE.subtleGray }}
+              >
+                {decimalText}
+              </span>
+            )}
+          </>
+        )}
+      </p>
+      <p className="mt-1 text-[10px] leading-tight">{loading ? "" : subtitle}</p>
     </div>
   );
 }
 
 /**
- * 5-tile strip showing month aggregates, rendered above the full daily table
- * when `summaryPlacement="top"`. Mirrors the Today tile visual language so the
- * overview reads as one coherent block.
+ * Single daily row. Row background + margin color keyed off the Fixfy palette.
+ * Uses inline styles (rather than Tailwind arbitrary hex) so the palette can
+ * be swapped from one constant.
  */
-function MonthTotalsDash({
+function DayRow({ row }: { row: DailyOpsRow }) {
+  const [hover, setHover] = useState(false);
+  const hasRevenue = row.revenue > 0;
+  const marginPositive = row.margin > 0;
+  const marginNeutral = row.margin === 0;
+  const bg = hover ? rowHoverBgColor(row.margin, hasRevenue) : rowBgColor(row.margin, hasRevenue);
+  return (
+    <tr
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        background: bg,
+        borderBottom: "1px solid rgba(0,0,0,0.04)",
+        opacity: row.isFuture ? 0.55 : 1,
+      }}
+    >
+      <td className="px-3 py-1.5">
+        <div className="flex items-center gap-2">
+          <span
+            className="tabular-nums text-[11px]"
+            style={{ color: PALETTE.subtleGray, minWidth: 16, textAlign: "right" }}
+          >
+            {row.label}
+          </span>
+          <span className="text-[12px] font-semibold" style={{ color: PALETTE.neutral }}>
+            {row.weekdayLabel}
+          </span>
+          {row.isToday ? (
+            <span
+              className="text-[9px] font-bold uppercase tracking-wide px-1 py-px rounded"
+              style={{ color: PALETTE.orange, background: PALETTE.warnBg }}
+            >
+              Today
+            </span>
+          ) : null}
+        </div>
+      </td>
+      <td
+        className="px-3 py-1.5 text-right tabular-nums"
+        style={{ color: hasRevenue ? PALETTE.neutral : PALETTE.subtleGray, fontWeight: 500 }}
+      >
+        {formatCurrency(row.revenue)}
+      </td>
+      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: PALETTE.neutral }}>
+        {formatCurrency(row.cost)}
+      </td>
+      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: PALETTE.neutral }}>
+        {formatCurrency(row.overhead)}
+      </td>
+      <td
+        className="px-3 py-1.5 text-right tabular-nums"
+        style={{
+          color: marginNeutral ? PALETTE.neutral : marginPositive ? PALETTE.green : PALETTE.red,
+          fontWeight: marginNeutral ? 500 : 600,
+        }}
+      >
+        {marginPositive
+          ? formatCurrency(row.margin)
+          : row.margin < 0
+            ? "−" + formatCurrency(Math.abs(row.margin))
+            : formatCurrency(row.margin)}
+      </td>
+      <td
+        className="px-3 py-1.5 text-right tabular-nums text-[11px]"
+        style={{
+          color: marginNeutral ? PALETTE.neutral : marginPositive ? PALETTE.green : PALETTE.red,
+          fontWeight: 600,
+        }}
+      >
+        {hasRevenue ? `${row.marginPct > 0 ? "+" : row.marginPct < 0 ? "−" : ""}${Math.abs(row.marginPct)}%` : "—"}
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * Health Insights panel — rendered inside the Daily Operations card, between
+ * the KPI grid and the daily table.
+ *
+ * Shape:
+ *   [HEALTH INSIGHTS]           Profit days X · Loss days Y · Best day Z
+ *   ┌────────────────────────────────────────────────────────────────────┐
+ *   │ CURRENT £X   BREAKEVEN £X   HEALTHY (40%) £X   ±£Y to breakeven   │
+ *   │ ▬▬▬▬▬▬▬░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░                     │
+ *   │          │ breakeven marker                                        │
+ *   └────────────────────────────────────────────────────────────────────┘
+ *
+ * Formulas are unchanged (same as before): breakeven = overhead / (1 − scr),
+ * healthy = overhead / (1 − scr − 0.40).
+ */
+function HealthInsightsPanel({
   totals,
-  loading,
+  profitDays,
+  lossDays,
+  bestDay,
 }: {
   totals: DailyOpsData["totals"];
-  loading: boolean;
+  profitDays: number;
+  lossDays: number;
+  bestDay: DailyOpsRow | null;
 }) {
-  const marginPositive = totals.margin >= 0;
-  const hasRevenue = totals.revenue > 0;
+  const serviceCostRatio = totals.revenue > 0 ? totals.cost / totals.revenue : 0;
+  const scrCapped = Math.min(0.95, Math.max(0, serviceCostRatio));
+  const breakevenRevenue = 1 - scrCapped > 0.01 ? totals.overhead / (1 - scrCapped) : 0;
+  const healthyDenom = 1 - scrCapped - TARGET_MARGIN_PCT / 100;
+  const healthyRevenue = healthyDenom > 0.01 ? totals.overhead / healthyDenom : 0;
+  const gapToBreakeven = breakevenRevenue - totals.revenue;
+  const gapToHealthy = healthyRevenue - totals.revenue;
+
+  // Progress bar: revenue as a share of the healthy target (clamped to 100).
+  // Breakeven marker sits at its own share of the same scale.
+  const fillPct = healthyRevenue > 0 ? Math.max(0, Math.min(100, (totals.revenue / healthyRevenue) * 100)) : 0;
+  const breakevenMarkerPct = healthyRevenue > 0
+    ? Math.max(0, Math.min(100, (breakevenRevenue / healthyRevenue) * 100))
+    : 0;
+  const pastHealthy = totals.revenue >= healthyRevenue && healthyRevenue > 0;
+  const fillColor = pastHealthy ? PALETTE.green : PALETTE.orange;
+
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-5 divide-y sm:divide-y-0 divide-border-light sm:divide-x border-y border-border-light bg-[#FAFAFB]">
-      <TotalCell
-        label="Month revenue"
-        hint="Billable revenue summed across the current calendar month"
-        value={formatCurrency(totals.revenue)}
-        accent="text-emerald-700"
-        loading={loading}
-      />
-      <TotalCell
-        label="Service cost"
-        hint="Partner + materials cost on jobs scheduled this month"
-        value={formatCurrency(totals.cost)}
-        accent="text-amber-700"
-        loading={loading}
-      />
-      <TotalCell
-        label="Overhead"
-        hint="Workforce + bills allocated across working days"
-        value={formatCurrency(totals.overhead)}
-        accent="text-purple-600"
-        loading={loading}
-      />
-      <TotalCell
-        label="Margin"
-        hint="Revenue − service cost − overhead"
-        value={formatCurrency(totals.margin)}
-        accent={marginPositive ? "text-emerald-700" : "text-rose-600"}
-        loading={loading}
-      />
-      <TotalCell
-        label="Margin %"
-        hint="Margin as a share of month revenue"
-        value={hasRevenue ? `${totals.marginPct}%` : "—"}
-        accent={marginPositive ? "text-emerald-700" : "text-rose-600"}
-        loading={loading}
-      />
+    <div className="px-4 py-3" style={{ background: "#FBFBFC", borderTop: "1px solid #E7E7EB", borderBottom: "1px solid #E7E7EB" }}>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-1.5">
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: PALETTE.navy }}
+          >
+            Health insights
+          </p>
+          <FixfyHintIcon text="Derived from the month totals above. Breakeven = overhead / (1 − service-cost ratio). Healthy = overhead / (1 − service-cost ratio − 40%)." />
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-[11px]" style={{ color: PALETTE.subtleGray }}>
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-1.5 w-1.5 rounded-full"
+              style={{ background: PALETTE.green }}
+              aria-hidden
+            />
+            Profit days <span className="font-semibold tabular-nums" style={{ color: PALETTE.green }}>{profitDays}</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-1.5 w-1.5 rounded-full"
+              style={{ background: PALETTE.red }}
+              aria-hidden
+            />
+            Loss days <span className="font-semibold tabular-nums" style={{ color: PALETTE.red }}>{lossDays}</span>
+          </span>
+          {bestDay ? (
+            <span>
+              Best day{" "}
+              <span className="font-semibold" style={{ color: PALETTE.neutral }}>
+                {bestDay.weekdayLabel} {formatCurrency(bestDay.margin)}
+              </span>
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <div
+        className="rounded-lg px-3 py-2.5"
+        style={{ background: "#FFFFFF", border: "1px solid #E7E7EB" }}
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1.5 mb-2">
+          <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+            <InlineMetric
+              label="Current"
+              value={formatCurrency(totals.revenue)}
+              valueColor={PALETTE.neutral}
+              valueWeight={500}
+            />
+            <InlineMetric
+              label="Breakeven"
+              value={breakevenRevenue > 0 ? formatCurrency(breakevenRevenue) : "—"}
+              valueColor={PALETTE.neutral}
+              valueWeight={600}
+            />
+            <InlineMetric
+              label={`Healthy (${TARGET_MARGIN_PCT}%)`}
+              value={healthyRevenue > 0 ? formatCurrency(healthyRevenue) : "—"}
+              valueColor={PALETTE.green}
+              valueWeight={600}
+            />
+          </div>
+          <div className="text-[11px] flex items-center gap-2" style={{ color: PALETTE.subtleGray }}>
+            <span style={{ color: gapToBreakeven > 0 ? PALETTE.red : PALETTE.green, fontWeight: 600 }}>
+              {gapToBreakeven > 0
+                ? `−${formatCurrency(gapToBreakeven)} to breakeven`
+                : `+${formatCurrency(Math.abs(gapToBreakeven))} past breakeven`}
+            </span>
+            <span aria-hidden>·</span>
+            <span style={{ color: gapToHealthy > 0 ? PALETTE.orange : PALETTE.green, fontWeight: 600 }}>
+              {gapToHealthy > 0
+                ? `${formatCurrency(gapToHealthy)} to healthy`
+                : `+${formatCurrency(Math.abs(gapToHealthy))} past healthy`}
+            </span>
+          </div>
+        </div>
+        <div
+          className="relative w-full overflow-hidden"
+          style={{ height: 7, borderRadius: 4, background: PALETTE.railBg }}
+        >
+          <div
+            className="h-full"
+            style={{
+              width: `${fillPct}%`,
+              background: fillColor,
+              borderRadius: 4,
+              transition: "width 400ms ease",
+            }}
+          />
+          {/* Breakeven marker */}
+          {healthyRevenue > 0 ? (
+            <div
+              className="absolute top-0 bottom-0"
+              style={{
+                left: `${breakevenMarkerPct}%`,
+                width: 1.5,
+                background: PALETTE.neutral,
+                transform: "translateX(-0.75px)",
+              }}
+              aria-hidden
+            />
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
 
-function TotalCell({
+/** Inline metric used in the Health Insights single-card row. */
+function InlineMetric({
   label,
-  hint,
   value,
-  accent,
-  loading,
+  valueColor,
+  valueWeight,
 }: {
   label: string;
-  hint: string;
   value: string;
-  accent: string;
-  loading: boolean;
+  valueColor: string;
+  valueWeight: number;
 }) {
   return (
-    <div className="p-3 sm:p-4">
-      <div className="flex items-center gap-1.5">
-        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">{label}</p>
-        <FixfyHintIcon text={hint} />
-      </div>
-      <p className={cn("text-base sm:text-lg font-bold tabular-nums mt-0.5", accent)}>
-        {loading ? "—" : value}
-      </p>
-    </div>
+    <span className="inline-flex items-baseline gap-1.5">
+      <span
+        className="text-[9px] uppercase tracking-wider"
+        style={{ color: PALETTE.subtleGray, fontWeight: 500 }}
+      >
+        {label}
+      </span>
+      <span className="tabular-nums" style={{ color: valueColor, fontWeight: valueWeight, fontSize: 12 }}>
+        {value}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Thin wrapper kept for backwards compatibility — external consumers could
+ * still import `HealthInsightsStrip`. Internally everything flows through
+ * HealthInsightsPanel; the "compact" flag is ignored (was for the removed
+ * floating strip layout).
+ */
+export function HealthInsightsStrip({
+  totals,
+}: {
+  totals: DailyOpsData["totals"];
+  /** Retained for backwards compatibility with older callers; ignored. */
+  compact?: boolean;
+}) {
+  return (
+    <HealthInsightsPanel totals={totals} profitDays={0} lossDays={0} bestDay={null} />
   );
 }
