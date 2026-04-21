@@ -26,6 +26,7 @@ import {
   type LiveMapJobStatusCategory,
 } from "@/components/dashboard/live-map-marker-icons";
 import { liveMapPointMatchesTradeFilter } from "@/lib/live-map-trade-filter";
+import { normalizeLiveMapCoordinate } from "@/lib/live-map-coordinate";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { motion, AnimatePresence } from "framer-motion";
@@ -147,20 +148,22 @@ function scheduleBarSegmentClass(segment: ScheduleBarSegment, colorClasses: stri
 }
 
 /**
- * Buckets a job.status value into one of the four live-map color categories
- * so the map pins mirror the Fixfy semantic palette:
- *   unassigned / auto_assigning → red
- *   scheduled                   → green
- *   in_progress_phase1/2/3      → blue
- *   late / need_attention / awaiting_payment / final_check / on_hold → orange
- *
- * Anything else (e.g. completed / cancelled) is filtered out upstream before
- * reaching this helper, but falls back to "attention" defensively.
+ * Buckets live-ops statuses into 3 map colors:
+ *   red   → unassigned / auto-assigning
+ *   green → scheduled flow
+ *   blue  → in-progress flow
  */
 function liveMapCategoryForStatus(status: string): LiveMapJobStatusCategory {
   if (status === "unassigned" || status === "auto_assigning") return "unassigned";
-  if (status === "scheduled") return "scheduled";
-  if (status.startsWith("in_progress")) return "in_progress";
+  if (status === "scheduled" || status === "late") return "scheduled";
+  if (
+    status.startsWith("in_progress") ||
+    status === "final_check" ||
+    status === "on_hold" ||
+    status === "need_attention"
+  ) {
+    return "in_progress";
+  }
   return "attention";
 }
 
@@ -332,14 +335,16 @@ export default function SchedulePage() {
         list.map(async (p) => {
             const loc = await getLatestLocation(p.userId);
             if (!loc) return null;
+            const normalized = normalizeLiveMapCoordinate(loc.latitude, loc.longitude);
+            if (!normalized) return null;
             const minutesSincePing = Math.floor((nowMs - new Date(loc.created_at).getTime()) / 60000);
             const inactive = !loc.is_active || minutesSincePing > LIVE_MAP_INACTIVE_MINUTES;
             const tr = tradeByAuthUserId.get(p.userId);
             return {
               id: p.userId,
               name: p.name,
-              latitude: Number(loc.latitude),
-              longitude: Number(loc.longitude),
+              latitude: normalized.latitude,
+              longitude: normalized.longitude,
               lastUpdateIso: loc.created_at,
               inactive,
               trade: tr?.trade ?? "General",
@@ -567,13 +572,19 @@ export default function SchedulePage() {
     if (view !== "live_map") return [];
     const { fromMs, toMs } = liveMapSelectedWindow;
     return jobs.filter((j) => {
+      const isLiveOpsVisible =
+        j.status !== "completed" &&
+        j.status !== "awaiting_payment" &&
+        j.status !== "cancelled" &&
+        j.status !== "deleted";
+      if (!isLiveOpsVisible) return false;
       const s = jobScheduleYmd(j);
       if (!s) return false;
       const e = jobFinishYmd(j) ?? s;
       const jobStart = new Date(s.y, s.m - 1, s.d).getTime();
       const jobEnd = new Date(e.y, e.m - 1, e.d).getTime();
       if (jobEnd < fromMs || jobStart > toMs) return false;
-      if (typeof j.latitude !== "number" || typeof j.longitude !== "number") return false;
+      if (!normalizeLiveMapCoordinate(j.latitude, j.longitude)) return false;
       if (liveMapTradeFilter !== "all") {
         const jobTrade = normalizeTypeOfWork(resolveScheduleJobTypeKey(j.title)) || "";
         const wanted = normalizeTypeOfWork(liveMapTradeFilter) || liveMapTradeFilter;
@@ -650,22 +661,28 @@ export default function SchedulePage() {
   }, [jobs]);
 
   const liveMapJobPoints = useMemo<ScheduleLiveMapJobPoint[]>(() => {
-    return jobsForSelectedDay.map((j) => ({
-      id: j.id,
-      latitude: Number(j.latitude ?? 0),
-      longitude: Number(j.longitude ?? 0),
-      reference: j.reference,
-      title: j.title,
-      partnerName: j.partner_name?.trim() ? j.partner_name : null,
-      clientName: j.client_name?.trim() || undefined,
-      propertyAddress: j.property_address,
-      statusLabel: statusConfig[j.status]?.label ?? j.status,
-      /** Drives the pin colour + icon (red/green/blue/orange) — matches the
-       *  Fixfy badge semantics used elsewhere in the app. */
-      statusCategory: liveMapCategoryForStatus(j.status),
-      tradeLabel: resolveScheduleJobTypeKey(j.title),
-      scheduleLine: formatJobScheduleLine(j) ?? "",
-    }));
+    const points: ScheduleLiveMapJobPoint[] = [];
+    for (const j of jobsForSelectedDay) {
+      const normalized = normalizeLiveMapCoordinate(j.latitude, j.longitude);
+      if (!normalized) continue;
+      points.push({
+        id: j.id,
+        latitude: normalized.latitude,
+        longitude: normalized.longitude,
+        reference: j.reference,
+        title: j.title,
+        partnerName: j.partner_name?.trim() ? j.partner_name : null,
+        clientName: j.client_name?.trim() || undefined,
+        propertyAddress: j.property_address,
+        statusLabel: statusConfig[j.status]?.label ?? j.status,
+        /** Drives the pin colour + icon (red/green/blue/orange) — matches the
+         *  Fixfy badge semantics used elsewhere in the app. */
+        statusCategory: liveMapCategoryForStatus(j.status),
+        tradeLabel: resolveScheduleJobTypeKey(j.title),
+        scheduleLine: formatJobScheduleLine(j) ?? "",
+      });
+    }
+    return points;
   }, [jobsForSelectedDay]);
 
   const toggleJobSelection = useCallback((id: string) => {
@@ -957,7 +974,7 @@ export default function SchedulePage() {
                       value={liveMapSearch}
                       onChange={(e) => setLiveMapSearch(e.target.value)}
                       aria-label="Filter partners by name"
-                      className="h-7 w-[148px] rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-6 pr-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
+                      className="h-7 w-[140px] rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-6 pr-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15 sm:w-[148px]"
                     />
                   </div>
                   <div className="relative">
@@ -965,7 +982,7 @@ export default function SchedulePage() {
                       aria-label="Map area"
                       value={liveMapRegionPreset}
                       onChange={(e) => setLiveMapRegionPreset(e.target.value as LiveMapRegionPreset)}
-                      className="h-7 appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
+                      className="h-7 min-w-[110px] appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
                     >
                       {LIVE_MAP_REGION_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>{o.label}</option>
@@ -978,7 +995,7 @@ export default function SchedulePage() {
                       aria-label="Trade filter"
                       value={liveMapTradeFilter}
                       onChange={(e) => setLiveMapTradeFilter(e.target.value)}
-                      className="h-7 appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
+                      className="h-7 min-w-[118px] appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
                     >
                       {liveMapTradeFilterOptions().map((o) => (
                         <option key={o.value} value={o.value}>{o.label}</option>
@@ -1048,7 +1065,7 @@ export default function SchedulePage() {
                 </div>
               }
               bottomRightOverlay={
-                <div className="max-w-[380px] rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm">
+                <div className="w-full sm:max-w-[380px] rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#020040]">
                       <CalIcon className="h-3 w-3 text-[#ED4B00]" aria-hidden />

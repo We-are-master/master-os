@@ -44,9 +44,51 @@ const TRADE_TO_ICON: Record<string, LucideIcon> = {
   "Fire Extinguisher Service (FES)": ShieldAlert,
 };
 
+const FALLBACK_TRADE_KEY = "general-maintenance";
+
 function iconForCanonicalTrade(canonical: string): LucideIcon {
   const key = normalizeTypeOfWork(canonical) || canonical;
   return TRADE_TO_ICON[key] ?? ShieldCheck;
+}
+
+function iconKeyFromCanonicalTrade(canonical: string): string {
+  const normalized = normalizeTypeOfWork(canonical) || canonical || GENERAL_MAINTENANCE_LABEL;
+  const safe = normalized
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return safe || FALLBACK_TRADE_KEY;
+}
+
+export function liveMapTradeIconKey(trade?: string | null): string {
+  const normalized = normalizeTypeOfWork(trade || "") || trade || GENERAL_MAINTENANCE_LABEL;
+  if (!TRADE_TO_ICON[normalized]) return FALLBACK_TRADE_KEY;
+  return iconKeyFromCanonicalTrade(normalized);
+}
+
+export function liveMapTradeIconKeys(): string[] {
+  const keys = new Set<string>([FALLBACK_TRADE_KEY]);
+  for (const canonical of Object.keys(TRADE_TO_ICON)) {
+    keys.add(iconKeyFromCanonicalTrade(canonical));
+  }
+  return Array.from(keys);
+}
+
+export function renderLiveMapTradeIconSvg(iconKey: string, opts?: { size?: number; color?: string }): string {
+  const color = opts?.color ?? "#FFFFFF";
+  const size = opts?.size ?? 18;
+  const canonical =
+    Object.keys(TRADE_TO_ICON).find((label) => iconKeyFromCanonicalTrade(label) === iconKey) ??
+    GENERAL_MAINTENANCE_LABEL;
+  const Icon = iconForCanonicalTrade(canonical);
+  return renderToStaticMarkup(
+    createElement(Icon, {
+      size,
+      strokeWidth: 2,
+      color,
+      "aria-hidden": true,
+    }),
+  );
 }
 
 export function liveMapTradeFilterOptions(): { value: string; label: string }[] {
@@ -197,6 +239,7 @@ export function createLiveMapMarkerElement(opts: {
   el.style.cssText = [
     `width:${PARTNER_MARKER_SIZE}px`,
     `height:${PARTNER_MARKER_SIZE}px`,
+    "display:block",
     "position:relative",
     "cursor:pointer",
   ].join(";");
@@ -310,9 +353,8 @@ export function createLiveMapJobMarkerElement(opts: {
   el.style.cssText = [
     `width:${JOB_PIN_WIDTH}px`,
     `height:${JOB_PIN_HEIGHT}px`,
+    "display:block",
     "cursor:pointer",
-    // drop-shadow follows the SVG shape; no transition so Mapbox positioning is instant
-    "filter:drop-shadow(0 2px 6px rgba(0,0,0,0.35))",
   ].join(";");
 
   // Circle (body) + separate triangle tail — drawn bottom-to-top so the triangle
