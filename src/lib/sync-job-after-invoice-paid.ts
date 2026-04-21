@@ -4,7 +4,7 @@ import { customerCollectionsSatisfyBillable, jobBillableRevenue } from "@/lib/jo
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { invoiceAmountPaid } from "@/lib/invoice-balance";
-import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { isSupabaseMissingColumnError, isJobPaymentsDeletedAtMissing } from "@/lib/supabase-schema-compat";
 
 const EPS = 0.02;
 
@@ -22,17 +22,35 @@ async function loadJobForInvoice(
 }
 
 async function sumLinkedInvoicePayments(client: SupabaseClient, invoiceId: string): Promise<number> {
-  const { data: rows, error } = await client
+  // Soft-delete aware; fall back to no filter when `deleted_at` isn't on this DB.
+  const first = await client
     .from("job_payments")
     .select("amount")
     .eq("linked_invoice_id", invoiceId)
     .is("deleted_at", null);
-  if (error) {
-    if (isSupabaseMissingColumnError(error, "linked_invoice_id")) return 0;
-    console.error("sumLinkedInvoicePayments", error);
-    return 0;
+  let rows: unknown[] | null = first.error ? null : (first.data ?? []);
+  if (first.error) {
+    if (isSupabaseMissingColumnError(first.error, "linked_invoice_id")) return 0;
+    if (isJobPaymentsDeletedAtMissing(first.error)) {
+      const retry = await client
+        .from("job_payments")
+        .select("amount")
+        .eq("linked_invoice_id", invoiceId);
+      if (retry.error) {
+        if (isSupabaseMissingColumnError(retry.error, "linked_invoice_id")) return 0;
+        console.error("sumLinkedInvoicePayments", retry.error);
+        return 0;
+      }
+      rows = retry.data ?? [];
+    } else {
+      console.error("sumLinkedInvoicePayments", first.error);
+      return 0;
+    }
   }
-  return (rows ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
+  return ((rows ?? []) as unknown[]).reduce(
+    (s: number, r) => s + Number((r as { amount?: number }).amount ?? 0),
+    0,
+  );
 }
 
 /**
@@ -50,11 +68,18 @@ export async function syncJobAfterInvoicePaidToLedger(
   const job = await loadJobForInvoice(client, inv as { job_reference?: string | null }, invoiceId);
   if (!job) return;
 
-  const { data: pays } = await client
+  // Soft-delete aware; fall back to no filter when `deleted_at` isn't on this DB.
+  let pays: { type: string; amount: number }[] | null = null;
+  const paysFirst = await client
     .from("job_payments")
     .select("type, amount")
     .eq("job_id", job.id)
     .is("deleted_at", null);
+  if (!paysFirst.error) pays = (paysFirst.data ?? []) as { type: string; amount: number }[];
+  else if (isJobPaymentsDeletedAtMissing(paysFirst.error)) {
+    const retry = await client.from("job_payments").select("type, amount").eq("job_id", job.id);
+    if (!retry.error) pays = (retry.data ?? []) as { type: string; amount: number }[];
+  }
   const list = (pays ?? []) as { type: string; amount: number }[];
   const customerTotal = list
     .filter((p) => p.type === "customer_deposit" || p.type === "customer_final")
@@ -63,12 +88,28 @@ export async function syncJobAfterInvoicePaidToLedger(
   const billable = jobBillableRevenue(job);
   const jobRemaining = Math.max(0, billable - customerTotal);
 
-  const { data: existingSource, error: existingSrcErr } = await client
-    .from("job_payments")
-    .select("id")
-    .eq("source_invoice_id", invoiceId)
-    .is("deleted_at", null)
-    .maybeSingle();
+  let existingSource: unknown = null;
+  let existingSrcErr: unknown = null;
+  {
+    const first = await client
+      .from("job_payments")
+      .select("id")
+      .eq("source_invoice_id", invoiceId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!first.error) existingSource = first.data;
+    else if (isJobPaymentsDeletedAtMissing(first.error)) {
+      const retry = await client
+        .from("job_payments")
+        .select("id")
+        .eq("source_invoice_id", invoiceId)
+        .maybeSingle();
+      if (retry.error) existingSrcErr = retry.error;
+      else existingSource = retry.data;
+    } else {
+      existingSrcErr = first.error;
+    }
+  }
   if (existingSrcErr && !isSupabaseMissingColumnError(existingSrcErr, "source_invoice_id")) {
     console.error("syncJobAfterInvoicePaidToLedger: existingSource query", existingSrcErr);
     return;
@@ -131,11 +172,18 @@ export async function maybeCompleteAwaitingPaymentJob(client: SupabaseClient, jo
   const job = row as Job;
   if (job.status !== "awaiting_payment") return;
 
-  const { data: pays } = await client
+  // Soft-delete aware; fall back to no filter when `deleted_at` isn't on this DB.
+  let pays: { type: string; amount: number }[] | null = null;
+  const first = await client
     .from("job_payments")
     .select("type, amount")
     .eq("job_id", jobId)
     .is("deleted_at", null);
+  if (!first.error) pays = (first.data ?? []) as { type: string; amount: number }[];
+  else if (isJobPaymentsDeletedAtMissing(first.error)) {
+    const retry = await client.from("job_payments").select("type, amount").eq("job_id", jobId);
+    if (!retry.error) pays = (retry.data ?? []) as { type: string; amount: number }[];
+  }
   const list = (pays ?? []) as { type: string; amount: number }[];
   const customerPayments = list
     .filter((p) => p.type === "customer_deposit" || p.type === "customer_final")

@@ -5,7 +5,7 @@ import {
   deriveCollectionStageForInvoice,
   syncInvoiceCollectionStagesForJob,
 } from "@/lib/invoice-collection";
-import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { isSupabaseMissingColumnError, isJobPaymentsDeletedAtMissing } from "@/lib/supabase-schema-compat";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { jobCustomerBillableRevenueForCollections } from "@/lib/job-financials";
 
@@ -34,34 +34,66 @@ function computeStatus(inv: Invoice, amountPaid: number, amount: number): Invoic
 }
 
 async function sumLinkedCustomerPayments(client: SupabaseClient, invoiceId: string): Promise<number> {
-  const { data: rows, error } = await client
+  // Soft-delete aware; fall back to no filter when `deleted_at` isn't on this DB.
+  const first = await client
     .from("job_payments")
     .select("amount, note, type")
     .eq("linked_invoice_id", invoiceId)
     .in("type", ["customer_deposit", "customer_final"])
     .is("deleted_at", null);
-  if (error && isSupabaseMissingColumnError(error, "linked_invoice_id")) return 0;
-  if (error) {
-    console.error("sumLinkedCustomerPayments", error);
-    return 0;
+  let rows: unknown[] | null = first.error ? null : (first.data ?? []);
+  if (first.error) {
+    if (isSupabaseMissingColumnError(first.error, "linked_invoice_id")) return 0;
+    if (isJobPaymentsDeletedAtMissing(first.error)) {
+      const retry = await client
+        .from("job_payments")
+        .select("amount, note, type")
+        .eq("linked_invoice_id", invoiceId)
+        .in("type", ["customer_deposit", "customer_final"]);
+      if (retry.error) {
+        if (isSupabaseMissingColumnError(retry.error, "linked_invoice_id")) return 0;
+        console.error("sumLinkedCustomerPayments", retry.error);
+        return 0;
+      }
+      rows = retry.data ?? [];
+    } else {
+      console.error("sumLinkedCustomerPayments", first.error);
+      return 0;
+    }
   }
-  const filtered = (rows ?? []).filter((r) =>
+  const filtered = ((rows ?? []) as unknown[]).filter((r) =>
     !isLegacyMisclassifiedCustomerPayment(r as { type: string; note?: string | null }),
   );
-  return Math.round(filtered.reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0) * 100) / 100;
+  return Math.round(filtered.reduce((s: number, r) => s + Number((r as { amount?: number }).amount ?? 0), 0) * 100) / 100;
 }
 
 async function latestLinkedPaymentDate(client: SupabaseClient, invoiceId: string): Promise<string | null> {
-  const { data: rows, error } = await client
+  // Soft-delete aware; fall back to no filter when `deleted_at` isn't on this DB.
+  const first = await client
     .from("job_payments")
     .select("payment_date, type, note")
     .eq("linked_invoice_id", invoiceId)
     .in("type", ["customer_deposit", "customer_final"])
     .is("deleted_at", null);
-  if (error) {
-    if (isSupabaseMissingColumnError(error, "linked_invoice_id")) return null;
-    console.error("latestLinkedPaymentDate", error);
-    return null;
+  let rows: unknown[] | null = first.error ? null : (first.data ?? []);
+  if (first.error) {
+    if (isSupabaseMissingColumnError(first.error, "linked_invoice_id")) return null;
+    if (isJobPaymentsDeletedAtMissing(first.error)) {
+      const retry = await client
+        .from("job_payments")
+        .select("payment_date, type, note")
+        .eq("linked_invoice_id", invoiceId)
+        .in("type", ["customer_deposit", "customer_final"]);
+      if (retry.error) {
+        if (isSupabaseMissingColumnError(retry.error, "linked_invoice_id")) return null;
+        console.error("latestLinkedPaymentDate", retry.error);
+        return null;
+      }
+      rows = retry.data ?? [];
+    } else {
+      console.error("latestLinkedPaymentDate", first.error);
+      return null;
+    }
   }
   let latest: string | null = null;
   for (const r of (rows ?? []).filter((row) => !isLegacyMisclassifiedCustomerPayment(row as { type: string; note?: string | null }))) {
@@ -164,11 +196,24 @@ async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: J
     return;
   }
 
-  const { data: pays } = await client
-    .from("job_payments")
-    .select("type, amount, payment_date, note")
-    .eq("job_id", job.id)
-    .is("deleted_at", null);
+  // Soft-delete aware; fall back to no filter when `deleted_at` isn't on this DB.
+  type PayRow = { type: string; amount: number; payment_date?: string; note?: string | null };
+  let pays: PayRow[] | null = null;
+  {
+    const first = await client
+      .from("job_payments")
+      .select("type, amount, payment_date, note")
+      .eq("job_id", job.id)
+      .is("deleted_at", null);
+    if (!first.error) pays = (first.data ?? []) as PayRow[];
+    else if (isJobPaymentsDeletedAtMissing(first.error)) {
+      const retry = await client
+        .from("job_payments")
+        .select("type, amount, payment_date, note")
+        .eq("job_id", job.id);
+      if (!retry.error) pays = (retry.data ?? []) as PayRow[];
+    }
+  }
 
   const list = ((pays ?? []) as { type: string; amount: number; payment_date?: string; note?: string | null }[]).filter(
     (p) => !isLegacyMisclassifiedCustomerPayment(p),
@@ -234,12 +279,23 @@ async function syncWeeklyBatchInvoice(client: SupabaseClient, inv: Invoice, trig
   let finSum = 0;
   let latestDate: string | null = null;
   for (const jid of jobIds) {
-    const { data: pays } = await client
+    // Soft-delete aware; fall back to no filter when `deleted_at` isn't on this DB.
+    type WeeklyPayRow = { type: string; amount: number; payment_date?: string };
+    let pays: WeeklyPayRow[] | null = null;
+    const first = await client
       .from("job_payments")
       .select("type, amount, payment_date")
       .eq("job_id", jid)
       .is("deleted_at", null);
-    const list = (pays ?? []) as { type: string; amount: number; payment_date?: string }[];
+    if (!first.error) pays = (first.data ?? []) as WeeklyPayRow[];
+    else if (isJobPaymentsDeletedAtMissing(first.error)) {
+      const retry = await client
+        .from("job_payments")
+        .select("type, amount, payment_date")
+        .eq("job_id", jid);
+      if (!retry.error) pays = (retry.data ?? []) as WeeklyPayRow[];
+    }
+    const list = (pays ?? []) as WeeklyPayRow[];
     for (const p of list) {
       if (p.type === "customer_deposit") depSum += Number(p.amount);
       if (p.type === "customer_final") finSum += Number(p.amount);

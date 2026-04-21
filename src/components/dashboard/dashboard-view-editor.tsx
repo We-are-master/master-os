@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
-import { X, Plus, Trash2, GripVertical, Save, Loader2, Star, Shield, Check } from "lucide-react";
+import { X, Plus, Trash2, GripVertical, Save, Loader2, Star, Shield, Check, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import type { DashboardView, WidgetConfig, WidgetSize } from "@/types/dashboard-
 import { WIDGET_CATALOG, CUSTOM_WIDGET_CATALOG } from "@/types/dashboard-config";
 import type { RoleKey } from "@/types/admin-config";
 import { CustomWidgetBuilder } from "./custom-widget-builder";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 const uuidv4 = () => crypto.randomUUID();
 
 const ICON_OPTIONS = ["LayoutDashboard", "DollarSign", "Briefcase", "BarChart2", "PieChart", "Activity", "Users", "Settings"];
@@ -29,6 +30,48 @@ const SIZE_LABELS: Record<WidgetSize, string> = {
   full:       "Full",
 };
 
+/**
+ * Legacy catalog labels from earlier versions (before the 2026-04-21 rename).
+ * A widget whose persisted title matches one of these is treated as stale
+ * library default and auto-upgraded to the current catalog label. Any other
+ * string is respected as a user-set custom title (pencil rename).
+ */
+const LEGACY_BUILTIN_TITLES = new Set([
+  "KPIs",
+  "Overview executive",
+  "Revenue Overview",
+  "Financial Flow",
+  "Activity",
+  "Partners by type of work",
+  "Top Partners",
+  "Partner payout · Top 5",
+  "Company margin · Top 5",
+  "Financial Snapshot",
+  "Pipeline",
+]);
+
+/**
+ * Resolves the name that shows in the editor row. User-customised titles
+ * (set via the inline pencil) win; empty / legacy-default titles fall back
+ * to the current catalog label so renames land on standardised copy.
+ */
+function displayWidgetTitle(w: WidgetConfig): string {
+  const libraryEntry = [...WIDGET_CATALOG, ...CUSTOM_WIDGET_CATALOG].find((m) => m.type === w.type);
+  if (!libraryEntry) return w.title || "Widget";
+  if (libraryEntry.isCustom) return w.title || libraryEntry.label;
+  const title = (w.title ?? "").trim();
+  if (!title || title === libraryEntry.label || LEGACY_BUILTIN_TITLES.has(title)) {
+    return libraryEntry.label;
+  }
+  return title;
+}
+
+/** Returns the catalog description for "!" hint tooltips next to active widget titles. */
+function widgetDescription(w: WidgetConfig): string {
+  const libraryEntry = [...WIDGET_CATALOG, ...CUSTOM_WIDGET_CATALOG].find((m) => m.type === w.type);
+  return libraryEntry?.description ?? "Custom widget";
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -41,6 +84,9 @@ export function DashboardViewEditor({ open, onClose, editView }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [tab, setTab] = useState<"info" | "widgets">("info");
   const [customBuilderOpen, setCustomBuilderOpen] = useState(false);
+  /** `id` of the widget whose title is currently being edited inline, or null. */
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [editingTitleValue, setEditingTitleValue] = useState("");
 
   const [form, setForm] = useState<{
     id: string;
@@ -127,6 +173,13 @@ export function DashboardViewEditor({ open, onClose, editView }: Props) {
     setForm((prev) => ({
       ...prev,
       widgets: prev.widgets.map((w) => w.id === id ? { ...w, size } : w),
+    }));
+  };
+
+  const renameWidget = (id: string, title: string) => {
+    setForm((prev) => ({
+      ...prev,
+      widgets: prev.widgets.map((w) => (w.id === id ? { ...w, title } : w)),
     }));
   };
 
@@ -311,26 +364,71 @@ export function DashboardViewEditor({ open, onClose, editView }: Props) {
                       </div>
                     ) : (
                       <div className="space-y-1.5">
-                        {form.widgets.map((w, i) => (
-                          <div key={w.id} className="flex items-center gap-2 p-2.5 rounded-xl bg-surface-hover/60 border border-border-light">
-                            <GripVertical className="h-3.5 w-3.5 text-text-tertiary flex-shrink-0" />
-                            <span className="text-xs font-semibold text-text-primary flex-1 truncate">{w.title}</span>
-                            <select
-                              value={w.size}
-                              onChange={(e) => changeWidgetSize(w.id, e.target.value as WidgetSize)}
-                              className="text-xs px-2 py-1 rounded-lg border border-border bg-card"
-                            >
-                              {(Object.entries(SIZE_LABELS) as [WidgetSize, string][]).map(([k, v]) => (
-                                <option key={k} value={k}>{v}</option>
-                              ))}
-                            </select>
-                            <button onClick={() => moveWidget(w.id, -1)} disabled={i === 0} className="p-1 rounded hover:bg-surface-tertiary disabled:opacity-30 text-text-tertiary">↑</button>
-                            <button onClick={() => moveWidget(w.id, 1)} disabled={i === form.widgets.length - 1} className="p-1 rounded hover:bg-surface-tertiary disabled:opacity-30 text-text-tertiary">↓</button>
-                            <button onClick={() => removeWidget(w.id)} className="p-1 rounded hover:bg-red-50 text-red-500">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ))}
+                        {form.widgets.map((w, i) => {
+                          const isEditing = editingTitleId === w.id;
+                          const commitRename = () => {
+                            const next = editingTitleValue.trim();
+                            if (next && next !== displayWidgetTitle(w)) {
+                              renameWidget(w.id, next);
+                            }
+                            setEditingTitleId(null);
+                            setEditingTitleValue("");
+                          };
+                          return (
+                            <div key={w.id} className="flex items-center gap-2 p-2.5 rounded-xl bg-surface-hover/60 border border-border-light">
+                              <GripVertical className="h-3.5 w-3.5 text-text-tertiary flex-shrink-0" />
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  value={editingTitleValue}
+                                  onChange={(e) => setEditingTitleValue(e.target.value)}
+                                  onBlur={commitRename}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") commitRename();
+                                    if (e.key === "Escape") {
+                                      setEditingTitleId(null);
+                                      setEditingTitleValue("");
+                                    }
+                                  }}
+                                  className="flex-1 text-xs font-semibold text-text-primary px-2 py-1 rounded-md border border-primary/40 bg-card focus:outline-none focus:ring-2 focus:ring-primary/25"
+                                />
+                              ) : (
+                                <span className="flex-1 min-w-0 inline-flex items-center gap-1.5">
+                                  <span className="text-xs font-semibold text-text-primary truncate">
+                                    {displayWidgetTitle(w)}
+                                  </span>
+                                  <FixfyHintIcon text={widgetDescription(w)} />
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingTitleId(w.id);
+                                  setEditingTitleValue(displayWidgetTitle(w));
+                                }}
+                                className="p-1 rounded hover:bg-surface-tertiary text-text-tertiary hover:text-text-primary transition-colors"
+                                title="Rename widget"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <select
+                                value={w.size}
+                                onChange={(e) => changeWidgetSize(w.id, e.target.value as WidgetSize)}
+                                className="text-xs px-2 py-1 rounded-lg border border-border bg-card"
+                              >
+                                {(Object.entries(SIZE_LABELS) as [WidgetSize, string][]).map(([k, v]) => (
+                                  <option key={k} value={k}>{v}</option>
+                                ))}
+                              </select>
+                              <button onClick={() => moveWidget(w.id, -1)} disabled={i === 0} className="p-1 rounded hover:bg-surface-tertiary disabled:opacity-30 text-text-tertiary">↑</button>
+                              <button onClick={() => moveWidget(w.id, 1)} disabled={i === form.widgets.length - 1} className="p-1 rounded hover:bg-surface-tertiary disabled:opacity-30 text-text-tertiary">↓</button>
+                              <button onClick={() => removeWidget(w.id)} className="p-1 rounded hover:bg-red-50 text-red-500">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

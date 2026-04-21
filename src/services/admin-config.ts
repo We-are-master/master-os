@@ -125,7 +125,16 @@ function relocateScheduleToOverview(nav: NavGroup[]): NavGroup[] {
  * Migrate stored navigation: Services → Admin; strip duplicates; Team → People; Payroll nav item stripped (hidden).
  */
 function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
-  const strip = new Set(["/finance/payroll", "/services", "/team"]);
+  // "/finance/pay-run" (legacy Pay Run tab) and "/finance/dashboard" (removed
+  // intermediate page) are stripped from any persisted nav so the sidebar
+  // reflects the current canonical Finance group without stale entries.
+  const strip = new Set([
+    "/finance/payroll",
+    "/finance/pay-run",
+    "/finance/dashboard",
+    "/services",
+    "/team",
+  ]);
   const next = nav.map((g) => ({
     ...g,
     label: g.label === LEGACY_TEAM_GROUP_LABEL ? PEOPLE_GROUP_LABEL : g.label,
@@ -214,7 +223,6 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Finance",
     items: [
-      { label: "Dashboard", href: "/finance/dashboard", icon: "grid-2x2", permission: "finance" },
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
       { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },

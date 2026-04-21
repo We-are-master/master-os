@@ -54,7 +54,18 @@ function addDaysYmd(ymd: string, days: number): string {
   return toYmd(d);
 }
 
-/** e.g. "5 Jan – 11 Jan ’26" with optional year on end week */
+/** ISO week number (1–53) of the given date using Mon-start weeks. */
+function isoWeekNumber(d: Date): number {
+  const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  return Math.ceil(((tmp.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
+
+/**
+ * e.g. "Wk 15 · 5 Jan – 11 Jan ’26" (week number + dates).
+ * Optional `includeYear` keeps the backward-compat call sites happy.
+ */
 export function weekRangeLabel(weekStartYmd: string, includeYear = true): string {
   const s = parseYmd(weekStartYmd);
   const e = new Date(s);
@@ -62,13 +73,16 @@ export function weekRangeLabel(weekStartYmd: string, includeYear = true): string
   const o: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
   const sy = s.getFullYear();
   const ey = e.getFullYear();
+  const wk = `Wk ${isoWeekNumber(s)}`;
+  let datePart: string;
   if (includeYear && sy !== ey) {
-    return `${s.toLocaleDateString(undefined, { ...o, year: "2-digit" })} – ${e.toLocaleDateString(undefined, { ...o, year: "2-digit" })}`;
+    datePart = `${s.toLocaleDateString(undefined, { ...o, year: "2-digit" })} – ${e.toLocaleDateString(undefined, { ...o, year: "2-digit" })}`;
+  } else if (includeYear) {
+    datePart = `${s.toLocaleDateString(undefined, o)} – ${e.toLocaleDateString(undefined, { ...o, year: "2-digit" })}`;
+  } else {
+    datePart = `${s.toLocaleDateString(undefined, o)} – ${e.toLocaleDateString(undefined, o)}`;
   }
-  if (includeYear) {
-    return `${s.toLocaleDateString(undefined, o)} – ${e.toLocaleDateString(undefined, { ...o, year: "2-digit" })}`;
-  }
-  return `${s.toLocaleDateString(undefined, o)} – ${e.toLocaleDateString(undefined, o)}`;
+  return `${wk} · ${datePart}`;
 }
 
 export function buildCashflowBuckets(
