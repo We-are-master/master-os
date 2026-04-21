@@ -32,8 +32,10 @@ import {
 } from "lucide-react";
 import {
   fetchPayoutRange,
+  fetchPayoutMultiWeek,
   buildPayoutCsv,
   CATEGORY_ORDER,
+  getWeekFromAnchor,
   type PayoutItem,
   type PayoutCategory,
   type PayoutStatus,
@@ -104,6 +106,9 @@ export default function PayoutPage() {
   // ── Period state (mirrors FinanceWeekRangeBar conventions) ─────────────────
   const [periodMode, setPeriodMode] = useState<FinancePeriodMode>(DEFAULT_FINANCE_PERIOD_MODE);
   const [weekAnchor, setWeekAnchor] = useState<Date>(() => new Date());
+  /** Extra weeks the user picked in "Week" mode (besides the primary weekAnchor).
+   * Rendered as chips below the FinanceWeekRangeBar; all are fetched in parallel. */
+  const [extraWeekAnchors, setExtraWeekAnchors] = useState<Date[]>([]);
   const [monthAnchor, setMonthAnchor] = useState<Date>(() => new Date());
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
@@ -122,6 +127,18 @@ export default function PayoutPage() {
   const [localPaid, setLocalPaid] = useState<Set<string>>(new Set());
   const [collapsedGroups, setCollapsedGroups] = useState<Set<PayoutCategory>>(new Set());
   const [reviewOpen, setReviewOpen] = useState(false);
+
+  /** All ISO-week anchors currently selected in Week mode (primary + extras, deduped & sorted). */
+  const selectedWeekAnchors = useMemo(() => {
+    const seen = new Set<string>();
+    const all = [weekAnchor, ...extraWeekAnchors].filter((d) => {
+      const key = getWeekFromAnchor(d).weekLabel;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return all.sort((a, b) => a.getTime() - b.getTime());
+  }, [weekAnchor, extraWeekAnchors]);
 
   /** Derive from/to dates based on the FinanceWeekRangeBar mode. */
   const derivedRange = useMemo(() => {
@@ -145,7 +162,11 @@ export default function PayoutPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetchPayoutRange(derivedRange.from, derivedRange.to);
+      // In Week mode with multiple chips, fetch each week in parallel and merge.
+      const res =
+        periodMode === "week" && selectedWeekAnchors.length > 1
+          ? await fetchPayoutMultiWeek(selectedWeekAnchors)
+          : await fetchPayoutRange(derivedRange.from, derivedRange.to);
       setItems(res.items);
       setOverdueItems(res.overdueItems);
       setRangeStart(res.rangeStart);
@@ -156,7 +177,7 @@ export default function PayoutPage() {
     } finally {
       setLoading(false);
     }
-  }, [derivedRange.from, derivedRange.to]);
+  }, [periodMode, selectedWeekAnchors, derivedRange.from, derivedRange.to]);
 
   useEffect(() => {
     void load();
@@ -237,10 +258,38 @@ export default function PayoutPage() {
   // ── Period handlers (FinanceWeekRangeBar quirks) ──────────────────────────
   const handlePeriodModeChange = (m: FinancePeriodMode) => {
     setPeriodMode(m);
+    // Multi-week chips only apply to Week mode — clear them when switching away.
+    if (m !== "week") setExtraWeekAnchors([]);
     if (m === "range" && rangeFrom.trim()) {
       const d = parseISO(rangeFrom.trim());
       if (isValid(d)) setWeekAnchor(d);
     }
+  };
+
+  // ── Multi-week handlers (Week mode only) ──────────────────────────────────
+  const addPreviousWeek = () => {
+    const earliest = selectedWeekAnchors[0] ?? weekAnchor;
+    const previous = new Date(earliest.getTime() - 7 * 86400000);
+    const previousLabel = getWeekFromAnchor(previous).weekLabel;
+    // Guard against re-adding a week that's already in the list (e.g., after DST boundaries).
+    if (selectedWeekAnchors.some((a) => getWeekFromAnchor(a).weekLabel === previousLabel)) return;
+    setExtraWeekAnchors((prev) => [...prev, previous]);
+  };
+
+  const removeWeekAnchor = (anchor: Date) => {
+    const target = getWeekFromAnchor(anchor).weekLabel;
+    const isPrimary = getWeekFromAnchor(weekAnchor).weekLabel === target;
+    if (isPrimary) {
+      // Promote the first extra as the new primary; if none, keep as-is (can't remove last chip).
+      if (extraWeekAnchors.length === 0) return;
+      const [first, ...rest] = extraWeekAnchors;
+      setWeekAnchor(first);
+      setExtraWeekAnchors(rest);
+      return;
+    }
+    setExtraWeekAnchors((prev) =>
+      prev.filter((a) => getWeekFromAnchor(a).weekLabel !== target),
+    );
   };
   const handleRangeFromChange = (v: string) => {
     setRangeFrom(v);
@@ -392,6 +441,17 @@ export default function PayoutPage() {
             onRangeToChange={setRangeTo}
             rangeHelperText="Pick From / To dates to pay multiple weeks in one run."
           />
+
+          {/* Multi-week chip row — Week mode only. Lets the user stack several
+              weeks into a single run without forcing a contiguous date range. */}
+          {periodMode === "week" ? (
+            <WeekChipsRow
+              anchors={selectedWeekAnchors}
+              primaryAnchor={weekAnchor}
+              onAddPrevious={addPreviousWeek}
+              onRemove={removeWeekAnchor}
+            />
+          ) : null}
         </div>
 
         {/* ── 3. Overdue banner (conditional) ──────────────────────────── */}
@@ -696,6 +756,81 @@ export default function PayoutPage() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Sub-components
 // ──────────────────────────────────────────────────────────────────────────────
+
+function WeekChipsRow({
+  anchors,
+  primaryAnchor,
+  onAddPrevious,
+  onRemove,
+}: {
+  anchors: Date[];
+  primaryAnchor: Date;
+  onAddPrevious: () => void;
+  onRemove: (anchor: Date) => void;
+}) {
+  if (anchors.length === 0) return null;
+  const primaryLabel = getWeekFromAnchor(primaryAnchor).weekLabel;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mr-1">
+        Selected weeks
+      </span>
+      {anchors.map((a) => {
+        const { weekStart, weekEnd, weekLabel } = getWeekFromAnchor(a);
+        const isPrimary = weekLabel === primaryLabel;
+        const weekNum = Number(weekLabel.slice(-2));
+        const start = new Date(weekStart);
+        const end = new Date(weekEnd);
+        const sameMonth = start.getMonth() === end.getMonth();
+        const startStr = sameMonth
+          ? String(start.getDate())
+          : start.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+        const endStr = end.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+        return (
+          <span
+            key={weekLabel}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors",
+              isPrimary
+                ? "border-[#020040] bg-[#020040] text-white"
+                : "border-border-light bg-card text-text-secondary",
+            )}
+          >
+            Wk {weekNum}
+            <span className={cn("font-normal", isPrimary ? "text-white/80" : "text-text-tertiary")}>
+              · {startStr}–{endStr}
+            </span>
+            {anchors.length > 1 ? (
+              <button
+                type="button"
+                onClick={() => onRemove(a)}
+                className={cn(
+                  "inline-flex h-4 w-4 items-center justify-center rounded-sm transition-colors",
+                  isPrimary
+                    ? "text-white/80 hover:bg-white/15 hover:text-white"
+                    : "text-text-tertiary hover:bg-surface-hover hover:text-text-primary",
+                )}
+                aria-label={`Remove ${weekLabel}`}
+                title="Remove this week"
+              >
+                <XIcon className="h-3 w-3" />
+              </button>
+            ) : null}
+          </span>
+        );
+      })}
+      <button
+        type="button"
+        onClick={onAddPrevious}
+        className="inline-flex items-center gap-1 rounded-lg border border-dashed border-border bg-card px-2.5 py-1 text-xs font-semibold text-text-secondary transition-colors hover:border-[#020040]/40 hover:text-[#020040]"
+        title="Include the week before the earliest selected week"
+      >
+        <Plus className="h-3 w-3" />
+        Add week
+      </button>
+    </div>
+  );
+}
 
 function downloadCsv(csv: string, filename: string) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });

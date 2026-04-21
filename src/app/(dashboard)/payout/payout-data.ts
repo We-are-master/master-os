@@ -334,6 +334,59 @@ export async function fetchPayoutRange(
 export const fetchPayoutWeek = (anchor: Date) => fetchPayoutRange(anchor);
 
 /**
+ * Fetch multiple non-contiguous ISO weeks in parallel and merge into one list.
+ *
+ * Used by the "Week" period mode when the user wants to pay several weeks at once
+ * without covering everything in between (e.g. Wk 10 + Wk 15, skipping 11–14).
+ *
+ * Implementation: each anchor goes through fetchPayoutRange in parallel, results are
+ * deduped by id, and overdue items already covered by another selected week are
+ * promoted out of the overdue bucket.
+ */
+export async function fetchPayoutMultiWeek(anchors: Date[]): Promise<{
+  items: PayoutItem[];
+  overdueItems: PayoutItem[];
+  rangeStart: string;
+  rangeEnd: string;
+  rangeLabel: string;
+}> {
+  if (anchors.length === 0) {
+    return {
+      items: [],
+      overdueItems: [],
+      rangeStart: "",
+      rangeEnd: "",
+      rangeLabel: "—",
+    };
+  }
+  if (anchors.length === 1) return fetchPayoutRange(anchors[0]);
+
+  const results = await Promise.all(anchors.map((a) => fetchPayoutRange(a)));
+
+  const itemsMap = new Map<string, PayoutItem>();
+  const overdueMap = new Map<string, PayoutItem>();
+  for (const r of results) {
+    for (const i of r.items) itemsMap.set(i.id, i);
+    for (const i of r.overdueItems) overdueMap.set(i.id, i);
+  }
+  // An "overdue" item from one week may be the selected week for another. Prefer selected.
+  for (const id of itemsMap.keys()) overdueMap.delete(id);
+
+  const sorted = [...results].sort((a, b) => a.rangeStart.localeCompare(b.rangeStart));
+  const rangeStart = sorted[0].rangeStart;
+  const rangeEnd = sorted[sorted.length - 1].rangeEnd;
+  const rangeLabel = `${sorted[0].rangeLabel} … ${sorted[sorted.length - 1].rangeLabel} (${sorted.length} weeks)`;
+
+  return {
+    items: [...itemsMap.values()],
+    overdueItems: [...overdueMap.values()],
+    rangeStart,
+    rangeEnd,
+    rangeLabel,
+  };
+}
+
+/**
  * CSV export of the currently visible items.
  * Simple, fixed-column schema — meant for bank upload / accounting handoff.
  */
