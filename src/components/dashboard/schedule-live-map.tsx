@@ -210,6 +210,7 @@ export function ScheduleLiveMap({
         tradeFilter: tradeFilter === "all" ? "all" : tradeFilter,
         trade: point.trade,
         trades: point.trades ?? null,
+        name: point.name,
       });
       const popup = new mapboxgl.Popup({
         closeButton: false,
@@ -267,6 +268,7 @@ export function ScheduleLiveMap({
       const el = createLiveMapJobMarkerElement({
         selected,
         statusCategory: job.statusCategory,
+        trade: job.tradeLabel,
       });
       if (onJobMarkerClick) {
         el.addEventListener("click", (e) => {
