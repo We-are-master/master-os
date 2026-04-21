@@ -7,31 +7,57 @@ import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-pa
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
 /**
+ * Older DBs don't have a `deleted_at` column on `job_payments`. PostgREST
+ * surfaces this as error 42703 / "undefined column". We probe once per call
+ * with a tiny read so the rest of the reopen flow knows whether to soft-delete
+ * (update deleted_at) or hard-delete the matching payments.
+ */
+async function probeJobPaymentsDeletedAt(client: SupabaseClient): Promise<boolean> {
+  const { error } = await client.from("job_payments").select("deleted_at").limit(1);
+  if (!error) return true;
+  const code = (error as { code?: string }).code;
+  const msg = (error as { message?: string }).message ?? "";
+  if (code === "42703" || msg.includes("deleted_at") || isSupabaseMissingColumnError(error, "deleted_at")) {
+    return false;
+  }
+  // Any unrelated error — assume the column exists and let the caller surface it.
+  return true;
+}
+
+/**
  * Reset an invoice from paid/partially_paid to pending: clear amount_paid, remove job_payments
  * tied to this invoice, optionally move a completed job back to awaiting_payment.
  */
 export async function reopenInvoiceToPending(client: SupabaseClient, invoice: Invoice): Promise<void> {
   if (invoice.status !== "paid" && invoice.status !== "partially_paid") return;
 
-  const { data: byLink, error: e1 } = await client
-    .from("job_payments")
-    .select("id")
-    .eq("linked_invoice_id", invoice.id)
-    .is("deleted_at", null);
-  if (e1) throw e1;
+  const hasDeletedAt = await probeJobPaymentsDeletedAt(client);
   const now = new Date().toISOString();
+
+  // Linked-invoice rows — payments recorded directly against this invoice.
+  const linkQuery = client.from("job_payments").select("id").eq("linked_invoice_id", invoice.id);
+  const { data: byLink, error: e1 } = hasDeletedAt ? await linkQuery.is("deleted_at", null) : await linkQuery;
+  if (e1) throw e1;
   for (const row of byLink ?? []) {
-    await client.from("job_payments").update({ deleted_at: now }).eq("id", (row as { id: string }).id);
+    const id = (row as { id: string }).id;
+    if (hasDeletedAt) {
+      await client.from("job_payments").update({ deleted_at: now }).eq("id", id);
+    } else {
+      await client.from("job_payments").delete().eq("id", id);
+    }
   }
 
-  const { data: bySource, error: e2 } = await client
-    .from("job_payments")
-    .select("id")
-    .eq("source_invoice_id", invoice.id)
-    .is("deleted_at", null);
+  // Source-invoice rows — payments generated from this invoice (legacy column).
+  const sourceQuery = client.from("job_payments").select("id").eq("source_invoice_id", invoice.id);
+  const { data: bySource, error: e2 } = hasDeletedAt ? await sourceQuery.is("deleted_at", null) : await sourceQuery;
   if (e2 && !isSupabaseMissingColumnError(e2, "source_invoice_id")) throw e2;
   for (const row of bySource ?? []) {
-    await client.from("job_payments").update({ deleted_at: now }).eq("id", (row as { id: string }).id);
+    const id = (row as { id: string }).id;
+    if (hasDeletedAt) {
+      await client.from("job_payments").update({ deleted_at: now }).eq("id", id);
+    } else {
+      await client.from("job_payments").delete().eq("id", id);
+    }
   }
 
   const { error: uErr } = await client
