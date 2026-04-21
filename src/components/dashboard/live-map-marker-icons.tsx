@@ -22,8 +22,8 @@ import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
 /** Partner marker canvas — needs extra room for the top-right trade badge. */
 const PARTNER_MARKER_SIZE = 52;
-/** Trade icon rendered inside the badge circle. */
-const BADGE_ICON_SIZE = 13;
+/** Trade icon size rendered inside the badge circle (SVG embed). */
+const BADGE_ICON_SIZE = 16;
 const ICON_BOX = 18;
 
 const TRADE_TO_ICON: Record<string, LucideIcon> = {
@@ -201,32 +201,31 @@ export function createLiveMapMarkerElement(opts: {
     "cursor:pointer",
   ].join(";");
 
-  /** Main circle SVG with initials text. */
-  const circleSvg = `<svg width="${PARTNER_MARKER_SIZE}" height="${PARTNER_MARKER_SIZE}" viewBox="0 0 ${PARTNER_MARKER_SIZE} ${PARTNER_MARKER_SIZE}" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible" fill="none">` +
+  /** Pure SVG — main circle + initials + badge circle + badge icon all in one element.
+   *  No absolutely-positioned child divs: Mapbox positions markers via element.style.transform,
+   *  and extra DOM layers can affect hit-testing and drop-shadow rendering. */
+  const markerSvg =
+    `<svg width="${PARTNER_MARKER_SIZE}" height="${PARTNER_MARKER_SIZE}" viewBox="0 0 ${PARTNER_MARKER_SIZE} ${PARTNER_MARKER_SIZE}" xmlns="http://www.w3.org/2000/svg" style="display:block;overflow:visible" fill="none">` +
+    // Main circle (cx=26, cy=26, r=20 — centered in 52×52 canvas)
     `<circle cx="26" cy="26" r="20" fill="${navy}" stroke="${circleStroke}" stroke-width="${circleStrokeWidth}" opacity="${circleOpacity}"/>` +
+    // Initials text
     (initials
       ? `<text x="26" y="31" text-anchor="middle" fill="white" font-family="system-ui,-apple-system,BlinkMacSystemFont,sans-serif" font-size="13" font-weight="600">${escapeHtml(initials)}</text>`
       : "") +
+    // Badge circle (cx=41, cy=13, r=10 — top-right of canvas)
+    `<circle cx="41" cy="13" r="10" fill="white" stroke="${badgeColor}" stroke-width="2"/>` +
+    // Badge icon (16×16, translate so its center lands at cx=41, cy=13 → 41-8=33, 13-8=5)
+    `<g transform="translate(33,5)">${badgeIconHtml}</g>` +
     `</svg>`;
 
-  /** Trade badge — white circle top-right with colored trade icon inside.
-   *  Positioned so its center lands at (41, 11) within the 52×52 canvas. */
-  const badgeDiv =
-    `<div style="position:absolute;top:1px;right:1px;width:20px;height:20px;` +
-    `background:white;border-radius:50%;` +
-    `border:2px solid ${badgeColor};` +
-    `display:flex;align-items:center;justify-content:center;` +
-    `box-shadow:0 1px 4px rgba(0,0,0,0.14)">` +
-    badgeIconHtml +
-    `</div>`;
-
-  /** Multi-trade "+N" pill — bottom-left so it doesn't collide with the badge. */
+  /** Multi-trade "+N" pill — bottom-left so it doesn't collide with the badge.
+   *  Kept as a separate span (SVG foreignObject has poor support in some webkit). */
   const multiBadge =
     extraTrades > 0 && tradeFilter === "all"
       ? `<span style="position:absolute;bottom:0;left:0;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:#ED4B00;color:#fff;font-size:9px;font-weight:700;line-height:14px;text-align:center;border:1.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.2)">+${extraTrades}</span>`
       : "";
 
-  el.innerHTML = circleSvg + badgeDiv + multiBadge;
+  el.innerHTML = markerSvg + multiBadge;
 
   return el;
 }
@@ -237,16 +236,11 @@ export function createLiveMapMarkerElement(opts: {
  */
 
 /** Width of the pin element in px. */
-const JOB_PIN_WIDTH = 28;
-/** Height of the pin element in px — tail tip sits at the bottom-center. */
-const JOB_PIN_HEIGHT = 38;
-/**
- * SVG teardrop path inside a 28×38 viewBox.
- * Circle centre ≈ (14, 13), radius ≈ 12.  Tail tip at (14, 37).
- * Anchor for Mapbox must be "bottom" so the tail tip lands on the lat/lng.
- */
-const JOB_PIN_PATH =
-  "M 14 1 C 7 1 1 7 1 14 C 1 21 7 27 14 37 C 21 27 27 21 27 14 C 27 7 21 1 14 1 Z";
+const JOB_PIN_WIDTH = 44;
+/** Height of the pin element in px — tail tip sits at the bottom-center.
+ *  Shape: circle (r=20, cx=22, cy=22) + separate triangle tail tip at (22, 54).
+ *  Anchor for Mapbox must be "bottom" so the tail tip lands on the lat/lng. */
+const JOB_PIN_HEIGHT = 54;
 
 /**
  * Status bucket that drives the job-pin color.
@@ -303,27 +297,35 @@ export function createLiveMapJobMarkerElement(opts: {
   // Always show the trade icon. ShieldCheck is the fallback for
   // unknown / general trades — never fall back to a status icon.
   const Icon = iconForCanonicalTrade(trade || GENERAL_MAINTENANCE_LABEL);
+  // Icon is 18×18, centered in the circle (cx=22, cy=22, r=20):
+  //   translate(22 - 9, 22 - 9) = translate(13, 13)
   const iconHtml = staticIcon(Icon);
 
-  const stroke = selected ? "#020040" : "rgba(255,255,255,0.8)";
-  const strokeWidth = selected ? 3 : 1.5;
+  // Selected = thick navy ring; default = white ring so the status color pops
+  const stroke = selected ? "#020040" : "white";
+  const strokeWidth = selected ? 3 : 2.5;
 
   const el = document.createElement("div");
   el.className = "live-map-job-marker";
   el.style.cssText = [
     `width:${JOB_PIN_WIDTH}px`,
     `height:${JOB_PIN_HEIGHT}px`,
-    "position:relative",
     "cursor:pointer",
-    // drop-shadow follows the pin shape; no transition so Mapbox positioning is instant
-    "filter:drop-shadow(0 2px 5px rgba(0,0,0,0.32))",
+    // drop-shadow follows the SVG shape; no transition so Mapbox positioning is instant
+    "filter:drop-shadow(0 2px 6px rgba(0,0,0,0.35))",
   ].join(";");
 
+  // Circle (body) + separate triangle tail — drawn bottom-to-top so the triangle
+  // sits behind the circle visually.  Tail tip at (22, 54) = Mapbox anchor point.
   el.innerHTML =
-    `<svg width="${JOB_PIN_WIDTH}" height="${JOB_PIN_HEIGHT}" viewBox="0 0 ${JOB_PIN_WIDTH} ${JOB_PIN_HEIGHT}" xmlns="http://www.w3.org/2000/svg" style="display:block;position:absolute;top:0;left:0" fill="none">` +
-    `<path d="${JOB_PIN_PATH}" fill="${color}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round"/>` +
-    `</svg>` +
-    `<span style="position:absolute;top:4px;left:50%;transform:translateX(-50%);display:flex;width:${ICON_BOX}px;height:${ICON_BOX}px;align-items:center;justify-content:center;pointer-events:none">${iconHtml}</span>`;
+    `<svg width="${JOB_PIN_WIDTH}" height="${JOB_PIN_HEIGHT}" viewBox="0 0 ${JOB_PIN_WIDTH} ${JOB_PIN_HEIGHT}" xmlns="http://www.w3.org/2000/svg" style="display:block" fill="none">` +
+    // Triangle tail — drawn first so it renders behind the circle
+    `<path d="M22 54 L14 40 L30 40 Z" fill="${color}"/>` +
+    // Circle body
+    `<circle cx="22" cy="22" r="20" fill="${color}" stroke="${stroke}" stroke-width="${strokeWidth}"/>` +
+    // Trade icon centered inside the circle
+    `<g transform="translate(13,13)">${iconHtml}</g>` +
+    `</svg>`;
 
   return el;
 }

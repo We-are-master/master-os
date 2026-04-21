@@ -289,7 +289,8 @@ export function ScheduleLiveMap({
         closeButton: false,
         closeOnClick: false,
         // anchor "bottom" pin → popup appears above; negative y offset clears the pin body
-        offset: { bottom: [0, -40] as [number, number] },
+        // anchor "bottom" → popup appears above tail tip; -58 clears the full 54 px pin
+        offset: { bottom: [0, -58] as [number, number] },
       }).setHTML(
         buildLiveMapJobPopupHtml({
           reference: job.reference,
