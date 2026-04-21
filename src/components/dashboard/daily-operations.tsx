@@ -490,7 +490,28 @@ export function DailyOperationsTable({
  * All ratios are derived from the same month totals the table shows so the
  * strip moves with the view — no extra fetches.
  */
+export function HealthInsightsStrip({
+  totals,
+  compact = false,
+}: {
+  totals: DailyOpsData["totals"];
+  /** Compact mode strips the card chrome so callers can embed in their own section. */
+  compact?: boolean;
+}) {
+  return <InsightsStripInner totals={totals} compact={compact} />;
+}
+
 function InsightsStrip({ totals }: { totals: DailyOpsData["totals"] }) {
+  return <InsightsStripInner totals={totals} compact={false} />;
+}
+
+function InsightsStripInner({
+  totals,
+  compact,
+}: {
+  totals: DailyOpsData["totals"];
+  compact: boolean;
+}) {
   const serviceCostRatio = totals.revenue > 0 ? totals.cost / totals.revenue : 0;
   const scrCapped = Math.min(0.95, Math.max(0, serviceCostRatio));
   const breakevenDenom = 1 - scrCapped;
@@ -502,7 +523,13 @@ function InsightsStrip({ totals }: { totals: DailyOpsData["totals"] }) {
   const past = gapToBreakeven <= 0;
 
   return (
-    <div className="border-t border-border-light bg-gradient-to-r from-[#FAFAFB] via-card to-[#FAFAFB] px-3 py-2.5 sm:px-4">
+    <div
+      className={cn(
+        compact
+          ? "rounded-2xl border border-border-light bg-gradient-to-r from-emerald-500/[0.04] via-card to-rose-500/[0.04] px-3 py-2 sm:px-4"
+          : "border-t border-border-light bg-gradient-to-r from-[#FAFAFB] via-card to-[#FAFAFB] px-3 py-2.5 sm:px-4",
+      )}
+    >
       <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary mb-1.5 flex items-center gap-1.5">
         Health insights
         <FixfyHintIcon text="Derived from the month totals above. Service-cost ratio is kept as-is, overhead is treated as fixed; healthy target assumes a 40% net margin after service cost and overhead." />

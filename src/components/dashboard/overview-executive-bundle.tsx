@@ -12,7 +12,7 @@ import type { CommissionTier } from "@/types/database";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Layers, Target, Users, CalendarDays, ChevronDown, ChevronRight, DollarSign } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
-import { DailyOperationsTable, DailyOperationsTodayTile, useDailyOperations } from "./daily-operations";
+import { DailyOperationsTable, DailyOperationsTodayTile, HealthInsightsStrip, useDailyOperations } from "./daily-operations";
 import { EditableTitle } from "./editable-title";
 import {
   buildWeeklyCashPositionBuckets,
@@ -930,6 +930,9 @@ export function OverviewExecutiveBundle() {
 
       {/* Today snapshot — full month breakdown below, collapsed by default */}
       <DailyOperationsTodayTile data={dailyOps} />
+      {/* Compact health insights so breakeven + healthy-margin targets are
+          always visible at the top, not only inside the expanded breakdown. */}
+      <HealthInsightsStrip totals={dailyOps.totals} compact />
       <DailyOperationsDetails data={dailyOps} />
 
       <Card padding="none" className="overflow-hidden border-border-light">
