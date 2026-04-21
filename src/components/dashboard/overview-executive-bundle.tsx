@@ -12,6 +12,7 @@ import type { CommissionTier } from "@/types/database";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Layers, Target, Users, CalendarDays } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { DailyOperationsTodayTile, useDailyOperations } from "./daily-operations";
 import {
   buildWeeklyCashPositionBuckets,
   buildWeeklyJobSoldSeries,
@@ -98,9 +99,8 @@ export function OverviewExecutiveBundle() {
   const [monthlyDirectCost, setMonthlyDirectCost] = useState(0);
   const [monthlyBills, setMonthlyBills] = useState(0);
   const [monthlyPayroll, setMonthlyPayroll] = useState(0);
-  /** Per-day revenue + direct cost for the current month, keyed by YYYY-MM-DD. */
-  const [dailyBreakdown, setDailyBreakdown] = useState<Record<string, { revenue: number; cost: number }>>({});
   const currentMonthLabel = useMemo(() => localCalendarMonthYmdBounds(new Date()).monthLabel, []);
+  const dailyOps = useDailyOperations();
   const [billingForTier, setBillingForTier] = useState(0);
   const [tierMonthLabel, setTierMonthLabel] = useState("");
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
@@ -652,18 +652,9 @@ export function OverviewExecutiveBundle() {
         ]);
         let rev = 0;
         let direct = 0;
-        const perDay: Record<string, { revenue: number; cost: number }> = {};
         for (const r of rows) {
-          const rowRevenue = jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]);
-          const rowCost = jobDirectCost(r as OverviewPipelineJobRow);
-          rev += rowRevenue;
-          direct += rowCost;
-          const day = (r.scheduled_date ?? "").slice(0, 10);
-          if (day) {
-            if (!perDay[day]) perDay[day] = { revenue: 0, cost: 0 };
-            perDay[day].revenue += rowRevenue;
-            perDay[day].cost += rowCost;
-          }
+          rev += jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]);
+          direct += jobDirectCost(r as OverviewPipelineJobRow);
         }
         const bills = (billsRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
         const payroll = (payrollRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
@@ -672,7 +663,6 @@ export function OverviewExecutiveBundle() {
           setMonthlyDirectCost(direct);
           setMonthlyBills(bills);
           setMonthlyPayroll(payroll);
-          setDailyBreakdown(perDay);
         }
       } catch {
         if (!cancelled) {
@@ -680,7 +670,6 @@ export function OverviewExecutiveBundle() {
           setMonthlyDirectCost(0);
           setMonthlyBills(0);
           setMonthlyPayroll(0);
-          setDailyBreakdown({});
         }
       } finally {
         if (!cancelled) setMonthlyLoading(false);
@@ -689,62 +678,6 @@ export function OverviewExecutiveBundle() {
     void loadMonthly();
     return () => { cancelled = true; };
   }, []);
-
-  /**
-   * Daily operations table: Mon–Sat of the current calendar month.
-   * Overhead is monthly (bills + payroll) divided evenly across working days
-   * (Mon–Sat, excluding Sundays) so every operational day carries a fair share.
-   */
-  const dailyOperations = useMemo(() => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = today.getMonth();
-    const lastDay = new Date(year, month + 1, 0).getDate();
-    const rows: Array<{
-      ymd: string;
-      label: string;
-      weekdayLabel: string;
-      revenue: number;
-      cost: number;
-      overhead: number;
-      margin: number;
-      marginPct: number;
-      isToday: boolean;
-      isFuture: boolean;
-    }> = [];
-    // Count Mon–Sat (1–6) in this month; Sunday (0) excluded from overhead allocation.
-    let workingDays = 0;
-    for (let d = 1; d <= lastDay; d++) {
-      const wd = new Date(year, month, d).getDay();
-      if (wd !== 0) workingDays++;
-    }
-    const dailyOverhead = workingDays > 0 ? (monthlyBills + monthlyPayroll) / workingDays : 0;
-    const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    for (let d = 1; d <= lastDay; d++) {
-      const dayDate = new Date(year, month, d);
-      const wd = dayDate.getDay();
-      if (wd === 0) continue; // skip Sundays from operational view
-      const ymd = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      const row = dailyBreakdown[ymd] ?? { revenue: 0, cost: 0 };
-      const overhead = dailyOverhead;
-      const margin = row.revenue - row.cost - overhead;
-      const marginPct = row.revenue > 0 ? Math.round((margin / row.revenue) * 1000) / 10 : 0;
-      const weekdayLabel = dayDate.toLocaleDateString(undefined, { weekday: "short" });
-      rows.push({
-        ymd,
-        label: String(d),
-        weekdayLabel,
-        revenue: row.revenue,
-        cost: row.cost,
-        overhead,
-        margin,
-        marginPct,
-        isToday: ymd === todayYmd,
-        isFuture: ymd > todayYmd,
-      });
-    }
-    return { rows, workingDays, dailyOverhead };
-  }, [dailyBreakdown, monthlyBills, monthlyPayroll]);
 
   const monthlyGross = monthlyRevenue - monthlyDirectCost;
   const monthlyNet = monthlyRevenue - monthlyDirectCost - monthlyBills - monthlyPayroll;
@@ -950,124 +883,8 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card> : null}
 
-      {/* ── Daily Operations (Mon–Sat per calendar day of the current month) ── */}
-      <Card padding="none" className="overflow-hidden border-border-light">
-        <CardHeader className="px-4 pt-3 pb-2">
-          <div className="flex items-start justify-between gap-2.5 flex-wrap">
-            <div className="flex items-start gap-2.5">
-              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-sky-500/10 flex items-center justify-center shrink-0">
-                <CalendarDays className="h-3.5 w-3.5 text-emerald-600" />
-              </div>
-              <div>
-                <CardTitle className="text-sm font-semibold">Daily Operations — {currentMonthLabel}</CardTitle>
-                <p className="text-[10px] text-text-tertiary mt-0.5">
-                  Revenue, service cost and daily overhead · Mon–Sat · overhead split evenly across {dailyOperations.workingDays} working days
-                </p>
-              </div>
-            </div>
-            <p className="text-[10px] text-text-tertiary whitespace-nowrap">
-              Overhead · <span className="tabular-nums font-semibold text-text-secondary">{formatCurrency(dailyOperations.dailyOverhead)}</span>/day
-            </p>
-          </div>
-        </CardHeader>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-[640px]">
-            <thead>
-              <tr className="bg-[#FAFAFB] border-y border-border-light">
-                <th className="text-left px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Day</th>
-                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Revenue</th>
-                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Service cost</th>
-                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Overhead</th>
-                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Margin</th>
-                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {monthlyLoading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i} className="border-b border-border-light/60 last:border-0">
-                    <td colSpan={6} className="px-3 py-2">
-                      <div className="h-5 animate-pulse rounded bg-surface-hover" />
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                dailyOperations.rows.map((r) => {
-                  const marginPositive = r.margin >= 0;
-                  const hasRevenue = r.revenue > 0;
-                  return (
-                    <tr
-                      key={r.ymd}
-                      className={cn(
-                        "border-b border-border-light/60 last:border-0",
-                        r.isToday && "bg-amber-50/60",
-                        r.isFuture && "opacity-60",
-                      )}
-                    >
-                      <td className="px-3 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-surface-hover text-[10px] font-semibold text-text-secondary tabular-nums">
-                            {r.label}
-                          </span>
-                          <span className="text-[11px] text-text-tertiary">{r.weekdayLabel}</span>
-                          {r.isToday ? <span className="text-[9px] font-bold text-amber-700 uppercase tracking-wide">Today</span> : null}
-                        </div>
-                      </td>
-                      <td className={cn("px-3 py-1.5 text-right tabular-nums font-semibold", hasRevenue ? "text-emerald-700" : "text-text-tertiary")}>
-                        {formatCurrency(r.revenue)}
-                      </td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-amber-700">
-                        {formatCurrency(r.cost)}
-                      </td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-purple-600">
-                        {formatCurrency(r.overhead)}
-                      </td>
-                      <td className={cn("px-3 py-1.5 text-right tabular-nums font-semibold", marginPositive ? "text-emerald-700" : "text-rose-600")}>
-                        {formatCurrency(r.margin)}
-                      </td>
-                      <td className={cn("px-3 py-1.5 text-right tabular-nums text-[11px] font-semibold", marginPositive ? "text-emerald-700" : "text-rose-600")}>
-                        {hasRevenue ? `${r.marginPct}%` : "—"}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-            {!monthlyLoading && dailyOperations.rows.length > 0 ? (
-              <tfoot>
-                <tr className="bg-[#FAFAFB] border-t border-border-light">
-                  <td className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Month total</td>
-                  <td className="px-3 py-2 text-right tabular-nums font-bold text-emerald-700">
-                    {formatCurrency(dailyOperations.rows.reduce((s, r) => s + r.revenue, 0))}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-bold text-amber-700">
-                    {formatCurrency(dailyOperations.rows.reduce((s, r) => s + r.cost, 0))}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-bold text-purple-600">
-                    {formatCurrency(dailyOperations.rows.reduce((s, r) => s + r.overhead, 0))}
-                  </td>
-                  {(() => {
-                    const monthMargin = dailyOperations.rows.reduce((s, r) => s + r.margin, 0);
-                    const monthRev = dailyOperations.rows.reduce((s, r) => s + r.revenue, 0);
-                    const monthMarginPct = monthRev > 0 ? Math.round((monthMargin / monthRev) * 1000) / 10 : 0;
-                    const positive = monthMargin >= 0;
-                    return (
-                      <>
-                        <td className={cn("px-3 py-2 text-right tabular-nums font-bold", positive ? "text-emerald-700" : "text-rose-600")}>
-                          {formatCurrency(monthMargin)}
-                        </td>
-                        <td className={cn("px-3 py-2 text-right tabular-nums font-bold", positive ? "text-emerald-700" : "text-rose-600")}>
-                          {monthRev > 0 ? `${monthMarginPct}%` : "—"}
-                        </td>
-                      </>
-                    );
-                  })()}
-                </tr>
-              </tfoot>
-            ) : null}
-          </table>
-        </div>
-      </Card>
+      {/* Today snapshot — full month breakdown lives on /finance/dashboard */}
+      <DailyOperationsTodayTile data={dailyOps} />
 
       <Card padding="none" className="overflow-hidden border-border-light">
         <CardHeader className="px-4 pt-3 pb-2">

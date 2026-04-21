@@ -214,6 +214,7 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Finance",
     items: [
+      { label: "Dashboard", href: "/finance/dashboard", icon: "grid-2x2", permission: "finance" },
       { label: "Invoices", href: "/finance/invoices", icon: "receipt", permission: "finance" },
       { label: "Self-billing", href: "/finance/selfbill", icon: "wallet", permission: "finance" },
       { label: "Expenses", href: "/finance/bills", icon: "file-check", permission: "finance" },
