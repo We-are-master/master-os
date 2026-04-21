@@ -282,17 +282,16 @@ function TodayCell({
 }
 
 /**
- * Row background by performance (kept faint — purely a scanning aid):
- * - margin < 0             → very pale red
- * - 0 ≤ margin < 20%       → very pale amber
- * - marginPct ≥ 20         → very pale emerald
+ * Row background by performance. Hex values picked for visible-but-soft tint
+ * (Tailwind's rose-50 / amber-50 / emerald-50 with opacity modifiers were too
+ * faint to read on zebra-free tables — see issue from 2026-04-21 review).
  * Rows with zero revenue still carry the day's overhead, so they land in red.
  */
 function rowToneClass(margin: number, marginPct: number, hasRevenue: boolean): string {
-  if (!hasRevenue) return "bg-rose-50/40";
-  if (margin < 0) return "bg-rose-50/40";
-  if (marginPct < 20) return "bg-amber-50/30";
-  return "bg-emerald-50/40";
+  if (!hasRevenue) return "bg-[#FDECEC]"; // soft red ~ rose-100
+  if (margin < 0) return "bg-[#FDECEC]";
+  if (marginPct < 20) return "bg-[#FEF5DB]"; // soft amber ~ amber-100
+  return "bg-[#DFF5E8]"; // soft green ~ emerald-100
 }
 
 /**
