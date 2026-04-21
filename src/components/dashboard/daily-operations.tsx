@@ -391,6 +391,11 @@ export function DailyOperationsTable({
         <MonthTotalsDash totals={totals} loading={loading} />
       ) : null}
 
+      {/* Health insights live as part of the header region (grouped with the
+          month title + month totals) so breakeven / healthy-target context sits
+          right next to the numbers it's derived from. */}
+      {!loading && rows.length > 0 ? <InsightsStrip totals={totals} /> : null}
+
       <div className="overflow-x-auto">
         <table className="w-full text-xs min-w-[640px]">
           <thead>
@@ -473,9 +478,6 @@ export function DailyOperationsTable({
           ) : null}
         </table>
       </div>
-
-      {/* Health insights strip — derived from month totals so it updates live. */}
-      {!loading && rows.length > 0 ? <InsightsStrip totals={totals} /> : null}
     </Card>
   );
 }

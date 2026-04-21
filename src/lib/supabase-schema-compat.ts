@@ -41,3 +41,16 @@ export function isSupabaseMissingColumnError(err: unknown, columnHint?: string):
   if (columnHint && !msg.includes(columnHint)) return false;
   return true;
 }
+
+/**
+ * True when a Supabase error was caused by `job_payments.deleted_at` not
+ * existing (older DBs without migration 080). PostgREST returns 42703
+ * "undefined column" but some cache layers strip the code — so we also
+ * string-match on the column name.
+ */
+export function isJobPaymentsDeletedAtMissing(err: unknown): boolean {
+  if (!err) return false;
+  const code = String((err as { code?: string })?.code ?? "");
+  if (code === "42703") return true;
+  return isSupabaseMissingColumnError(err, "deleted_at");
+}

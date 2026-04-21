@@ -12,7 +12,7 @@ import type { CommissionTier } from "@/types/database";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Layers, Target, Users, CalendarDays, ChevronDown, ChevronRight, DollarSign } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
-import { DailyOperationsTable, DailyOperationsTodayTile, HealthInsightsStrip, useDailyOperations } from "./daily-operations";
+import { DailyOperationsTable, DailyOperationsTodayTile, useDailyOperations } from "./daily-operations";
 import { EditableTitle } from "./editable-title";
 import {
   buildWeeklyCashPositionBuckets,
@@ -928,11 +928,11 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card> : null}
 
-      {/* Today snapshot — full month breakdown below, collapsed by default */}
+      {/* Today snapshot — full month breakdown below, collapsed by default.
+          Health insights are now grouped INSIDE the Daily Operations card
+          header (see DailyOperationsTable) so the month view reads as one
+          cohesive block instead of three floating strips. */}
       <DailyOperationsTodayTile data={dailyOps} />
-      {/* Compact health insights so breakeven + healthy-margin targets are
-          always visible at the top, not only inside the expanded breakdown. */}
-      <HealthInsightsStrip totals={dailyOps.totals} compact />
       <DailyOperationsDetails data={dailyOps} />
 
       <Card padding="none" className="overflow-hidden border-border-light">
