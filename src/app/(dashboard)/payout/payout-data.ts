@@ -15,7 +15,11 @@ import {
  * This type exists only in the frontend — it's derived on the fly from existing data.
  */
 export type PayoutCategory = "workforce" | "partners" | "expenses";
-export type PayoutStatus = "ready" | "skipped" | "paid" | "cancelled";
+/**
+ * Uses the existing Fixfy vocabulary (Draft / Approved / Paid / Cancelled),
+ * so users coming from Bills, Self-bills and Invoices recognise the states.
+ */
+export type PayoutStatus = "draft" | "approved" | "paid" | "cancelled";
 export type PayoutSource = "self_bill_partner" | "self_bill_internal" | "bill";
 
 export interface PayoutItem {
@@ -82,17 +86,42 @@ function bankForBill(): string | null {
   return null;
 }
 
+/**
+ * Self-bill → payout status
+ * - paid                                    → paid
+ * - payout_cancelled / payout_lost /
+ *   payout_archived / rejected              → cancelled
+ * - ready_to_pay / pending_review /
+ *   awaiting_payment / audit_required       → approved (ready to release funds)
+ * - everything else (draft, accumulating,
+ *   needs_attention)                        → draft (not yet signed off)
+ */
 function mapSelfBillStatus(sb: SelfBill): PayoutStatus {
   if (sb.status === "paid") return "paid";
   if (isSelfBillPayoutVoided(sb) || sb.status === "rejected") return "cancelled";
-  return "ready";
+  if (
+    sb.status === "ready_to_pay" ||
+    sb.status === "pending_review" ||
+    sb.status === "awaiting_payment" ||
+    sb.status === "audit_required"
+  ) {
+    return "approved";
+  }
+  return "draft";
 }
 
+/**
+ * Supplier bill → payout status
+ * - paid                     → paid
+ * - rejected                 → cancelled
+ * - approved                 → approved
+ * - submitted / needs_attention → draft (awaiting review)
+ */
 function mapBillStatus(b: Bill): PayoutStatus {
   if (b.status === "paid") return "paid";
   if (b.status === "rejected") return "cancelled";
-  if (b.status === "needs_attention") return "skipped";
-  return "ready";
+  if (b.status === "approved") return "approved";
+  return "draft";
 }
 
 /**
@@ -286,7 +315,8 @@ export async function fetchPayoutRange(
     const isInRange = it.weekStart >= rangeStart && it.weekStart <= rangeEnd;
     if (isInRange) {
       inRange.push(it);
-    } else if (it.status === "ready" || it.status === "skipped") {
+    } else if (it.status === "approved" || it.status === "draft") {
+      // "Still open" = anything not paid / cancelled that lives before the active range.
       overdue.push(it);
     }
   }
@@ -341,7 +371,7 @@ export function buildPayoutCsv(items: PayoutItem[], weekLabel: string): string {
     .concat(`# ${weekLabel}\n`);
 }
 
-/** Exported so mapSelfBillStatus / bill mappers stay authoritative if reused. */
-export const STATUS_ORDER: PayoutStatus[] = ["ready", "skipped", "paid", "cancelled"];
+/** Tab order — matches Fixfy lifecycle vocabulary. */
+export const STATUS_ORDER: PayoutStatus[] = ["draft", "approved", "paid", "cancelled"];
 export const CATEGORY_ORDER: PayoutCategory[] = ["workforce", "partners", "expenses"];
 export { SELF_BILL_PAYOUT_VOID_STATUSES };

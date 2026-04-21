@@ -40,7 +40,7 @@ import {
 } from "./payout-data";
 import { ReviewPayModal } from "./review-pay-modal";
 
-type PrimaryTab = "all" | "ready" | "skipped" | "paid" | "cancelled";
+type PrimaryTab = "all" | "draft" | "approved" | "paid" | "cancelled";
 type CategoryFilter = "all" | PayoutCategory;
 
 const CATEGORY_META: Record<
@@ -114,12 +114,11 @@ export default function PayoutPage() {
   const [rangeEnd, setRangeEnd] = useState("");
   const [loading, setLoading] = useState(true);
 
-  const [primaryTab, setPrimaryTab] = useState<PrimaryTab>("ready");
+  const [primaryTab, setPrimaryTab] = useState<PrimaryTab>("approved");
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [search, setSearch] = useState("");
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [localSkipped, setLocalSkipped] = useState<Set<string>>(new Set());
   const [localPaid, setLocalPaid] = useState<Set<string>>(new Set());
   const [collapsedGroups, setCollapsedGroups] = useState<Set<PayoutCategory>>(new Set());
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -170,18 +169,17 @@ export default function PayoutPage() {
   const effectiveStatus = useCallback(
     (it: PayoutItem): PayoutStatus => {
       if (localPaid.has(it.id)) return "paid";
-      if (localSkipped.has(it.id)) return "skipped";
       return it.status;
     },
-    [localPaid, localSkipped],
+    [localPaid],
   );
 
   const primaryCounts = useMemo(() => {
-    const counts = { ready: 0, skipped: 0, paid: 0, cancelled: 0, all: items.length };
+    const counts = { draft: 0, approved: 0, paid: 0, cancelled: 0, all: items.length };
     for (const it of items) {
       const st = effectiveStatus(it);
-      if (st === "ready") counts.ready++;
-      else if (st === "skipped") counts.skipped++;
+      if (st === "draft") counts.draft++;
+      else if (st === "approved") counts.approved++;
       else if (st === "paid") counts.paid++;
       else if (st === "cancelled") counts.cancelled++;
     }
@@ -266,7 +264,7 @@ export default function PayoutPage() {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       for (const r of rows) {
-        if (effectiveStatus(r) !== "ready") continue;
+        if (effectiveStatus(r) !== "approved") continue;
         if (select) next.add(r.id);
         else next.delete(r.id);
       }
@@ -275,7 +273,7 @@ export default function PayoutPage() {
   };
 
   const selectAllVisibleReady = () => {
-    const ready = filteredItems.filter((r) => effectiveStatus(r) === "ready");
+    const ready = filteredItems.filter((r) => effectiveStatus(r) === "approved");
     setSelectedIds(new Set(ready.map((r) => r.id)));
   };
 
@@ -290,27 +288,12 @@ export default function PayoutPage() {
 
   const markPaidLocal = (id: string) => {
     setLocalPaid((prev) => new Set(prev).add(id));
-    setLocalSkipped((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
       return next;
     });
     toast.success("Marked paid (session)");
-  };
-
-  const skipLocal = (id: string) => {
-    setLocalSkipped((prev) => new Set(prev).add(id));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-    toast.message("Skipped for this payout run");
   };
 
   const exportAllVisible = () => {
@@ -355,7 +338,7 @@ export default function PayoutPage() {
     return sorted[0].weekLabel.replace(/^\d{4}-W/, "Wk ");
   }, [overdueItems]);
 
-  const allReadyVisible = useMemo(() => filteredItems.filter((r) => effectiveStatus(r) === "ready"), [filteredItems, effectiveStatus]);
+  const allReadyVisible = useMemo(() => filteredItems.filter((r) => effectiveStatus(r) === "approved"), [filteredItems, effectiveStatus]);
   const allReadySelected =
     allReadyVisible.length > 0 && allReadyVisible.every((r) => selectedIds.has(r.id));
 
@@ -436,7 +419,7 @@ export default function PayoutPage() {
               size="sm"
               className="shrink-0 border-[#F5BFBF] bg-card text-[#A32D2D] hover:bg-white"
               onClick={() => {
-                setPrimaryTab("ready");
+                setPrimaryTab("approved");
                 setPeriodMode("range");
                 const earliestDate = overdueItems
                   .map((i) => i.weekStart)
@@ -490,8 +473,8 @@ export default function PayoutPage() {
             {(
               [
                 { id: "all", label: "All", count: primaryCounts.all },
-                { id: "ready", label: "Ready", count: primaryCounts.ready, accent: true },
-                { id: "skipped", label: "Skipped", count: primaryCounts.skipped },
+                { id: "draft", label: "Draft", count: primaryCounts.draft },
+                { id: "approved", label: "Approved", count: primaryCounts.approved, accent: true },
                 { id: "paid", label: "Paid", count: primaryCounts.paid },
                 { id: "cancelled", label: "Cancelled", count: primaryCounts.cancelled },
               ] as Array<{ id: PrimaryTab; label: string; count: number; accent?: boolean }>
@@ -576,7 +559,7 @@ export default function PayoutPage() {
               onClick={selectAllVisibleReady}
               disabled={allReadyVisible.length === 0}
             >
-              {allReadySelected ? "Clear selection" : "Select all ready"}
+              {allReadySelected ? "Clear selection" : "Select all approved"}
             </Button>
           </div>
         </div>
@@ -594,7 +577,7 @@ export default function PayoutPage() {
               const meta = CATEGORY_META[g.key];
               const Icon = meta.Icon;
               const total = g.rows.reduce((s, i) => s + i.amount, 0);
-              const readyRows = g.rows.filter((r) => effectiveStatus(r) === "ready");
+              const readyRows = g.rows.filter((r) => effectiveStatus(r) === "approved");
               const allSelected = readyRows.length > 0 && readyRows.every((r) => selectedIds.has(r.id));
               const collapsed = collapsedGroups.has(g.key);
               const totalSplit = splitAmount(total);
@@ -649,7 +632,6 @@ export default function PayoutPage() {
                           selected={selectedIds.has(row.id)}
                           onToggleSelect={() => toggleOne(row.id)}
                           onMarkPaid={() => markPaidLocal(row.id)}
-                          onSkip={() => skipLocal(row.id)}
                         />
                       ))}
                     </div>
@@ -795,33 +777,30 @@ function PayoutRow({
   selected,
   onToggleSelect,
   onMarkPaid,
-  onSkip,
 }: {
   row: PayoutItem;
   status: PayoutStatus;
   selected: boolean;
   onToggleSelect: () => void;
   onMarkPaid: () => void;
-  onSkip: () => void;
 }) {
-  const isReady = status === "ready";
-  const isPaid = status === "paid";
+  const isApproved = status === "approved";
+  const isDraft = status === "draft";
   const amount = splitAmount(row.amount);
   const wkShort = row.weekLabel.replace(/^\d{4}-W/, "Wk ");
   return (
     <div
       className={cn(
         "flex items-center gap-3 border-t border-border-light px-4 py-3 sm:px-5",
-        isReady && "bg-[#FFFDFA]",
-        isPaid && "bg-card",
-        !isReady && !isPaid && "bg-card",
+        isApproved && "bg-[#FFFDFA]",
+        !isApproved && "bg-card",
       )}
     >
       <input
         type="checkbox"
         checked={selected}
         onChange={onToggleSelect}
-        disabled={!isReady}
+        disabled={!isApproved}
         aria-label={`Select ${row.name}`}
         className="h-4 w-4 shrink-0"
       />
@@ -881,25 +860,26 @@ function PayoutRow({
       </div>
 
       <div className="flex items-center gap-1 shrink-0 sm:w-36 sm:justify-end">
-        {isReady ? (
-          <>
-            <button
-              type="button"
-              onClick={onMarkPaid}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#0F6E56]/30 bg-[#EFF7F3] text-[#0F6E56] transition-colors hover:bg-[#DBEEE5]"
-              title="Mark paid"
-            >
-              <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
-            </button>
-            <button
-              type="button"
-              onClick={onSkip}
-              className="inline-flex h-7 items-center justify-center rounded-md border border-border-light bg-card px-2 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-surface-hover"
-              title="Skip this payout"
-            >
-              Skip
-            </button>
-          </>
+        {isApproved ? (
+          <button
+            type="button"
+            onClick={onMarkPaid}
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-[#0F6E56]/30 bg-[#EFF7F3] px-2 text-[11px] font-semibold text-[#0F6E56] transition-colors hover:bg-[#DBEEE5]"
+            title="Mark paid"
+          >
+            <Check className="h-3 w-3" strokeWidth={2.5} />
+            Mark paid
+          </button>
+        ) : isDraft ? (
+          <Link
+            href={row.linkHref}
+            target="_blank"
+            rel="noopener"
+            className="inline-flex h-7 items-center rounded-md border border-border-light bg-card px-2 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-surface-hover"
+            title="Review & approve in origin"
+          >
+            Review
+          </Link>
         ) : (
           <StatusChip status={status} />
         )}
@@ -924,10 +904,10 @@ function StatusChip({ status }: { status: PayoutStatus }) {
         <Check className="h-3 w-3" strokeWidth={3} /> Paid
       </span>
     );
-  if (status === "skipped")
+  if (status === "draft")
     return (
       <span className="inline-flex items-center gap-1 rounded-md bg-[#F1EFE8] px-2 py-0.5 text-[11px] font-semibold text-[#6B6B70]">
-        Skipped
+        Draft
       </span>
     );
   if (status === "cancelled")
@@ -941,12 +921,12 @@ function StatusChip({ status }: { status: PayoutStatus }) {
 
 function EmptyState({ primaryTab }: { primaryTab: PrimaryTab }) {
   const msg =
-    primaryTab === "ready"
-      ? "Nothing ready to pay in this period."
+    primaryTab === "approved"
+      ? "Nothing approved and ready to pay in this period."
       : primaryTab === "paid"
         ? "No payments made yet in this period."
-        : primaryTab === "skipped"
-          ? "Nothing skipped in this period."
+        : primaryTab === "draft"
+          ? "No drafts waiting for review."
           : primaryTab === "cancelled"
             ? "Nothing cancelled."
             : "No items match these filters.";
