@@ -10,7 +10,8 @@ import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financia
 import { listCommissionTiers } from "@/services/tiers";
 import type { CommissionTier } from "@/types/database";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { Building2, Layers, Target, Users, CalendarDays } from "lucide-react";
+import { Layers, Target, Users, CalendarDays } from "lucide-react";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import {
   buildWeeklyCashPositionBuckets,
   buildWeeklyJobSoldSeries,
@@ -97,14 +98,21 @@ export function OverviewExecutiveBundle() {
   const [monthlyDirectCost, setMonthlyDirectCost] = useState(0);
   const [monthlyBills, setMonthlyBills] = useState(0);
   const [monthlyPayroll, setMonthlyPayroll] = useState(0);
+  /** Per-day revenue + direct cost for the current month, keyed by YYYY-MM-DD. */
+  const [dailyBreakdown, setDailyBreakdown] = useState<Record<string, { revenue: number; cost: number }>>({});
   const currentMonthLabel = useMemo(() => localCalendarMonthYmdBounds(new Date()).monthLabel, []);
   const [billingForTier, setBillingForTier] = useState(0);
   const [tierMonthLabel, setTierMonthLabel] = useState("");
   const [tiers, setTiers] = useState<CommissionTier[]>([]);
+  // Top 5 — account owners and Top 5 — accounts cards were hidden. We keep the
+  // state wired so the derivation query stays consistent, but the values are
+  // unused in the rendered tree. If the cards come back, only JSX changes.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [accountOwnerLeaderboard, setAccountOwnerLeaderboard] = useState<
     { ownerProfileId: string | null; displayName: string; revenue: number }[]
   >([]);
   const [topPartners, setTopPartners] = useState<{ name: string; marginContribution: number }[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [topAccounts, setTopAccounts] = useState<
     { accountId: string; name: string; revenue: number; ownerName?: string | null }[]
   >([]);
@@ -644,9 +652,18 @@ export function OverviewExecutiveBundle() {
         ]);
         let rev = 0;
         let direct = 0;
+        const perDay: Record<string, { revenue: number; cost: number }> = {};
         for (const r of rows) {
-          rev += jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]);
-          direct += jobDirectCost(r as OverviewPipelineJobRow);
+          const rowRevenue = jobBillableRevenue(r as Parameters<typeof jobBillableRevenue>[0]);
+          const rowCost = jobDirectCost(r as OverviewPipelineJobRow);
+          rev += rowRevenue;
+          direct += rowCost;
+          const day = (r.scheduled_date ?? "").slice(0, 10);
+          if (day) {
+            if (!perDay[day]) perDay[day] = { revenue: 0, cost: 0 };
+            perDay[day].revenue += rowRevenue;
+            perDay[day].cost += rowCost;
+          }
         }
         const bills = (billsRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
         const payroll = (payrollRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
@@ -655,6 +672,7 @@ export function OverviewExecutiveBundle() {
           setMonthlyDirectCost(direct);
           setMonthlyBills(bills);
           setMonthlyPayroll(payroll);
+          setDailyBreakdown(perDay);
         }
       } catch {
         if (!cancelled) {
@@ -662,6 +680,7 @@ export function OverviewExecutiveBundle() {
           setMonthlyDirectCost(0);
           setMonthlyBills(0);
           setMonthlyPayroll(0);
+          setDailyBreakdown({});
         }
       } finally {
         if (!cancelled) setMonthlyLoading(false);
@@ -670,6 +689,62 @@ export function OverviewExecutiveBundle() {
     void loadMonthly();
     return () => { cancelled = true; };
   }, []);
+
+  /**
+   * Daily operations table: Mon–Sat of the current calendar month.
+   * Overhead is monthly (bills + payroll) divided evenly across working days
+   * (Mon–Sat, excluding Sundays) so every operational day carries a fair share.
+   */
+  const dailyOperations = useMemo(() => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = today.getMonth();
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    const rows: Array<{
+      ymd: string;
+      label: string;
+      weekdayLabel: string;
+      revenue: number;
+      cost: number;
+      overhead: number;
+      margin: number;
+      marginPct: number;
+      isToday: boolean;
+      isFuture: boolean;
+    }> = [];
+    // Count Mon–Sat (1–6) in this month; Sunday (0) excluded from overhead allocation.
+    let workingDays = 0;
+    for (let d = 1; d <= lastDay; d++) {
+      const wd = new Date(year, month, d).getDay();
+      if (wd !== 0) workingDays++;
+    }
+    const dailyOverhead = workingDays > 0 ? (monthlyBills + monthlyPayroll) / workingDays : 0;
+    const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    for (let d = 1; d <= lastDay; d++) {
+      const dayDate = new Date(year, month, d);
+      const wd = dayDate.getDay();
+      if (wd === 0) continue; // skip Sundays from operational view
+      const ymd = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      const row = dailyBreakdown[ymd] ?? { revenue: 0, cost: 0 };
+      const overhead = dailyOverhead;
+      const margin = row.revenue - row.cost - overhead;
+      const marginPct = row.revenue > 0 ? Math.round((margin / row.revenue) * 1000) / 10 : 0;
+      const weekdayLabel = dayDate.toLocaleDateString(undefined, { weekday: "short" });
+      rows.push({
+        ymd,
+        label: String(d),
+        weekdayLabel,
+        revenue: row.revenue,
+        cost: row.cost,
+        overhead,
+        margin,
+        marginPct,
+        isToday: ymd === todayYmd,
+        isFuture: ymd > todayYmd,
+      });
+    }
+    return { rows, workingDays, dailyOverhead };
+  }, [dailyBreakdown, monthlyBills, monthlyPayroll]);
 
   const monthlyGross = monthlyRevenue - monthlyDirectCost;
   const monthlyNet = monthlyRevenue - monthlyDirectCost - monthlyBills - monthlyPayroll;
@@ -776,57 +851,59 @@ export function OverviewExecutiveBundle() {
             },
           ].map((cell) => (
             <div key={cell.label} className="p-3 sm:p-4">
-              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">{cell.label}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">{cell.label}</p>
+                <FixfyHintIcon text={cell.sub} />
+              </div>
               <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", cell.accent)}>
                 {monthlyLoading ? "—" : formatCurrency(cell.value)}
               </p>
-              <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">{cell.sub}</p>
             </div>
           ))}
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 divide-border-light sm:divide-x">
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
-              Quotes awaiting customer
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+                Quotes awaiting customer
+              </p>
+              <FixfyHintIcon text={loading ? "Awaiting customer response" : `${funnel.quotesAwaitingCount} open (not accepted)`} />
+            </div>
             <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-sky-600")}>
               {loading ? "—" : formatCurrency(funnel.quotesAwaiting)}
             </p>
-            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              {loading ? "—" : `${funnel.quotesAwaitingCount} open (not accepted)`}
-            </p>
           </div>
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
-              Workforce cost
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+                Workforce cost
+              </p>
+              <FixfyHintIcon text={`Internal payroll · ${currentMonthLabel}`} />
+            </div>
             <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-orange-600")}>
               {monthlyLoading ? "—" : formatCurrency(monthlyPayroll)}
             </p>
-            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              Internal payroll · {currentMonthLabel}
-            </p>
           </div>
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
-              Total bills
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+                Total bills
+              </p>
+              <FixfyHintIcon text={`Supplier bills · ${currentMonthLabel}`} />
+            </div>
             <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-rose-600")}>
               {monthlyLoading ? "—" : formatCurrency(monthlyBills)}
             </p>
-            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              Supplier bills · {currentMonthLabel}
-            </p>
           </div>
           <div className="p-3 sm:p-4">
-            <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
-              Total overhead
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">
+                Total overhead
+              </p>
+              <FixfyHintIcon text={`Workforce + bills · ${currentMonthLabel}`} />
+            </div>
             <p className={cn("text-lg sm:text-xl font-bold tabular-nums mt-0.5", "text-purple-600")}>
               {monthlyLoading ? "—" : formatCurrency(monthlyPayroll + monthlyBills)}
-            </p>
-            <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-              Workforce + bills · {currentMonthLabel}
             </p>
           </div>
         </div>
@@ -872,6 +949,125 @@ export function OverviewExecutiveBundle() {
           )}
         </div>
       </Card> : null}
+
+      {/* ── Daily Operations (Mon–Sat per calendar day of the current month) ── */}
+      <Card padding="none" className="overflow-hidden border-border-light">
+        <CardHeader className="px-4 pt-3 pb-2">
+          <div className="flex items-start justify-between gap-2.5 flex-wrap">
+            <div className="flex items-start gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-sky-500/10 flex items-center justify-center shrink-0">
+                <CalendarDays className="h-3.5 w-3.5 text-emerald-600" />
+              </div>
+              <div>
+                <CardTitle className="text-sm font-semibold">Daily Operations — {currentMonthLabel}</CardTitle>
+                <p className="text-[10px] text-text-tertiary mt-0.5">
+                  Revenue, service cost and daily overhead · Mon–Sat · overhead split evenly across {dailyOperations.workingDays} working days
+                </p>
+              </div>
+            </div>
+            <p className="text-[10px] text-text-tertiary whitespace-nowrap">
+              Overhead · <span className="tabular-nums font-semibold text-text-secondary">{formatCurrency(dailyOperations.dailyOverhead)}</span>/day
+            </p>
+          </div>
+        </CardHeader>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs min-w-[640px]">
+            <thead>
+              <tr className="bg-[#FAFAFB] border-y border-border-light">
+                <th className="text-left px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Day</th>
+                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Revenue</th>
+                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Service cost</th>
+                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Overhead</th>
+                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">Margin</th>
+                <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthlyLoading ? (
+                Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-b border-border-light/60 last:border-0">
+                    <td colSpan={6} className="px-3 py-2">
+                      <div className="h-5 animate-pulse rounded bg-surface-hover" />
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                dailyOperations.rows.map((r) => {
+                  const marginPositive = r.margin >= 0;
+                  const hasRevenue = r.revenue > 0;
+                  return (
+                    <tr
+                      key={r.ymd}
+                      className={cn(
+                        "border-b border-border-light/60 last:border-0",
+                        r.isToday && "bg-amber-50/60",
+                        r.isFuture && "opacity-60",
+                      )}
+                    >
+                      <td className="px-3 py-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-surface-hover text-[10px] font-semibold text-text-secondary tabular-nums">
+                            {r.label}
+                          </span>
+                          <span className="text-[11px] text-text-tertiary">{r.weekdayLabel}</span>
+                          {r.isToday ? <span className="text-[9px] font-bold text-amber-700 uppercase tracking-wide">Today</span> : null}
+                        </div>
+                      </td>
+                      <td className={cn("px-3 py-1.5 text-right tabular-nums font-semibold", hasRevenue ? "text-emerald-700" : "text-text-tertiary")}>
+                        {formatCurrency(r.revenue)}
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-amber-700">
+                        {formatCurrency(r.cost)}
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-purple-600">
+                        {formatCurrency(r.overhead)}
+                      </td>
+                      <td className={cn("px-3 py-1.5 text-right tabular-nums font-semibold", marginPositive ? "text-emerald-700" : "text-rose-600")}>
+                        {formatCurrency(r.margin)}
+                      </td>
+                      <td className={cn("px-3 py-1.5 text-right tabular-nums text-[11px] font-semibold", marginPositive ? "text-emerald-700" : "text-rose-600")}>
+                        {hasRevenue ? `${r.marginPct}%` : "—"}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+            {!monthlyLoading && dailyOperations.rows.length > 0 ? (
+              <tfoot>
+                <tr className="bg-[#FAFAFB] border-t border-border-light">
+                  <td className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Month total</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-bold text-emerald-700">
+                    {formatCurrency(dailyOperations.rows.reduce((s, r) => s + r.revenue, 0))}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-bold text-amber-700">
+                    {formatCurrency(dailyOperations.rows.reduce((s, r) => s + r.cost, 0))}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-bold text-purple-600">
+                    {formatCurrency(dailyOperations.rows.reduce((s, r) => s + r.overhead, 0))}
+                  </td>
+                  {(() => {
+                    const monthMargin = dailyOperations.rows.reduce((s, r) => s + r.margin, 0);
+                    const monthRev = dailyOperations.rows.reduce((s, r) => s + r.revenue, 0);
+                    const monthMarginPct = monthRev > 0 ? Math.round((monthMargin / monthRev) * 1000) / 10 : 0;
+                    const positive = monthMargin >= 0;
+                    return (
+                      <>
+                        <td className={cn("px-3 py-2 text-right tabular-nums font-bold", positive ? "text-emerald-700" : "text-rose-600")}>
+                          {formatCurrency(monthMargin)}
+                        </td>
+                        <td className={cn("px-3 py-2 text-right tabular-nums font-bold", positive ? "text-emerald-700" : "text-rose-600")}>
+                          {monthRev > 0 ? `${monthMarginPct}%` : "—"}
+                        </td>
+                      </>
+                    );
+                  })()}
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+        </div>
+      </Card>
 
       <Card padding="none" className="overflow-hidden border-border-light">
         <CardHeader className="px-4 pt-3 pb-2">
@@ -1006,71 +1202,6 @@ export function OverviewExecutiveBundle() {
                   <p className="text-xs font-bold tabular-nums text-text-primary shrink-0">
                     {formatCurrency(row.marginContribution)}
                   </p>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <Card padding="none" className="border-border-light h-full flex flex-col min-h-0 overflow-hidden">
-          <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-start justify-between gap-2 mb-0 shrink-0">
-            <div className="flex items-start gap-2 min-w-0">
-              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-sky-500/20 to-indigo-500/10 flex items-center justify-center shrink-0">
-                <Users className="h-3.5 w-3.5 text-sky-600" />
-              </div>
-              <div className="min-w-0">
-                <CardTitle className="text-sm font-semibold">Top 5 — account owners</CardTitle>
-                <p className="text-[10px] text-text-tertiary mt-0.5">
-                  By <strong className="text-text-secondary">account_owner_id</strong> · booked revenue ·{" "}
-                  {revenuePeriodSubtext}
-                </p>
-              </div>
-            </div>
-          </CardHeader>
-          <div className="px-3 pb-3 space-y-1 flex-1 min-h-0">
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-8 animate-pulse rounded-md bg-surface-hover" />)
-            ) : accountOwnerLeaderboard.length === 0 ? (
-              <p className="text-xs text-text-tertiary py-3 text-center">No account-linked revenue in this period</p>
-            ) : (
-              accountOwnerLeaderboard.map((row, i) => (
-                <div
-                  key={row.ownerProfileId ?? `unassigned-${i}`}
-                  className="flex items-center gap-2 py-1.5 border-b border-border-light/50 last:border-0"
-                >
-                  <span className={rankBadgeClass(i)}>{i + 1}</span>
-                  <p className="text-xs font-medium text-text-primary truncate flex-1">{row.displayName}</p>
-                  <p className="text-xs font-bold tabular-nums text-text-primary shrink-0">{formatCurrency(row.revenue)}</p>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <Card padding="none" className="border-border-light h-full flex flex-col min-h-0">
-          <CardHeader className="px-3 pt-3 pb-1.5 flex flex-row items-center justify-between shrink-0 mb-0">
-            <div>
-              <CardTitle className="text-sm font-semibold">Top 5 — accounts</CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">By account · auto-link clients without account</p>
-            </div>
-            <Building2 className="h-3.5 w-3.5 text-text-tertiary" />
-          </CardHeader>
-          <div className="px-3 pb-3 space-y-1 flex-1 min-h-0">
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-8 animate-pulse rounded-md bg-surface-hover" />)
-            ) : topAccounts.length === 0 ? (
-              <p className="text-xs text-text-tertiary py-3 text-center">No account-linked revenue</p>
-            ) : (
-              topAccounts.map((row, i) => (
-                <div key={row.accountId} className="flex items-center gap-2 py-1.5 border-b border-border-light/50 last:border-0">
-                  <span className={rankBadgeClass(i)}>{i + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-text-primary truncate">{row.name}</p>
-                    {row.ownerName ? (
-                      <p className="text-[10px] text-text-tertiary truncate">Owner: {row.ownerName}</p>
-                    ) : null}
-                  </div>
-                  <p className="text-xs font-bold tabular-nums text-text-primary shrink-0">{formatCurrency(row.revenue)}</p>
                 </div>
               ))
             )}
