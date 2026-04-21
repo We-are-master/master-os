@@ -23,6 +23,8 @@ interface KpiCardProps {
   description?: string;
   /** When true, render the description as a hover `!` tooltip next to the title instead of a body line. */
   descriptionAsTooltip?: boolean;
+  /** Tighter padding + smaller type — use in dense layouts like the Live Map header row. */
+  compact?: boolean;
   className?: string;
 }
 
@@ -45,6 +47,7 @@ export function KpiCard({
   accent = "primary",
   description,
   descriptionAsTooltip = false,
+  compact = false,
   className,
 }: KpiCardProps) {
   const formattedValue = (() => {
@@ -61,18 +64,35 @@ export function KpiCard({
 
   return (
     <motion.div variants={staggerItem} className="h-full min-w-0 w-full">
-      <Card className={cn("relative overflow-hidden group h-full flex flex-col", className)}>
-        <div className="flex items-start justify-between gap-3 flex-1 min-h-0">
-          <div className="space-y-2 flex-1 min-w-0">
+      <Card
+        padding={compact ? "none" : "md"}
+        className={cn(
+          "relative overflow-hidden group h-full flex flex-col",
+          compact && "px-3 py-2.5",
+          className,
+        )}
+      >
+        <div className="flex items-start justify-between gap-2 flex-1 min-h-0">
+          <div className={cn("flex-1 min-w-0", compact ? "space-y-0.5" : "space-y-2")}>
             <div className="flex items-center gap-1.5">
-              <p className="text-xs font-medium text-text-secondary uppercase tracking-wide">
+              <p
+                className={cn(
+                  "font-medium text-text-secondary uppercase tracking-wide",
+                  compact ? "text-[10px]" : "text-xs",
+                )}
+              >
                 {title}
               </p>
               {descriptionAsTooltip && description ? (
                 <FixfyHintIcon text={description} />
               ) : null}
             </div>
-            <p className="text-2xl font-bold text-text-primary tracking-tight">
+            <p
+              className={cn(
+                "font-bold text-text-primary tracking-tight",
+                compact ? "text-lg" : "text-2xl",
+              )}
+            >
               {formattedValue}
             </p>
             {change !== undefined && (
@@ -97,17 +117,20 @@ export function KpiCard({
               </div>
             )}
             {description && !descriptionAsTooltip ? (
-              <p className="text-xs text-text-tertiary line-clamp-2">{description}</p>
+              <p className={cn("text-text-tertiary line-clamp-2", compact ? "text-[10px]" : "text-xs")}>
+                {description}
+              </p>
             ) : null}
           </div>
           {Icon && (
             <div
               className={cn(
-                "h-10 w-10 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110",
-                accentStyles[accent]
+                "rounded-xl flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110",
+                compact ? "h-8 w-8 rounded-lg" : "h-10 w-10",
+                accentStyles[accent],
               )}
             >
-              <Icon className="h-5 w-5" />
+              <Icon className={compact ? "h-4 w-4" : "h-5 w-5"} />
             </div>
           )}
         </div>

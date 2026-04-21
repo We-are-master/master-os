@@ -183,6 +183,7 @@ export default function SchedulePage() {
   const [selectedJobAccountName, setSelectedJobAccountName] = useState<string | null>(null);
   const [accountLogoByClientId, setAccountLogoByClientId] = useState<Map<string, string | null>>(() => new Map());
   const [legendBarChipsOpen, setLegendBarChipsOpen] = useState(false);
+  const [liveMapLegendOpen, setLiveMapLegendOpen] = useState(true);
   const [view, setView] = useState<"calendar" | "live_map">("calendar");
   const [liveMapPoints, setLiveMapPoints] = useState<ScheduleLiveMapPoint[]>([]);
   const [loadingLiveMap, setLoadingLiveMap] = useState(false);
@@ -759,9 +760,10 @@ export default function SchedulePage() {
         )}
 
         <StaggerContainer className="grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4">
-          <KpiCard title="Jobs this month" value={activeCount} format="number" icon={Briefcase} accent="blue" />
-          <KpiCard title="In progress" value={inProgressCount} format="number" icon={RefreshCw} accent="emerald" />
+          <KpiCard compact title="Jobs this month" value={activeCount} format="number" icon={Briefcase} accent="blue" />
+          <KpiCard compact title="In progress" value={inProgressCount} format="number" icon={RefreshCw} accent="emerald" />
           <KpiCard
+            compact
             title={view === "calendar" ? "Total revenue this month" : "Total on map"}
             value={view === "calendar" ? monthRevenue : liveMapPoints.length}
             format={view === "calendar" ? "currency" : "number"}
@@ -779,6 +781,7 @@ export default function SchedulePage() {
             descriptionAsTooltip
           />
           <KpiCard
+            compact
             title="Unassigned"
             value={unassignedCount}
             format="number"
@@ -1159,12 +1162,26 @@ export default function SchedulePage() {
                   )}
                 </div>
 
-                {/* Job-pin status legend — tells ops what each colour means.
-                     Uses the shared helper so the palette stays in sync with
-                     the map markers themselves. */}
+                {/* Job-pin status legend — collapsible so ops can reclaim
+                     vertical space once they've learnt the colour coding. */}
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#64748B]">
-                  <span className="font-semibold uppercase tracking-wide text-[#94A3B8]">Job pins:</span>
-                  {liveMapJobStatusLegend().map((entry) => (
+                  <button
+                    type="button"
+                    onClick={() => setLiveMapLegendOpen((o) => !o)}
+                    className="inline-flex items-center gap-1 hover:text-[#020040] transition-colors"
+                    aria-expanded={liveMapLegendOpen}
+                    aria-label={liveMapLegendOpen ? "Collapse legend" : "Expand legend"}
+                  >
+                    <ChevronRight
+                      className={cn(
+                        "h-3 w-3 shrink-0 transition-transform duration-200",
+                        liveMapLegendOpen && "rotate-90",
+                      )}
+                      aria-hidden
+                    />
+                    <span className="font-semibold uppercase tracking-wide text-[#94A3B8]">Job pins</span>
+                  </button>
+                  {liveMapLegendOpen && liveMapJobStatusLegend().map((entry) => (
                     <span key={entry.key} className="inline-flex items-center gap-1">
                       <span
                         className="inline-block h-2.5 w-2.5 rounded-[3px] ring-1 ring-white"
