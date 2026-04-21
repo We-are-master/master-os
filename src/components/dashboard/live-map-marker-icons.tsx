@@ -12,9 +12,9 @@ import {
   MapPin,
   Paintbrush,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Sprout,
-  Wrench,
   Zap,
 } from "lucide-react";
 import { createElement } from "react";
@@ -27,7 +27,7 @@ const ICON_BOX = 18;
 
 const TRADE_TO_ICON: Record<string, LucideIcon> = {
   Painter: Paintbrush,
-  [GENERAL_MAINTENANCE_LABEL]: Wrench,
+  [GENERAL_MAINTENANCE_LABEL]: ShieldCheck,
   Plumber: Droplets,
   Electrician: Zap,
   Builder: HardHat,
@@ -45,7 +45,7 @@ const TRADE_TO_ICON: Record<string, LucideIcon> = {
 
 function iconForCanonicalTrade(canonical: string): LucideIcon {
   const key = normalizeTypeOfWork(canonical) || canonical;
-  return TRADE_TO_ICON[key] ?? Wrench;
+  return TRADE_TO_ICON[key] ?? ShieldCheck;
 }
 
 export function liveMapTradeFilterOptions(): { value: string; label: string }[] {
@@ -155,8 +155,8 @@ export function createLiveMapMarkerElement(opts: {
   const extraTrades = Math.max(0, tradesNorm.length - 1);
 
   /** Icon: prefer the active trade filter (so "Plumber" filter shows droplets
-   *  on every pin), otherwise the partner's primary trade, fallback Wrench. */
-  const iconTrade = tradeFilter !== "all" ? tradeFilter : primaryTrade || "Wrench";
+   *  on every pin), otherwise the partner's primary trade, fallback ShieldCheck. */
+  const iconTrade = tradeFilter !== "all" ? tradeFilter : primaryTrade || "";
   const Icon = iconForCanonicalTrade(iconTrade);
   const innerHtml = staticIcon(Icon);
 
