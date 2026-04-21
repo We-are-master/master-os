@@ -939,7 +939,7 @@ export function OverviewExecutiveBundle() {
               <CardTitle className="text-sm font-semibold">Invoice due — cash forecast</CardTitle>
               <p className="text-[10px] text-text-tertiary mt-0.5">
                 Open invoice balance by <strong className="text-text-secondary">week of due date</strong> (uses invoice{" "}
-                <strong className="text-text-secondary">created</strong> when due is missing) · {bounds ? rangeLabel : "last ~26 weeks"}
+                <strong className="text-text-secondary">created</strong> when due is missing) · rolling 10-week window
               </p>
             </div>
           </div>
