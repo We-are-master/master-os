@@ -282,8 +282,24 @@ function TodayCell({
 }
 
 /**
- * Full-month Daily Operations table. Used on the Finance Dashboard.
- * Supports two summary positions (top / bottom) so pages can choose.
+ * Row background by performance (kept faint — purely a scanning aid):
+ * - margin < 0             → very pale red
+ * - 0 ≤ margin < 20%       → very pale amber
+ * - marginPct ≥ 20         → very pale emerald
+ * Rows with zero revenue still carry the day's overhead, so they land in red.
+ */
+function rowToneClass(margin: number, marginPct: number, hasRevenue: boolean): string {
+  if (!hasRevenue) return "bg-rose-50/40";
+  if (margin < 0) return "bg-rose-50/40";
+  if (marginPct < 20) return "bg-amber-50/30";
+  return "bg-emerald-50/40";
+}
+
+/**
+ * Full-month Daily Operations table.
+ * When `summaryPlacement="top"` a mini-dashboard of the month's totals is
+ * rendered above the table — five tiles with Revenue / Cost / Overhead /
+ * Margin / Margin %. When `"bottom"` the totals stay in the table's <tfoot>.
  */
 export function DailyOperationsTable({
   data,
@@ -293,7 +309,8 @@ export function DailyOperationsTable({
   summaryPlacement?: "top" | "bottom";
 }) {
   const { loading, rows, workingDays, dailyOverhead, monthLabel, totals } = data;
-  const summaryRow = rows.length > 0 ? (
+
+  const footerSummaryRow = rows.length > 0 ? (
     <tr className="bg-[#FAFAFB] border-y border-border-light">
       <td className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Month total</td>
       <td className="px-3 py-2 text-right tabular-nums font-bold text-emerald-700">
@@ -344,6 +361,12 @@ export function DailyOperationsTable({
           </p>
         </div>
       </CardHeader>
+
+      {/* Mini-dash: month-level KPIs above the table (top placement only). */}
+      {summaryPlacement === "top" ? (
+        <MonthTotalsDash totals={totals} loading={loading} />
+      ) : null}
+
       <div className="overflow-x-auto">
         <table className="w-full text-xs min-w-[640px]">
           <thead>
@@ -356,9 +379,6 @@ export function DailyOperationsTable({
               <th className="text-right px-3 py-2 font-semibold text-text-tertiary uppercase tracking-wide text-[10px]">%</th>
             </tr>
           </thead>
-          {summaryPlacement === "top" && !loading && summaryRow ? (
-            <tbody>{summaryRow}</tbody>
-          ) : null}
           <tbody>
             {loading ? (
               Array.from({ length: 6 }).map((_, i) => (
@@ -372,12 +392,13 @@ export function DailyOperationsTable({
               rows.map((r) => {
                 const marginPositive = r.margin >= 0;
                 const hasRevenue = r.revenue > 0;
+                const tone = rowToneClass(r.margin, r.marginPct, hasRevenue);
                 return (
                   <tr
                     key={r.ymd}
                     className={cn(
                       "border-b border-border-light/60 last:border-0",
-                      r.isToday && "bg-amber-50/60",
+                      tone,
                       r.isFuture && "opacity-60",
                     )}
                   >
@@ -423,9 +444,92 @@ export function DailyOperationsTable({
               })
             )}
           </tbody>
-          {summaryPlacement === "bottom" && !loading && summaryRow ? <tfoot>{summaryRow}</tfoot> : null}
+          {summaryPlacement === "bottom" && !loading && footerSummaryRow ? (
+            <tfoot>{footerSummaryRow}</tfoot>
+          ) : null}
         </table>
       </div>
     </Card>
+  );
+}
+
+/**
+ * 5-tile strip showing month aggregates, rendered above the full daily table
+ * when `summaryPlacement="top"`. Mirrors the Today tile visual language so the
+ * overview reads as one coherent block.
+ */
+function MonthTotalsDash({
+  totals,
+  loading,
+}: {
+  totals: DailyOpsData["totals"];
+  loading: boolean;
+}) {
+  const marginPositive = totals.margin >= 0;
+  const hasRevenue = totals.revenue > 0;
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-5 divide-y sm:divide-y-0 divide-border-light sm:divide-x border-y border-border-light bg-[#FAFAFB]">
+      <TotalCell
+        label="Month revenue"
+        hint="Billable revenue summed across the current calendar month"
+        value={formatCurrency(totals.revenue)}
+        accent="text-emerald-700"
+        loading={loading}
+      />
+      <TotalCell
+        label="Service cost"
+        hint="Partner + materials cost on jobs scheduled this month"
+        value={formatCurrency(totals.cost)}
+        accent="text-amber-700"
+        loading={loading}
+      />
+      <TotalCell
+        label="Overhead"
+        hint="Workforce + bills allocated across working days"
+        value={formatCurrency(totals.overhead)}
+        accent="text-purple-600"
+        loading={loading}
+      />
+      <TotalCell
+        label="Margin"
+        hint="Revenue − service cost − overhead"
+        value={formatCurrency(totals.margin)}
+        accent={marginPositive ? "text-emerald-700" : "text-rose-600"}
+        loading={loading}
+      />
+      <TotalCell
+        label="Margin %"
+        hint="Margin as a share of month revenue"
+        value={hasRevenue ? `${totals.marginPct}%` : "—"}
+        accent={marginPositive ? "text-emerald-700" : "text-rose-600"}
+        loading={loading}
+      />
+    </div>
+  );
+}
+
+function TotalCell({
+  label,
+  hint,
+  value,
+  accent,
+  loading,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  accent: string;
+  loading: boolean;
+}) {
+  return (
+    <div className="p-3 sm:p-4">
+      <div className="flex items-center gap-1.5">
+        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide leading-tight">{label}</p>
+        <FixfyHintIcon text={hint} />
+      </div>
+      <p className={cn("text-base sm:text-lg font-bold tabular-nums mt-0.5", accent)}>
+        {loading ? "—" : value}
+      </p>
+    </div>
   );
 }
