@@ -83,12 +83,11 @@ export function useDailyOperations(): DailyOpsData {
             .neq("status", "rejected")
             .gte("due_date", fromDay)
             .lte("due_date", toDay),
-          // Every active / onboarding payroll row — normalised to monthly below
-          // so a contractor whose next due has rolled into the next month still
-          // contributes to this month's workforce / overhead split.
+          // Every active / onboarding payroll row at its declared amount
+          // (no due_date filter — matches how People → Workforce sums them).
           supabase
             .from("payroll_internal_costs")
-            .select("id, amount, pay_frequency, lifecycle_stage")
+            .select("id, amount, lifecycle_stage")
             .neq("lifecycle_stage", "offboard"),
           // Internal self-bills — ad-hoc contractors not backed by a catalog row.
           supabase
@@ -110,31 +109,17 @@ export function useDailyOperations(): DailyOpsData {
         }
         const billsTotal = (billsRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
         /**
-         * Workforce cost = monthly-equivalent spend on all active workforce
-         * (weekly × 4.345, biweekly × 2.1725, monthly × 1) + ad-hoc contractors
-         * paid via internal self-bills this month that don't match a catalog row.
+         * Workforce cost = every active / onboarding payroll_internal_costs row at
+         * its declared amount + ad-hoc internal self-bills for this month whose
+         * internal_cost_id doesn't match a catalog row (dedup to avoid doubles).
          */
-        type PayrollRow = {
-          id?: string;
-          amount?: number;
-          pay_frequency?: "weekly" | "biweekly" | "monthly" | null;
-          lifecycle_stage?: string | null;
-        };
+        type PayrollRow = { id?: string; amount?: number; lifecycle_stage?: string | null };
         type InternalSbRow = { internal_cost_id?: string | null; net_payout?: number };
-        const MONTHLY_FACTOR: Record<string, number> = {
-          weekly: 4.345,
-          biweekly: 2.1725,
-          monthly: 1,
-        };
         const payrollRows = (payrollRes.data ?? []) as PayrollRow[];
         const internalSbRows = (internalSbRes.data ?? []) as InternalSbRow[];
         const payrollIds = new Set(payrollRows.map((p) => p.id).filter(Boolean) as string[]);
         let payrollTotal = 0;
-        for (const p of payrollRows) {
-          const freq = (p.pay_frequency ?? "monthly").toLowerCase();
-          const factor = MONTHLY_FACTOR[freq] ?? 1;
-          payrollTotal += Number(p.amount ?? 0) * factor;
-        }
+        for (const p of payrollRows) payrollTotal += Number(p.amount ?? 0);
         for (const sb of internalSbRows) {
           const linkedId = sb.internal_cost_id?.trim();
           if (!linkedId || !payrollIds.has(linkedId)) {

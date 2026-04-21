@@ -660,11 +660,11 @@ export function OverviewExecutiveBundle() {
           Promise.resolve(),
           supabase.from("bills").select("amount").is("archived_at", null).neq("status", "rejected")
             .gte("due_date", fromDay).lte("due_date", toDay),
-          // Every active / onboarding payroll row — amount normalised to monthly
-          // below, so a contractor whose next due has rolled into the next month
-          // still counts for "this month's" workforce cost.
+          // Every active / onboarding payroll row at its declared amount.
+          // No due_date filter — a monthly contractor with next due in the
+          // following month is still part of this month's commitment.
           supabase.from("payroll_internal_costs")
-            .select("id, amount, pay_frequency, lifecycle_stage")
+            .select("id, amount, lifecycle_stage")
             .neq("lifecycle_stage", "offboard"),
           // Internal self-bills — capture ad-hoc contractors without a payroll catalog entry.
           supabase.from("self_bills")
@@ -682,37 +682,21 @@ export function OverviewExecutiveBundle() {
         }
         const bills = (billsRes.data ?? []).reduce((s, r) => s + Number((r as { amount?: number }).amount ?? 0), 0);
         /**
-         * Workforce cost = monthly-equivalent spend on all active/onboarding
-         * workforce, plus ad-hoc contractors paid through internal self-bills.
-         *  - Weekly rows    → amount × 4.345 (average weeks/month)
-         *  - Biweekly rows  → amount × 2.1725
-         *  - Monthly rows   → amount × 1
-         *  + any internal self-bill (bill_origin = "internal") in this month that
-         *    isn't already covered by one of the catalog rows (matched by id).
-         *  This keeps the KPI aligned with the sum visible in People → Workforce
-         *  regardless of where each person's next due date currently sits.
+         * Workforce cost = sum of every active / onboarding payroll_internal_costs
+         * row at its declared `amount`, regardless of where its next due date
+         * falls. This mirrors exactly what the user sees when they sum the cards
+         * in People → Workforce (no frequency multiplier — `amount` is stored
+         * as the period commitment and the People view treats it the same way).
+         * Ad-hoc contractors paid through internal self-bills are added on top,
+         * deduped by internal_cost_id so no row is counted twice.
          */
-        type PayrollRow = {
-          id?: string;
-          amount?: number;
-          pay_frequency?: "weekly" | "biweekly" | "monthly" | null;
-          lifecycle_stage?: string | null;
-        };
+        type PayrollRow = { id?: string; amount?: number; lifecycle_stage?: string | null };
         type InternalSbRow = { internal_cost_id?: string | null; net_payout?: number };
-        const MONTHLY_FACTOR: Record<string, number> = {
-          weekly: 4.345,
-          biweekly: 2.1725,
-          monthly: 1,
-        };
         const payrollRows = (payrollRes.data ?? []) as PayrollRow[];
         const internalSbRows = (internalSbRes.data ?? []) as InternalSbRow[];
         const payrollIds = new Set(payrollRows.map((p) => p.id).filter(Boolean) as string[]);
         let payroll = 0;
-        for (const p of payrollRows) {
-          const freq = (p.pay_frequency ?? "monthly").toLowerCase();
-          const factor = MONTHLY_FACTOR[freq] ?? 1;
-          payroll += Number(p.amount ?? 0) * factor;
-        }
+        for (const p of payrollRows) payroll += Number(p.amount ?? 0);
         for (const sb of internalSbRows) {
           const linkedId = sb.internal_cost_id?.trim();
           if (!linkedId || !payrollIds.has(linkedId)) {
