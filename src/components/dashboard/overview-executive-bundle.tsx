@@ -10,9 +10,9 @@ import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financia
 import { listCommissionTiers } from "@/services/tiers";
 import type { CommissionTier } from "@/types/database";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { Layers, Target, Users, CalendarDays } from "lucide-react";
+import { Layers, Target, Users, CalendarDays, ChevronDown, ChevronRight } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
-import { DailyOperationsTodayTile, useDailyOperations } from "./daily-operations";
+import { DailyOperationsTable, DailyOperationsTodayTile, useDailyOperations } from "./daily-operations";
 import {
   buildWeeklyCashPositionBuckets,
   buildWeeklyJobSoldSeries,
@@ -883,8 +883,9 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card> : null}
 
-      {/* Today snapshot — full month breakdown lives on /finance/dashboard */}
+      {/* Today snapshot — full month breakdown below, collapsed by default */}
       <DailyOperationsTodayTile data={dailyOps} />
+      <DailyOperationsDetails data={dailyOps} />
 
       <Card padding="none" className="overflow-hidden border-border-light">
         <CardHeader className="px-4 pt-3 pb-2">
@@ -1181,6 +1182,32 @@ export function OverviewExecutiveBundle() {
           )}
         </div>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * Collapsible wrapper under the Today tile: the full Mon–Sat table lives behind
+ * a disclosure toggle so the overview stays scannable by default, and finance
+ * can drill into the day-by-day breakdown without leaving the page.
+ */
+function DailyOperationsDetails({ data }: { data: ReturnType<typeof useDailyOperations> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-text-secondary hover:text-text-primary transition-colors"
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        {open ? "Hide daily breakdown" : "Show daily breakdown"}
+        <span className="ml-1 text-[10px] font-normal text-text-tertiary">
+          Mon–Sat · {data.monthLabel}
+        </span>
+      </button>
+      {open ? <DailyOperationsTable data={data} summaryPlacement="top" /> : null}
     </div>
   );
 }
