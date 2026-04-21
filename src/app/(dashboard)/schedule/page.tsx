@@ -26,6 +26,7 @@ import {
   type LiveMapJobStatusCategory,
 } from "@/components/dashboard/live-map-marker-icons";
 import { liveMapPointMatchesTradeFilter } from "@/lib/live-map-trade-filter";
+import { normalizeLiveMapCoordinate } from "@/lib/live-map-coordinate";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { motion, AnimatePresence } from "framer-motion";
@@ -147,20 +148,22 @@ function scheduleBarSegmentClass(segment: ScheduleBarSegment, colorClasses: stri
 }
 
 /**
- * Buckets a job.status value into one of the four live-map color categories
- * so the map pins mirror the Fixfy semantic palette:
- *   unassigned / auto_assigning → red
- *   scheduled                   → green
- *   in_progress_phase1/2/3      → blue
- *   late / need_attention / awaiting_payment / final_check / on_hold → orange
- *
- * Anything else (e.g. completed / cancelled) is filtered out upstream before
- * reaching this helper, but falls back to "attention" defensively.
+ * Buckets live-ops statuses into 3 map colors:
+ *   red   → unassigned / auto-assigning
+ *   green → scheduled flow
+ *   blue  → in-progress flow
  */
 function liveMapCategoryForStatus(status: string): LiveMapJobStatusCategory {
   if (status === "unassigned" || status === "auto_assigning") return "unassigned";
-  if (status === "scheduled") return "scheduled";
-  if (status.startsWith("in_progress")) return "in_progress";
+  if (status === "scheduled" || status === "late") return "scheduled";
+  if (
+    status.startsWith("in_progress") ||
+    status === "final_check" ||
+    status === "on_hold" ||
+    status === "need_attention"
+  ) {
+    return "in_progress";
+  }
   return "attention";
 }
 
@@ -189,7 +192,7 @@ export default function SchedulePage() {
   const [liveMapUpdatedAt, setLiveMapUpdatedAt] = useState<string | null>(null);
   const [liveMapSearch, setLiveMapSearch] = useState("");
   const [liveMapStatusFilter, setLiveMapStatusFilter] = useState<LiveMapStatusFilter>("all");
-  const [liveMapRegionPreset, setLiveMapRegionPreset] = useState<LiveMapRegionPreset>("london");
+  const [liveMapRegionPreset, setLiveMapRegionPreset] = useState<LiveMapRegionPreset>("fit_all");
   const [liveMapTradeFilter, setLiveMapTradeFilter] = useState<"all" | string>("all");
   // Live-map dispatch overlay: date layer + per-job selection for manual ops.
   // Defaults to today so the map opens with "jobs scheduled today" pinned.
@@ -332,14 +335,16 @@ export default function SchedulePage() {
         list.map(async (p) => {
             const loc = await getLatestLocation(p.userId);
             if (!loc) return null;
+            const normalized = normalizeLiveMapCoordinate(loc.latitude, loc.longitude);
+            if (!normalized) return null;
             const minutesSincePing = Math.floor((nowMs - new Date(loc.created_at).getTime()) / 60000);
             const inactive = !loc.is_active || minutesSincePing > LIVE_MAP_INACTIVE_MINUTES;
             const tr = tradeByAuthUserId.get(p.userId);
             return {
               id: p.userId,
               name: p.name,
-              latitude: Number(loc.latitude),
-              longitude: Number(loc.longitude),
+              latitude: normalized.latitude,
+              longitude: normalized.longitude,
               lastUpdateIso: loc.created_at,
               inactive,
               trade: tr?.trade ?? "General",
@@ -510,7 +515,7 @@ export default function SchedulePage() {
     liveMapSearch.trim().length > 0 ||
     liveMapStatusFilter !== "all" ||
     liveMapTradeFilter !== "all" ||
-    liveMapRegionPreset !== "london";
+    liveMapRegionPreset !== "fit_all";
 
   /**
    * Date layer for the live map — always expressed as an inclusive
@@ -567,13 +572,19 @@ export default function SchedulePage() {
     if (view !== "live_map") return [];
     const { fromMs, toMs } = liveMapSelectedWindow;
     return jobs.filter((j) => {
+      const isLiveOpsVisible =
+        j.status !== "completed" &&
+        j.status !== "awaiting_payment" &&
+        j.status !== "cancelled" &&
+        j.status !== "deleted";
+      if (!isLiveOpsVisible) return false;
       const s = jobScheduleYmd(j);
       if (!s) return false;
       const e = jobFinishYmd(j) ?? s;
       const jobStart = new Date(s.y, s.m - 1, s.d).getTime();
       const jobEnd = new Date(e.y, e.m - 1, e.d).getTime();
       if (jobEnd < fromMs || jobStart > toMs) return false;
-      if (typeof j.latitude !== "number" || typeof j.longitude !== "number") return false;
+      if (!normalizeLiveMapCoordinate(j.latitude, j.longitude)) return false;
       if (liveMapTradeFilter !== "all") {
         const jobTrade = normalizeTypeOfWork(resolveScheduleJobTypeKey(j.title)) || "";
         const wanted = normalizeTypeOfWork(liveMapTradeFilter) || liveMapTradeFilter;
@@ -650,22 +661,28 @@ export default function SchedulePage() {
   }, [jobs]);
 
   const liveMapJobPoints = useMemo<ScheduleLiveMapJobPoint[]>(() => {
-    return jobsForSelectedDay.map((j) => ({
-      id: j.id,
-      latitude: Number(j.latitude ?? 0),
-      longitude: Number(j.longitude ?? 0),
-      reference: j.reference,
-      title: j.title,
-      partnerName: j.partner_name?.trim() ? j.partner_name : null,
-      clientName: j.client_name?.trim() || undefined,
-      propertyAddress: j.property_address,
-      statusLabel: statusConfig[j.status]?.label ?? j.status,
-      /** Drives the pin colour + icon (red/green/blue/orange) — matches the
-       *  Fixfy badge semantics used elsewhere in the app. */
-      statusCategory: liveMapCategoryForStatus(j.status),
-      tradeLabel: resolveScheduleJobTypeKey(j.title),
-      scheduleLine: formatJobScheduleLine(j) ?? "",
-    }));
+    const points: ScheduleLiveMapJobPoint[] = [];
+    for (const j of jobsForSelectedDay) {
+      const normalized = normalizeLiveMapCoordinate(j.latitude, j.longitude);
+      if (!normalized) continue;
+      points.push({
+        id: j.id,
+        latitude: normalized.latitude,
+        longitude: normalized.longitude,
+        reference: j.reference,
+        title: j.title,
+        partnerName: j.partner_name?.trim() ? j.partner_name : null,
+        clientName: j.client_name?.trim() || undefined,
+        propertyAddress: j.property_address,
+        statusLabel: statusConfig[j.status]?.label ?? j.status,
+        /** Drives the pin colour + icon (red/green/blue/orange) — matches the
+         *  Fixfy badge semantics used elsewhere in the app. */
+        statusCategory: liveMapCategoryForStatus(j.status),
+        tradeLabel: resolveScheduleJobTypeKey(j.title),
+        scheduleLine: formatJobScheduleLine(j) ?? "",
+      });
+    }
+    return points;
   }, [jobsForSelectedDay]);
 
   const toggleJobSelection = useCallback((id: string) => {
@@ -759,9 +776,10 @@ export default function SchedulePage() {
         )}
 
         <StaggerContainer className="grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4">
-          <KpiCard title="Jobs this month" value={activeCount} format="number" icon={Briefcase} accent="blue" />
-          <KpiCard title="In progress" value={inProgressCount} format="number" icon={RefreshCw} accent="emerald" />
+          <KpiCard compact title="Jobs this month" value={activeCount} format="number" icon={Briefcase} accent="blue" />
+          <KpiCard compact title="In progress" value={inProgressCount} format="number" icon={RefreshCw} accent="emerald" />
           <KpiCard
+            compact
             title={view === "calendar" ? "Total revenue this month" : "Total on map"}
             value={view === "calendar" ? monthRevenue : liveMapPoints.length}
             format={view === "calendar" ? "currency" : "number"}
@@ -779,6 +797,7 @@ export default function SchedulePage() {
             descriptionAsTooltip
           />
           <KpiCard
+            compact
             title="Unassigned"
             value={unassignedCount}
             format="number"
@@ -924,99 +943,150 @@ export default function SchedulePage() {
             variants={fadeInUp}
             initial="hidden"
             animate="visible"
-            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-[#E4E4E8]"
           >
-            <Card padding="none" variant="outlined" className="flex min-h-0 flex-1 flex-col overflow-hidden border-[#E4E4E8]">
-              <div
-                className="shrink-0 border-b border-[#E4E4E8] bg-[#FAFAFB] px-[14px] py-[10px]"
-                style={{ borderBottomWidth: 0.5 }}
-              >
-                <div className="flex flex-wrap items-center gap-[10px]">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                    <span className="inline-flex items-center gap-1.5 text-[11px]">
+            <ScheduleLiveMap
+              className="flex min-h-0 flex-1 flex-col"
+              points={partnerPointsForMap}
+              regionPreset={liveMapRegionPreset}
+              tradeFilter={liveMapTradeFilter}
+              embeddedInCard
+              jobPoints={liveMapJobPoints}
+              selectedJobIds={liveMapSelectedJobSet}
+              onJobMarkerClick={toggleJobSelection}
+              toolbarExtra={
+                <button
+                  type="button"
+                  className={LIVE_MAP_TOOLBAR_BTN_CLASS}
+                  onClick={() => void loadLiveMap()}
+                >
+                  <RefreshCw className={cn("h-3 w-3 shrink-0", loadingLiveMap && "animate-spin")} aria-hidden />
+                  Refresh
+                </button>
+              }
+              filterOverlay={
+                <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-[#E4E4E8] bg-white/95 p-2 shadow-md backdrop-blur-sm">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
+                    <input
+                      type="search"
+                      placeholder="Search partner…"
+                      value={liveMapSearch}
+                      onChange={(e) => setLiveMapSearch(e.target.value)}
+                      aria-label="Filter partners by name"
+                      className="h-7 w-[140px] rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-6 pr-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15 sm:w-[148px]"
+                    />
+                  </div>
+                  <div className="relative">
+                    <select
+                      aria-label="Map area"
+                      value={liveMapRegionPreset}
+                      onChange={(e) => setLiveMapRegionPreset(e.target.value as LiveMapRegionPreset)}
+                      className="h-7 min-w-[110px] appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
+                    >
+                      {LIVE_MAP_REGION_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
+                  </div>
+                  <div className="relative">
+                    <select
+                      aria-label="Trade filter"
+                      value={liveMapTradeFilter}
+                      onChange={(e) => setLiveMapTradeFilter(e.target.value)}
+                      className="h-7 min-w-[118px] appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
+                    >
+                      {liveMapTradeFilterOptions().map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
+                  </div>
+                  <div className="flex items-center gap-0.5 rounded-md border-[0.5px] border-[#D8D8DD] bg-[#FAFAFB] p-0.5">
+                    {(["all", "active", "inactive"] as const).map((id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setLiveMapStatusFilter(id)}
+                        className={cn(
+                          "rounded px-2 py-0.5 text-[11px] font-medium transition-colors capitalize",
+                          liveMapStatusFilter === id
+                            ? "bg-[#020040] text-white"
+                            : "text-[#020040] hover:bg-white",
+                        )}
+                      >
+                        {id === "all" ? "All" : id.charAt(0).toUpperCase() + id.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                  {liveMapTradeFilter !== "all" && (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-[#EEF2FF] px-2 py-0.5 text-[11px] font-medium text-[#020040]">
+                      <Users className="h-3 w-3" aria-hidden />
+                      {filteredLiveMapPoints.length} visible
+                    </span>
+                  )}
+                  {filteredLiveMapPoints.length === 0 && liveMapPoints.length > 0 && (
+                    <span className="text-[11px] font-medium text-red-500">No partners match</span>
+                  )}
+                </div>
+              }
+              bottomLeftOverlay={
+                <div className="rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm">
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <span className="inline-flex items-center gap-1.5">
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#1D9E75]" aria-hidden />
                       <span className="text-[#64748B]">Active</span>
                       <span className="font-semibold tabular-nums text-[#020040]">{liveActiveCount}</span>
                     </span>
-                    <span className="inline-flex items-center gap-1.5 text-[11px]">
+                    <span className="inline-flex items-center gap-1.5">
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ED4B00]" aria-hidden />
                       <span className="text-[#64748B]">Inactive</span>
                       <span className="font-semibold tabular-nums text-[#020040]">{liveInactiveCount}</span>
                     </span>
                     {liveMapUpdatedAt && (
                       <span className="text-[10px] text-[#64748B]">
-                        Updated {new Date(liveMapUpdatedAt).toLocaleTimeString()}
+                        · {new Date(liveMapUpdatedAt).toLocaleTimeString()}
                       </span>
                     )}
                   </div>
-
-                  <div className="w-full min-[520px]:w-auto min-[520px]:min-w-[180px] min-[520px]:max-w-[260px] min-[520px]:flex-1">
-                    <Input
-                      type="search"
-                      placeholder="Search partner…"
-                      value={liveMapSearch}
-                      onChange={(e) => setLiveMapSearch(e.target.value)}
-                      icon={<Search className="h-3.5 w-3.5 text-[#64748B]" />}
-                      aria-label="Filter partners by name"
-                      className="!h-auto !rounded-md !border-[0.5px] !border-[#D8D8DD] !bg-white !py-1.5 !pl-7 !text-sm shadow-none"
-                    />
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-[#64748B]">
+                    {liveMapJobStatusLegend().map((entry) => (
+                      <span key={entry.key} className="inline-flex items-center gap-1">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-[3px] ring-1 ring-white/80"
+                          style={{ background: entry.color }}
+                          aria-hidden
+                        />
+                        {entry.label}
+                      </span>
+                    ))}
                   </div>
-
-                  <div className="flex w-full flex-wrap items-center gap-1.5 min-[900px]:ml-auto min-[900px]:w-auto min-[900px]:flex-1 min-[900px]:justify-end">
-                    <div className="relative flex min-w-0 flex-1 items-center gap-1 sm:max-w-[200px] min-[900px]:flex-none">
-                      <span className="shrink-0 text-[11px] text-[#64748B]">View:</span>
-                      <div className="relative min-w-0 flex-1">
-                        <select
-                          aria-label="Map area"
-                          className={cn(LIVE_MAP_NATIVE_SELECT_CLASS, "w-full")}
-                          value={liveMapRegionPreset}
-                          onChange={(e) => setLiveMapRegionPreset(e.target.value as LiveMapRegionPreset)}
-                        >
-                          {LIVE_MAP_REGION_OPTIONS.map((o) => (
-                            <option key={o.value} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
-                      </div>
-                    </div>
-
-                    <div className="relative flex min-w-0 flex-1 items-center gap-1 sm:max-w-[220px] min-[900px]:flex-none">
-                      <span className="shrink-0 text-[11px] text-[#64748B]">Trade:</span>
-                      <div className="relative min-w-0 flex-1">
-                        <select
-                          aria-label="Trade filter"
-                          className={cn(LIVE_MAP_NATIVE_SELECT_CLASS, "w-full")}
-                          value={liveMapTradeFilter}
-                          onChange={(e) => setLiveMapTradeFilter(e.target.value)}
-                        >
-                          {liveMapTradeFilterOptions().map((o) => (
-                            <option key={o.value} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
-                      </div>
-                    </div>
-
-                    <div className="hidden min-[500px]:inline-flex flex-wrap items-center gap-0.5 rounded-md border-[0.5px] border-[#D8D8DD] bg-[#FAFAFB] p-0.5">
+                </div>
+              }
+              bottomRightOverlay={
+                <div className="w-full sm:max-w-[380px] rounded-xl border border-[#E4E4E8] bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#020040]">
+                      <CalIcon className="h-3 w-3 text-[#ED4B00]" aria-hidden />
+                      Jobs of the day
+                    </span>
+                    <div className="inline-flex items-center gap-0.5 rounded-md border-[0.5px] border-[#D8D8DD] bg-[#FAFAFB] p-0.5">
                       {(
                         [
-                          { id: "all" as const, label: "All" },
-                          { id: "active" as const, label: "Active" },
-                          { id: "inactive" as const, label: "Inactive" },
+                          { id: "today" as const, label: "Today" },
+                          { id: "tomorrow" as const, label: "Tomorrow" },
+                          { id: "custom" as const, label: "Custom" },
                         ] as const
                       ).map(({ id, label }) => (
                         <button
                           key={id}
                           type="button"
-                          onClick={() => setLiveMapStatusFilter(id)}
+                          onClick={() => setLiveMapDateMode(id)}
                           className={cn(
-                            "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
-                            liveMapStatusFilter === id
-                              ? "bg-[#020040] text-white"
+                            "rounded-md px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+                            liveMapDateMode === id
+                              ? "bg-[#ED4B00] text-white"
                               : "border-[0.5px] border-[#D8D8DD] bg-white text-[#020040] hover:bg-white",
                           )}
                         >
@@ -1024,90 +1094,33 @@ export default function SchedulePage() {
                         </button>
                       ))}
                     </div>
-
-                    <div className="relative w-full min-[500px]:hidden">
-                      <select
-                        aria-label="Active or inactive location"
-                        className={cn(LIVE_MAP_NATIVE_SELECT_CLASS, "w-full")}
-                        value={liveMapStatusFilter}
-                        onChange={(e) => setLiveMapStatusFilter(e.target.value as LiveMapStatusFilter)}
-                      >
-                        <option value="all">Status: All</option>
-                        <option value="active">Status: Active</option>
-                        <option value="inactive">Status: Inactive</option>
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Dispatch layer — date selector + partner filter + selection summary.
-                   Sits under the partner filter bar so the original layout is kept. */}
-              <div
-                className="shrink-0 border-b border-[#E4E4E8] bg-white px-[14px] py-[8px]"
-                style={{ borderBottomWidth: 0.5 }}
-              >
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#020040]">
-                    <CalIcon className="h-3 w-3 text-[#ED4B00]" aria-hidden />
-                    Jobs of the day
-                  </span>
-
-                  <div className="inline-flex items-center gap-0.5 rounded-md border-[0.5px] border-[#D8D8DD] bg-[#FAFAFB] p-0.5">
-                    {(
-                      [
-                        { id: "today" as const, label: "Today" },
-                        { id: "tomorrow" as const, label: "Tomorrow" },
-                        { id: "custom" as const, label: "Custom" },
-                      ] as const
-                    ).map(({ id, label }) => (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setLiveMapDateMode(id)}
-                        className={cn(
-                          "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
-                          liveMapDateMode === id
-                            ? "bg-[#ED4B00] text-white"
-                            : "border-[0.5px] border-[#D8D8DD] bg-white text-[#020040] hover:bg-white",
-                        )}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {liveMapDateMode === "custom" && (
-                    <div className="inline-flex items-center gap-1">
-                      <input
-                        type="date"
-                        aria-label="Range start"
-                        value={liveMapCustomFrom}
-                        onChange={(e) => setLiveMapCustomFrom(e.target.value)}
-                        max={liveMapCustomTo || undefined}
-                        className="h-8 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
-                      />
-                      <span className="text-[11px] text-[#64748B]">→</span>
-                      <input
-                        type="date"
-                        aria-label="Range end"
-                        value={liveMapCustomTo}
-                        onChange={(e) => setLiveMapCustomTo(e.target.value)}
-                        min={liveMapCustomFrom || undefined}
-                        className="h-8 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
-                      />
-                    </div>
-                  )}
-
-                  <div className="relative flex items-center gap-1">
-                    <span className="shrink-0 text-[11px] text-[#64748B]">Partner:</span>
+                    {liveMapDateMode === "custom" && (
+                      <div className="inline-flex items-center gap-1">
+                        <input
+                          type="date"
+                          aria-label="Range start"
+                          value={liveMapCustomFrom}
+                          onChange={(e) => setLiveMapCustomFrom(e.target.value)}
+                          max={liveMapCustomTo || undefined}
+                          className="h-7 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
+                        />
+                        <span className="text-[11px] text-[#64748B]">→</span>
+                        <input
+                          type="date"
+                          aria-label="Range end"
+                          value={liveMapCustomTo}
+                          onChange={(e) => setLiveMapCustomTo(e.target.value)}
+                          min={liveMapCustomFrom || undefined}
+                          className="h-7 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
+                        />
+                      </div>
+                    )}
                     <div className="relative">
                       <select
                         aria-label="Filter jobs by partner"
                         value={liveMapPartnerFilter}
                         onChange={(e) => setLiveMapPartnerFilter(e.target.value)}
-                        className={cn(LIVE_MAP_NATIVE_SELECT_CLASS, "min-w-[150px]")}
+                        className="h-7 appearance-none rounded-md border-[0.5px] border-[#D8D8DD] bg-white py-1 pl-2 pr-6 text-[11px] font-medium text-[#020040] outline-none"
                       >
                         <option value="all">All partners</option>
                         <option value="__unassigned__">Unassigned only</option>
@@ -1115,98 +1128,37 @@ export default function SchedulePage() {
                           <option key={p.id} value={p.id}>{p.name}</option>
                         ))}
                       </select>
-                      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
+                      <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]" aria-hidden />
                     </div>
-                  </div>
-
-                  <span className="inline-flex items-center gap-1 rounded-md bg-[#FFF4ED] px-2 py-1 text-[11px] font-medium text-[#ED4B00]">
-                    <Briefcase className="h-3 w-3" aria-hidden />
-                    {liveMapJobsWithLocation} {liveMapJobsWithLocation === 1 ? "job" : "jobs"}
-                    {liveMapIsRange ? ` · ${liveMapSelectedLabel}` : ` · ${liveMapSelectedLabel}`}
-                    {liveMapTradeFilter !== "all" && (
-                      <span className="ml-1 text-[10px] text-[#ED4B00]/80">· {liveMapTradeFilter} only</span>
-                    )}
-                  </span>
-
-                  {liveMapTradeFilter !== "all" && (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-[#EEF2FF] px-2 py-1 text-[11px] font-medium text-[#020040]">
-                      <Users className="h-3 w-3" aria-hidden />
-                      {filteredLiveMapPoints.length} {liveMapTradeFilter}{filteredLiveMapPoints.length === 1 ? "" : "s"} on map
+                    <span className="inline-flex items-center gap-1 rounded-md bg-[#FFF4ED] px-2 py-0.5 text-[11px] font-medium text-[#ED4B00]">
+                      <Briefcase className="h-3 w-3" aria-hidden />
+                      {liveMapJobsWithLocation} {liveMapJobsWithLocation === 1 ? "job" : "jobs"} · {liveMapSelectedLabel}
                     </span>
-                  )}
-
-                  {liveMapJobsMissingLocation > 0 && (
-                    <span
-                      className="inline-flex items-center gap-1 rounded-md bg-[#FEF3C7] px-2 py-1 text-[11px] font-medium text-[#92400E]"
-                      title="These jobs have no geocoded address so they can't be placed on the map."
-                    >
-                      <AlertTriangle className="h-3 w-3" aria-hidden />
-                      {liveMapJobsMissingLocation} without location
-                    </span>
-                  )}
-
-                  {liveMapSelectedJobIds.size > 0 && (
-                    <span className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-[#020040] px-2.5 py-1 text-[11px] font-semibold text-white">
-                      {liveMapSelectedJobIds.size} selected for dispatch
-                      <button
-                        type="button"
-                        onClick={clearJobSelection}
-                        className="ml-1 rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-white/25"
-                      >
-                        Clear
-                      </button>
-                    </span>
-                  )}
-                </div>
-
-                {/* Job-pin status legend — tells ops what each colour means.
-                     Uses the shared helper so the palette stays in sync with
-                     the map markers themselves. */}
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[#64748B]">
-                  <span className="font-semibold uppercase tracking-wide text-[#94A3B8]">Job pins:</span>
-                  {liveMapJobStatusLegend().map((entry) => (
-                    <span key={entry.key} className="inline-flex items-center gap-1">
+                    {liveMapJobsMissingLocation > 0 && (
                       <span
-                        className="inline-block h-2.5 w-2.5 rounded-[3px] ring-1 ring-white"
-                        style={{ background: entry.color }}
-                        aria-hidden
-                      />
-                      {entry.label}
-                    </span>
-                  ))}
+                        className="inline-flex items-center gap-1 rounded-md bg-[#FEF3C7] px-2 py-0.5 text-[11px] font-medium text-[#92400E]"
+                        title="These jobs have no geocoded address so they can't be placed on the map."
+                      >
+                        <AlertTriangle className="h-3 w-3" aria-hidden />
+                        {liveMapJobsMissingLocation} no location
+                      </span>
+                    )}
+                    {liveMapSelectedJobIds.size > 0 && (
+                      <span className="inline-flex items-center gap-1.5 rounded-md bg-[#020040] px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                        {liveMapSelectedJobIds.size} selected for dispatch
+                        <button
+                          type="button"
+                          onClick={clearJobSelection}
+                          className="ml-0.5 rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-white/25"
+                        >
+                          Clear
+                        </button>
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-
-              {filteredLiveMapPoints.length === 0 && liveMapPoints.length > 0 && (
-                <p className="shrink-0 border-b border-[#E4E4E8] bg-[#FAFAFB] px-[14px] py-2 text-sm text-text-secondary">
-                  No partners match these filters. Clear search, set trade to &quot;All trades&quot;, or set status to
-                  &quot;All&quot;.
-                </p>
-              )}
-
-              <div className="relative min-h-0 flex-1">
-                <ScheduleLiveMap
-                  className="flex h-full min-h-0 flex-col"
-                  points={partnerPointsForMap}
-                  regionPreset={liveMapRegionPreset}
-                  tradeFilter={liveMapTradeFilter}
-                  embeddedInCard
-                  jobPoints={liveMapJobPoints}
-                  selectedJobIds={liveMapSelectedJobSet}
-                  onJobMarkerClick={toggleJobSelection}
-                  toolbarExtra={
-                    <button
-                      type="button"
-                      className={LIVE_MAP_TOOLBAR_BTN_CLASS}
-                      onClick={() => void loadLiveMap()}
-                    >
-                      <RefreshCw className={cn("h-3 w-3 shrink-0", loadingLiveMap && "animate-spin")} aria-hidden />
-                      Refresh
-                    </button>
-                  }
-                />
-              </div>
-            </Card>
+              }
+            />
           </motion.div>
         )}
 

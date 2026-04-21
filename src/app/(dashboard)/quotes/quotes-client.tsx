@@ -582,7 +582,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   } = useSupabaseList<Quote>({
     fetcher: listQuotesForPage,
     /** No realtime auto-refresh — avoids fetch loops; list reloads use `refreshSilent` / `refreshWithKpis` (no `refresh()`). */
-    initialStatus: "pipeline",
+    initialStatus: "bidding",
     initialData,
   });
 
