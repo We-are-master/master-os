@@ -29,6 +29,19 @@ const SIZE_LABELS: Record<WidgetSize, string> = {
   full:       "Full",
 };
 
+/**
+ * Show the current catalog label for built-in widgets so an old persisted title
+ * ("KPIs", "Financial Flow", "Activity") snaps to the standardised name
+ * ("Monthly Overview", "Cash Flow", "Activity Feed") without mutating stored
+ * view configs. Custom widgets keep the user-set title.
+ */
+function displayWidgetTitle(w: WidgetConfig): string {
+  const libraryEntry = [...WIDGET_CATALOG, ...CUSTOM_WIDGET_CATALOG].find((m) => m.type === w.type);
+  if (!libraryEntry) return w.title;
+  if (libraryEntry.isCustom) return w.title;
+  return libraryEntry.label;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -314,7 +327,7 @@ export function DashboardViewEditor({ open, onClose, editView }: Props) {
                         {form.widgets.map((w, i) => (
                           <div key={w.id} className="flex items-center gap-2 p-2.5 rounded-xl bg-surface-hover/60 border border-border-light">
                             <GripVertical className="h-3.5 w-3.5 text-text-tertiary flex-shrink-0" />
-                            <span className="text-xs font-semibold text-text-primary flex-1 truncate">{w.title}</span>
+                            <span className="text-xs font-semibold text-text-primary flex-1 truncate">{displayWidgetTitle(w)}</span>
                             <select
                               value={w.size}
                               onChange={(e) => changeWidgetSize(w.id, e.target.value as WidgetSize)}
