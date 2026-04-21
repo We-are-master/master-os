@@ -777,13 +777,12 @@ function JobsPageContent() {
         report_link: (formData as { report_link?: string | null }).report_link?.trim() || undefined,
         images: capJobImagesArray(coerceJobImagesArray(formData.images)),
       });
-      await Promise.all([
-        logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }),
-        loadDashboardStats(),
-      ]);
       setCreateOpen(false);
       toast.success("Job created");
-      refreshSilent();
+      router.push(`/jobs/${result.id}`);
+      void logAudit({ entityType: "job", entityId: result.id, entityRef: result.reference, action: "created", userId: profile?.id, userName: profile?.full_name }).catch(() => {});
+      void loadDashboardStats();
+      void Promise.resolve().then(() => refreshSilent());
       if (result.partner_id) {
         fetch("/api/push/notify-partner", {
           method: "POST",
@@ -796,7 +795,6 @@ function JobsPageContent() {
           }),
         }).catch(() => {});
       }
-      router.push(`/jobs/${result.id}`);
     } catch (err) {
       toast.error(getErrorMessage(err, "Failed to create job"));
     }
@@ -2567,6 +2565,41 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
             </div>
           </details>
 
+          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Pricing</p>
+            {form.job_type === "hourly" ? (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price £</label><Input type="number" value={String(hourlyPreview.clientTotal + accessSurchargePreview)} readOnly /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label><Input type="number" value={String(hourlyPreview.partnerTotal)} readOnly /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
+                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
+                </div>
+                <p className="text-[11px] text-text-tertiary">
+                  Client hourly rate is loaded from Call Out type: {formatCurrency(Number(form.hourly_client_rate) || 0)}/h.
+                </p>
+                <p className="text-[11px] text-text-tertiary">
+                  Billing rule: up to 1h = 1h minimum, then rounds up in 30-minute increments from timer logs.
+                </p>
+              </>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price £</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label>
+                  <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
+                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
+                    Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin.
+                  </p>
+                </div>
+                <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
+              </div>
+            )}
+          </section>
+
           <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Partner allocation</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -2667,41 +2700,6 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                     <p className="text-xs text-text-tertiary px-2 py-2">No partners match this search.</p>
                   ) : null}
                 </div>
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Pricing</p>
-            {form.job_type === "hourly" ? (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price £</label><Input type="number" value={String(hourlyPreview.clientTotal + accessSurchargePreview)} readOnly /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label><Input type="number" value={String(hourlyPreview.partnerTotal)} readOnly /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
-                </div>
-                <p className="text-[11px] text-text-tertiary">
-                  Client hourly rate is loaded from Call Out type: {formatCurrency(Number(form.hourly_client_rate) || 0)}/h.
-                </p>
-                <p className="text-[11px] text-text-tertiary">
-                  Billing rule: up to 1h = 1h minimum, then rounds up in 30-minute increments from timer logs.
-                </p>
-              </>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price £</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label>
-                  <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
-                  <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
-                    Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin.
-                  </p>
-                </div>
-                <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
               </div>
             )}
           </section>

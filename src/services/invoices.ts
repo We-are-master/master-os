@@ -94,11 +94,9 @@ export async function createInvoice(
     .single();
   if (!error) {
     const inv = data as Invoice;
-    try {
-      await syncJobAfterInvoiceCreated(supabase, inv);
-    } catch (e) {
+    void syncJobAfterInvoiceCreated(supabase, inv).catch((e) => {
       console.error("syncJobAfterInvoiceCreated", inv.id, e);
-    }
+    });
     return inv;
   }
 
@@ -129,11 +127,9 @@ export async function createInvoice(
     .single();
   if (!legacyErr) {
     const inv = legacyData as Invoice;
-    try {
-      await syncJobAfterInvoiceCreated(supabase, inv);
-    } catch (e) {
+    void syncJobAfterInvoiceCreated(supabase, inv).catch((e) => {
       console.error("syncJobAfterInvoiceCreated", inv.id, e);
-    }
+    });
     return inv;
   }
 
@@ -153,11 +149,9 @@ export async function createInvoice(
     .single();
   if (minimalErr) throw minimalErr;
   const inv = minimalData as Invoice;
-  try {
-    await syncJobAfterInvoiceCreated(supabase, inv);
-  } catch (e) {
+  void syncJobAfterInvoiceCreated(supabase, inv).catch((e) => {
     console.error("syncJobAfterInvoiceCreated", inv.id, e);
-  }
+  });
   return inv;
 }
 

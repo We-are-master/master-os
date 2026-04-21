@@ -23,6 +23,10 @@ import {
   ChevronRight,
   Archive,
   Ban,
+  CalendarRange,
+  CalendarDays,
+  Sunrise,
+  TrendingUp,
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -231,13 +235,28 @@ export default function BillsPage() {
     const next30Rows = active.filter(
       (b) => b.due_date && b.due_date >= today && b.due_date <= next30 && b.status !== "needs_attention",
     );
-    const recurringMonthlyRows = active.filter(
-      (b) => !!b.is_recurring && b.recurrence_interval === "monthly" && b.status !== "needs_attention",
-    );
-    const recurringMonthlySeriesRows = recurringMonthlyRows
+
+    /** Burn rate: one row per recurring series, each intervaled to its monthly equivalent. */
+    const monthlyFactor: Record<string, number> = {
+      weekly: 4.345,
+      weekly_friday: 4.345,
+      biweekly_friday: 2.1725,
+      monthly: 1,
+      quarterly: 1 / 3,
+      yearly: 1 / 12,
+    };
+    const recurringActive = active.filter((b) => !!b.is_recurring && b.status !== "needs_attention");
+    const oneRowPerSeries = recurringActive
       .slice()
       .sort((a, b) => String(a.due_date ?? "").localeCompare(String(b.due_date ?? "")))
       .filter((bill, index, rows) => rows.findIndex((row) => recurringGroupKey(row) === recurringGroupKey(bill)) === index);
+    const monthlyBurn = oneRowPerSeries.reduce((acc, b) => {
+      const f = monthlyFactor[String(b.recurrence_interval ?? "monthly")] ?? 1;
+      return acc + Number(b.amount ?? 0) * f;
+    }, 0);
+    const monthlyBurnMonthlyOnly = oneRowPerSeries
+      .filter((b) => b.recurrence_interval === "monthly")
+      .reduce((acc, b) => acc + Number(b.amount ?? 0), 0);
 
     const sum = (rows: Bill[]) => rows.reduce((acc, row) => acc + Number(row.amount ?? 0), 0);
     return {
@@ -246,9 +265,32 @@ export default function BillsPage() {
       dueMonthAmount: sum(monthRows),
       dueMonthCount: monthRows.length,
       next30Amount: sum(next30Rows),
-      recurringMonthlyAmount: sum(recurringMonthlySeriesRows),
+      next30Count: next30Rows.length,
+      recurringMonthlyAmount: monthlyBurnMonthlyOnly,
+      recurringSeriesCount: oneRowPerSeries.length,
+      burnMonthly: monthlyBurn,
+      burnWeekly: monthlyBurn / 4.345,
+      burnDaily: monthlyBurn / 30.44,
     };
   }, [bills]);
+
+  const cadenceSuffix = (interval: BillRecurrence | null | undefined): string => {
+    switch (interval) {
+      case "weekly":
+      case "weekly_friday":
+        return "p/w";
+      case "biweekly_friday":
+        return "p/2w";
+      case "monthly":
+        return "p/m";
+      case "quarterly":
+        return "p/q";
+      case "yearly":
+        return "p/y";
+      default:
+        return "";
+    }
+  };
 
   const compactRows = useMemo(() => {
     const rows = displayList.map((item) => {
@@ -265,6 +307,7 @@ export default function BillsPage() {
         return {
           key: item.key,
           amount: Number(head.amount ?? 0),
+          amountSuffix: cadenceSuffix(head.recurrence_interval as BillRecurrence | undefined),
           title: head.description,
           category: billCategoryLabel(head.category),
           meta: `${due ? `Next due ${formatDate(due)}` : "No due date"} · ${cadence} · ${visibleCount} occurrence${visibleCount === 1 ? "" : "s"}`,
@@ -280,6 +323,7 @@ export default function BillsPage() {
       return {
         key: row.id,
         amount: Number(row.amount ?? 0),
+        amountSuffix: row.is_recurring ? cadenceSuffix(row.recurrence_interval) : "",
         title: row.description,
         category: billCategoryLabel(row.category),
         meta: `${row.due_date ? `Next due ${formatDate(row.due_date)}` : "No due date"} · ${row.is_recurring ? recurrenceLabel(row.recurrence_interval) : "One-off"} · 1 occurrence`,
@@ -619,26 +663,110 @@ export default function BillsPage() {
           </Button>
         </PageHeader>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
-            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Overdue</p>
-            <p className="mt-2 text-3xl font-bold tabular-nums text-red-600">{formatCurrency(headlineKpis.overdueAmount)}</p>
-            <p className="mt-auto pt-3 text-sm text-text-tertiary">{headlineKpis.overdueCount} bills</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div
+            className={cn(
+              "flex items-center justify-between gap-3 rounded-xl border bg-card px-3 py-2.5",
+              headlineKpis.overdueCount > 0 ? "border-red-200/90 dark:border-red-900/50" : "border-border-light",
+            )}
+          >
+            <div className="min-w-0">
+              <p className={cn("text-[10px] font-semibold uppercase tracking-wide", headlineKpis.overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-text-tertiary")}>Overdue</p>
+              <p className={cn("text-[20px] font-bold tabular-nums leading-tight", headlineKpis.overdueAmount > 0.02 ? "text-red-600 dark:text-red-400" : "text-[#020040]")}>
+                {formatCurrency(headlineKpis.overdueAmount)}
+              </p>
+              <p className={cn("text-[11px] font-medium", headlineKpis.overdueCount > 0 ? "text-red-600 dark:text-red-400" : "text-text-secondary")}>
+                {headlineKpis.overdueCount} bill{headlineKpis.overdueCount === 1 ? "" : "s"}
+              </p>
+            </div>
+            <div className={cn("flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg", headlineKpis.overdueAmount > 0.02 ? "bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400" : "bg-surface-tertiary text-text-tertiary")}>
+              <Banknote className="h-4 w-4" aria-hidden />
+            </div>
           </div>
-          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
-            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Due this month</p>
-            <p className="mt-2 text-3xl font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.dueMonthAmount)}</p>
-            <p className="mt-auto pt-3 text-sm text-text-tertiary">{headlineKpis.dueMonthCount} bills</p>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Due this month</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(headlineKpis.dueMonthAmount)}</p>
+              <p className="text-[11px] text-text-secondary">{headlineKpis.dueMonthCount} bill{headlineKpis.dueMonthCount === 1 ? "" : "s"}</p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+              <FileCheck className="h-4 w-4" aria-hidden />
+            </div>
           </div>
-          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
-            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Next 30 days</p>
-            <p className="mt-2 text-3xl font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.next30Amount)}</p>
-            <p className="mt-auto pt-3 text-sm text-text-tertiary">Cashflow</p>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Next 30 days</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(headlineKpis.next30Amount)}</p>
+              <p className="text-[11px] text-text-secondary">{headlineKpis.next30Count} bill{headlineKpis.next30Count === 1 ? "" : "s"} · cashflow</p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+              <DollarSign className="h-4 w-4" aria-hidden />
+            </div>
           </div>
-          <div className="rounded-2xl border border-border-light bg-[#FAFAFB] p-5 min-h-[128px] h-full flex flex-col">
-            <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Recurring / mo</p>
-            <p className="mt-2 text-3xl font-bold tabular-nums text-text-primary">{formatCurrency(headlineKpis.recurringMonthlyAmount)}</p>
-            <p className="mt-auto pt-3 text-sm text-text-tertiary">Base burn</p>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Recurring / mo</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(headlineKpis.recurringMonthlyAmount)}</p>
+              <p className="text-[11px] text-text-secondary">{headlineKpis.recurringSeriesCount} series · base burn</p>
+            </div>
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
+              <Layers className="h-4 w-4" aria-hidden />
+            </div>
+          </div>
+        </div>
+
+        {/* Burn-rate strip: all recurring bills normalised to monthly, then derived weekly & daily averages. */}
+        <div className="rounded-xl border border-border-light bg-gradient-to-br from-[#020040]/[0.03] via-card to-emerald-50/30 dark:from-[#020040]/20 dark:via-card dark:to-emerald-950/10 px-3 py-3 sm:px-4">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
+                <TrendingUp className="h-3.5 w-3.5" aria-hidden />
+              </div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary truncate">
+                Average recurring cost
+              </p>
+            </div>
+            <p className="text-[10px] text-text-tertiary sm:text-right">
+              Normalised from all recurring bills · can you afford more?
+            </p>
+          </div>
+          <div className="mt-2.5 grid grid-cols-3 gap-2 sm:gap-3">
+            <div className="rounded-lg border border-border-light bg-card/80 backdrop-blur px-3 py-2.5 flex items-start gap-2.5 min-w-0">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+                <CalendarRange className="h-3.5 w-3.5" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Monthly</p>
+                <p className="mt-0.5 flex items-baseline gap-1 leading-none">
+                  <span className="text-base sm:text-lg font-bold tabular-nums text-[#020040] truncate">{formatCurrency(headlineKpis.burnMonthly)}</span>
+                  <span className="text-[10px] font-medium text-text-tertiary shrink-0">p/m</span>
+                </p>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border-light bg-card/80 backdrop-blur px-3 py-2.5 flex items-start gap-2.5 min-w-0">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
+                <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Weekly</p>
+                <p className="mt-0.5 flex items-baseline gap-1 leading-none">
+                  <span className="text-base sm:text-lg font-bold tabular-nums text-[#020040] truncate">{formatCurrency(headlineKpis.burnWeekly)}</span>
+                  <span className="text-[10px] font-medium text-text-tertiary shrink-0">p/w</span>
+                </p>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border-light bg-card/80 backdrop-blur px-3 py-2.5 flex items-start gap-2.5 min-w-0">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-600">
+                <Sunrise className="h-3.5 w-3.5" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Daily</p>
+                <p className="mt-0.5 flex items-baseline gap-1 leading-none">
+                  <span className="text-base sm:text-lg font-bold tabular-nums text-[#020040] truncate">{formatCurrency(headlineKpis.burnDaily)}</span>
+                  <span className="text-[10px] font-medium text-text-tertiary shrink-0">p/d</span>
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -676,11 +804,11 @@ export default function BillsPage() {
             No bills for this filter.
           </p>
         ) : (
-          <div className="rounded-2xl border border-border-light bg-card overflow-hidden">
+          <div className="rounded-xl border border-border-light bg-card overflow-hidden">
             {visibleCompactRows.map((row, index) => (
               <div key={row.key} className={cn("border-b border-border-light last:border-0", index % 2 === 1 && "bg-[#F5F5F7]")}>
-                <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-5">
-                  <div className="min-w-0 flex items-start gap-3">
+                <div className="flex flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-2.5">
+                  <div className="min-w-0 flex items-start gap-2">
                     <button
                       type="button"
                       onClick={row.onToggle}
@@ -689,18 +817,23 @@ export default function BillsPage() {
                       disabled={!row.expandable}
                     >
                       {row.expandable ? (
-                        row.expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
+                        row.expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />
                       ) : (
-                        <ChevronRight className="h-4 w-4 opacity-50" />
+                        <ChevronRight className="h-3.5 w-3.5 opacity-40" />
                       )}
                     </button>
                     <div className="min-w-0">
-                      <p className="truncate text-base sm:text-lg font-semibold text-text-primary">{row.title}</p>
-                      <p className="mt-1 truncate text-xs sm:text-sm text-text-tertiary">{row.meta}</p>
+                      <p className="truncate text-sm font-semibold text-text-primary">{row.title}</p>
+                      <p className="mt-0.5 truncate text-[11px] text-text-tertiary">{row.meta}</p>
                     </div>
                   </div>
-                  <div className="shrink-0 w-full sm:w-auto flex items-center justify-start sm:justify-end gap-3">
-                    <p className="text-base font-semibold tabular-nums text-text-primary">{formatCurrency(row.amount)}</p>
+                  <div className="shrink-0 w-full sm:w-auto flex items-center justify-start sm:justify-end gap-2.5">
+                    <p className="flex items-baseline gap-1 text-sm font-semibold tabular-nums text-text-primary">
+                      <span>{formatCurrency(row.amount)}</span>
+                      {row.amountSuffix ? (
+                        <span className="text-[10px] font-medium text-text-tertiary">{row.amountSuffix}</span>
+                      ) : null}
+                    </p>
                     <Badge
                       variant={
                         row.status === "Approved" || row.status === "Paid" ? "success"
@@ -716,33 +849,36 @@ export default function BillsPage() {
                   </div>
                 </div>
                 {row.expandable && row.expanded ? (
-                  <div className="bg-surface-hover/40 px-4 pb-4 sm:px-6 sm:pb-5">
-                    <div className="mb-3 flex items-center justify-between">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Occurrences</p>
+                  <div className="bg-surface-hover/40 px-3 pb-3 sm:px-4 sm:pb-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Occurrences</p>
                       {renderSeriesHeadlineStatusBadge(row.children)}
                     </div>
-                    <div className="space-y-3">
+                    <div className="space-y-1.5">
                       {row.children.map((bill) => (
                         <div
                           key={bill.id}
-                          className="rounded-xl border border-border-light bg-card p-3 sm:p-4"
+                          className="rounded-lg border border-border-light bg-card p-2.5"
                         >
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between">
                             <div className="min-w-0">
-                              <p className="truncate text-sm sm:text-base font-semibold text-text-primary">{bill.description}</p>
-                              <p className="mt-1 text-xs sm:text-sm text-text-tertiary">
+                              <p className="truncate text-sm font-semibold text-text-primary">{bill.description}</p>
+                              <p className="mt-0.5 text-[11px] text-text-tertiary">
                                 {bill.due_date ? formatDate(bill.due_date) : "No due date"} · {billCategoryLabel(bill.category)} ·{" "}
                                 {bill.is_recurring ? recurrenceLabel(bill.recurrence_interval) : "One-off"}
                               </p>
                             </div>
                             <div className="shrink-0 text-left sm:text-right">
-                              <p className="text-lg sm:text-xl font-semibold tabular-nums text-text-primary">
-                                {formatCurrency(Number(bill.amount ?? 0))}
+                              <p className="inline-flex items-baseline gap-1 text-sm font-semibold tabular-nums text-text-primary">
+                                <span>{formatCurrency(Number(bill.amount ?? 0))}</span>
+                                {bill.is_recurring && cadenceSuffix(bill.recurrence_interval) ? (
+                                  <span className="text-[10px] font-medium text-text-tertiary">{cadenceSuffix(bill.recurrence_interval)}</span>
+                                ) : null}
                               </p>
-                              <div className="mt-1">{renderStatusBadge(bill)}</div>
+                              <div className="mt-0.5">{renderStatusBadge(bill)}</div>
                             </div>
                           </div>
-                          <div className="mt-3">{renderBillActions(bill)}</div>
+                          <div className="mt-2">{renderBillActions(bill)}</div>
                         </div>
                       ))}
                     </div>
@@ -750,7 +886,7 @@ export default function BillsPage() {
                 ) : null}
               </div>
             ))}
-            <div className="px-6 py-4 text-center text-sm text-text-tertiary">
+            <div className="px-4 py-2.5 text-center text-[11px] text-text-tertiary">
               Showing {Math.min(visibleCompactRows.length, compactRows.length)} of {compactRows.length} ·{" "}
               <button
                 type="button"
