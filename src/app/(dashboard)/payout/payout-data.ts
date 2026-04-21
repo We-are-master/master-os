@@ -96,34 +96,50 @@ function mapBillStatus(b: Bill): PayoutStatus {
 }
 
 /**
- * Fetch one week of payout items from the three sources, enrich with bank info,
- * and return a unified list.
+ * Fetch one week (or multi-week range) of payout items from the three sources,
+ * enrich with bank info, and return a unified list plus an overdue-from-before-range list.
  *
  * All reads are done in parallel. No writes, no new endpoints.
+ *
+ * @param fromDate start of the user-selected window (any day in the first week)
+ * @param toDate   end of the user-selected window (any day in the last week).
+ *                 When omitted, the week that contains fromDate is used (single-week mode).
  */
-export async function fetchPayoutWeek(anchor: Date): Promise<{
+export async function fetchPayoutRange(
+  fromDate: Date,
+  toDate?: Date,
+): Promise<{
   items: PayoutItem[];
   overdueItems: PayoutItem[];
+  rangeStart: string;
+  rangeEnd: string;
+  rangeLabel: string;
 }> {
-  const { weekStart, weekEnd, weekLabel } = getWeekBoundsForDate(anchor);
+  const from = getWeekBoundsForDate(fromDate);
+  const to = toDate ? getWeekBoundsForDate(toDate) : from;
+  const rangeStart = from.weekStart < to.weekStart ? from.weekStart : to.weekStart;
+  const rangeEnd = from.weekEnd > to.weekEnd ? from.weekEnd : to.weekEnd;
+  const rangeLabel =
+    from.weekLabel === to.weekLabel ? from.weekLabel : `${from.weekLabel} → ${to.weekLabel}`;
+
   const supabase = getSupabase();
 
-  // Past 8 weeks range, used to pick up overdue items that should have been paid earlier.
-  const overdueRangeStart = toYmd(new Date(new Date(weekStart).getTime() - 56 * 86400000));
+  // Past 8 weeks before range start — lookback for overdue payouts that should have been done earlier.
+  const overdueRangeStart = toYmd(new Date(new Date(rangeStart).getTime() - 56 * 86400000));
 
   const [selfBillsRes, billsRes] = await Promise.all([
     supabase
       .from("self_bills")
       .select("*")
       .gte("week_start", overdueRangeStart)
-      .lte("week_start", weekEnd)
+      .lte("week_start", rangeEnd)
       .order("week_start", { ascending: false })
       .order("created_at", { ascending: false }),
     supabase
       .from("bills")
       .select("*")
       .gte("due_date", overdueRangeStart)
-      .lte("due_date", weekEnd)
+      .lte("due_date", rangeEnd)
       .is("archived_at", null)
       .order("due_date", { ascending: false }),
   ]);
@@ -189,9 +205,9 @@ export async function fetchPayoutWeek(anchor: Date): Promise<{
     const isInternal = sb.bill_origin === "internal";
     const category: PayoutCategory = isInternal ? "workforce" : "partners";
     const status = mapSelfBillStatus(sb);
-    const wkLabel = sb.week_label ?? weekLabel;
-    const wkStart = sb.week_start ?? weekStart;
-    const wkEnd = sb.week_end ?? weekEnd;
+    const wkLabel = sb.week_label ?? from.weekLabel;
+    const wkStart = sb.week_start ?? rangeStart;
+    const wkEnd = sb.week_end ?? rangeEnd;
 
     let name = sb.partner_name ?? "—";
     let description: string | undefined;
@@ -240,7 +256,7 @@ export async function fetchPayoutWeek(anchor: Date): Promise<{
   }
 
   for (const b of bills) {
-    const due = b.due_date ?? weekStart;
+    const due = b.due_date ?? rangeStart;
     const wkBounds = getWeekBoundsForDate(new Date(due));
     items.push({
       id: `bill:${b.id}`,
@@ -263,20 +279,29 @@ export async function fetchPayoutWeek(anchor: Date): Promise<{
     });
   }
 
-  // Split into "current week" vs "overdue" (earlier weeks still pending).
-  const inWeek: PayoutItem[] = [];
+  // Split into "in range" vs "overdue" (earlier weeks still pending).
+  const inRange: PayoutItem[] = [];
   const overdue: PayoutItem[] = [];
   for (const it of items) {
-    const isInTargetWeek = it.weekStart >= weekStart && it.weekStart <= weekEnd;
-    if (isInTargetWeek) {
-      inWeek.push(it);
+    const isInRange = it.weekStart >= rangeStart && it.weekStart <= rangeEnd;
+    if (isInRange) {
+      inRange.push(it);
     } else if (it.status === "ready" || it.status === "skipped") {
       overdue.push(it);
     }
   }
 
-  return { items: inWeek, overdueItems: overdue };
+  return {
+    items: inRange,
+    overdueItems: overdue,
+    rangeStart,
+    rangeEnd,
+    rangeLabel,
+  };
 }
+
+/** Back-compat alias used by the page before range support. */
+export const fetchPayoutWeek = (anchor: Date) => fetchPayoutRange(anchor);
 
 /**
  * CSV export of the currently visible items.
