@@ -120,6 +120,7 @@ export function OverviewExecutiveBundle() {
   const [cashflow, setCashflow] = useState<WeeklyCashPositionRow[]>([]);
   /** 10-week rolling cash-flow forecast (3 past + 7 future), independent of dashboard bounds. */
   const [cashFlowForecast, setCashFlowForecast] = useState<WeeklyCashPositionRow[]>([]);
+  const [cashflowView, setCashflowView] = useState<"weekly" | "ahead10">("weekly");
   const [forecastWeeks, setForecastWeeks] = useState<{ label: string; sold: number }[]>([]);
   const [invoiceDueForecastWeeks, setInvoiceDueForecastWeeks] = useState<WeeklyInvoiceDueForecastRow[]>([]);
   const [funnel, setFunnel] = useState({
@@ -755,6 +756,78 @@ export function OverviewExecutiveBundle() {
     { collected: 0, partnerToPay: 0, billsToPay: 0, workforceToPay: 0, net: 0 },
   );
   const periodAllInCosts = partnerDirect + billsCost + payrollCost;
+  const cashflowChartRows = useMemo(() => {
+    const sanitized = cashflow.map((w) => ({
+      ...w,
+      collected: Number.isFinite(w.collected) ? w.collected : 0,
+      billsToPay: Number.isFinite(w.billsToPay) ? w.billsToPay : 0,
+      partnerToPay: Number.isFinite(w.partnerToPay) ? w.partnerToPay : 0,
+      workforceToPay: Number.isFinite(w.workforceToPay) ? w.workforceToPay : 0,
+      net: Number.isFinite(w.net) ? w.net : 0,
+    }));
+    const nonZero = sanitized.filter(
+      (w) =>
+        Math.abs(w.collected) > 0.01 ||
+        Math.abs(w.billsToPay) > 0.01 ||
+        Math.abs(w.partnerToPay) > 0.01 ||
+        Math.abs(w.workforceToPay) > 0.01,
+    );
+    const rows = nonZero.length > 0 ? nonZero : sanitized;
+    // Keep chart readable on very long ranges (totals above remain full-period).
+    return rows.length > 52 ? rows.slice(-52) : rows;
+  }, [cashflow]);
+  const cashflowAheadRows = useMemo<WeeklyCashPositionRow[]>(() => {
+    const byWeek = new Map(
+      cashFlowForecast.map((w) => [
+        w.weekStart ?? "",
+        {
+          partnerToPay: Number.isFinite(w.partnerToPay) ? w.partnerToPay : 0,
+          billsToPay: Number.isFinite(w.billsToPay) ? w.billsToPay : 0,
+          workforceToPay: Number.isFinite(w.workforceToPay) ? w.workforceToPay : 0,
+        },
+      ]),
+    );
+    const base = invoiceDueForecastWeeks.map((w) => {
+      const out = byWeek.get(w.weekStart ?? "");
+      const partnerToPay = out?.partnerToPay ?? 0;
+      const billsToPay = out?.billsToPay ?? 0;
+      const workforceToPay = out?.workforceToPay ?? 0;
+      const collected = Number.isFinite(w.dueOpen) ? w.dueOpen : 0; // invoices to receive
+      return {
+        label: w.label,
+        weekStart: w.weekStart,
+        collected,
+        partnerToPay,
+        billsToPay,
+        workforceToPay,
+        net: collected - partnerToPay - billsToPay - workforceToPay,
+      };
+    });
+    const nonZero = base.filter(
+      (w) =>
+        Math.abs(w.collected) > 0.01 ||
+        Math.abs(w.partnerToPay) > 0.01 ||
+        Math.abs(w.billsToPay) > 0.01 ||
+        Math.abs(w.workforceToPay) > 0.01,
+    );
+    return nonZero.length > 0 ? nonZero : base;
+  }, [cashFlowForecast, invoiceDueForecastWeeks]);
+  const activeCashRows = cashflowView === "ahead10" ? cashflowAheadRows : cashflowChartRows;
+  const activeCashTotals = useMemo(
+    () =>
+      activeCashRows.reduce(
+        (acc, b) => ({
+          collected: acc.collected + b.collected,
+          partnerToPay: acc.partnerToPay + b.partnerToPay,
+          billsToPay: acc.billsToPay + b.billsToPay,
+          workforceToPay: acc.workforceToPay + b.workforceToPay,
+          net: acc.net + b.net,
+        }),
+        { collected: 0, partnerToPay: 0, billsToPay: 0, workforceToPay: 0, net: 0 },
+      ),
+    [activeCashRows],
+  );
+  const activeCashInLabel = cashflowView === "ahead10" ? "Invoices to receive" : "Cash in";
 
   const cashflowLegend = useMemo(
     () => [
@@ -1048,35 +1121,123 @@ export function OverviewExecutiveBundle() {
         </div>
       </Card>
 
-      {/* ── Cash-flow forecast: rolling 10 weeks, green income / red expenses ── */}
+      {/* Single Cash-flow card: weekly + 10-week-ahead with same working chart */}
       <Card padding="none" className="overflow-hidden border-border-light">
-        <CardHeader className="px-4 pt-3 pb-2">
-          <div className="flex items-start gap-2.5">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-rose-500/10 flex items-center justify-center shrink-0">
-              <DollarSign className="h-3.5 w-3.5 text-emerald-600" />
+        <CardHeader className="px-4 pt-3 pb-2 border-b border-border-light/60 bg-gradient-to-r from-cyan-500/5 to-violet-500/5">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+            <div className="flex items-start gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-rose-500/10 flex items-center justify-center shrink-0">
+                <DollarSign className="h-3.5 w-3.5 text-emerald-600" />
+              </div>
+              <div>
+                <CardTitle className="text-sm font-semibold">
+                  <EditableTitle id="cash-flow-forecast" defaultValue="Cashflow" />
+                </CardTitle>
+                <p className="text-[10px] text-text-tertiary mt-0.5">
+                  <strong className="text-emerald-700">Green</strong> = cash in ·{" "}
+                  <strong className="text-rose-700">Red</strong> = cash out (partners, bills, workforce)
+                </p>
+              </div>
             </div>
-            <div>
-              <CardTitle className="text-sm font-semibold">
-                <EditableTitle id="cash-flow-forecast" defaultValue="Cash flow — 10-week forecast" />
-              </CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5">
-                <strong className="text-emerald-700">Green</strong> = cash in (customer payments) ·{" "}
-                <strong className="text-rose-700">Red</strong> = cash out (partners, bills, workforce) · rolling 10-week window
-              </p>
+            <div className="flex items-center gap-2 self-start">
+              <div className="inline-flex items-center gap-0.5 rounded-md border border-border-light bg-surface-hover/60 p-0.5">
+                {[
+                  { id: "weekly" as const, label: "Weekly" },
+                  { id: "ahead10" as const, label: "10 week ahead" },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setCashflowView(opt.id)}
+                    className={cn(
+                      "rounded px-2 py-0.5 text-[10px] font-semibold transition-colors",
+                      cashflowView === opt.id ? "bg-primary text-white" : "text-text-secondary hover:bg-card",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {!loading && activeCashRows.length > 0 && (
+                <span
+                  className={cn(
+                    "text-xs font-bold tabular-nums px-2 py-0.5 rounded-md",
+                    activeCashTotals.net >= 0
+                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                      : "bg-rose-500/15 text-rose-700 dark:text-rose-300",
+                  )}
+                >
+                  Period net {formatCurrency(activeCashTotals.net)}
+                </span>
+              )}
             </div>
           </div>
         </CardHeader>
-        <div className="px-2 sm:px-3 pb-4">
+
+        <div className="px-3 sm:px-4 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-border-light/50">
+          {cashflowLegend.map((item) => (
+            <div key={item.key} className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: item.color }} aria-hidden />
+              <span className="text-[10px] font-medium text-text-secondary">{item.label}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="px-2 sm:px-3 py-2">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-px rounded-lg overflow-hidden border border-border-light/70 bg-border-light/50 mb-2">
+            {[
+              {
+                k: "in",
+                label: activeCashInLabel,
+                main: loading ? "—" : formatCurrency(activeCashTotals.collected),
+                sub: cashflowView === "ahead10" ? "Open invoices by due week" : "Customer payments by week",
+                accent: "text-emerald-600",
+              },
+              {
+                k: "partners",
+                label: "Partners to pay",
+                main: loading ? "—" : formatCurrency(activeCashTotals.partnerToPay),
+                sub: "Self-bills awaiting / ready",
+                accent: "text-amber-600",
+              },
+              {
+                k: "otherOut",
+                label: "Bills + workforce",
+                main: loading ? "—" : formatCurrency(activeCashTotals.billsToPay + activeCashTotals.workforceToPay),
+                sub: "Other cash out this view",
+                accent: "text-violet-600",
+              },
+              {
+                k: "net",
+                label: "Cash left (net)",
+                main: loading ? "—" : formatCurrency(activeCashTotals.net),
+                sub: loading
+                  ? "—"
+                  : cashflowView === "ahead10"
+                    ? "Invoices due − partners − bills − workforce"
+                    : "Σ weekly net in selected period",
+                accent: activeCashTotals.net >= 0 ? "text-emerald-600" : "text-rose-600",
+              },
+            ].map((cell) => (
+              <div key={cell.k} className="bg-card px-2.5 py-2 min-w-0">
+                <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide truncate">{cell.label}</p>
+                <p className={cn("text-sm font-bold tabular-nums leading-tight mt-0.5 truncate", cell.accent)}>{cell.main}</p>
+                <p className="text-[9px] text-text-tertiary leading-snug mt-0.5 line-clamp-2">{cell.sub}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="px-2 sm:px-3 pb-4 pt-0">
           {loading ? (
-            <div className="h-48 animate-pulse rounded-xl bg-surface-hover" />
-          ) : cashFlowForecast.length === 0 ? (
-            <div className="h-32 flex items-center justify-center text-sm text-text-tertiary">No data in range</div>
+            <div className="h-56 animate-pulse rounded-xl bg-surface-hover" />
+          ) : activeCashRows.length === 0 ? (
+            <div className="h-40 flex items-center justify-center text-sm text-text-tertiary">No data in range</div>
           ) : (
-            <ResponsiveContainer width="100%" height={240}>
+            <ResponsiveContainer width="100%" height={280}>
               <BarChart
-                data={cashFlowForecast.map((w) => ({
+                data={activeCashRows.map((w) => ({
                   ...w,
-                  // Render expenses as negative so they draw below the zero line (diverging look).
                   expensesNeg: -(w.billsToPay + w.partnerToPay + w.workforceToPay),
                   expensesTotal: w.billsToPay + w.partnerToPay + w.workforceToPay,
                 }))}
@@ -1114,11 +1275,11 @@ export function OverviewExecutiveBundle() {
                         </p>
                         <div className="mt-1 space-y-0.5 text-[10px] text-text-tertiary">
                           <p>
-                            <span className="text-emerald-600 font-semibold">In</span>{" "}
+                            <span className="text-emerald-600 font-semibold">{activeCashInLabel}</span>{" "}
                             <span className="tabular-nums">{formatCurrency(w.collected)}</span>
                           </p>
                           <p>
-                            <span className="text-rose-600 font-semibold">Out</span>{" "}
+                            <span className="text-rose-600 font-semibold">Cash out</span>{" "}
                             <span className="tabular-nums">{formatCurrency(w.expensesTotal)}</span>
                           </p>
                           <p className="pt-0.5 text-[9px]">
@@ -1130,8 +1291,8 @@ export function OverviewExecutiveBundle() {
                     );
                   }}
                 />
-                <Bar dataKey="collected" name="Cash in" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="expensesNeg" name="Cash out" fill="#f43f5e" radius={[0, 0, 4, 4]} />
+                <Bar dataKey="collected" name={activeCashInLabel} fill="#22c55e" radius={[4, 4, 0, 0]} minPointSize={2} />
+                <Bar dataKey="expensesNeg" name="Cash out" fill="#f43f5e" radius={[0, 0, 4, 4]} minPointSize={2} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -1200,136 +1361,6 @@ export function OverviewExecutiveBundle() {
         </Card>
       </div>
 
-      <Card padding="none" className="border-border-light ring-1 ring-border-light/20 overflow-hidden">
-        <CardHeader className="px-4 pt-3 pb-2 border-b border-border-light/60 bg-gradient-to-r from-cyan-500/5 to-violet-500/5">
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-            <div>
-              <CardTitle className="text-sm font-semibold">
-                <EditableTitle id="cash-flow-detailed" defaultValue="Cash flow" />
-              </CardTitle>
-              <p className="text-[10px] text-text-tertiary mt-0.5 max-w-xl">
-                One column per week: <strong className="text-text-secondary">stacked</strong> cash in (green), bills (violet), partners
-                (amber), workforce (rose). Heights are each line’s amount for that week;{" "}
-                <strong className="text-text-secondary">net</strong> = in − partners − bills − workforce (see tooltip).
-              </p>
-            </div>
-            {!loading && cashflow.length > 0 && (
-              <span
-                className={cn(
-                  "text-xs font-bold tabular-nums px-2 py-0.5 rounded-md self-start",
-                  cashflowTotals.net >= 0 ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-rose-500/15 text-rose-700 dark:text-rose-300",
-                )}
-              >
-                Period net {formatCurrency(cashflowTotals.net)}
-              </span>
-            )}
-          </div>
-        </CardHeader>
-        <div className="px-3 sm:px-4 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-border-light/50">
-          {cashflowLegend.map((item) => (
-            <div key={item.key} className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: item.color }} aria-hidden />
-              <span className="text-[10px] font-medium text-text-secondary">{item.label}</span>
-            </div>
-          ))}
-        </div>
-        <div className="px-2 sm:px-3 py-2">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-px rounded-lg overflow-hidden border border-border-light/70 bg-border-light/50 mb-2">
-            {[
-              {
-                k: "sales",
-                label: "Sales (booked)",
-                main: loading ? "—" : formatCurrency(funnel.salesBookedValue),
-                sub: loading ? "—" : `${funnel.salesJobCount} jobs`,
-                accent: "text-emerald-600",
-              },
-              {
-                k: "rev",
-                label: "Revenue",
-                main: loading ? "—" : formatCurrency(revenue),
-                sub: loading ? "—" : revenuePeriodSubtext,
-                accent: "text-emerald-700 dark:text-emerald-400",
-              },
-              {
-                k: "costs",
-                label: "Projected costs",
-                main: loading ? "—" : formatCurrency(periodAllInCosts),
-                sub: "Direct + bills + payroll · period",
-                accent: "text-amber-600",
-              },
-              {
-                k: "net",
-                label: "Period net (cash)",
-                main: loading ? "—" : formatCurrency(cashflowTotals.net),
-                sub: loading
-                  ? "—"
-                  : `Σ weekly net · open AR ${formatCurrency(funnel.outstandingAr)}`,
-                accent: cashflowTotals.net >= 0 ? "text-emerald-600" : "text-rose-600",
-              },
-            ].map((cell) => (
-              <div key={cell.k} className="bg-card px-2.5 py-2 min-w-0">
-                <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide truncate">{cell.label}</p>
-                <p className={cn("text-sm font-bold tabular-nums leading-tight mt-0.5 truncate", cell.accent)}>{cell.main}</p>
-                <p className="text-[9px] text-text-tertiary leading-snug mt-0.5 line-clamp-2">{cell.sub}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="px-2 sm:px-3 pb-4 pt-0">
-          {loading ? (
-            <div className="h-56 animate-pulse rounded-xl bg-surface-hover" />
-          ) : cashflow.length === 0 ? (
-            <div className="h-40 flex items-center justify-center text-sm text-text-tertiary">No data in range</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={cashflow} margin={{ top: 8, right: 8, left: 4, bottom: 8 }} barCategoryGap="18%">
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border-light/50" />
-                <XAxis
-                  dataKey="label"
-                  tick={{ fontSize: 9, fill: "var(--color-text-tertiary)" }}
-                  axisLine={false}
-                  tickLine={false}
-                  interval="preserveStartEnd"
-                  height={48}
-                />
-                <YAxis
-                  tick={{ fontSize: 10, fill: "var(--color-text-tertiary)" }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => (Math.abs(v) >= 1000 ? `£${(v / 1000).toFixed(0)}k` : `£${v}`)}
-                />
-                <Tooltip
-                  content={({ active, payload, label }) => {
-                    if (!active || !payload?.length) return null;
-                    const w = payload[0]!.payload as WeeklyCashPositionRow;
-                    return (
-                      <div
-                        className="rounded-lg border border-border-light px-3 py-2 text-xs shadow-md"
-                        style={{ background: "var(--color-card)" }}
-                      >
-                        <p className="font-semibold text-text-primary mb-1">{String(label)}</p>
-                        <p className={cn("font-bold tabular-nums", w.net >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                          Net {formatCurrency(w.net)}
-                        </p>
-                        <p className="text-[10px] text-text-tertiary mt-1 space-y-0.5">
-                          <span className="block">Cash in {formatCurrency(w.collected)}</span>
-                          <span className="block">Bills {formatCurrency(w.billsToPay)}</span>
-                          <span className="block">Partners {formatCurrency(w.partnerToPay)}</span>
-                          <span className="block">Workforce {formatCurrency(w.workforceToPay)}</span>
-                        </p>
-                      </div>
-                    );
-                  }}
-                />
-                <Bar dataKey="collected" name="Cash in" stackId="cf" fill="#22c55e" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="billsToPay" name="Bills" stackId="cf" fill="#a855f7" />
-                <Bar dataKey="partnerToPay" name="Partners" stackId="cf" fill="#eab308" />
-                <Bar dataKey="workforceToPay" name="Workforce" stackId="cf" fill="#fb7185" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </Card>
     </div>
   );
 }

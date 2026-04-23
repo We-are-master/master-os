@@ -84,14 +84,16 @@ const PIPELINE_ROW_WIDGETS = new Set<WidgetConfig["type"]>([
 /** Revenue Overview always uses the full 12-column row (not split with Quick Actions, etc.). */
 function getWidgetGridClass(widget: WidgetConfig, orderedWidgets: WidgetConfig[], activeView: DashboardView | null): string {
   if (widget.type === "revenue_chart") return "col-span-12";
-  /** Overview: Jobs donut + Request→Job funnel + Partners by trade share one row (3×4 cols from `md`). */
+  /** Overview: Jobs donut + Request→Job funnel share one row (2×6 cols from `md`). */
   if (
     activeView &&
     isOverviewView(activeView) &&
-    (widget.type === "jobs_status_donut" || widget.type === "quote_funnel" || widget.type === "partners_by_trade")
+    (widget.type === "jobs_status_donut" || widget.type === "quote_funnel")
   ) {
-    return "col-span-12 md:col-span-4";
+    return "col-span-12 md:col-span-6";
   }
+  /** Overview: Partners by trade gets full-width (3/3) for better readability. */
+  if (activeView && isOverviewView(activeView) && widget.type === "partners_by_trade") return "col-span-12";
   /** If only one Top 5 companion exists, let Pipeline expand to avoid empty space. */
   if (widget.type === "pipeline_summary") {
     const companionCount = orderedWidgets.filter(
@@ -190,7 +192,7 @@ function orderCashFlowPartnersAboveJobsDonut(widgets: WidgetConfig[]): WidgetCon
 }
 
 /**
- * Overview: place **Partners by type of work** in the same row as Jobs donut + Quote funnel (1/3 width each).
+ * Overview: place **Partners by type of work** after the funnel as a full-width row.
  */
 function injectOverviewPartnersWidget(widgets: WidgetConfig[], activeView: DashboardView | null): WidgetConfig[] {
   if (!activeView || !isOverviewView(activeView)) return widgets;
@@ -201,7 +203,7 @@ function injectOverviewPartnersWidget(widgets: WidgetConfig[], activeView: Dashb
     id: "overview-partners-by-trade",
     type: "partners_by_trade",
     title: "Partners by type of work",
-    size: "one_third",
+    size: "full",
     position: 0,
   };
   if (funnelIdx === -1) {

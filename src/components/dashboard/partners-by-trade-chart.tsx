@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Treemap } from "recharts";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
@@ -38,6 +38,26 @@ function tradeLabelsForPartner(p: Pick<Partner, "trade" | "trades">): string[] {
 }
 
 type TradeRow = { name: string; count: number; fill: string };
+type PartnerSimpleRow = { name: string; initials: string; postcodeOutward: string; status: "active" | "inactive" };
+type AreaRow = { name: string; size: number; fill: string };
+
+function initialsFromName(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((x) => x[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function extractOutwardPostcode(raw: string): string {
+  const text = raw.trim().toUpperCase();
+  if (!text) return "N/A";
+  const full = text.match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}\b/);
+  if (full?.[1]) return full[1];
+  const outward = text.match(/\b([A-Z]{1,2}\d[A-Z\d]?)\b/);
+  return outward?.[1] ?? "N/A";
+}
 
 /**
  * Donut chart scales better than horizontal bars on narrow viewports:
@@ -46,6 +66,8 @@ type TradeRow = { name: string; count: number; fill: string };
  */
 export function PartnersByTradeChart({ compact = false }: { compact?: boolean }) {
   const [rows, setRows] = useState<TradeRow[]>([]);
+  const [partnerRows, setPartnerRows] = useState<PartnerSimpleRow[]>([]);
+  const [areaRows, setAreaRows] = useState<AreaRow[]>([]);
   const [activeTotal, setActiveTotal] = useState(0);
   const [inactiveTotal, setInactiveTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -55,26 +77,20 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
       const supabase = getSupabase();
       setLoading(true);
       try {
-        const [activeCountRes, inactiveCountRes, first] = await Promise.all([
-          supabase.from("partners").select("id", { count: "exact", head: true }).eq("status", "active"),
-          supabase.from("partners").select("id", { count: "exact", head: true }).neq("status", "active"),
-          supabase.from("partners").select("trade, trades, status").eq("status", "active"),
-        ]);
-
-        setActiveTotal(activeCountRes.count ?? 0);
-        setInactiveTotal(inactiveCountRes.count ?? 0);
-
-        let partnerRows: Pick<Partner, "trade" | "trades" | "status">[];
-        if (first.error) {
-          const second = await supabase.from("partners").select("trade, status").eq("status", "active");
-          if (second.error) throw second.error;
-          partnerRows = (second.data ?? []) as Pick<Partner, "trade" | "trades" | "status">[];
-        } else {
-          partnerRows = (first.data ?? []) as Pick<Partner, "trade" | "trades" | "status">[];
-        }
+        const { data, error } = await supabase
+          .from("partners")
+          .select("contact_name, company_name, trade, trades, status, partner_address, location");
+        if (error) throw error;
+        const allPartners = (data ?? []) as Array<
+          Pick<Partner, "trade" | "trades" | "status" | "partner_address" | "location" | "contact_name" | "company_name">
+        >;
+        const activePartners = allPartners.filter((p) => p.status === "active");
+        const inactivePartners = allPartners.filter((p) => p.status !== "active");
+        setActiveTotal(activePartners.length);
+        setInactiveTotal(inactivePartners.length);
 
         const counts: Record<string, number> = {};
-        for (const p of partnerRows) {
+        for (const p of activePartners) {
           for (const label of tradeLabelsForPartner(p)) {
             counts[label] = (counts[label] ?? 0) + 1;
           }
@@ -86,8 +102,34 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
           .map((r, i) => ({ ...r, fill: SLICE_COLORS[i % SLICE_COLORS.length] }));
 
         setRows(chartData);
+
+        const simpleRows = allPartners
+          .map((p) => {
+            const rawName = (p.contact_name || p.company_name || "Partner").trim();
+            const postcodeOutward = extractOutwardPostcode(`${p.partner_address ?? ""} ${p.location ?? ""}`);
+            return {
+              name: rawName,
+              initials: initialsFromName(rawName) || "P",
+              postcodeOutward,
+              status: p.status === "active" ? "active" : "inactive",
+            } as PartnerSimpleRow;
+          })
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setPartnerRows(simpleRows);
+
+        const areaMap: Record<string, number> = {};
+        for (const p of simpleRows) {
+          const key = p.postcodeOutward || "N/A";
+          areaMap[key] = (areaMap[key] ?? 0) + 1;
+        }
+        const areas = Object.entries(areaMap)
+          .map(([name, size], i) => ({ name, size, fill: SLICE_COLORS[i % SLICE_COLORS.length] }))
+          .sort((a, b) => b.size - a.size);
+        setAreaRows(compact ? areas.slice(0, 8) : areas);
       } catch {
         setRows([]);
+        setPartnerRows([]);
+        setAreaRows([]);
         setActiveTotal(0);
         setInactiveTotal(0);
       } finally {
@@ -99,6 +141,8 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
 
   const displayRows = compact ? rows.slice(0, 12) : rows;
   const totalCount = useMemo(() => displayRows.reduce((s, r) => s + r.count, 0), [displayRows]);
+  const topTradeRows = useMemo(() => rows.slice(0, compact ? 6 : 8), [rows, compact]);
+  const visiblePartners = compact ? partnerRows.slice(0, 8) : partnerRows;
   const totalDir = activeTotal + inactiveTotal;
   const activeShare = totalDir > 0 ? Math.round((activeTotal / totalDir) * 1000) / 10 : 0;
 
@@ -124,7 +168,7 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
                   <p className="mt-1 text-2xl sm:text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
                     {activeTotal}
                   </p>
-                  <p className="text-[10px] text-text-tertiary mt-0.5">Eligible · trade breakdown below</p>
+                  <p className="text-[10px] text-text-tertiary mt-0.5">In system today · trade breakdown below</p>
                 </motion.div>
                 <motion.div
                   whileHover={{ scale: 1.01 }}
@@ -135,7 +179,7 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
                   <p className="mt-1 text-2xl sm:text-3xl font-bold tabular-nums text-text-primary">
                     {inactiveTotal}
                   </p>
-                  <p className="text-[10px] text-text-tertiary mt-0.5">Onboarding, needs attention, paused…</p>
+                  <p className="text-[10px] text-text-tertiary mt-0.5">In system today · onboarding, paused, needs attention…</p>
                 </motion.div>
               </div>
               {totalDir > 0 && (
@@ -153,6 +197,26 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
                       transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
                       className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500"
                     />
+                  </div>
+                </div>
+              )}
+              {topTradeRows.length > 0 && (
+                <div className="rounded-xl border border-border-light/70 bg-card p-2.5">
+                  <div className="flex items-center justify-between gap-2 text-[10px] sm:text-[11px] text-text-tertiary mb-2">
+                    <span>Today in system</span>
+                    <span className="font-semibold tabular-nums text-text-secondary">{totalDir} partners</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {topTradeRows.map((row) => (
+                      <div
+                        key={row.name}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border-light bg-surface-hover/60 px-2 py-1"
+                      >
+                        <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: row.fill }} />
+                        <span className="text-[10px] text-text-secondary">{row.name}</span>
+                        <span className="text-[10px] font-semibold tabular-nums text-text-primary">{row.count}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -174,8 +238,20 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
               By type of work · active partners only
             </p>
             {/* Responsive split: donut on top (mobile) / left (md+); legend right/below */}
-            <div className="flex flex-col md:flex-row items-center md:items-stretch gap-4 min-h-0 flex-1">
-              <div className="relative w-full max-w-[220px] md:w-[220px] md:max-w-none mx-auto md:mx-0 aspect-square shrink-0">
+            <div
+              className={cn(
+                "min-h-0 flex-1 gap-4",
+                compact ? "flex flex-col md:flex-row items-center md:items-stretch" : "flex flex-col xl:flex-row items-stretch",
+              )}
+            >
+              <div
+                className={cn(
+                  "relative aspect-square shrink-0",
+                  compact
+                    ? "w-full max-w-[220px] md:w-[220px] md:max-w-none mx-auto md:mx-0"
+                    : "w-full max-w-[260px] sm:max-w-[300px] xl:w-[300px] xl:max-w-none mx-auto xl:mx-0",
+                )}
+              >
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Tooltip
@@ -219,8 +295,13 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
                 </div>
               </div>
               {/* Legend — scrollable column on md+, wrapped 2-col chips on mobile */}
-              <div className="flex-1 min-w-0 md:min-h-0 md:overflow-y-auto">
-                <div className="grid grid-cols-2 md:grid-cols-1 gap-1.5">
+              <div className={cn("flex-1 min-w-0", compact && "md:min-h-0 md:overflow-y-auto")}>
+                <div
+                  className={cn(
+                    "gap-1.5",
+                    compact ? "grid grid-cols-2 md:grid-cols-1" : "grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-2",
+                  )}
+                >
                   {displayRows.map((row) => {
                     const pct = totalCount > 0 ? Math.round((row.count / totalCount) * 1000) / 10 : 0;
                     return (
@@ -242,6 +323,52 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
                     );
                   })}
                 </div>
+              </div>
+            </div>
+            <div className={cn("grid gap-3", compact ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2")}>
+              <div className="rounded-xl border border-border-light/70 bg-card p-2.5">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Partners now</p>
+                  <p className="text-[10px] font-semibold text-text-secondary tabular-nums">{totalDir} total</p>
+                </div>
+                <div className="space-y-1.5 max-h-[190px] overflow-y-auto pr-1">
+                  {visiblePartners.map((p) => (
+                    <div key={`${p.name}-${p.postcodeOutward}`} className="flex items-center gap-2 rounded-md bg-surface-hover/50 px-2 py-1.5">
+                      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#020040] text-[10px] font-semibold text-white">
+                        {p.initials}
+                      </span>
+                      <span className="text-[11px] text-text-secondary truncate flex-1">{p.name}</span>
+                      <span className="text-[10px] font-semibold text-text-primary tabular-nums">{p.postcodeOutward}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border-light/70 bg-card p-2.5">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Partners by area</p>
+                  <p className="text-[10px] text-text-tertiary">Based on home postcode</p>
+                </div>
+                {areaRows.length === 0 ? (
+                  <div className="h-[190px] flex items-center justify-center text-[11px] text-text-tertiary">No postcode data</div>
+                ) : (
+                  <div className="h-[190px] space-y-2">
+                    <ResponsiveContainer width="100%" height="78%">
+                      <Treemap data={areaRows} dataKey="size" stroke="rgba(255,255,255,0.8)" fill="#60a5fa">
+                        <Tooltip formatter={(v, _n, p) => [`${Number(v ?? 0)} partners`, String((p?.payload as AreaRow)?.name ?? "")]} />
+                      </Treemap>
+                    </ResponsiveContainer>
+                    <div className="flex flex-wrap gap-1.5">
+                      {areaRows.slice(0, compact ? 5 : 8).map((a) => (
+                        <span key={a.name} className="inline-flex items-center gap-1 rounded-md border border-border-light px-2 py-0.5 text-[10px]">
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: a.fill }} />
+                          <span className="text-text-secondary">{a.name}</span>
+                          <span className="font-semibold text-text-primary tabular-nums">{a.size}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

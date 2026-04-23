@@ -31,11 +31,13 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatCurrency, cn, normalizeCalendarDateToYmd, formatYmdUkDisplay } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Quote, Partner, Job } from "@/types/database";
+import type { Quote, Partner, Job, Account } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { getClient } from "@/services/clients";
-import { getAccount } from "@/services/accounts";
+import { getAccount, listAccounts } from "@/services/accounts";
+import { getAccountProperty } from "@/services/account-properties";
+import { getAccountIdsForBu } from "@/services/business-units";
 import {
   findDuplicateJobs,
   findDuplicateQuotes,
@@ -94,6 +96,7 @@ import {
   type PartnerLinePricingMode,
 } from "@/lib/quote-proposal-line-notes";
 import { resolveImagesForJobFromQuote } from "@/lib/job-images";
+import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 
 const UI_PERF_EVENT = "master-ui-perf";
 
@@ -615,11 +618,60 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const filterRef = useRef<HTMLDivElement>(null);
   const [filterQuoteType, setFilterQuoteType] = useState<"all" | "internal" | "partner">("all");
   const buFilter = useBuFilter();
+  /** Accounts in the selected BU — used with `property_id` when a quote has no `client_id`. */
+  const [buAccountIds, setBuAccountIds] = useState<Set<string>>(new Set());
+  /** `account_properties.id` → `account_id` for quotes without a client (BU filter). */
+  const [propertyIdToAccountId, setPropertyIdToAccountId] = useState<Record<string, string>>({});
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
   const [drawerPendingTab, setDrawerPendingTab] = useState<"overview" | "bids" | null>(null);
   const consumeDrawerPendingTab = useCallback(() => setDrawerPendingTab(null), []);
   const kpiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!buFilter.selectedBuId) {
+      setBuAccountIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    getAccountIdsForBu(buFilter.selectedBuId).then((ids) => {
+      if (!cancelled) setBuAccountIds(ids);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [buFilter.selectedBuId]);
+
+  useEffect(() => {
+    const ids = [...new Set(data.map((q) => q.property_id).filter(Boolean))] as string[];
+    if (ids.length === 0) {
+      setPropertyIdToAccountId({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = getSupabase();
+        const { data: rows, error } = await supabase
+          .from("account_properties")
+          .select("id, account_id")
+          .in("id", ids)
+          .is("deleted_at", null);
+        if (error || cancelled) return;
+        const next: Record<string, string> = {};
+        for (const row of rows ?? []) {
+          const r = row as { id: string; account_id: string };
+          if (r.id && r.account_id) next[r.id] = r.account_id;
+        }
+        if (!cancelled) setPropertyIdToAccountId(next);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
 
   useEffect(() => {
     const qid = searchParams.get("quoteId");
@@ -660,11 +712,22 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       if (filterQuoteType !== "all" && (q.quote_type ?? "internal") !== filterQuoteType) return false;
       if (buFilter.selectedBuId) {
         if (!buFilter.clientIdsInBu) return true;
-        if (!q.client_id || !buFilter.clientIdsInBu.has(q.client_id)) return false;
+        const clientInBu = Boolean(q.client_id && buFilter.clientIdsInBu.has(q.client_id));
+        const pid = q.property_id?.trim();
+        const accFromProperty = pid ? propertyIdToAccountId[pid] : undefined;
+        const propertyInBu = Boolean(accFromProperty && buAccountIds.has(accFromProperty));
+        if (!clientInBu && !propertyInBu) return false;
       }
       return true;
     });
-  }, [data, filterQuoteType, buFilter.selectedBuId, buFilter.clientIdsInBu]);
+  }, [
+    data,
+    filterQuoteType,
+    buFilter.selectedBuId,
+    buFilter.clientIdsInBu,
+    propertyIdToAccountId,
+    buAccountIds,
+  ]);
 
   const [avgBidByQuoteId, setAvgBidByQuoteId] = useState<Record<string, number>>({});
   const dataIdsKey = useMemo(() => data.map((q) => q.id).sort().join(","), [data]);
@@ -865,12 +928,17 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         });
         if (!(await confirmDespiteDuplicates(formatQuoteDuplicateLines(dupQ)))) return;
 
+        const pid =
+          formData.property_id && isUuid(String(formData.property_id).trim())
+            ? String(formData.property_id).trim()
+            : undefined;
         const result = await createQuote({
           title: formData.title ?? "",
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
           client_name: formData.client_name ?? "",
           client_email: formData.client_email ?? "",
+          ...(pid ? { property_id: pid } : {}),
           catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
             ? String(formData.catalog_service_id).trim()
             : null,
@@ -1879,45 +1947,84 @@ function QuoteDetailDrawer({
   useEffect(() => {
     let cancelled = false;
     const clientId = quoteClientPick.client_id ?? quote.client_id;
-    if (!clientId) {
-      setLinkedAccountPreview(null);
-      return;
-    }
-    void (async () => {
-      try {
-        const client = await getClient(clientId);
-        const sid = client?.source_account_id?.trim();
-        if (!sid) {
+    if (clientId) {
+      void (async () => {
+        try {
+          const client = await getClient(clientId);
+          const sid = client?.source_account_id?.trim();
+          if (!sid) {
+            if (!cancelled) setLinkedAccountPreview(null);
+            return;
+          }
+          const acc = await getAccount(sid);
+          if (cancelled) return;
+          if (!acc) {
+            setLinkedAccountPreview(null);
+            return;
+          }
+          const mainEmail = bidPayloadTrimmedString(acc.email as unknown);
+          const feRaw = bidPayloadTrimmedString(acc.finance_email as unknown);
+          const companyName =
+            bidPayloadTrimmedString(acc.company_name as unknown) ||
+            bidPayloadTrimmedString(acc.contact_name as unknown) ||
+            "";
+          if (!cancelled) {
+            setLinkedAccountPreview({
+              companyName: companyName || "—",
+              email: mainEmail || "—",
+              financeEmail: feRaw.length > 0 ? feRaw : null,
+            });
+          }
+        } catch {
           if (!cancelled) setLinkedAccountPreview(null);
-          return;
         }
-        const acc = await getAccount(sid);
-        if (cancelled) return;
-        if (!acc) {
-          setLinkedAccountPreview(null);
-          return;
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    const propId = quote.property_id?.trim();
+    if (!clientId && propId) {
+      void (async () => {
+        try {
+          const prop = await getAccountProperty(propId);
+          const aid = prop?.account_id?.trim();
+          if (!aid) {
+            if (!cancelled) setLinkedAccountPreview(null);
+            return;
+          }
+          const acc = await getAccount(aid);
+          if (cancelled) return;
+          if (!acc) {
+            setLinkedAccountPreview(null);
+            return;
+          }
+          const mainEmail = bidPayloadTrimmedString(acc.email as unknown);
+          const feRaw = bidPayloadTrimmedString(acc.finance_email as unknown);
+          const companyName =
+            bidPayloadTrimmedString(acc.company_name as unknown) ||
+            bidPayloadTrimmedString(acc.contact_name as unknown) ||
+            "";
+          if (!cancelled) {
+            setLinkedAccountPreview({
+              companyName: companyName || "—",
+              email: mainEmail || "—",
+              financeEmail: feRaw.length > 0 ? feRaw : null,
+            });
+          }
+        } catch {
+          if (!cancelled) setLinkedAccountPreview(null);
         }
-        const mainEmail = bidPayloadTrimmedString(acc.email as unknown);
-        const feRaw = bidPayloadTrimmedString(acc.finance_email as unknown);
-        const companyName =
-          bidPayloadTrimmedString(acc.company_name as unknown) ||
-          bidPayloadTrimmedString(acc.contact_name as unknown) ||
-          "";
-        if (!cancelled) {
-          setLinkedAccountPreview({
-            companyName: companyName || "—",
-            email: mainEmail || "—",
-            financeEmail: feRaw.length > 0 ? feRaw : null,
-          });
-        }
-      } catch {
-        if (!cancelled) setLinkedAccountPreview(null);
-      }
-    })();
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    setLinkedAccountPreview(null);
     return () => {
       cancelled = true;
     };
-  }, [quote.client_id, quoteClientPick.client_id, quote.updated_at]);
+  }, [quote.client_id, quote.property_id, quoteClientPick.client_id, quote.updated_at]);
 
   useEffect(() => {
     if (quote.status === "accepted" || quote.status === "converted_to_job") {
@@ -1985,7 +2092,10 @@ function QuoteDetailDrawer({
   }, [quote]);
 
   const partnersEligibleForInvite = useMemo(
-    () => partners.filter((p) => isPartnerEligibleForWork(p)),
+    () =>
+      partners.filter(
+        (p) => isPartnerEligibleForWork(p) && typeof p.id === "string" && p.id.trim().length > 0,
+      ),
     [partners],
   );
 
@@ -3683,27 +3793,24 @@ function QuoteDetailDrawer({
               const isTradeMatch =
                 !!invitePartnerTypeOfWork.trim() && safePartnerMatchesTypeOfWork(p, invitePartnerTypeOfWork);
               return (
-                <label
+                <button
+                  type="button"
                   key={p.id}
+                  onClick={() => {
+                    setSelectedPartnerIds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(p.id)) next.delete(p.id);
+                      else next.add(p.id);
+                      return next;
+                    });
+                  }}
+                  aria-pressed={isSelected}
                   className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
                     isSelected
                       ? "border-amber-500 bg-amber-50/80 dark:bg-amber-950/35 ring-1 ring-amber-500/25"
                       : "border-amber-200/70 dark:border-amber-900/50 bg-card hover:border-amber-400/70 hover:bg-amber-50/50 dark:hover:bg-amber-950/25"
                   }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={(e) => {
-                      setSelectedPartnerIds((prev) => {
-                        const next = new Set(prev);
-                        if (e.target.checked) next.add(p.id);
-                        else next.delete(p.id);
-                        return next;
-                      });
-                    }}
-                    className="sr-only"
-                  />
                   <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-text-primary truncate">{p.company_name}</p>
@@ -3727,7 +3834,7 @@ function QuoteDetailDrawer({
                       {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
                     </span>
                   </div>
-                </label>
+                </button>
               );
             })}
           </div>
@@ -3794,8 +3901,7 @@ function QuoteDetailDrawer({
 
 /** Required fields before leaving draft/survey; bidding is optional — you can go straight to awaiting_customer with your own figures. */
 function quoteBasicsForPipeline(quote: Quote): { ok: boolean; message?: string } {
-  if (!bidPayloadTrimmedString(quote.client_name as unknown)) return { ok: false, message: "Fill client name (Step 1: Job details)." };
-  if (!bidPayloadTrimmedString(quote.client_email as unknown)) return { ok: false, message: "Fill client email (Step 1: Job details)." };
+  if (!bidPayloadTrimmedString(quote.client_name as unknown)) return { ok: false, message: "Fill client or account name (Step 1: Job details)." };
   if (!bidPayloadTrimmedString(quote.property_address as unknown)) return { ok: false, message: "Fill property address (Step 1: Job details)." };
   if (!bidPayloadTrimmedString(quote.title as unknown)) return { ok: false, message: "Fill job title / service (Step 1: Job details)." };
   if (Number(quote.total_value) <= 0 && Number(quote.cost) <= 0) {
@@ -3966,8 +4072,8 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       job_type: "fixed",
     });
     setClientAddress({
-      client_id: quote.client_id,
-      client_address_id: quote.client_address_id,
+      client_id: quote.client_id ?? undefined,
+      client_address_id: quote.client_address_id ?? undefined,
       client_name: quote.client_name ?? "",
       client_email: quote.client_email ?? undefined,
       property_address: quote.property_address ?? "",
@@ -4014,12 +4120,17 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
         materials_cost: split.hasSplit ? String(split.materials) : prev.materials_cost,
         job_type: bidJobType ?? prev.job_type,
       }));
+      let resolvedAddr = q.property_address ?? "";
+      if (!resolvedAddr.trim() && q.property_id?.trim()) {
+        const prop = await getAccountProperty(String(q.property_id).trim()).catch(() => null);
+        if (prop?.full_address) resolvedAddr = prop.full_address;
+      }
       setClientAddress({
-        client_id: q.client_id,
-        client_address_id: q.client_address_id,
+        client_id: q.client_id ?? undefined,
+        client_address_id: q.client_address_id ?? undefined,
         client_name: q.client_name ?? "",
         client_email: q.client_email ?? undefined,
-        property_address: q.property_address ?? "",
+        property_address: resolvedAddr,
       });
     })();
     if (quote.request_id && !quote.client_address_id?.trim()) {
@@ -4171,7 +4282,12 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
             { value: "hourly", label: "Hourly" },
           ]}
         />
-        <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+        {!quote.client_id ? (
+          <p className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-text-secondary dark:border-primary/30 dark:bg-primary/10">
+            This quote has no linked contact yet. Select or create a client below before creating the job.
+          </p>
+        ) : null}
+        <ClientAddressPicker value={clientAddress} onChange={setClientAddress} loadAllClientsOnOpen />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work *</label>
           <textarea
@@ -4402,7 +4518,21 @@ function CreateQuoteForm({
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const inviteUploadFolderRef = useRef(`create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`);
   const quoteTypePrevRef = useRef(quoteType);
+  const [accountRows, setAccountRows] = useState<Account[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [addContactClient, setAddContactClient] = useState(true);
+  /** Free-text work address when there is no contact on the quote — stored only on the quote row, not as an account property. */
+  const [manualSiteAddress, setManualSiteAddress] = useState("");
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
+  const selectedAccountLabel = useMemo(() => {
+    const a = accountRows.find((x) => x.id === selectedAccountId);
+    return (
+      bidPayloadTrimmedString(a?.company_name as unknown) ||
+      bidPayloadTrimmedString(a?.contact_name as unknown) ||
+      ""
+    );
+  }, [accountRows, selectedAccountId]);
   const linePartnerTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.partnerUnitCost) || 0), 0);
   const lineSellTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const createProposalMarginAbs = lineSellTotal - linePartnerTotal;
@@ -4471,19 +4601,44 @@ function CreateQuoteForm({
     });
   }, [form.title, quoteType]);
 
+  useEffect(() => {
+    setAccountsLoading(true);
+    listAccounts({ page: 1, pageSize: 500, status: "all" })
+      .then((r) => setAccountRows(r.data ?? []))
+      .catch(() => setAccountRows([]))
+      .finally(() => setAccountsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    setClientAddress({ client_name: "", property_address: "" });
+    setManualSiteAddress("");
+  }, [selectedAccountId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title?.trim()) {
       toast.error("Type of work is required");
       return;
     }
-    if (!clientAddress.client_id) {
-      toast.error("Select a client from the list (click the name or press Enter) — typing alone does not link the client.");
+    if (!selectedAccountId.trim()) {
+      toast.error("Select an account");
       return;
     }
-    if (!clientAddress.property_address?.trim()) {
-      toast.error("Choose a property address or add a new one under Property address.");
-      return;
+    if (addContactClient) {
+      if (!clientAddress.client_id) {
+        toast.error("Select a client from the list (click the name or press Enter) — typing alone does not link the client.");
+        return;
+      }
+      if (!clientAddress.property_address?.trim()) {
+        toast.error("Choose a property address or add a new one under Property address.");
+        return;
+      }
+    } else {
+      const addr = manualSiteAddress.trim();
+      if (!addr) {
+        toast.error("Enter the property / work address.");
+        return;
+      }
     }
     const scopeFromLineItems = lineItems
       .map((li) => li.description.trim())
@@ -4529,13 +4684,26 @@ function CreateQuoteForm({
     const depPct = clampDepositPercent(Number(depositPercent));
     const depAmt = depositAmountFromPercent(lineSellTotal, depPct);
 
+    const accountDisplayName = selectedAccountLabel || "Account";
+    const noClientAddress = addContactClient
+      ? clientAddress.property_address
+      : manualSiteAddress.trim();
+
     const payload: Partial<Quote> = {
       title: normalizeTypeOfWork(form.title),
-      client_id: clientAddress.client_id,
-      client_address_id: clientAddress.client_address_id,
-      client_name: clientAddress.client_name,
-      client_email: clientAddress.client_email,
-      property_address: clientAddress.property_address,
+      ...(addContactClient
+        ? {
+            client_id: clientAddress.client_id,
+            client_address_id: clientAddress.client_address_id,
+            client_name: clientAddress.client_name,
+            client_email: clientAddress.client_email ?? "",
+            property_address: noClientAddress,
+          }
+        : {
+            client_name: accountDisplayName,
+            client_email: "",
+            property_address: noClientAddress,
+          }),
       catalog_service_id: null,
       total_value: quoteType === "internal" ? (lineSellTotal > 0 ? lineSellTotal : linePartnerTotal) : 0,
       cost: quoteType === "internal" ? linePartnerTotal : 0,
@@ -4558,6 +4726,9 @@ function CreateQuoteForm({
     onSubmit(payload, quoteType === "internal" ? { manualLineItems: lineItems } : undefined);
     inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     setForm({ title: "", total_value: "" });
+    setSelectedAccountId("");
+    setAddContactClient(true);
+    setManualSiteAddress("");
     setClientAddress({ client_name: "", property_address: "" });
     setLineItems(seedManualProposalLines(""));
     setScopeText("");
@@ -4646,7 +4817,79 @@ function CreateQuoteForm({
           </button>
         </div>
       </div>
-      <ClientAddressPicker value={clientAddress} onChange={setClientAddress} loadAllClientsOnOpen />
+      <Select
+        label="Account *"
+        value={selectedAccountId}
+        onChange={(e) => setSelectedAccountId(e.target.value)}
+        disabled={accountsLoading}
+        options={[
+          { value: "", label: accountsLoading ? "Loading accounts…" : "Select account…" },
+          ...accountRows.map((a) => ({
+            value: a.id,
+            label:
+              bidPayloadTrimmedString(a.company_name as unknown) ||
+              bidPayloadTrimmedString(a.contact_name as unknown) ||
+              a.id,
+          })),
+        ]}
+      />
+      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border-light bg-card px-3 py-2.5 text-sm text-text-primary">
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20"
+          checked={addContactClient}
+          onChange={(e) => {
+            const on = e.target.checked;
+            setAddContactClient(on);
+            if (!on) {
+              setClientAddress((p) => ({
+                ...p,
+                client_id: undefined,
+                client_address_id: undefined,
+                client_email: undefined,
+              }));
+            }
+          }}
+        />
+        <span>
+          <span className="font-medium">Add a contact client on this quote</span>
+          <span className="mt-0.5 block text-[11px] font-normal text-text-tertiary">
+            Turn off to quote for the account with a typed address only — it is saved on the quote, not as a saved site.
+            Link a contact when you convert to a job (or after the quote is accepted), if you need one.
+          </span>
+        </span>
+      </label>
+      {addContactClient ? (
+        selectedAccountId.trim() ? (
+          <ClientAddressPicker
+            value={clientAddress}
+            onChange={setClientAddress}
+            loadAllClientsOnOpen
+            restrictToSourceAccountId={selectedAccountId.trim()}
+            restrictToSourceAccountLabel={selectedAccountLabel || undefined}
+          />
+        ) : (
+          <p className="rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-100/90">
+            Select an account above to choose a contact and property address.
+          </p>
+        )
+      ) : (
+        <div className="space-y-3 rounded-xl border border-border-light bg-surface-hover/30 p-3 dark:bg-surface-secondary/20">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Work address</p>
+          <p className="text-[11px] leading-snug text-text-tertiary">
+            This address is stored only on the quote. It is not saved as an account property or client address until you add a contact later.
+          </p>
+          <AddressAutocomplete
+            label="Property address *"
+            value={manualSiteAddress}
+            onChange={(v) => setManualSiteAddress(v)}
+            onSelect={(parts: AddressParts) => setManualSiteAddress(parts.full_address)}
+            placeholder="Start typing the work address…"
+            multiline
+            fieldClassName="min-h-[72px]"
+          />
+        </div>
+      )}
       <Select
         label="Type of work *"
         value={form.title}

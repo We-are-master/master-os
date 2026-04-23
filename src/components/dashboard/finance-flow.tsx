@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { getSupabase } from "@/services/base";
 import { formatCurrency, cn } from "@/lib/utils";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
@@ -97,21 +98,31 @@ export function FinanceFlow() {
     <Card padding="none" className="h-full min-h-0 flex flex-col border-border-light shadow-sm overflow-hidden ring-1 ring-border-light/20">
       <CardHeader className="px-5 pt-5 shrink-0 mb-0 flex flex-row flex-wrap items-start justify-between gap-3 border-b border-border-light/60 bg-gradient-to-r from-surface-hover/30 to-transparent">
         <div className="min-w-0">
-          <CardTitle>Cash flow</CardTitle>
-          <p className="text-xs text-text-tertiary mt-0.5">
-            {loading ? (
-              "Loading…"
-            ) : (
-              <>
-                Weekly · Net:{" "}
-                <span className={totals.net >= 0 ? "text-emerald-600 font-semibold" : "text-rose-600 font-semibold"}>
-                  {formatCurrency(totals.net)}
-                </span>
-                {totals.net >= 0 ? " · positive" : " · negative"}
-              </>
-            )}
-            {bounds && <span className="block mt-0.5">Dashboard date range</span>}
-          </p>
+          <div className="flex items-center gap-1.5">
+            <CardTitle>Cash flow</CardTitle>
+            <FixfyHintIcon
+              text="Weekly cash position by expected movement date. Period net = invoices paid minus partner, bills and workforce payables."
+            />
+          </div>
+          {loading ? (
+            <p className="text-xs text-text-tertiary mt-1">Loading…</p>
+          ) : (
+            <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-border-light/80 bg-card px-2.5 py-1.5 shadow-sm">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Period net</span>
+              <span className={cn("text-sm font-bold tabular-nums", totals.net >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                {formatCurrency(totals.net)}
+              </span>
+              <span
+                className={cn(
+                  "text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5",
+                  totals.net >= 0 ? "text-emerald-700 bg-emerald-500/10" : "text-rose-700 bg-rose-500/10",
+                )}
+              >
+                {totals.net >= 0 ? "Positive" : "Negative"}
+              </span>
+            </div>
+          )}
+          {bounds && <p className="text-[11px] text-text-tertiary mt-1">Dashboard date range applied</p>}
         </div>
         <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary px-2 py-1 rounded-lg bg-surface-hover border border-border-light/50">
           By week
