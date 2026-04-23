@@ -271,9 +271,9 @@ export default function SchedulePage() {
       ]) {
         merged.set(row.id, row as Job);
       }
-      const list = Array.from(merged.values())
-        .filter((j) => !isJobExcludedFromScheduleView(j))
-        .filter((j) => jobIntersectsLocalMonth(j, year, month));
+      // Keep every job in the fetch window so Live map custom ranges can extend
+      // beyond the calendar month (bars still use jobIntersectsLocalMonth per cell).
+      const list = Array.from(merged.values()).filter((j) => !isJobExcludedFromScheduleView(j));
       list.sort((a, b) => {
         const ka = a.scheduled_start_at ?? (a.scheduled_date ? `${a.scheduled_date}T00:00:00` : "");
         const kb = b.scheduled_start_at ?? (b.scheduled_date ? `${b.scheduled_date}T00:00:00` : "");
@@ -287,10 +287,17 @@ export default function SchedulePage() {
     }
   }, [year, month]);
 
-  const activeCount = useMemo(() => jobs.length, [jobs]);
+  /** Calendar month slice — KPIs and "jobs this month" use this; Live map uses full `jobs`. */
+  const jobsTouchingCalendarMonth = useMemo(
+    () => jobs.filter((j) => jobIntersectsLocalMonth(j, year, month)),
+    [jobs, year, month],
+  );
+
+  const activeCount = useMemo(() => jobsTouchingCalendarMonth.length, [jobsTouchingCalendarMonth]);
   const unassignedCount = useMemo(
-    () => jobs.filter((j) => j.status === "unassigned" || j.status === "auto_assigning").length,
-    [jobs],
+    () =>
+      jobsTouchingCalendarMonth.filter((j) => j.status === "unassigned" || j.status === "auto_assigning").length,
+    [jobsTouchingCalendarMonth],
   );
 
   const loadLiveMap = useCallback(async () => {
@@ -491,10 +498,10 @@ export default function SchedulePage() {
 
   const selectedScheduleLine = selectedJob ? formatJobScheduleLine(selectedJob) : null;
 
-  const monthRevenue = useMemo(() => sumScheduleMonthRevenue(jobs), [jobs]);
+  const monthRevenue = useMemo(() => sumScheduleMonthRevenue(jobsTouchingCalendarMonth), [jobsTouchingCalendarMonth]);
   const inProgressCount = useMemo(
-    () => jobs.filter((j) => isJobInProgressStatus(j.status)).length,
-    [jobs],
+    () => jobsTouchingCalendarMonth.filter((j) => isJobInProgressStatus(j.status)).length,
+    [jobsTouchingCalendarMonth],
   );
   const hasUnassigned = unassignedCount > 0;
   const liveActiveCount = useMemo(() => liveMapPoints.filter((p) => !p.inactive).length, [liveMapPoints]);
@@ -619,7 +626,7 @@ export default function SchedulePage() {
       }
       return s;
     };
-    for (const j of jobs) {
+    for (const j of jobsTouchingCalendarMonth) {
       const pid = j.partner_id?.trim();
       if (!pid) continue;
       if (j.status === "completed") ensure(pid).completed += 1;
@@ -630,7 +637,7 @@ export default function SchedulePage() {
       ensure(pid).inWindow += 1;
     }
     return stats;
-  }, [jobs, jobsForSelectedDay]);
+  }, [jobsTouchingCalendarMonth, jobsForSelectedDay]);
 
   /** Partner points enriched with hover-popup stats (completed / in window).
    *  Kept after partnerStatsById's declaration so the memo can read from it. */
@@ -849,7 +856,7 @@ export default function SchedulePage() {
                 <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary sm:text-xs">
                   <span className="flex items-center gap-1">
                     <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />
-                    <span className="whitespace-nowrap">{jobs.length} jobs this month</span>
+                    <span className="whitespace-nowrap">{jobsTouchingCalendarMonth.length} jobs this month</span>
                   </span>
                 </div>
               </div>
@@ -1101,7 +1108,6 @@ export default function SchedulePage() {
                           aria-label="Range start"
                           value={liveMapCustomFrom}
                           onChange={(e) => setLiveMapCustomFrom(e.target.value)}
-                          max={liveMapCustomTo || undefined}
                           className="h-7 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
                         />
                         <span className="text-[11px] text-[#64748B]">→</span>
@@ -1110,7 +1116,6 @@ export default function SchedulePage() {
                           aria-label="Range end"
                           value={liveMapCustomTo}
                           onChange={(e) => setLiveMapCustomTo(e.target.value)}
-                          min={liveMapCustomFrom || undefined}
                           className="h-7 rounded-md border-[0.5px] border-[#D8D8DD] bg-white px-2 text-[11px] text-[#020040] outline-none focus:ring-2 focus:ring-[#020040]/15"
                         />
                       </div>

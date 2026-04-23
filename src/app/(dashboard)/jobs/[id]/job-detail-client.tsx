@@ -161,7 +161,7 @@ import {
   buildOfficeCancellationReasonText,
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
-import { formatArrivalTimeRange, formatHourMinuteAmPm } from "@/lib/schedule-calendar";
+import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
@@ -179,6 +179,7 @@ import {
   buildSchedulePatchForResume,
   localHmFromIsoTimestamp,
   onHoldSnapshotArrivalYmd,
+  resumeRequiresStrictFutureArrivalDate,
   validateResumeArrivalDate,
 } from "@/lib/job-on-hold";
 
@@ -566,8 +567,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [putOnHoldSaving, setPutOnHoldSaving] = useState(false);
   const putOnHoldReasonRef = useRef<HTMLTextAreaElement>(null);
   const [resumeJobOpen, setResumeJobOpen] = useState(false);
+  const [resumeAction, setResumeAction] = useState<"reschedule" | "cancel" | "complete">("reschedule");
   const [resumeArrivalDate, setResumeArrivalDate] = useState("");
   const [resumeArrivalTime, setResumeArrivalTime] = useState("");
+  const [resumeExpectedFinishDate, setResumeExpectedFinishDate] = useState("");
   const [resumeSaving, setResumeSaving] = useState(false);
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
   const [validatingComplete, setValidatingComplete] = useState(false);
@@ -689,8 +692,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   useEffect(() => {
     if (!validateCompleteOpen || !job || job.job_type !== "hourly") return;
     const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+    const timerSeconds = computeOfficeTimerElapsedSeconds(job);
+    const billedSeconds = Math.round(Math.max(0, Number(job.billed_hours ?? 0) || 0) * 3600);
+    const elapsedSeconds = Math.max(timerSeconds, billedSeconds);
     const preview = computeHourlyTotals({
-      elapsedSeconds: computeOfficeTimerElapsedSeconds(job),
+      elapsedSeconds,
       clientHourlyRate: clientRate,
       partnerHourlyRate: partnerRate,
     });
@@ -746,6 +752,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     return computeOfficeTimerElapsedSeconds(job);
   }, [job, officeTimerTick]);
 
+  const hourlyBilledSeconds = useMemo(() => {
+    if (!job || job.job_type !== "hourly") return 0;
+    const billedHours = Math.max(0, Number(job.billed_hours ?? 0) || 0);
+    return Math.round(billedHours * 3600);
+  }, [job]);
+
+  const hourlyWorkDisplaySeconds = useMemo(() => {
+    if (!job) return 0;
+    const timerSeconds = officeTimerDisplaySeconds ?? (Number(job.timer_elapsed_seconds ?? 0) || 0);
+    if (job.job_type !== "hourly") return timerSeconds;
+    return Math.max(timerSeconds, hourlyBilledSeconds);
+  }, [job, officeTimerDisplaySeconds, hourlyBilledSeconds]);
+
   const hourlyAutoBilling = useMemo(() => {
     if (!job || job.job_type !== "hourly") return null;
     const { clientRate, partnerRate } = resolveJobHourlyRates(job);
@@ -776,11 +795,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setHourlyTimeEditOpen(false);
       return;
     }
-    const secs = officeTimerDisplaySeconds ?? (Number(job.timer_elapsed_seconds ?? 0) || 0);
+    const secs = hourlyWorkDisplaySeconds;
     const totalMins = Math.floor(Math.max(0, secs) / 60);
     setHourlyEditHours(String(Math.floor(totalMins / 60)));
     setHourlyEditMinutes(String(totalMins % 60));
-  }, [job?.id, job?.job_type, job?.timer_elapsed_seconds, officeTimerDisplaySeconds]);
+  }, [job?.id, job?.job_type, hourlyWorkDisplaySeconds]);
 
   useEffect(() => {
     if (!job || job.job_type !== "fixed") {
@@ -2016,11 +2035,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [job, unlinkedAddressDraft, handleJobUpdate, refreshJobFinance]);
 
-  const handleConfirmOfficeCancel = useCallback(async () => {
-    if (!job) return;
+  const handleConfirmOfficeCancel = useCallback(async (): Promise<boolean> => {
+    if (!job) return false;
     if (officeCancellationDetailRequired(cancelPresetId) && !cancelDetail.trim()) {
       toast.error("Add details when the reason is “Other”.");
-      return;
+      return false;
     }
     const reasonText = buildOfficeCancellationReasonText(cancelPresetId, cancelDetail);
     setCancellingJob(true);
@@ -2068,8 +2087,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           cancellationReason: reasonText,
         });
       }
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to cancel job");
+      return false;
     } finally {
       setCancellingJob(false);
     }
@@ -2285,12 +2306,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const openResumeJobModal = useCallback(() => {
     if (!job || job.status !== "on_hold") return;
-    const ymd = onHoldSnapshotArrivalYmd(job) ?? job.scheduled_date?.trim().slice(0, 10) ?? "";
-    setResumeArrivalDate(ymd);
+    const snapshotArrival = onHoldSnapshotArrivalYmd(job);
+    const savedArrival = snapshotArrival ?? job.scheduled_date?.trim().slice(0, 10) ?? "";
+    const today = formatLocalYmd(new Date());
+    const tomorrowDate = new Date();
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrow = formatLocalYmd(tomorrowDate);
+    let nextArrival = savedArrival.trim().slice(0, 10);
+    if (!nextArrival) {
+      nextArrival = resumeRequiresStrictFutureArrivalDate(snapshotArrival) ? tomorrow : today;
+    } else if (resumeRequiresStrictFutureArrivalDate(snapshotArrival) && nextArrival <= today) {
+      nextArrival = tomorrow;
+    } else if (nextArrival < today) {
+      nextArrival = today;
+    }
+    setResumeArrivalDate(nextArrival);
     const hm =
       localHmFromIsoTimestamp(job.on_hold_snapshot_scheduled_start_at ?? job.scheduled_start_at ?? null) ||
       scheduleTime.trim();
     setResumeArrivalTime(hm);
+    const finishYmd = (job.on_hold_snapshot_scheduled_finish_date ?? job.scheduled_finish_date ?? "").trim().slice(0, 10);
+    setResumeExpectedFinishDate(finishYmd);
+    setResumeAction("reschedule");
     setResumeJobOpen(true);
   }, [job, scheduleTime]);
 
@@ -2315,7 +2352,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       fallbackFinishDate: job.scheduled_finish_date,
     });
     const arrY = resumeArrivalDate.trim().slice(0, 10);
-    const finishY = (schedule.scheduled_finish_date ?? "").toString().slice(0, 10);
+    const finishY = resumeExpectedFinishDate.trim().slice(0, 10) || (schedule.scheduled_finish_date ?? "").toString().slice(0, 10);
     if (finishY && finishY < arrY) {
       toast.error("Arrival date cannot be after the expected finish date.");
       return;
@@ -2326,6 +2363,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const patch: Partial<Job> = {
       status: prev,
       ...schedule,
+      scheduled_finish_date: finishY || null,
       on_hold_previous_status: null,
       on_hold_at: null,
       on_hold_reason: null,
@@ -2374,10 +2412,34 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     job,
     resumeArrivalDate,
     resumeArrivalTime,
+    resumeExpectedFinishDate,
     handleJobUpdate,
     profile?.id,
     profile?.full_name,
   ]);
+
+  const openCompleteFromResumeModal = useCallback(() => {
+    setResumeJobOpen(false);
+    setApprovalMode("review_approve");
+    setOwnerApprovalChecked(true);
+    setForceApprovalChecked(false);
+    setForceApprovalReason("");
+    setSentToAccountsChecked(false);
+    setValidateCompleteOpen(true);
+  }, []);
+
+  const handleResumeModalAction = useCallback(async () => {
+    if (resumeAction === "cancel") {
+      const cancelled = await handleConfirmOfficeCancel();
+      if (cancelled) setResumeJobOpen(false);
+      return;
+    }
+    if (resumeAction === "complete") {
+      openCompleteFromResumeModal();
+      return;
+    }
+    await confirmResumeJob();
+  }, [resumeAction, handleConfirmOfficeCancel, openCompleteFromResumeModal, confirmResumeJob]);
 
   const handleScheduleChange = useCallback(
     (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string) => {
@@ -2869,6 +2931,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setValidatingComplete(true);
     try {
       let current = j;
+      if (current.status === "on_hold") {
+        const timerBasis = { ...current, status: "on_hold" as Job["status"] };
+        const unholdPatch: Partial<Job> = {
+          status: "final_check",
+          on_hold_previous_status: null,
+          on_hold_at: null,
+          on_hold_reason: null,
+          on_hold_snapshot_scheduled_date: null,
+          on_hold_snapshot_scheduled_start_at: null,
+          on_hold_snapshot_scheduled_end_at: null,
+          on_hold_snapshot_scheduled_finish_date: null,
+          ...statusChangePartnerTimerPatch(timerBasis, "final_check"),
+          ...statusChangeOfficeTimerPatch(timerBasis, "final_check"),
+        };
+        const unheld = await handleJobUpdate(current.id, unholdPatch, {
+          notifyPartner: false,
+          silent: true,
+          skipSelfBillSync: true,
+        });
+        if (!unheld) {
+          throw new Error("Could not move job out of On hold before approval.");
+        }
+        current = unheld;
+      }
 
       const r2 = (s: string) => Math.round((parseFloat(s) || 0) * 100) / 100;
       const extrasFromForm = r2(finForm.extras_amount);
@@ -3394,11 +3480,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const phaseIndexes = reportPhaseIndices(phaseCount);
   const reportsUploaded = phaseIndexes.every((n) => Boolean(job[`report_${n}_uploaded` as keyof Job]));
   const reportMediaUrls = extractReportMediaUrls(job.report_notes);
-  const timeSpentLabel = officeTimerDisplaySeconds != null
-    ? formatOfficeTimer(officeTimerDisplaySeconds)
-    : partnerLiveActiveMs != null
-      ? formatPartnerLiveTimer(partnerLiveActiveMs)
-      : formatOfficeTimer(Number(job.timer_elapsed_seconds ?? 0) || 0);
+  const hasRecordedWorkTime = Number(job.timer_elapsed_seconds ?? 0) > 0 || (job.job_type === "hourly" && hourlyBilledSeconds > 0);
+  const timeSpentLabel = job.job_type === "hourly"
+    ? formatOfficeTimer(hourlyWorkDisplaySeconds)
+    : officeTimerDisplaySeconds != null
+      ? formatOfficeTimer(officeTimerDisplaySeconds)
+      : partnerLiveActiveMs != null
+        ? formatPartnerLiveTimer(partnerLiveActiveMs)
+        : formatOfficeTimer(Number(job.timer_elapsed_seconds ?? 0) || 0);
   const progressTimerActiveVisual =
     job.timer_is_running ||
     (partnerLiveActiveMs != null && !job.partner_timer_ended_at && officeTimerDisplaySeconds == null);
@@ -3422,7 +3511,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ? job.partner_timer_ended_at
           ? "Ended"
           : "Live"
-        : Number(job.timer_elapsed_seconds ?? 0) > 0
+        : hasRecordedWorkTime
           ? "Recorded"
           : "Not started";
   const attestationDisplayName = profile?.full_name?.trim() || job.owner_name?.trim() || "Victor";
@@ -4125,7 +4214,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             <span className="mx-1 h-4 border-l border-[#e8e5e0] dark:border-[#2f3440]" />
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium text-[#333] tabular-nums dark:text-[#d8dee9]">
-                                {formatOfficeTimer(officeTimerDisplaySeconds ?? (Number(job.timer_elapsed_seconds ?? 0) || 0))}
+                                {formatOfficeTimer(hourlyWorkDisplaySeconds)}
                               </span>
                               <button
                                 type="button"
@@ -6417,24 +6506,120 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
           ) : null}
           <p className="text-sm text-text-secondary">
-            Confirm arrival for the partner. If the saved arrival date is no longer in the future, you must pick a later date before resuming.
+            Choose what you want to do with this on-hold job.
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date *</label>
-              <Input type="date" value={resumeArrivalDate} onChange={(e) => setResumeArrivalDate(e.target.value)} className="h-10" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival time *</label>
-              <TimeSelect value={resumeArrivalTime} onChange={(v) => setResumeArrivalTime(v)} />
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <Button
+              variant={resumeAction === "reschedule" ? "primary" : "outline"}
+              size="sm"
+              disabled={resumeSaving}
+              onClick={() => setResumeAction("reschedule")}
+            >
+              Reschedule
+            </Button>
+            <Button
+              variant={resumeAction === "complete" ? "outline" : "outline"}
+              size="sm"
+              disabled={resumeSaving}
+              onClick={() => setResumeAction("complete")}
+              className={cn(
+                resumeAction === "complete" &&
+                  "border-emerald-600/50 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300",
+              )}
+            >
+              Complete
+            </Button>
+            <Button
+              variant={resumeAction === "cancel" ? "danger" : "outline"}
+              size="sm"
+              disabled={resumeSaving}
+              onClick={() => setResumeAction("cancel")}
+            >
+              Cancel
+            </Button>
           </div>
+          {resumeAction === "reschedule" ? (
+            <>
+              <p className="text-xs text-text-tertiary">
+                If the saved arrival date is no longer in the future, choose a valid date/time before resuming.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival date *</label>
+                  <Input type="date" value={resumeArrivalDate} onChange={(e) => setResumeArrivalDate(e.target.value)} className="h-10" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Arrival time *</label>
+                  <TimeSelect value={resumeArrivalTime} onChange={(v) => setResumeArrivalTime(v)} />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Expected finish date</label>
+                  <Input
+                    type="date"
+                    value={resumeExpectedFinishDate}
+                    onChange={(e) => setResumeExpectedFinishDate(e.target.value)}
+                    className="h-10"
+                  />
+                </div>
+              </div>
+            </>
+          ) : null}
+          {resumeAction === "cancel" ? (
+            <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 space-y-3">
+              <p className="text-xs text-red-700 dark:text-red-300">
+                The assigned partner will be notified with this reason.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Reason</label>
+                <select
+                  value={cancelPresetId}
+                  onChange={(e) => setCancelPresetId(e.target.value)}
+                  className="w-full h-10 rounded-lg border border-border bg-card text-sm text-text-primary px-3"
+                  disabled={cancellingJob}
+                >
+                  {OFFICE_JOB_CANCELLATION_REASONS.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                  {officeCancellationDetailRequired(cancelPresetId) ? "Details (required)" : "Additional details (optional)"}
+                </label>
+                <textarea
+                  value={cancelDetail}
+                  onChange={(e) => setCancelDetail(e.target.value)}
+                  rows={3}
+                  placeholder={officeCancellationDetailRequired(cancelPresetId) ? "Describe why this job is being cancelled…" : "Optional context for the partner or internal record…"}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y min-h-[72px]"
+                  disabled={cancellingJob}
+                />
+              </div>
+            </div>
+          ) : null}
+          {resumeAction === "complete" ? (
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
+              Continue to the existing completion validation flow.
+            </div>
+          ) : null}
           <div className="flex flex-wrap gap-2 justify-end pt-1">
-            <Button variant="ghost" size="sm" disabled={resumeSaving} onClick={() => setResumeJobOpen(false)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={resumeSaving || cancellingJob}
+              onClick={() => setResumeJobOpen(false)}
+            >
               Back
             </Button>
-            <Button variant="primary" size="sm" loading={resumeSaving} onClick={() => void confirmResumeJob()}>
-              Resume job
+            <Button
+              variant={resumeAction === "cancel" ? "danger" : "primary"}
+              size="sm"
+              loading={(resumeAction === "reschedule" && resumeSaving) || (resumeAction === "cancel" && cancellingJob)}
+              onClick={() => void handleResumeModalAction()}
+            >
+              {resumeAction === "reschedule" ? "Reschedule & resume" : resumeAction === "cancel" ? "Cancel job" : "Final Review"}
             </Button>
           </div>
         </div>

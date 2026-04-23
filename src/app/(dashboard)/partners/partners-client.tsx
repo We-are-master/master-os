@@ -766,14 +766,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               }}
             />
             <Button
-              variant="outline"
-              size="sm"
-              className="shrink-0 whitespace-nowrap"
-              icon={<Filter className="h-3.5 w-3.5 shrink-0" />}
-            >
-              Filter
-            </Button>
-            <Button
               size="sm"
               className="shrink-0 whitespace-nowrap"
               icon={<UserPlus className="h-3.5 w-3.5 shrink-0" />}
@@ -921,6 +913,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   ))}
                 </select>
                 <SearchInput placeholder="Search partners..." className="w-48" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>
+                  Filter
+                </Button>
               </div>
             </div>
           </div>

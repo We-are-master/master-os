@@ -15,6 +15,8 @@ import { UserPlus, MapPin, Loader2, ChevronDown, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import type { Client, ClientAddress } from "@/types/database";
 import { listClients, createClient, getClient } from "@/services/clients";
+import { getSupabase } from "@/services/base";
+import { sanitizePostgrestValue } from "@/lib/supabase/sanitize";
 import { listAddressesByClient, createClientAddress } from "@/services/client-addresses";
 import { listClientSourceAccounts, createClientSourceAccount } from "@/services/client-source-accounts";
 import type { ClientSourceAccount } from "@/types/database";
@@ -74,6 +76,10 @@ interface ClientAddressPickerProps {
   clientNameInputClassName?: string;
   /** `stack` (default) keeps the historic Client-on-top / Address-below layout. `grid-2` renders them side-by-side. */
   layout?: "stack" | "grid-2";
+  /** When set, client search and browse are limited to contacts linked to this account (`source_account_id`). */
+  restrictToSourceAccountId?: string;
+  /** Shown when `restrictToSourceAccountId` locks the new-client modal account picker. */
+  restrictToSourceAccountLabel?: string;
 }
 
 export function ClientAddressPicker({
@@ -88,6 +94,8 @@ export function ClientAddressPicker({
   jobCurrentAddressOnly = false,
   clientNameInputClassName,
   layout = "stack",
+  restrictToSourceAccountId,
+  restrictToSourceAccountLabel,
 }: ClientAddressPickerProps) {
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
   const clientSectionLocked = lockClient && !!value.client_id;
@@ -129,6 +137,8 @@ export function ClientAddressPicker({
   const containerRef = useRef<HTMLDivElement>(null);
   /** Synchronous “who is selected” for the same event-loop tick as selectClient → selectAddress (React state lags). */
   const selectedClientRef = useRef<Client | null>(null);
+  /** Open the saved-address list once per linked client when rows arrive (dropdown starts closed). */
+  const autoOpenedAddressPickerForClientRef = useRef<string | null>(null);
   /** Job card: collapsed = single address; expanded = full list (same client). */
   const [jobAddressListExpanded, setJobAddressListExpanded] = useState(false);
   /** Create flow: searchable dropdown — starts closed once an address is selected, opens on "Change address". */
@@ -141,11 +151,45 @@ export function ClientAddressPicker({
 
   useEffect(() => {
     if (!createClientOpen) return;
+    if (restrictToSourceAccountId?.trim()) return;
     listClientSourceAccounts().then(setSourceAccounts).catch(() => setSourceAccounts([]));
-  }, [createClientOpen]);
+  }, [createClientOpen, restrictToSourceAccountId]);
+
+  useEffect(() => {
+    if (!createClientOpen || !restrictToSourceAccountId?.trim()) return;
+    setCreateClientForm((p) => ({ ...p, source_account_id: restrictToSourceAccountId.trim() }));
+  }, [createClientOpen, restrictToSourceAccountId]);
 
   const loadClientResults = useCallback(
     async (search: string) => {
+      const aid = restrictToSourceAccountId?.trim();
+      if (aid) {
+        setClientLoading(true);
+        try {
+          let q = getSupabase()
+            .from("clients")
+            .select("*")
+            .eq("source_account_id", aid)
+            .is("deleted_at", null)
+            .order("full_name", { ascending: true })
+            .limit(500);
+          const t = search.trim();
+          if (t) {
+            const safe = sanitizePostgrestValue(t);
+            if (safe) {
+              q = q.or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`);
+            }
+          }
+          const { data, error } = await q;
+          if (error) throw error;
+          setClientResults((data ?? []) as Client[]);
+        } catch {
+          setClientResults([]);
+        } finally {
+          setClientLoading(false);
+        }
+        return;
+      }
       if (!search.trim()) {
         if (loadAllClientsOnOpen) return;
         setClientResults([]);
@@ -161,33 +205,76 @@ export function ClientAddressPicker({
         setClientLoading(false);
       }
     },
-    [loadAllClientsOnOpen]
+    [loadAllClientsOnOpen, restrictToSourceAccountId]
   );
 
   useEffect(() => {
     if (!loadAllClientsOnOpen || !clientDropdownOpen || selectedClient || clientSearch.trim()) return;
     let cancelled = false;
     setClientLoading(true);
-    listClients({ page: 1, pageSize: 200 })
-      .then((res) => {
-        if (!cancelled) setClientResults(res.data ?? []);
-      })
-      .catch(() => {
+    void (async () => {
+      try {
+        const aid = restrictToSourceAccountId?.trim();
+        let rows: Client[] = [];
+        if (aid) {
+          const { data, error } = await getSupabase()
+            .from("clients")
+            .select("*")
+            .eq("source_account_id", aid)
+            .is("deleted_at", null)
+            .order("full_name", { ascending: true })
+            .limit(500);
+          if (error) throw error;
+          rows = (data ?? []) as Client[];
+        } else {
+          const res = await listClients({ page: 1, pageSize: 200 });
+          rows = res.data ?? [];
+        }
+        if (!cancelled) setClientResults(rows);
+      } catch {
         if (!cancelled) setClientResults([]);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setClientLoading(false);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, [loadAllClientsOnOpen, clientDropdownOpen, selectedClient, clientSearch]);
+  }, [loadAllClientsOnOpen, clientDropdownOpen, selectedClient, clientSearch, restrictToSourceAccountId]);
 
   useEffect(() => {
     if (clientSearchDebounce.current) clearTimeout(clientSearchDebounce.current);
     clientSearchDebounce.current = setTimeout(() => loadClientResults(clientSearch), 300);
     return () => { if (clientSearchDebounce.current) clearTimeout(clientSearchDebounce.current); };
   }, [clientSearch, loadClientResults]);
+
+  /** Account-scoped create quote: show full contact list as soon as the account is known (not only after opening the dropdown). */
+  useEffect(() => {
+    const aid = restrictToSourceAccountId?.trim();
+    if (!aid) return;
+    let cancelled = false;
+    setClientLoading(true);
+    void (async () => {
+      try {
+        const { data, error } = await getSupabase()
+          .from("clients")
+          .select("*")
+          .eq("source_account_id", aid)
+          .is("deleted_at", null)
+          .order("full_name", { ascending: true })
+          .limit(500);
+        if (error) throw error;
+        if (!cancelled) setClientResults((data ?? []) as Client[]);
+      } catch {
+        if (!cancelled) setClientResults([]);
+      } finally {
+        if (!cancelled) setClientLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [restrictToSourceAccountId]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -282,6 +369,29 @@ export function ClientAddressPicker({
       .catch(() => setAddresses([]))
       .finally(() => setAddressLoading(false));
   }, [clientIdForAddresses]);
+
+  /** Saved addresses are in a dropdown that starts closed — open it once per client when rows load. */
+  useEffect(() => {
+    const cid = value.client_id ?? selectedClient?.id ?? null;
+    if (!cid) {
+      autoOpenedAddressPickerForClientRef.current = null;
+      return;
+    }
+    if (jobCurrentAddressOnly) return;
+    if (addressLoading) return;
+    if (addresses.length === 0) return;
+    if (value.client_address_id) return;
+    if (autoOpenedAddressPickerForClientRef.current === cid) return;
+    autoOpenedAddressPickerForClientRef.current = cid;
+    setAddressPickerOpen(true);
+  }, [
+    addresses,
+    addressLoading,
+    value.client_address_id,
+    value.client_id,
+    selectedClient,
+    jobCurrentAddressOnly,
+  ]);
 
   const selectAddress = useCallback(
     (addr: ClientAddress) => {
@@ -379,11 +489,13 @@ export function ClientAddressPicker({
       toast.error("Full name is required");
       return;
     }
-    if (!createClientForm.source_account_id) {
+    const lockedAccountId = restrictToSourceAccountId?.trim();
+    const sourceFromForm = createClientForm.source_account_id.trim();
+    let sourceAccountId = lockedAccountId || sourceFromForm;
+    if (!sourceAccountId) {
       toast.error("Please select the linked account");
       return;
     }
-    let sourceAccountId = createClientForm.source_account_id;
     if (sourceAccountId === CREATE_LINKED_ACCOUNT_OPTION) {
       if (!newSourceForm.company_name.trim() || !newSourceForm.contact_name.trim() || !newSourceForm.email.trim()) {
         toast.error("Fill company name, contact and email to create the linked account");
@@ -480,7 +592,15 @@ export function ClientAddressPicker({
     } finally {
       setCreating(false);
     }
-  }, [createClientForm, createAddressPending, newSourceForm, selectClient, selectAddress, confirmDespiteDuplicates]);
+  }, [
+    createClientForm,
+    createAddressPending,
+    newSourceForm,
+    selectClient,
+    selectAddress,
+    confirmDespiteDuplicates,
+    restrictToSourceAccountId,
+  ]);
 
   const clearClient = useCallback(() => {
     selectedClientRef.current = null;
@@ -506,9 +626,25 @@ export function ClientAddressPicker({
     if (selectedClient) return;
     const q = clientSearch.trim();
     if (!q) return;
+    const aid = restrictToSourceAccountId?.trim();
     try {
-      const res = await listClients({ search: q, pageSize: 25 });
-      const rows = res.data ?? [];
+      let rows: Client[] = [];
+      if (aid) {
+        const safe = sanitizePostgrestValue(q);
+        if (!safe) return;
+        const { data, error } = await getSupabase()
+          .from("clients")
+          .select("*")
+          .eq("source_account_id", aid)
+          .is("deleted_at", null)
+          .or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%,phone.ilike.%${safe}%`)
+          .limit(25);
+        if (error) throw error;
+        rows = (data ?? []) as Client[];
+      } else {
+        const res = await listClients({ search: q, pageSize: 25 });
+        rows = res.data ?? [];
+      }
       if (rows.length === 1) {
         selectClient(rows[0]);
         return;
@@ -521,10 +657,11 @@ export function ClientAddressPicker({
     } catch {
       /* ignore */
     }
-  }, [selectedClient, clientSearch, selectClient]);
+  }, [selectedClient, clientSearch, selectClient, restrictToSourceAccountId]);
 
   const outerLayoutClass =
     layout === "grid-2" ? "grid grid-cols-1 items-start gap-3 sm:grid-cols-2 sm:items-start" : "";
+  const accountContactsMode = Boolean(restrictToSourceAccountId?.trim());
   return (
     <div className={cn(outerLayoutClass, className)} ref={containerRef}>
       {!clientSectionLocked ? (
@@ -536,9 +673,11 @@ export function ClientAddressPicker({
               value={selectedClient ? selectedClient.full_name : clientSearch}
               onChange={(e) => {
                 setClientSearch(e.target.value);
-                if (!selectedClient) setClientDropdownOpen(true);
+                if (!selectedClient && !accountContactsMode) setClientDropdownOpen(true);
               }}
-              onFocus={() => !selectedClient && setClientDropdownOpen(true)}
+              onFocus={() => {
+                if (!selectedClient && !accountContactsMode) setClientDropdownOpen(true);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -572,7 +711,7 @@ export function ClientAddressPicker({
                 <ChevronDown className="h-4 w-4 text-text-tertiary" />
               )}
             </div>
-            {clientDropdownOpen && !selectedClient && (
+            {clientDropdownOpen && !selectedClient && !accountContactsMode && (
               <div
                 className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-border bg-card shadow-lg z-50 max-h-56 overflow-y-auto"
                 onMouseDown={(e) => e.preventDefault()}
@@ -616,7 +755,57 @@ export function ClientAddressPicker({
                 )}
               </div>
             )}
-            {!selectedClient && clientSearch.trim() && !clientLoading && (
+            {accountContactsMode && !selectedClient ? (
+              <div className="mt-2 space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                  Contacts on this account
+                  {!clientLoading ? <span className="font-normal text-text-tertiary"> ({clientResults.length})</span> : null}
+                </p>
+                <div className="max-h-44 overflow-y-auto rounded-lg border border-border bg-card shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => setCreateClientOpen(true)}
+                    className="sticky top-0 z-[1] flex w-full items-center gap-2 border-b border-border bg-card px-3 py-2.5 text-left text-sm font-medium text-primary hover:bg-primary/10"
+                  >
+                    <UserPlus className="h-4 w-4 shrink-0" /> Create new contact
+                  </button>
+                  {clientLoading && clientResults.length === 0 ? (
+                    <div className="flex items-center justify-center gap-2 p-4 text-sm text-text-tertiary">
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      Loading contacts…
+                    </div>
+                  ) : clientResults.length === 0 ? (
+                    <p className="p-3 text-xs text-text-tertiary">
+                      No contacts linked to this account yet. Use &quot;Create new contact&quot; above.
+                    </p>
+                  ) : (
+                    clientResults.map((c) => {
+                      const addrLine = [c.address?.trim(), c.city?.trim(), c.postcode?.trim()]
+                        .filter(Boolean)
+                        .join(", ");
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => selectClient(c)}
+                          className="w-full border-b border-border px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-surface-hover"
+                        >
+                          <span className="font-medium text-text-primary">{c.full_name}</span>
+                          {c.email ? <span className="block truncate text-xs text-text-tertiary">{c.email}</span> : null}
+                          {addrLine ? (
+                            <span className="mt-0.5 block truncate text-[11px] text-text-secondary">{addrLine}</span>
+                          ) : null}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+                <p className="text-[10px] text-text-tertiary leading-snug">
+                  Use the search box to filter. After you pick a contact, saved property addresses appear below.
+                </p>
+              </div>
+            ) : null}
+            {!accountContactsMode && !selectedClient && clientSearch.trim() && !clientLoading && (
               <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
                 Click a client in the list, press <kbd className="px-1 rounded bg-surface-hover text-[10px]">Enter</kbd> to confirm, or
                 finish typing the exact name and tab away — only then the client is linked.
@@ -875,29 +1064,41 @@ export function ClientAddressPicker({
       >
         <div className="p-6 space-y-4">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">Linked account (Accounts) *</label>
-            <select
-              value={createClientForm.source_account_id}
-              onChange={(e) => {
-                const value = e.target.value;
-                setCreateClientForm((p) => ({ ...p, source_account_id: value }));
-                if (value === CREATE_LINKED_ACCOUNT_OPTION) {
-                  setNewSourceForm((prev) => ({
-                    ...prev,
-                    contact_name: prev.contact_name || createClientForm.full_name || "Client Team",
-                    email: prev.email || createClientForm.email || "",
-                  }));
-                }
-              }}
-              className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
-            >
-              <option value="">— Where did the client come from? —</option>
-              {sourceAccounts.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-              <option value={CREATE_LINKED_ACCOUNT_OPTION}>+ Create new account</option>
-            </select>
-            <p className="text-[10px] text-text-tertiary mt-1">Pulled from Accounts — the client row stores this account&apos;s ID.</p>
+            {restrictToSourceAccountId?.trim() ? (
+              <>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Linked account</label>
+                <p className="rounded-lg border border-border bg-surface-hover/50 px-3 py-2 text-sm text-text-primary">
+                  {restrictToSourceAccountLabel?.trim() || "This quote’s account"}
+                </p>
+                <p className="text-[10px] text-text-tertiary mt-1">New contact will be linked to this account.</p>
+              </>
+            ) : (
+              <>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Linked account (Accounts) *</label>
+                <select
+                  value={createClientForm.source_account_id}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setCreateClientForm((p) => ({ ...p, source_account_id: value }));
+                    if (value === CREATE_LINKED_ACCOUNT_OPTION) {
+                      setNewSourceForm((prev) => ({
+                        ...prev,
+                        contact_name: prev.contact_name || createClientForm.full_name || "Client Team",
+                        email: prev.email || createClientForm.email || "",
+                      }));
+                    }
+                  }}
+                  className="w-full h-9 rounded-lg border border-border bg-card px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
+                >
+                  <option value="">— Where did the client come from? —</option>
+                  {sourceAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                  <option value={CREATE_LINKED_ACCOUNT_OPTION}>+ Create new account</option>
+                </select>
+                <p className="text-[10px] text-text-tertiary mt-1">Pulled from Accounts — the client row stores this account&apos;s ID.</p>
+              </>
+            )}
           </div>
           {createClientForm.source_account_id === CREATE_LINKED_ACCOUNT_OPTION && (
             <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 space-y-3">
@@ -1023,7 +1224,7 @@ export function ClientAddressPicker({
               disabled={
                 creating ||
                 !createClientForm.full_name.trim() ||
-                !createClientForm.source_account_id.trim()
+                !(restrictToSourceAccountId?.trim() || createClientForm.source_account_id.trim())
               }
             >
               Create client

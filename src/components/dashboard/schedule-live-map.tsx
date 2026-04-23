@@ -37,6 +37,9 @@ const JOB_ICON_PREFIX = "fixfy-job-center-";
 
 const PARTNER_BADGE_ACTIVE_COLOR = "#0F6E56";
 const PARTNER_BADGE_INACTIVE_COLOR = "#9A9AA0";
+const PARTNER_BADGE_ICON_SIZE = 14;
+const PARTNER_BADGE_RADIUS = 8;
+const PARTNER_BADGE_OFFSET: [number, number] = [12, -11];
 
 function toInitials(name: string): string {
   return name
@@ -351,12 +354,12 @@ export function ScheduleLiveMap({
         await ensureMapImage(
           map,
           `${PARTNER_BADGE_ACTIVE_ICON_PREFIX}${key}`,
-          renderLiveMapTradeIconSvg(key, { size: 16, color: PARTNER_BADGE_ACTIVE_COLOR }),
+          renderLiveMapTradeIconSvg(key, { size: PARTNER_BADGE_ICON_SIZE, color: PARTNER_BADGE_ACTIVE_COLOR }),
         );
         await ensureMapImage(
           map,
           `${PARTNER_BADGE_INACTIVE_ICON_PREFIX}${key}`,
-          renderLiveMapTradeIconSvg(key, { size: 16, color: PARTNER_BADGE_INACTIVE_COLOR }),
+          renderLiveMapTradeIconSvg(key, { size: PARTNER_BADGE_ICON_SIZE, color: PARTNER_BADGE_INACTIVE_COLOR }),
         );
         await ensureMapImage(
           map,
@@ -489,10 +492,10 @@ export function ScheduleLiveMap({
         source: PARTNER_SOURCE_ID,
         paint: {
           "circle-color": "#FFFFFF",
-          "circle-radius": 9,
+          "circle-radius": PARTNER_BADGE_RADIUS,
           "circle-stroke-width": 2,
           "circle-stroke-color": ["case", ["==", ["get", "inactive"], 1], "#9A9AA0", "#0F6E56"],
-          "circle-translate": [15, -13],
+          "circle-translate": PARTNER_BADGE_OFFSET,
           "circle-translate-anchor": "viewport",
         },
       });
@@ -511,7 +514,7 @@ export function ScheduleLiveMap({
           "icon-rotation-alignment": "map",
         },
         paint: {
-          "icon-translate": [15, -13],
+          "icon-translate": PARTNER_BADGE_OFFSET,
           "icon-translate-anchor": "viewport",
         },
       });
