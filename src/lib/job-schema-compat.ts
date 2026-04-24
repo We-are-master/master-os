@@ -16,7 +16,6 @@ export function isLegacyJobSchema(): boolean {
 const JOB_DB_COMPAT_STRIP_KEYS = [
   "quote_id",
   "scheduled_finish_date",
-  "extras_amount",
   "partner_ids",
   "client_address_id",
   "catalog_service_id",
@@ -27,9 +26,9 @@ const JOB_DB_COMPAT_STRIP_KEYS = [
 
 /**
  * Stripped only on `applyJobDbCompat` (write retry). Omit from legacy `prepare*` so first-class
- * PATCHes still persist `partner_extras_amount` when migration 105 is applied (Cash Out “Extra payout” line).
+ * PATCHes still persist `extras_amount` / `partner_extras_amount` when newer schema is available.
  */
-const JOB_DB_COMPAT_RETRY_EXTRA_STRIP_KEYS = ["partner_extras_amount"] as const;
+const JOB_DB_COMPAT_RETRY_EXTRA_STRIP_KEYS = ["extras_amount", "partner_extras_amount"] as const;
 
 /**
  * Migration `070_job_operational_flow` columns. If the DB was not migrated, PostgREST returns 400 on PATCH.

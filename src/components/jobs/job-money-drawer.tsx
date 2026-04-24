@@ -25,6 +25,18 @@ export type JobMoneySubmitPayload = {
   paymentDate: string;
   method: JobPaymentMethod;
   note: string;
+  /** For extra flows: mandatory category selected by user. */
+  extraType?: string;
+  /** For extra flows: mandatory reason/details explaining why the extra happened. */
+  extraReason?: string;
+  /** For client extra flow: user attestation checkbox state. */
+  clientProofConfirmed?: boolean;
+  /** Optional helper path: create partner extra in the same submit from client extra modal. */
+  linkedPartnerExtra?: {
+    amount: number;
+    extraType: string;
+    extraReason: string;
+  };
   clientPayApplyAs?: ClientPayApplyAs;
   /** Optional; prefixed into payment note for history only. */
   paymentLedgerLabel?: string;
@@ -39,6 +51,7 @@ export type JobMoneyDrawerClientCashContext = {
 type Props = {
   open: boolean;
   flow: JobMoneyDrawerFlow | null;
+  initialExtraType?: string;
   onClose: () => void;
   onSubmit: (payload: JobMoneySubmitPayload) => Promise<void>;
   submitting: boolean;
@@ -76,20 +89,58 @@ const PARTNER_LEDGER_LABEL_OPTIONS: { value: string; label: string }[] = [
 
 /** Match Cash In — Finance Summary “CASH IN — CLIENT” extra rows. */
 const CLIENT_EXTRA_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: "Extra charges", label: "Extra charges" },
+  { value: "Labour", label: "Labour" },
   { value: "CCZ", label: "CCZ" },
   { value: "Parking", label: "Parking" },
   { value: "Materials", label: "Materials" },
   { value: "Other", label: "Other" },
 ];
 
+const CLIENT_EXTRA_REASON_PRESETS: { value: string; label: string }[] = [
+  { value: "", label: "Select reason" },
+  { value: "Extra labour approved by client", label: "Extra labour approved by client" },
+  { value: "Scope extension approved by client", label: "Scope extension approved by client" },
+  { value: "Additional labour time approved after inspection", label: "Additional labour time approved after inspection" },
+  { value: "Return visit labour approved by client", label: "Return visit labour approved by client" },
+  { value: "Additional task outside original scope approved by client", label: "Additional task outside original scope approved by client" },
+  { value: "__other__", label: "Other (type manually)" },
+];
+
+const CLIENT_MATERIALS_REASON_PRESETS: { value: string; label: string }[] = [
+  { value: "", label: "Select reason" },
+  { value: "Client approved materials purchase on site", label: "Client approved materials purchase on site" },
+  { value: "Additional material quantity required to complete scope", label: "Additional material quantity required to complete scope" },
+  { value: "Replacement materials approved after inspection", label: "Replacement materials approved after inspection" },
+  { value: "Emergency materials required and approved by client", label: "Emergency materials required and approved by client" },
+  { value: "__other__", label: "Other (type manually)" },
+];
+
 /** Match Cash Out partner extras — same labels as Finance Summary “CASH OUT — PARTNER”. */
 const PARTNER_EXTRA_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: "Extra payout", label: "Extra payout" },
+  { value: "Labour", label: "Labour" },
   { value: "CCZ", label: "CCZ" },
   { value: "Parking", label: "Parking" },
   { value: "Materials", label: "Materials" },
   { value: "Other", label: "Other" },
+];
+
+const PARTNER_EXTRA_REASON_PRESETS: { value: string; label: string }[] = [
+  { value: "", label: "Select reason" },
+  { value: "Extra labour agreed with partner", label: "Extra labour agreed with partner" },
+  { value: "Scope extension agreed with partner", label: "Scope extension agreed with partner" },
+  { value: "Additional labour time after inspection", label: "Additional labour time after inspection" },
+  { value: "Return visit labour agreed with partner", label: "Return visit labour agreed with partner" },
+  { value: "Task outside original scope performed by partner", label: "Task outside original scope performed by partner" },
+  { value: "__other__", label: "Other (type manually)" },
+];
+
+const PARTNER_MATERIALS_REASON_PRESETS: { value: string; label: string }[] = [
+  { value: "", label: "Select reason" },
+  { value: "Partner purchased materials on site", label: "Partner purchased materials on site" },
+  { value: "Additional material quantity required to complete scope", label: "Additional material quantity required to complete scope" },
+  { value: "Replacement materials purchased by partner", label: "Replacement materials purchased by partner" },
+  { value: "Emergency materials purchased by partner", label: "Emergency materials purchased by partner" },
+  { value: "__other__", label: "Other (type manually)" },
 ];
 
 function isClientFlow(flow: JobMoneyDrawerFlow): boolean {
@@ -139,6 +190,7 @@ function isPayFlow(flow: JobMoneyDrawerFlow): boolean {
 export function JobMoneyDrawer({
   open,
   flow,
+  initialExtraType,
   onClose,
   onSubmit,
   submitting,
@@ -152,6 +204,13 @@ export function JobMoneyDrawer({
   const [clientPayApplyAs, setClientPayApplyAs] = useState<ClientPayApplyAs>("final");
   const [paymentLedgerLabel, setPaymentLedgerLabel] = useState("");
   const [extraType, setExtraType] = useState("");
+  const [extraReason, setExtraReason] = useState("");
+  const [extraReasonPreset, setExtraReasonPreset] = useState("");
+  const [extraClientProofConfirmed, setExtraClientProofConfirmed] = useState(false);
+  const [addLinkedPartnerExtra, setAddLinkedPartnerExtra] = useState(false);
+  const [linkedPartnerAmount, setLinkedPartnerAmount] = useState("");
+  const [linkedPartnerType, setLinkedPartnerType] = useState("Labour");
+  const [linkedPartnerReason, setLinkedPartnerReason] = useState("");
   const amountRef = useRef<HTMLInputElement>(null);
 
   const depositRemaining = clientCashContext?.depositRemaining ?? 0;
@@ -165,7 +224,14 @@ export function JobMoneyDrawer({
     setPaymentDate(new Date().toISOString().slice(0, 10));
     setNote("");
     setPaymentLedgerLabel("");
-    setExtraType(flow === "partner_extra" ? "Extra payout" : "Extra charges");
+    setExtraType(initialExtraType?.trim() || "Labour");
+    setExtraReason("");
+    setExtraReasonPreset("");
+    setExtraClientProofConfirmed(false);
+    setAddLinkedPartnerExtra(false);
+    setLinkedPartnerAmount("");
+    setLinkedPartnerType("Labour");
+    setLinkedPartnerReason("");
     if (isPayFlow(flow)) {
       setMethod(readSavedMethod(flow));
     } else {
@@ -178,7 +244,7 @@ export function JobMoneyDrawer({
       amountRef.current?.focus();
     });
     return () => cancelAnimationFrame(id);
-  }, [open, flow, canRecordDeposit]);
+  }, [open, flow, canRecordDeposit, initialExtraType]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -192,9 +258,34 @@ export function JobMoneyDrawer({
   const isClientStripe = flow === "client_pay" && method === "stripe";
   const n = Number(amount);
   const amountOk = amount.trim() !== "" && !Number.isNaN(n) && n > 0;
-  const isOtherExtra = !isPayFlow(flow) && extraType.trim().toLowerCase() === "other";
-  const noteOk = !isOtherExtra || note.trim().length > 0;
-  const canSubmit = !isClientStripe && amountOk && noteOk;
+  const isExtraFlow = !isPayFlow(flow);
+  const extraTypeUpper = extraType.trim().toUpperCase();
+  const showLabourReasonPresets = isExtraFlow && extraTypeUpper === "LABOUR";
+  const showMaterialsReasonPresets = isExtraFlow && extraTypeUpper === "MATERIALS";
+  const showExtraPresetReasonSelect = showLabourReasonPresets || showMaterialsReasonPresets;
+  const activePresetOptions = showMaterialsReasonPresets
+    ? (flow === "partner_extra" ? PARTNER_MATERIALS_REASON_PRESETS : CLIENT_MATERIALS_REASON_PRESETS)
+    : (flow === "partner_extra" ? PARTNER_EXTRA_REASON_PRESETS : CLIENT_EXTRA_REASON_PRESETS);
+  const quickReasonOk = !showExtraPresetReasonSelect || extraReasonPreset.trim().length > 0;
+  const requiresManualExtraReason =
+    !showExtraPresetReasonSelect || extraReasonPreset === "__other__";
+  const extraTypeOk = !isExtraFlow || extraType.trim().length > 0;
+  const extraReasonOk = !isExtraFlow || (requiresManualExtraReason ? extraReason.trim().length > 0 : true);
+  const extraClientProofOk = flow !== "client_extra" || extraClientProofConfirmed;
+  const linkedPartnerAmountNum = Number(linkedPartnerAmount);
+  const linkedPartnerAmountOk = !addLinkedPartnerExtra || (!Number.isNaN(linkedPartnerAmountNum) && linkedPartnerAmountNum > 0);
+  const linkedPartnerTypeOk = !addLinkedPartnerExtra || linkedPartnerType.trim().length > 0;
+  const linkedPartnerReasonOk = !addLinkedPartnerExtra || linkedPartnerReason.trim().length > 0;
+  const canSubmit =
+    !isClientStripe &&
+    amountOk &&
+    extraTypeOk &&
+    quickReasonOk &&
+    extraReasonOk &&
+    extraClientProofOk &&
+    linkedPartnerAmountOk &&
+    linkedPartnerTypeOk &&
+    linkedPartnerReasonOk;
 
   const handleMethodChange = (m: JobPaymentMethod) => {
     setMethod(m);
@@ -214,7 +305,7 @@ export function JobMoneyDrawer({
         : undefined;
     const noteWithExtraType =
       !isPayFlow(flow) && extraType.trim()
-        ? `${extraType.trim()}${note.trim() ? ` — ${note.trim()}` : ""}`
+        ? `${extraType.trim()}${extraReason.trim() ? ` — ${extraReason.trim()}` : ""}`
         : note;
     await onSubmit({
       flow,
@@ -222,6 +313,22 @@ export function JobMoneyDrawer({
       paymentDate: pay ? paymentDate : new Date().toISOString().slice(0, 10),
       method: submitMethod,
       note: noteWithExtraType,
+      ...(!pay
+        ? {
+            extraType: extraType.trim(),
+            extraReason: extraReason.trim(),
+            ...(flow === "client_extra" ? { clientProofConfirmed: extraClientProofConfirmed } : {}),
+          }
+        : {}),
+      ...(flow === "client_extra" && addLinkedPartnerExtra
+        ? {
+            linkedPartnerExtra: {
+              amount: linkedPartnerAmountNum,
+              extraType: linkedPartnerType.trim(),
+              extraReason: linkedPartnerReason.trim(),
+            },
+          }
+        : {}),
       ...(applyForSubmit != null ? { clientPayApplyAs: applyForSubmit } : {}),
       ...(pay && paymentLedgerLabel.trim()
         ? { paymentLedgerLabel: paymentLedgerLabel.trim() }
@@ -390,7 +497,13 @@ export function JobMoneyDrawer({
                 <Select
                   label="Extra type"
                   value={extraType}
-                  onChange={(e) => setExtraType(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setExtraType(next);
+                    const normalized = next.trim().toUpperCase();
+                    const usePreset = normalized === "LABOUR" || normalized === "MATERIALS";
+                    if (!usePreset) setExtraReasonPreset("");
+                  }}
                   options={flow === "partner_extra" ? PARTNER_EXTRA_TYPE_OPTIONS : CLIENT_EXTRA_TYPE_OPTIONS}
                   className="h-10"
                 />
@@ -398,19 +511,16 @@ export function JobMoneyDrawer({
             ) : null}
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Amount</label>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-text-tertiary">£</span>
-                <Input
-                  ref={amountRef}
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className="h-11 pl-7 text-base font-medium tabular-nums"
-                  placeholder="0.00"
-                />
-              </div>
+              <Input
+                ref={amountRef}
+                type="number"
+                min={0}
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="h-10 text-sm font-medium tabular-nums"
+                placeholder="0.00"
+              />
             </div>
             {isPayFlow(flow) ? (
               <div>
@@ -418,18 +528,126 @@ export function JobMoneyDrawer({
                 <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
               </div>
             ) : null}
-            {isOtherExtra ? (
+            {!isPayFlow(flow) ? (
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                  Note <span className="text-red-500">*</span>
+                {showExtraPresetReasonSelect ? (
+                  <Select
+                    label="Reason *"
+                    value={extraReasonPreset}
+                    onChange={(e) => {
+                      const preset = e.target.value.trim();
+                      setExtraReasonPreset(preset);
+                      if (!preset) {
+                        setExtraReason("");
+                        return;
+                      }
+                      if (preset === "__other__") {
+                        setExtraReason("");
+                        return;
+                      }
+                      setExtraReason(preset);
+                    }}
+                    options={activePresetOptions}
+                    className="h-10"
+                  />
+                ) : null}
+                {requiresManualExtraReason ? (
+                  <>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5 mt-2">
+                      Reason <span className="text-red-500">*</span>
+                    </label>
+                    <Input
+                      value={extraReason}
+                      onChange={(e) => setExtraReason(e.target.value)}
+                      placeholder={extraType.trim().toLowerCase() === "other" ? "Describe this extra in detail" : "Why did this extra happen?"}
+                      className="h-10"
+                      required
+                    />
+                    <p className="mt-1 text-[11px] text-text-tertiary">
+                      Mandatory for tracking and future audit.
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-[11px] text-text-tertiary">
+                    Using selected quick reason.
+                  </p>
+                )}
+                {flow === "client_extra" ? (
+                  <label className="mt-2.5 inline-flex items-start gap-2 text-xs text-text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={extraClientProofConfirmed}
+                      onChange={(e) => setExtraClientProofConfirmed(e.target.checked)}
+                      className="mt-0.5"
+                      required
+                    />
+                    <span>
+                      I confirm the client has been informed and the acceptance approved. I understand I may assume
+                      responsibility for this charge.
+                    </span>
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
+            {flow === "client_extra" ? (
+              <div className="rounded-lg border border-border-light bg-card/60 px-3 py-2.5">
+                <label className="inline-flex items-center gap-2 text-xs font-medium text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={addLinkedPartnerExtra}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setAddLinkedPartnerExtra(checked);
+                      if (checked) {
+                        if (!linkedPartnerAmount.trim() && amount.trim()) setLinkedPartnerAmount(amount);
+                        if (!linkedPartnerReason.trim() && extraReason.trim()) setLinkedPartnerReason(extraReason.trim());
+                        } else {
+                          setLinkedPartnerAmount("");
+                          setLinkedPartnerType("Labour");
+                          setLinkedPartnerReason("");
+                      }
+                    }}
+                  />
+                  Add partner extra payout as well
                 </label>
-                <Input
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Describe this extra"
-                  className="h-10"
-                  required
-                />
+                <p className="mt-1 text-[11px] text-text-tertiary">
+                  Useful when you sell extra work and need to register partner extra in the same step.
+                </p>
+                {addLinkedPartnerExtra ? (
+                  <div className="mt-2.5 space-y-2.5">
+                    <Select
+                      label="Partner extra type"
+                      value={linkedPartnerType}
+                      onChange={(e) => setLinkedPartnerType(e.target.value)}
+                      options={PARTNER_EXTRA_TYPE_OPTIONS}
+                      className="h-10"
+                    />
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner amount</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={linkedPartnerAmount}
+                        onChange={(e) => setLinkedPartnerAmount(e.target.value)}
+                        className="h-10 text-[14px] font-medium tabular-nums sm:text-[15px]"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                        Partner reason <span className="text-red-500">*</span>
+                      </label>
+                      <Input
+                        value={linkedPartnerReason}
+                        onChange={(e) => setLinkedPartnerReason(e.target.value)}
+                        placeholder="Why did this partner extra happen?"
+                        className="h-10"
+                        required
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </>
