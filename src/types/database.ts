@@ -902,3 +902,21 @@ export interface AuditLog {
   metadata?: Record<string, unknown>;
   created_at: string;
 }
+
+export interface JobExtraEntry {
+  id: string;
+  job_id: string;
+  side: "client" | "partner";
+  extra_type: string;
+  reason: string;
+  amount: number;
+  allocation: "extras" | "materials" | "partner_cost";
+  linked_group_id?: string | null;
+  created_by?: string | null;
+  created_by_name?: string | null;
+  created_at: string;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  deleted_by_name?: string | null;
+  deleted_reason?: string | null;
+}

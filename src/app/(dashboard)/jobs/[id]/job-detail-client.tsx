@@ -85,7 +85,7 @@ import { AddressAutocomplete } from "@/components/ui/address-autocomplete";
 import { Avatar } from "@/components/ui/avatar";
 import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { AuditTimeline } from "@/components/ui/audit-timeline";
-import type { CatalogService, Invoice, Job, JobPayment, JobPaymentMethod, Partner, QuoteLineItem, SelfBill } from "@/types/database";
+import type { CatalogService, Invoice, Job, JobExtraEntry, JobPayment, JobPaymentMethod, Partner, QuoteLineItem, SelfBill } from "@/types/database";
 import { listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
@@ -173,6 +173,7 @@ import {
 } from "@/components/jobs/job-money-drawer";
 import { executeJobMoneyAction } from "@/services/job-money-actions";
 import { reverseCustomerExtraPatch, reversePartnerExtraPatch } from "@/lib/job-extra-charges";
+import { isJobExtraEntriesTableUnavailable, listJobExtraEntries, softDeleteJobExtraEntry } from "@/services/job-extra-entries";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import {
@@ -512,6 +513,91 @@ type InternalJobNote = {
   text: string;
 };
 
+type ExtraHistoryEntry = {
+  id: string;
+  side: "client" | "partner";
+  amount: number;
+  extraType: string;
+  reason: string;
+  clientConfirmed?: boolean;
+  createdAt: string;
+  userName?: string;
+  allocation: "extras" | "materials" | "partner_cost";
+  linkedGroupId?: string | null;
+  idRaw: string;
+};
+
+function encodeClientExtraReason(reason: string, clientConfirmed: boolean): string {
+  const base = reason.trim();
+  return `${clientConfirmed ? "[CLIENT_CONFIRMED]" : "[CLIENT_UNCONFIRMED]"} ${base}`.trim();
+}
+
+function decodeClientExtraReason(raw: string): { reason: string; clientConfirmed?: boolean } {
+  const text = raw.trim();
+  if (text.startsWith("[CLIENT_CONFIRMED]")) {
+    return { reason: text.replace("[CLIENT_CONFIRMED]", "").trim(), clientConfirmed: true };
+  }
+  if (text.startsWith("[CLIENT_UNCONFIRMED]")) {
+    return { reason: text.replace("[CLIENT_UNCONFIRMED]", "").trim(), clientConfirmed: false };
+  }
+  return { reason: text };
+}
+
+type ExtraHistoryBucket = "extra" | "ccz" | "parking" | "materials";
+
+function extraHistoryBucket(extraType: string): ExtraHistoryBucket {
+  const key = extraType.trim().toUpperCase();
+  if (key === "CCZ") return "ccz";
+  if (key === "PARKING") return "parking";
+  if (key === "MATERIALS") return "materials";
+  return "extra";
+}
+
+function isFallbackExtraEntry(entry: ExtraHistoryEntry): boolean {
+  return entry.idRaw.startsWith("fallback-");
+}
+
+function extractExtraHistory(entries: JobExtraEntry[]): ExtraHistoryEntry[] {
+  return entries
+    .map((row) => {
+      const decoded = row.side === "client"
+        ? decodeClientExtraReason(String(row.reason ?? ""))
+        : { reason: String(row.reason ?? "").trim(), clientConfirmed: undefined };
+      return {
+        id: row.id,
+        idRaw: row.id,
+        side: row.side,
+        amount: Number(row.amount ?? 0),
+        extraType: String(row.extra_type ?? "").trim() || "Extra",
+        reason: decoded.reason,
+        clientConfirmed: decoded.clientConfirmed,
+        createdAt: String(row.created_at ?? ""),
+        userName: String(row.created_by_name ?? "").trim() || undefined,
+        allocation: row.allocation,
+        linkedGroupId: row.linked_group_id,
+      } satisfies ExtraHistoryEntry;
+    })
+    .filter((v) => v.amount > 0.009)
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+function extraHistoryTooltipText(entries: ExtraHistoryEntry[], emptyText: string): string {
+  if (entries.length === 0) return emptyText;
+  return entries
+    .slice(0, 25)
+    .map((entry) => {
+      const when = new Date(entry.createdAt).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+      const by = entry.userName ? ` · ${entry.userName}` : "";
+      const reason = entry.reason?.trim() ? `\nReason: ${entry.reason.trim()}` : "";
+      return `${when} · ${entry.extraType} · +${formatCurrency(entry.amount)}${by}${reason}`;
+    })
+    .join("\n\n");
+}
+
 export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const params = useParams();
   const router = useRouter();
@@ -538,9 +624,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       (p) => p.type === "customer_deposit" || p.type === "customer_final",
     ) as JobPayment[]),
   );
+  const [extraHistory, setExtraHistory] = useState<ExtraHistoryEntry[]>([]);
+  const [deletingExtraId, setDeletingExtraId] = useState<string | null>(null);
+  const [deleteExtraTarget, setDeleteExtraTarget] = useState<ExtraHistoryEntry | null>(null);
+  const [deleteLinkedPartnerAlso, setDeleteLinkedPartnerAlso] = useState(true);
+  const [confirmingDeleteExtra, setConfirmingDeleteExtra] = useState(false);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [moneyDrawerOpen, setMoneyDrawerOpen] = useState(false);
   const [moneyDrawerFlow, setMoneyDrawerFlow] = useState<JobMoneyDrawerFlow | null>(null);
+  const [moneyDrawerInitialExtraType, setMoneyDrawerInitialExtraType] = useState<string | undefined>(undefined);
+  const [extraManagerSide, setExtraManagerSide] = useState<"client" | "partner" | null>(null);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
   /** Layout-only: job detail tabs and accordions (money actions use drawer modal). */
   const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4>(0);
@@ -657,7 +750,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [sitePhotoUploading, setSitePhotoUploading] = useState(false);
   const [clientExtrasUiValue, setClientExtrasUiValue] = useState(0);
   const [partnerExtrasUiValue, setPartnerExtrasUiValue] = useState(0);
-  const [cashOutExtraExpanded, setCashOutExtraExpanded] = useState<string | null>(null);
   const [hourlyTimeEditOpen, setHourlyTimeEditOpen] = useState(false);
   const [hourlyEditHours, setHourlyEditHours] = useState("");
   const [hourlyEditMinutes, setHourlyEditMinutes] = useState("");
@@ -840,6 +932,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, []);
 
+  const loadExtraHistory = useCallback(async (jobId: string) => {
+    try {
+      const rows = await listJobExtraEntries(jobId);
+      if (rows.length === 0 && isJobExtraEntriesTableUnavailable()) return;
+      setExtraHistory(extractExtraHistory(rows));
+    } catch {
+      setExtraHistory([]);
+    }
+  }, []);
+
   const loadJobInvoices = useCallback(async (j: Job) => {
     if (!j.reference?.trim()) {
       setJobInvoices([]);
@@ -965,14 +1067,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const j = await getJob(id);
       setJob(j);
       if (j) {
-        await Promise.all([loadPayments(j.id), loadJobInvoices(j), loadQuoteLineItems(j), loadJobSelfBill(j)]);
+        await Promise.all([
+          loadPayments(j.id),
+          loadJobInvoices(j),
+          loadQuoteLineItems(j),
+          loadJobSelfBill(j),
+          loadExtraHistory(j.id),
+        ]);
       }
     } catch {
       toast.error("Failed to refresh");
     } finally {
       setRefreshingJob(false);
     }
-  }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill]);
+  }, [id, loadPayments, loadJobInvoices, loadQuoteLineItems, loadJobSelfBill, loadExtraHistory]);
 
   const quoteLineBreakdown = useMemo(() => {
     if (!quoteLineItems.length) return null;
@@ -1057,15 +1165,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           );
         } else {
           // Legacy fallback
-          const [j, all] = await Promise.all([
+          const [j, allPayments] = await Promise.all([
             getJob(id),
             listJobPayments(id),
           ]);
           if (cancelled) return;
           setJob(j ?? null);
-          setPartnerPayments(all.filter((p) => p.type === "partner"));
+          setPartnerPayments(allPayments.filter((p) => p.type === "partner"));
           setCustomerPayments(
-            all.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"),
+            allPayments.filter((p) => p.type === "customer_deposit" || p.type === "customer_final"),
           );
         }
       } catch {
@@ -1078,6 +1186,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       cancelled = true;
     };
   }, [id]);
+
+  useEffect(() => {
+    if (!job?.id) {
+      setExtraHistory([]);
+      return;
+    }
+    void loadExtraHistory(job.id);
+  }, [job?.id, loadExtraHistory]);
 
   useEffect(() => {
     if (!job?.id) {
@@ -2575,78 +2691,161 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       if (!job) return;
       setMoneySubmitting(true);
       try {
-        const updated = await executeJobMoneyAction({
-          job,
-          mode: payload.flow,
-          amount: payload.amount,
-          paymentDate: payload.paymentDate,
-          method: payload.method,
-          note: payload.note,
-          customerPayments,
-          partnerPayments,
-          ...(payload.flow === "client_pay" && payload.clientPayApplyAs
-            ? { clientPayApplyAs: payload.clientPayApplyAs }
-            : {}),
-          ...(payload.paymentLedgerLabel?.trim() ? { paymentLedgerLabel: payload.paymentLedgerLabel.trim() } : {}),
-        });
-        if (payload.flow === "client_extra") {
-          setClientExtrasUiValue((v) => Math.round((v + payload.amount) * 100) / 100);
-        } else if (payload.flow === "partner_extra") {
-          setPartnerExtrasUiValue((v) => Math.round((v + payload.amount) * 100) / 100);
-          const noteUpper = payload.note.trim().toUpperCase();
-          /* Materials line reads from job.materials_cost after save — do not fold into extra/ccz/parking breakdown. */
-          if (!noteUpper.startsWith("MATERIALS")) {
-            const type: "ccz" | "parking" | "extra" =
-              noteUpper.startsWith("CCZ")
-                ? "ccz"
-                : noteUpper.startsWith("PARKING")
-                  ? "parking"
-                  : "extra";
-            setPartnerExtraBreakdownUi((prev) => ({
-              ...prev,
-              [type]: Math.round(((prev[type] ?? 0) + payload.amount) * 100) / 100,
-            }));
-          }
+        const linkedPartnerExtra =
+          payload.flow === "client_extra" && payload.linkedPartnerExtra
+            ? payload.linkedPartnerExtra
+            : undefined;
+        const linkedGroupId =
+          linkedPartnerExtra
+            ? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`)
+            : undefined;
+        let workingJob: Job = job;
+        const actions: JobMoneySubmitPayload[] = [payload];
+        if (linkedPartnerExtra) {
+          const p = linkedPartnerExtra;
+          actions.push({
+            flow: "partner_extra",
+            amount: p.amount,
+            paymentDate: payload.paymentDate,
+            method: "other",
+            note: `${p.extraType} — ${p.extraReason}`,
+            extraType: p.extraType,
+            extraReason: p.extraReason,
+          });
         }
-        setJob(updated);
-        const fieldName =
-          payload.flow === "client_pay"
-            ? "customer_payment"
-            : payload.flow === "client_extra"
-              ? "customer_extra_charge"
-              : payload.flow === "partner_pay"
-                ? "partner_payment"
-                : "partner_extra_payout";
-        await logAudit({
-          entityType: "job",
-          entityId: job.id,
-          entityRef: job.reference,
-          action: payload.flow === "client_pay" || payload.flow === "partner_pay" ? "payment" : "updated",
-          fieldName,
-          newValue: formatCurrency(payload.amount),
-          userId: profile?.id,
-          userName: profile?.full_name,
-          metadata: {
-            mode: payload.flow,
-            method: payload.method,
-            date: payload.paymentDate,
-            ...(payload.note.trim() ? { note: payload.note.trim() } : {}),
-            ...(payload.flow === "client_pay" && payload.clientPayApplyAs
-              ? { client_pay_apply_as: payload.clientPayApplyAs }
+
+        for (const actionPayload of actions) {
+          const reasonForSubmit =
+            actionPayload.flow === "client_extra"
+              ? encodeClientExtraReason(
+                  actionPayload.extraReason ?? "",
+                  Boolean(actionPayload.clientProofConfirmed),
+                )
+              : actionPayload.extraReason;
+          const updated = await executeJobMoneyAction({
+            job: workingJob,
+            mode: actionPayload.flow,
+            amount: actionPayload.amount,
+            paymentDate: actionPayload.paymentDate,
+            method: actionPayload.method,
+            note: actionPayload.note,
+            extraType: actionPayload.extraType,
+            extraReason: reasonForSubmit,
+            actorUserId: profile?.id ?? undefined,
+            actorUserName: profile?.full_name ?? undefined,
+            linkedGroupId,
+            customerPayments,
+            partnerPayments,
+            ...(actionPayload.flow === "client_pay" && actionPayload.clientPayApplyAs
+              ? { clientPayApplyAs: actionPayload.clientPayApplyAs }
               : {}),
-          },
-        });
+            ...(actionPayload.paymentLedgerLabel?.trim()
+              ? { paymentLedgerLabel: actionPayload.paymentLedgerLabel.trim() }
+              : {}),
+          });
+          if (
+            isJobExtraEntriesTableUnavailable() &&
+            (actionPayload.flow === "client_extra" || actionPayload.flow === "partner_extra")
+          ) {
+            const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            setExtraHistory((prev) => [
+              {
+                id: localId,
+                idRaw: localId,
+                side: actionPayload.flow === "client_extra" ? "client" : "partner",
+                amount: actionPayload.amount,
+                extraType: actionPayload.extraType?.trim() || "Extra",
+                reason: actionPayload.extraReason?.trim() || "",
+                clientConfirmed:
+                  actionPayload.flow === "client_extra"
+                    ? Boolean(actionPayload.clientProofConfirmed)
+                    : undefined,
+                createdAt: new Date().toISOString(),
+                userName: profile?.full_name ?? undefined,
+                allocation:
+                  actionPayload.flow === "client_extra"
+                    ? actionPayload.extraType?.trim().toUpperCase() === "MATERIALS"
+                      ? "materials"
+                      : "extras"
+                    : actionPayload.extraType?.trim().toUpperCase() === "MATERIALS"
+                      ? "materials"
+                      : "partner_cost",
+                linkedGroupId: linkedGroupId ?? null,
+              },
+              ...prev,
+            ]);
+          }
+          if (actionPayload.flow === "client_extra") {
+            setClientExtrasUiValue((v) => Math.round((v + actionPayload.amount) * 100) / 100);
+          } else if (actionPayload.flow === "partner_extra") {
+            const typeUpper = (actionPayload.extraType ?? "").trim().toUpperCase();
+            if (typeUpper !== "MATERIALS") {
+              setPartnerExtrasUiValue((v) => Math.round((v + actionPayload.amount) * 100) / 100);
+            }
+            /* Materials line reads from job.materials_cost after save — do not fold into extra/ccz/parking breakdown. */
+            if (typeUpper !== "MATERIALS") {
+              const type: "ccz" | "parking" | "extra" =
+                typeUpper === "CCZ"
+                  ? "ccz"
+                  : typeUpper === "PARKING"
+                    ? "parking"
+                    : "extra";
+              setPartnerExtraBreakdownUi((prev) => ({
+                ...prev,
+                [type]: Math.round(((prev[type] ?? 0) + actionPayload.amount) * 100) / 100,
+              }));
+            }
+          }
+          workingJob = updated;
+          setJob(updated);
+          const fieldName =
+            actionPayload.flow === "client_pay"
+              ? "customer_payment"
+              : actionPayload.flow === "client_extra"
+                ? "customer_extra_charge"
+                : actionPayload.flow === "partner_pay"
+                  ? "partner_payment"
+                  : "partner_extra_payout";
+          await logAudit({
+            entityType: "job",
+            entityId: job.id,
+            entityRef: job.reference,
+            action: actionPayload.flow === "client_pay" || actionPayload.flow === "partner_pay" ? "payment" : "updated",
+            fieldName,
+            newValue: formatCurrency(actionPayload.amount),
+            userId: profile?.id,
+            userName: profile?.full_name,
+            metadata: {
+              mode: actionPayload.flow,
+              method: actionPayload.method,
+              date: actionPayload.paymentDate,
+              ...(actionPayload.note.trim() ? { note: actionPayload.note.trim() } : {}),
+              ...(actionPayload.extraType?.trim() ? { extra_type: actionPayload.extraType.trim() } : {}),
+              ...(actionPayload.extraReason?.trim() ? { extra_reason: actionPayload.extraReason.trim() } : {}),
+              ...(actionPayload.flow === "client_extra"
+                ? { client_proof_confirmed: Boolean(actionPayload.clientProofConfirmed) }
+                : {}),
+              ...(linkedGroupId ? { linked_group_id: linkedGroupId } : {}),
+              ...(actionPayload.flow === "client_pay" && actionPayload.clientPayApplyAs
+                ? { client_pay_apply_as: actionPayload.clientPayApplyAs }
+                : {}),
+            },
+          });
+        }
         const toastMsg =
-          payload.flow === "client_pay"
-            ? "Payment recorded"
-            : payload.flow === "client_extra"
-              ? "Extra charge added"
-              : payload.flow === "partner_pay"
-                ? "Payout recorded"
-                : "Extra payout added";
+          payload.flow === "client_extra" && payload.linkedPartnerExtra
+            ? "Client and partner extras added"
+            : payload.flow === "client_pay"
+              ? "Payment recorded"
+              : payload.flow === "client_extra"
+                ? "Extra charge added"
+                : payload.flow === "partner_pay"
+                  ? "Payout recorded"
+                  : "Extra payout added";
         toast.success(toastMsg);
         setMoneyDrawerOpen(false);
         setMoneyDrawerFlow(null);
+        setMoneyDrawerInitialExtraType(undefined);
         await refreshJobFinance();
       } catch (e) {
         const msg =
@@ -2686,6 +2885,119 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setDeletePaymentTarget(null);
     }
   }, [deletePaymentTarget, job, profile?.id, profile?.full_name, refreshJobFinance]);
+
+  const handleDeleteExtraEntry = useCallback(
+    (entry: ExtraHistoryEntry) => {
+      if (isFallbackExtraEntry(entry)) return;
+      const hasLinkedPartner =
+        entry.side === "client" &&
+        Boolean(entry.linkedGroupId) &&
+        extraHistory.some(
+          (row) =>
+            row.side === "partner" &&
+            row.linkedGroupId &&
+            row.linkedGroupId === entry.linkedGroupId &&
+            !isFallbackExtraEntry(row),
+        );
+      setDeleteExtraTarget(entry);
+      setDeleteLinkedPartnerAlso(hasLinkedPartner);
+    },
+    [extraHistory],
+  );
+
+  const confirmDeleteExtraEntry = useCallback(async () => {
+    if (!deleteExtraTarget || !job) return;
+    setConfirmingDeleteExtra(true);
+    setDeletingExtraId(deleteExtraTarget.idRaw);
+    try {
+      const targets: ExtraHistoryEntry[] =
+        deleteExtraTarget.side === "client" &&
+        Boolean(deleteExtraTarget.linkedGroupId) &&
+        deleteLinkedPartnerAlso
+          ? extraHistory.filter(
+              (row) =>
+                row.linkedGroupId &&
+                row.linkedGroupId === deleteExtraTarget.linkedGroupId &&
+                !isFallbackExtraEntry(row),
+            )
+          : [deleteExtraTarget];
+
+      let workingJob: Job = job;
+      for (const entry of targets) {
+        if (entry.side === "client") {
+          const allocation = entry.allocation === "materials" ? "materials" : "extras";
+          const patch = reverseCustomerExtraPatch(workingJob, entry.amount, allocation);
+          if (Object.keys(patch).length > 0) {
+            const updated = await updateJob(workingJob.id, patch);
+            await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+            await syncSelfBillAfterJobChange(updated);
+            await reconcileJobCustomerPaymentFlags(getSupabase(), workingJob.id);
+            workingJob = updated;
+            setJob(updated);
+          }
+        } else {
+          const allocation = entry.allocation === "materials" ? "materials" : "partner_cost";
+          const patch = reversePartnerExtraPatch(workingJob, entry.amount, allocation);
+          if (Object.keys(patch).length > 0) {
+            const updated = await updateJob(workingJob.id, patch);
+            await syncSelfBillAfterJobChange(updated);
+            workingJob = updated;
+            setJob(updated);
+          }
+        }
+
+        if (!entry.idRaw.startsWith("local-")) {
+          await softDeleteJobExtraEntry({
+            id: entry.idRaw,
+            deletedBy: profile?.id,
+            deletedByName: profile?.full_name ?? undefined,
+            reason: "Removed from job card extra history",
+          });
+        }
+
+        await logAudit({
+          entityType: "job",
+          entityId: job.id,
+          entityRef: job.reference,
+          action: "deleted",
+          fieldName: entry.side === "client" ? "customer_extra_charge" : "partner_extra_payout",
+          oldValue: formatCurrency(entry.amount),
+          userId: profile?.id,
+          userName: profile?.full_name,
+          metadata: {
+            extra_entry_id: entry.idRaw,
+            extra_type: entry.extraType,
+            extra_reason: entry.reason,
+            ...(entry.linkedGroupId ? { linked_group_id: entry.linkedGroupId } : {}),
+            ...(deleteLinkedPartnerAlso && deleteExtraTarget.side === "client" ? { delete_linked_partner: true } : {}),
+          },
+        });
+      }
+
+      setExtraHistory((prev) => prev.filter((row) => !targets.some((target) => target.idRaw === row.idRaw)));
+      await refreshJobFinance();
+      toast.success(
+        targets.length > 1
+          ? "Client and linked partner extras removed"
+          : "Extra removed",
+      );
+    } catch {
+      toast.error("Could not remove extra");
+    } finally {
+      setDeletingExtraId(null);
+      setConfirmingDeleteExtra(false);
+      setDeleteExtraTarget(null);
+      setDeleteLinkedPartnerAlso(false);
+    }
+  }, [
+    deleteExtraTarget,
+    job,
+    deleteLinkedPartnerAlso,
+    extraHistory,
+    profile?.id,
+    profile?.full_name,
+    refreshJobFinance,
+  ]);
 
   useEffect(() => {
     if (!job?.id || !profile?.id) return;
@@ -3373,15 +3685,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     Number(partnerExtraBreakdownUi.parking ?? 0);
   const partnerExtraResidual = Math.max(0, Math.round((partnerExtraDisplay - partnerExtraBreakdownTotal) * 100) / 100);
   const partnerExtraLine = Math.round((Number(partnerExtraBreakdownUi.extra ?? 0) + partnerExtraResidual) * 100) / 100;
-  const partnerCczLine = Math.max(0, Number(partnerExtraBreakdownUi.ccz ?? 0));
-  const partnerParkingLine = Math.max(0, Number(partnerExtraBreakdownUi.parking ?? 0));
   const partnerMaterialsLine = Math.max(0, Number(job.materials_cost ?? 0));
-  const cashOutExtraRows = [
-    { key: "extra", label: "Extra payout", amount: partnerExtraLine, active: partnerExtraLine > 0.02, allocation: "partner_cost" as const },
-    { key: "ccz", label: "CCZ", amount: partnerCczLine, active: partnerCczLine > 0.02, allocation: "partner_cost" as const },
-    { key: "parking", label: "Parking", amount: partnerParkingLine, active: partnerParkingLine > 0.02, allocation: "partner_cost" as const },
-    { key: "materials", label: "Materials", amount: partnerMaterialsLine, active: partnerMaterialsLine > 0.02, allocation: "materials" as const },
-  ] as const;
   const partnerCashOutTotal = Math.max(0, partnerCap + partnerMaterialsLine);
   const directCost =
     job.job_type === "hourly" && hourlyAutoBilling
@@ -3420,17 +3724,149 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const attributedAccessNominal = cczFeeNominal + parkingFeeNominal;
   const attributedAccessForExtrasLine = Math.min(attributedAccessNominal, effectiveExtrasAmountForDisplay);
   const extrasNetOfAccess = Math.max(0, Math.round((effectiveExtrasAmountForDisplay - attributedAccessForExtrasLine) * 100) / 100);
-  const cashInExtraRows = [
-    { key: "extra", label: "Extra charges", amount: extrasNetOfAccess, active: extrasNetOfAccess > 0.02 },
-    { key: "ccz", label: "CCZ", amount: effectiveCustomerInCcz ? ACCESS_CCZ_FEE_GBP : 0, active: effectiveCustomerInCcz },
-    { key: "parking", label: "Parking", amount: job.has_free_parking === false ? ACCESS_PARKING_FEE_GBP : 0, active: job.has_free_parking === false },
-    {
-      key: "materials",
-      label: "Materials",
-      amount: Math.max(0, Number(job.materials_cost ?? 0)),
-      active: Math.max(0, Number(job.materials_cost ?? 0)) > 0.02,
+  const clientExtraHistory = extraHistory.filter((row) => row.side === "client");
+  const partnerExtraHistory = extraHistory.filter((row) => row.side === "partner");
+  const partnerExtraEntriesTotal = partnerExtraHistory.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const clientExtraTypeTotals = clientExtraHistory.reduce(
+    (acc, row) => {
+      const bucket = extraHistoryBucket(row.extraType);
+      acc[bucket] += Number(row.amount ?? 0);
+      return acc;
     },
-  ] as const;
+    { extra: 0, ccz: 0, parking: 0, materials: 0 },
+  );
+  const partnerExtraTypeTotals = partnerExtraHistory.reduce(
+    (acc, row) => {
+      const bucket = extraHistoryBucket(row.extraType);
+      acc[bucket] += Number(row.amount ?? 0);
+      return acc;
+    },
+    { extra: 0, ccz: 0, parking: 0, materials: 0 },
+  );
+  const clientExtraCczDisplay = Math.max(
+    effectiveCustomerInCcz ? ACCESS_CCZ_FEE_GBP : 0,
+    Math.round(clientExtraTypeTotals.ccz * 100) / 100,
+  );
+  const clientExtraParkingDisplay = Math.max(
+    job.has_free_parking === false ? ACCESS_PARKING_FEE_GBP : 0,
+    Math.round(clientExtraTypeTotals.parking * 100) / 100,
+  );
+  const clientExtraMaterialsDisplay = Math.max(
+    0,
+    Math.round(clientExtraTypeTotals.materials * 100) / 100,
+  );
+  const extrasNetOfAccessAndMaterials = Math.max(
+    0,
+    Math.round((extrasNetOfAccess - clientExtraMaterialsDisplay) * 100) / 100,
+  );
+  const clientExtraPlainDisplay = Math.max(
+    extrasNetOfAccessAndMaterials,
+    Math.round(clientExtraTypeTotals.extra * 100) / 100,
+  );
+  const clientExtraTotalDisplay = Math.max(
+    0,
+    Math.round((clientExtraPlainDisplay + clientExtraCczDisplay + clientExtraParkingDisplay + clientExtraMaterialsDisplay) * 100) / 100,
+  );
+  const partnerExtraUnifiedAmount = Math.max(partnerExtraLine, Math.round(partnerExtraEntriesTotal * 100) / 100);
+  const partnerExtraPlainDisplay = Math.max(
+    partnerExtraLine,
+    Math.round(partnerExtraTypeTotals.extra * 100) / 100,
+  );
+  const partnerExtraCczDisplay = Math.max(
+    Math.round(Number(partnerExtraBreakdownUi.ccz ?? 0) * 100) / 100,
+    Math.round(partnerExtraTypeTotals.ccz * 100) / 100,
+  );
+  const partnerExtraParkingDisplay = Math.max(
+    Math.round(Number(partnerExtraBreakdownUi.parking ?? 0) * 100) / 100,
+    Math.round(partnerExtraTypeTotals.parking * 100) / 100,
+  );
+  const partnerExtraTotalDisplay = Math.max(
+    0,
+    Math.round((partnerExtraPlainDisplay + partnerExtraCczDisplay + partnerExtraParkingDisplay + partnerMaterialsLine) * 100) / 100,
+  );
+  /**
+   * Locked partner "Initial balance" — defensive against legacy schemas.
+   *
+   * `partnerCashOutBase` relies solely on `partner_extras_amount`. If that column is missing or
+   * the `job_extra_entries` ledger hasn't been migrated, the recorded extras stay at 0 while
+   * `partner_cost` grows, which would make Initial balance drift upward on refresh.
+   *
+   * We subtract the MAX of every available "extras against partner_cost" source so the base
+   * stays anchored to the original subcontract labour regardless of which source lags.
+   */
+  const partnerPartnerCostLedgerTotal = partnerExtraHistory
+    .filter((row) => {
+      const alloc = row.allocation ?? null;
+      return alloc === "partner_cost" || alloc === null;
+    })
+    .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const partnerExtrasEffectiveAgainstCost = Math.max(
+    Math.round(Number(job.partner_extras_amount ?? 0) * 100) / 100,
+    Math.round(partnerPartnerCostLedgerTotal * 100) / 100,
+    Math.round(partnerExtrasUiValue * 100) / 100,
+  );
+  const partnerInitialBalance = Math.max(
+    0,
+    Math.round((partnerCap - Math.min(partnerExtrasEffectiveAgainstCost, partnerCap)) * 100) / 100,
+  );
+  const clientFallbackEntries: ExtraHistoryEntry[] = clientExtraHistory.length === 0
+    ? ([
+        { key: "Extras", amount: clientExtraPlainDisplay, allocation: "extras" as const },
+        { key: "CCZ", amount: clientExtraCczDisplay, allocation: "extras" as const },
+        { key: "Parking", amount: clientExtraParkingDisplay, allocation: "extras" as const },
+        { key: "Materials", amount: clientExtraMaterialsDisplay, allocation: "materials" as const },
+      ]
+        .filter((row) => row.amount > 0.02)
+        .map((row, idx) => ({
+          id: `fallback-client-${idx}`,
+          idRaw: `fallback-client-${idx}`,
+          side: "client" as const,
+          amount: row.amount,
+          extraType: row.key,
+          reason: "Derived from current totals. Itemized history is unavailable in this environment.",
+          createdAt: "",
+          allocation: row.allocation,
+        })))
+    : [];
+  const partnerFallbackEntries: ExtraHistoryEntry[] = partnerExtraHistory.length === 0
+    ? ([
+        { key: "Extra", amount: partnerExtraPlainDisplay, allocation: "partner_cost" as const },
+        { key: "CCZ", amount: partnerExtraCczDisplay, allocation: "partner_cost" as const },
+        { key: "Parking", amount: partnerExtraParkingDisplay, allocation: "partner_cost" as const },
+        { key: "Materials", amount: partnerMaterialsLine, allocation: "materials" as const },
+      ]
+        .filter((row) => row.amount > 0.02)
+        .map((row, idx) => ({
+          id: `fallback-partner-${idx}`,
+          idRaw: `fallback-partner-${idx}`,
+          side: "partner" as const,
+          amount: row.amount,
+          extraType: row.key,
+          reason: "Derived from current totals. Itemized history is unavailable in this environment.",
+          createdAt: "",
+          allocation: row.allocation,
+        })))
+    : [];
+  const extraManagerEntries = extraManagerSide === "client"
+    ? (clientExtraHistory.length > 0 ? clientExtraHistory : clientFallbackEntries)
+    : (partnerExtraHistory.length > 0 ? partnerExtraHistory : partnerFallbackEntries);
+  const extraManagerTitle = extraManagerSide === "client" ? "Manage client extras" : "Manage partner extras";
+  const extraManagerEmptyText =
+    extraManagerSide === "client"
+      ? "No extra charges recorded yet."
+      : "No extra payouts recorded yet.";
+  const extraManagerGroups: { key: ExtraHistoryBucket; label: string; entries: ExtraHistoryEntry[] }[] = [
+    { key: "extra", label: "Labour", entries: [] },
+    { key: "materials", label: "Materials", entries: [] },
+    { key: "ccz", label: "CCZ", entries: [] },
+    { key: "parking", label: "Parking", entries: [] },
+  ];
+  for (const entry of extraManagerEntries) {
+    const bucket = extraHistoryBucket(entry.extraType);
+    const g = extraManagerGroups.find((row) => row.key === bucket);
+    if (g) g.entries.push(entry);
+  }
+  const isEditableExtraBucket = (b: ExtraHistoryBucket) => b === "extra" || b === "materials";
   let finalSplitRemain = finalBalanceTotal;
   const finalExtraCharges = Math.min(extrasNetOfAccess, finalSplitRemain);
   finalSplitRemain = Math.max(0, finalSplitRemain - finalExtraCharges);
@@ -3622,7 +4058,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <span className="font-semibold tabular-nums">-{formatCurrency(partnerCashOutBase)}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-text-secondary">Extra payout</span>
+              <span className="text-text-secondary">Total Extras</span>
               <span className={cn("font-semibold tabular-nums", hasPartnerExtra ? "text-rose-700" : "text-text-tertiary")}>
                 {hasPartnerExtra ? `-${formatCurrency(partnerExtraDisplay)}` : formatCurrency(0)}
               </span>
@@ -5653,21 +6089,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               {/* CLIENT cash in */}
               <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-2 shadow-sm dark:border-emerald-500/25 dark:bg-emerald-950/20">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
-                  <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash in — client</span>
                     <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
                       {amountDue > 0.02 ? "Pending" : "Settled"}
                     </Badge>
                   </div>
                   <span
-                    className="text-sm font-bold tabular-nums text-text-primary"
+                    className="text-sm font-bold tabular-nums text-text-primary shrink-0"
                     title="Extra charge / CCZ / parking change this total and the invoice. Record Payment only reduces amount due."
                   >
                     {formatCurrency(billableRevenue)}
                   </span>
                 </div>
                 <div className="space-y-1.5 text-xs">
+                  <div
+                    className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 dark:border-[#2f3642] dark:bg-[#101621]"
+                    title="Base client price at the start of this job (field client_price). Extras are tracked below."
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-text-primary">Initial balance</span>
+                      <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
+                    </div>
+                    <span className="font-semibold tabular-nums text-text-primary shrink-0">
+                      {formatCurrency(Math.max(0, Number(job.client_price ?? 0)))}
+                    </span>
+                  </div>
                   {(job.customer_deposit ?? 0) > 0 && (
                     <div className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-1.5">
@@ -5678,28 +6126,70 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   )}
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
-                    {cashInExtraRows.map((row) => (
-                      <div key={row.key} className="flex items-center justify-between gap-2 py-1 text-xs">
-                        <span className="text-text-secondary">{row.label}</span>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
+                      <button
+                        type="button"
+                        onClick={() => setExtraManagerSide("client")}
+                        title="View all client extras"
+                        aria-label="View all client extras"
+                        className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border-light text-[9px] font-bold text-text-tertiary transition-colors hover:border-text-primary hover:text-text-primary focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                      >
+                        !
+                      </button>
+                    </div>
+                    <div className="py-1">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-text-secondary">Total Extras</span>
                         <div className="flex items-center gap-1.5">
-                          <span className={cn("font-semibold tabular-nums", row.active ? "text-emerald-700" : "text-text-tertiary")}>
-                            {row.active ? `+${formatCurrency(row.amount)}` : formatCurrency(0)}
+                          <span className={cn("font-semibold tabular-nums", clientExtraTotalDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                            {clientExtraTotalDisplay > 0.02 ? `+${formatCurrency(clientExtraTotalDisplay)}` : formatCurrency(0)}
                           </span>
                           <button
                             type="button"
                             className="text-text-tertiary transition-colors hover:text-text-primary"
-                            title={`Edit ${row.label}`}
+                            title="Edit Labour / Materials extras"
                             onClick={() => {
-                              setMoneyDrawerFlow("client_extra");
-                              setMoneyDrawerOpen(true);
+                              setExtraManagerSide("client");
                             }}
                           >
                             <Pencil className="h-3 w-3" />
                           </button>
                         </div>
                       </div>
-                    ))}
+                    </div>
+                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+                      <span className="text-text-secondary">Labour</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("font-semibold tabular-nums", clientExtraPlainDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                          {clientExtraPlainDisplay > 0.02 ? `+${formatCurrency(clientExtraPlainDisplay)}` : formatCurrency(0)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+                      <span className="text-text-secondary">CCZ</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("font-semibold tabular-nums", clientExtraCczDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                          {clientExtraCczDisplay > 0.02 ? `+${formatCurrency(clientExtraCczDisplay)}` : formatCurrency(0)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+                      <span className="text-text-secondary">Parking</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("font-semibold tabular-nums", clientExtraParkingDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                          {clientExtraParkingDisplay > 0.02 ? `+${formatCurrency(clientExtraParkingDisplay)}` : formatCurrency(0)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+                      <span className="text-text-secondary">Materials</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("font-semibold tabular-nums", clientExtraMaterialsDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
+                          {clientExtraMaterialsDisplay > 0.02 ? `+${formatCurrency(clientExtraMaterialsDisplay)}` : formatCurrency(0)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                   {/* Payment history: always show header so empty state is visible */}
                   <div className="mt-1 space-y-0.5">
@@ -5771,6 +6261,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     className="h-10 w-full rounded-lg px-3 text-sm font-semibold shadow-sm"
                     icon={<Plus className="h-4 w-4 shrink-0" />}
                     onClick={() => {
+                      setMoneyDrawerInitialExtraType(undefined);
                       setMoneyDrawerFlow("client_extra");
                       setMoneyDrawerOpen(true);
                     }}
@@ -5782,89 +6273,98 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               {/* Cash out (partner payout) */}
               <div className="rounded-lg border border-rose-200/80 bg-rose-50/45 p-2 shadow-sm dark:border-rose-500/25 dark:bg-rose-950/20">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-light/80 pb-1.5 text-xs dark:border-[#2f3642]">
-                  <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash out — partner</span>
                     <Badge variant={partnerPayRemaining > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
                       {partnerPayRemaining > 0.02 ? "Pending" : "Settled"}
                     </Badge>
                   </div>
                   <span
-                    className="text-sm font-bold tabular-nums text-text-primary"
+                    className="text-sm font-bold tabular-nums text-text-primary shrink-0"
                     title="Partner cash out includes labour, extras, and materials cost."
                   >
                     {formatCurrency(partnerCashOutTotal)}
                   </span>
                 </div>
                 <div className="space-y-2 text-xs">
+                  <div
+                    className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 dark:border-[#2f3642] dark:bg-[#101621]"
+                    title="Subcontract labour agreed at the start of this job. Stays locked — extras and materials are tracked below."
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-text-primary">Initial balance</span>
+                      <Badge variant="outline" size="sm" className="h-5 text-[10px]">Base</Badge>
+                    </div>
+                    <span className="font-semibold tabular-nums text-text-primary shrink-0">
+                      {formatCurrency(partnerInitialBalance)}
+                    </span>
+                  </div>
                   <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
-                    {cashOutExtraRows.map((row) => (
-                      <div key={row.key} className="py-1">
-                        <div className="flex items-center justify-between gap-2 text-xs">
-                          <span className="text-text-secondary">{row.label}</span>
-                          <div className="flex items-center gap-1.5">
-                            <span className={cn("font-semibold tabular-nums", row.active ? "text-rose-700" : "text-text-tertiary")}>
-                              {row.active ? `+${formatCurrency(row.amount)}` : formatCurrency(0)}
-                            </span>
-                            <button
-                              type="button"
-                              className="text-text-tertiary transition-colors hover:text-text-primary"
-                              onClick={() => setCashOutExtraExpanded((prev) => (prev === row.key ? null : row.key))}
-                              title={`Actions for ${row.label}`}
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </button>
-                          </div>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
+                      <button
+                        type="button"
+                        onClick={() => setExtraManagerSide("partner")}
+                        title="View all partner extras"
+                        aria-label="View all partner extras"
+                        className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border-light text-[9px] font-bold text-text-tertiary transition-colors hover:border-text-primary hover:text-text-primary focus:outline-none focus:ring-1 focus:ring-rose-400"
+                      >
+                        !
+                      </button>
+                    </div>
+                    <div className="py-1">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-text-secondary">Total Extras</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn("font-semibold tabular-nums", partnerExtraTotalDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                            {partnerExtraTotalDisplay > 0.02 ? `+${formatCurrency(partnerExtraTotalDisplay)}` : formatCurrency(0)}
+                          </span>
+                          <button
+                            type="button"
+                            className="text-text-tertiary transition-colors hover:text-text-primary"
+                            onClick={() => {
+                              setExtraManagerSide("partner");
+                            }}
+                            title="Edit Labour / Materials extras"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
                         </div>
-                        {cashOutExtraExpanded === row.key ? (
-                          <div className="mt-1 flex items-center gap-3 pl-4">
-                            <button
-                              type="button"
-                              className="text-[10px] font-medium text-text-secondary transition-colors hover:text-text-primary"
-                              onClick={() => {
-                                setMoneyDrawerFlow("partner_extra");
-                                setMoneyDrawerOpen(true);
-                              }}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="text-[10px] font-medium text-red-500 transition-colors hover:text-red-600"
-                              onClick={() => {
-                                void (async () => {
-                                  if (!job || row.amount <= 0.02) return;
-                                  try {
-                                    const patch = reversePartnerExtraPatch(job, row.amount, row.allocation);
-                                    if (Object.keys(patch).length === 0) return;
-                                    const updated = await updateJob(job.id, patch);
-                                    await syncSelfBillAfterJobChange(updated);
-                                    setJob(updated);
-                                    if (row.allocation === "materials") {
-                                      // Materials line comes from job.materials_cost; no breakdown reset needed.
-                                    } else {
-                                      setPartnerExtrasUiValue((v) => Math.max(0, Math.round((v - row.amount) * 100) / 100));
-                                      setPartnerExtraBreakdownUi((prev) => ({
-                                        ...prev,
-                                        [row.key]: Math.max(0, Math.round(((prev[row.key as "extra" | "ccz" | "parking"] ?? 0) - row.amount) * 100) / 100),
-                                      }));
-                                    }
-                                    setCashOutExtraExpanded(null);
-                                    await refreshJobFinance();
-                                    toast.success("Extra updated");
-                                  } catch {
-                                    toast.error("Could not update extra");
-                                  }
-                                })();
-                              }}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        ) : null}
                       </div>
-                    ))}
+                    </div>
+                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+                      <span className="text-text-secondary">Labour</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("font-semibold tabular-nums", partnerExtraPlainDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                          {partnerExtraPlainDisplay > 0.02 ? `+${formatCurrency(partnerExtraPlainDisplay)}` : formatCurrency(0)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+                      <span className="text-text-secondary">CCZ</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("font-semibold tabular-nums", partnerExtraCczDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                          {partnerExtraCczDisplay > 0.02 ? `+${formatCurrency(partnerExtraCczDisplay)}` : formatCurrency(0)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+                      <span className="text-text-secondary">Parking</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("font-semibold tabular-nums", partnerExtraParkingDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                          {partnerExtraParkingDisplay > 0.02 ? `+${formatCurrency(partnerExtraParkingDisplay)}` : formatCurrency(0)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
+                      <span className="text-text-secondary">Materials</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("font-semibold tabular-nums", partnerMaterialsLine > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
+                          {partnerMaterialsLine > 0.02 ? `+${formatCurrency(partnerMaterialsLine)}` : formatCurrency(0)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                   {/* Partner payment history: always show header when there is a partner cost so empty state is visible */}
                   {partnerCashOutTotal > 0.02 && (
@@ -6849,6 +7349,199 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         </div>
       </Modal>
 
+      <Modal
+        open={extraManagerSide != null}
+        onClose={() => setExtraManagerSide(null)}
+        title={extraManagerTitle}
+      >
+        <div className="p-4 space-y-4">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs text-text-tertiary leading-snug max-w-[60%]">
+              Review all extras grouped by category. Only <span className="font-medium text-text-secondary">Labour</span> and <span className="font-medium text-text-secondary">Materials</span> can be edited here.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => {
+                if (extraManagerSide === "client") {
+                  setMoneyDrawerInitialExtraType(undefined);
+                  setMoneyDrawerFlow("client_extra");
+                } else {
+                  setMoneyDrawerFlow("partner_extra");
+                }
+                setExtraManagerSide(null);
+                setMoneyDrawerOpen(true);
+              }}
+            >
+              {extraManagerSide === "client" ? "Add extra charge" : "Add extra payout"}
+            </Button>
+          </div>
+
+          <div className="max-h-[56vh] space-y-3 overflow-y-auto pr-1">
+            {extraManagerEntries.length === 0 ? (
+              <p className="text-xs text-text-tertiary">{extraManagerEmptyText}</p>
+            ) : null}
+            {extraManagerEntries.length > 0
+              ? extraManagerGroups
+                  .filter((group) => group.entries.length > 0)
+                  .map((group) => {
+                    const groupTotal = group.entries.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+                    const editable = isEditableExtraBucket(group.key);
+                    return (
+                      <div key={group.key} className="rounded-lg border border-border-light/70 bg-background/50 p-2 dark:border-[#2f3642] dark:bg-[#101621]">
+                        <div className="flex items-center justify-between gap-2 pb-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">{group.label}</span>
+                            {!editable ? (
+                              <Badge variant="outline" size="sm" className="h-4 text-[9px]">Read-only</Badge>
+                            ) : null}
+                          </div>
+                          <span
+                            className={cn(
+                              "text-[11px] font-semibold tabular-nums",
+                              extraManagerSide === "client" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
+                            )}
+                          >
+                            +{formatCurrency(groupTotal)}
+                          </span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {group.entries.map((entry) => (
+                            <div key={entry.id} className="flex items-start justify-between gap-2 rounded-md bg-surface-hover/40 px-2.5 py-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-[10px] font-semibold uppercase text-text-tertiary">{entry.extraType}</span>
+                                  {entry.side === "client" ? (
+                                    <Badge
+                                      variant={
+                                        entry.clientConfirmed == null
+                                          ? "outline"
+                                          : entry.clientConfirmed
+                                            ? "success"
+                                            : "warning"
+                                      }
+                                      size="sm"
+                                    >
+                                      {entry.clientConfirmed == null
+                                        ? "Confirmation unknown"
+                                        : entry.clientConfirmed
+                                          ? "Client confirmed"
+                                          : "Not confirmed"}
+                                    </Badge>
+                                  ) : null}
+                                  {entry.createdAt ? (
+                                    <span className="text-[10px] text-text-tertiary">
+                                      · {new Date(entry.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                                    </span>
+                                  ) : null}
+                                  {entry.userName ? <span className="text-[10px] text-text-tertiary">· {entry.userName}</span> : null}
+                                </div>
+                                {entry.reason ? <p className="text-[11px] text-text-secondary">{entry.reason}</p> : null}
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span
+                                  className={cn(
+                                    "text-xs font-semibold tabular-nums",
+                                    entry.side === "client" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300",
+                                  )}
+                                >
+                                  +{formatCurrency(entry.amount)}
+                                </span>
+                                {editable && !isFallbackExtraEntry(entry) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteExtraEntry(entry)}
+                                    disabled={deletingExtraId === entry.idRaw}
+                                    className="text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-50"
+                                    title="Delete this extra entry"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })
+              : null}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!deleteExtraTarget}
+        onClose={() => {
+          if (confirmingDeleteExtra) return;
+          setDeleteExtraTarget(null);
+          setDeleteLinkedPartnerAlso(false);
+        }}
+        title="Remove extra entry"
+      >
+        <div className="p-4 space-y-3">
+          {deleteExtraTarget ? (
+            <>
+              <p className="text-sm text-text-secondary">
+                Remove this extra entry from the job?
+              </p>
+              <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                  {deleteExtraTarget.extraType}
+                </p>
+                {deleteExtraTarget.reason ? (
+                  <p className="text-xs text-text-secondary">{deleteExtraTarget.reason}</p>
+                ) : null}
+                <p className="text-sm font-semibold tabular-nums text-text-primary mt-1">
+                  +{formatCurrency(deleteExtraTarget.amount)}
+                </p>
+              </div>
+              {deleteExtraTarget.side === "client" &&
+              deleteExtraTarget.linkedGroupId &&
+              extraHistory.some(
+                (row) =>
+                  row.side === "partner" &&
+                  row.linkedGroupId &&
+                  row.linkedGroupId === deleteExtraTarget.linkedGroupId &&
+                  !isFallbackExtraEntry(row),
+              ) ? (
+                <label className="inline-flex items-start gap-2 text-xs text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={deleteLinkedPartnerAlso}
+                    onChange={(e) => setDeleteLinkedPartnerAlso(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>Also remove linked partner extra from the same action.</span>
+                </label>
+              ) : null}
+            </>
+          ) : null}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={confirmingDeleteExtra}
+              onClick={() => {
+                setDeleteExtraTarget(null);
+                setDeleteLinkedPartnerAlso(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              loading={confirmingDeleteExtra}
+              onClick={() => void confirmDeleteExtraEntry()}
+            >
+              Remove extra
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       {/* DELETE PAYMENT CONFIRMATION MODAL */}
       <Modal
         open={!!deletePaymentTarget}
@@ -6883,11 +7576,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         onClose={() => {
           setMoneyDrawerOpen(false);
           setMoneyDrawerFlow(null);
+          setMoneyDrawerInitialExtraType(undefined);
         }}
         onSubmit={handleMoneyDrawerSubmit}
         submitting={moneySubmitting}
         stripeInvoices={jobInvoices}
         clientCashContext={jobMoneyClientCashContext}
+        initialExtraType={moneyDrawerInitialExtraType}
       />
 
       <Modal
@@ -7074,7 +7769,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             )}
             <div className="space-y-2 rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
               {[
-                { key: "extra", label: "Extra payout" },
+                { key: "extra", label: "Labour" },
                 { key: "ccz", label: "CCZ" },
                 { key: "parking", label: "Parking" },
                 { key: "materials", label: "Materials" },

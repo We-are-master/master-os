@@ -8,6 +8,21 @@ import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-f
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { partnerPaymentCap } from "@/lib/job-financials";
 import { syncSelfBillAfterJobChange } from "@/services/self-bills";
+import { createJobExtraEntry, softDeleteJobExtraEntry } from "@/services/job-extra-entries";
+
+function isMissingJobExtraEntriesTableError(err: unknown): boolean {
+  if (typeof err !== "object" || err == null) return false;
+  const code = "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
+  const message = "message" in err ? String((err as { message?: unknown }).message ?? "") : "";
+  const details = "details" in err ? String((err as { details?: unknown }).details ?? "") : "";
+  const haystack = `${message} ${details}`.toLowerCase();
+  if (code === "PGRST205" || code === "42P01") return true;
+  return haystack.includes("job_extra_entries") && (
+    haystack.includes("could not find the table") ||
+    haystack.includes("does not exist") ||
+    haystack.includes("table unavailable")
+  );
+}
 
 function composeLedgerNote(ledgerLabel?: string, userNote?: string): string | undefined {
   const label = ledgerLabel?.trim();
@@ -38,6 +53,15 @@ export type ExecuteJobMoneyActionInput = {
   clientPayApplyAs?: ClientPayApplyAs;
   /** Optional history label only (prefixed in note); does not affect allocation. */
   paymentLedgerLabel?: string;
+  /** Extra category selected in drawer (for extra flows). */
+  extraType?: string;
+  /** Human reason/details for why the extra happened (for extra flows). */
+  extraReason?: string;
+  /** Actor context for archived extra rows (optional but recommended). */
+  actorUserId?: string;
+  actorUserName?: string;
+  /** Link multiple extras added from one UI action. */
+  linkedGroupId?: string;
 };
 
 function resolveJobId(job: Job): string {
@@ -62,6 +86,11 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     partnerPayments,
     clientPayApplyAs,
     paymentLedgerLabel,
+    extraType,
+    extraReason,
+    actorUserId,
+    actorUserName,
+    linkedGroupId,
   } = input;
 
   const jobId = resolveJobId(job);
@@ -79,12 +108,54 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
     if (method === "stripe") {
       throw new Error("Extra charges cannot use Stripe here — use Bank or Cash, or add the charge then collect via link.");
     }
-    const patch = applyCustomerExtraPatch(job, a, "extras");
-    const updated = await updateJob(jobId, patch);
-    await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-    await syncSelfBillAfterJobChange(updated);
-    await reconcileJobCustomerPaymentFlags(getSupabase(), jobId);
-    return updated;
+    const extraTypeTrim = (extraType ?? "").trim();
+    const extraReasonTrim = (extraReason ?? "").trim();
+    if (!extraTypeTrim) throw new Error("Select an extra type.");
+    if (!extraReasonTrim) throw new Error("Add a reason for this extra.");
+    const extraTypeUpper = (extraType ?? "").trim().toUpperCase();
+    /**
+     * Client-side Materials should stay on client only and must not inflate partner materials.
+     * We keep visual categorization by `extra_type` and persist financial impact in `extras_amount`.
+     */
+    const allocation = "extras";
+    let entry: { id: string } | null = null;
+    try {
+      entry = await createJobExtraEntry({
+        job_id: jobId,
+        side: "client",
+        extra_type: extraTypeTrim,
+        reason: extraReasonTrim,
+        amount: a,
+        allocation,
+        ...(linkedGroupId?.trim() ? { linked_group_id: linkedGroupId.trim() } : {}),
+        ...(actorUserId?.trim() ? { created_by: actorUserId.trim() } : {}),
+        ...(actorUserName?.trim() ? { created_by_name: actorUserName.trim() } : {}),
+      });
+    } catch (err) {
+      if (!isMissingJobExtraEntriesTableError(err)) throw err;
+    }
+    try {
+      const patch = applyCustomerExtraPatch(job, a, allocation);
+      const updated = await updateJob(jobId, patch);
+      await bumpLinkedInvoiceAmountsToJobSchedule(updated);
+      await syncSelfBillAfterJobChange(updated);
+      await reconcileJobCustomerPaymentFlags(getSupabase(), jobId);
+      return updated;
+    } catch (err) {
+      if (entry?.id) {
+        try {
+          await softDeleteJobExtraEntry({
+            id: entry.id,
+            deletedBy: actorUserId,
+            deletedByName: actorUserName,
+            reason: "Rollback: failed to apply client extra",
+          });
+        } catch {
+          // best effort rollback marker
+        }
+      }
+      throw err;
+    }
   }
 
   if (mode === "client_pay") {
@@ -129,25 +200,65 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
 
   if (mode === "partner_extra") {
     if (!job.partner_id?.trim()) throw new Error("Assign a partner first");
+    const extraTypeTrim = (extraType ?? "").trim();
+    const extraReasonTrim = (extraReason ?? "").trim();
+    if (!extraTypeTrim) throw new Error("Select an extra type.");
+    if (!extraReasonTrim) throw new Error("Add a reason for this extra.");
+    const extraTypeUpper = (extraType ?? "").trim().toUpperCase();
     const noteUpper = (noteTrim ?? "").toUpperCase();
-    const allocation = noteUpper.startsWith("MATERIALS") ? "materials" : "partner_cost";
-    const patch = applyPartnerExtraPatch(job, a, allocation);
+    const allocation =
+      extraTypeUpper === "MATERIALS" || noteUpper.startsWith("MATERIALS")
+        ? "materials"
+        : "partner_cost";
+    let entry: { id: string } | null = null;
     try {
-      const updated = await updateJob(jobId, patch);
-      await syncSelfBillAfterJobChange(updated);
-      return updated;
-    } catch {
-      // Fallback patch with minimal fields for schema-drifted environments.
-      const fallbackPatch =
-        allocation === "materials"
-          ? ({ materials_cost: Math.round((Number(job.materials_cost ?? 0) + a) * 100) / 100 } as Partial<Job>)
-          : ({
-              partner_cost: Math.round((Number(job.partner_cost ?? 0) + a) * 100) / 100,
-              partner_extras_amount: Math.round((Number(job.partner_extras_amount ?? 0) + a) * 100) / 100,
-            } as Partial<Job>);
-      const updated = await updateJob(jobId, fallbackPatch);
-      await syncSelfBillAfterJobChange(updated);
-      return updated;
+      entry = await createJobExtraEntry({
+        job_id: jobId,
+        side: "partner",
+        extra_type: extraTypeTrim,
+        reason: extraReasonTrim,
+        amount: a,
+        allocation,
+        ...(linkedGroupId?.trim() ? { linked_group_id: linkedGroupId.trim() } : {}),
+        ...(actorUserId?.trim() ? { created_by: actorUserId.trim() } : {}),
+        ...(actorUserName?.trim() ? { created_by_name: actorUserName.trim() } : {}),
+      });
+    } catch (err) {
+      if (!isMissingJobExtraEntriesTableError(err)) throw err;
+    }
+    try {
+      const patch = applyPartnerExtraPatch(job, a, allocation);
+      try {
+        const updated = await updateJob(jobId, patch);
+        await syncSelfBillAfterJobChange(updated);
+        return updated;
+      } catch {
+        // Fallback patch with minimal fields for schema-drifted environments.
+        const fallbackPatch =
+          allocation === "materials"
+            ? ({ materials_cost: Math.round((Number(job.materials_cost ?? 0) + a) * 100) / 100 } as Partial<Job>)
+            : ({
+                partner_cost: Math.round((Number(job.partner_cost ?? 0) + a) * 100) / 100,
+                partner_extras_amount: Math.round((Number(job.partner_extras_amount ?? 0) + a) * 100) / 100,
+              } as Partial<Job>);
+        const updated = await updateJob(jobId, fallbackPatch);
+        await syncSelfBillAfterJobChange(updated);
+        return updated;
+      }
+    } catch (err) {
+      if (entry?.id) {
+        try {
+          await softDeleteJobExtraEntry({
+            id: entry.id,
+            deletedBy: actorUserId,
+            deletedByName: actorUserName,
+            reason: "Rollback: failed to apply partner extra",
+          });
+        } catch {
+          // best effort rollback marker
+        }
+      }
+      throw err;
     }
   }
 
