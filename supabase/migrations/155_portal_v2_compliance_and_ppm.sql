@@ -18,6 +18,12 @@
 -- =============================================
 -- 1. compliance certificates
 -- =============================================
+-- days_left is computed on read in the application layer
+-- (portal-compliance.ts: days_left = expiry_date - today). Postgres
+-- rejects CURRENT_DATE in a GENERATED ... STORED column because
+-- CURRENT_DATE is STABLE not IMMUTABLE; a STORED value would also
+-- freeze at insert time and never refresh, so it wouldn't be useful
+-- anyway.
 CREATE TABLE IF NOT EXISTS public.account_compliance_certificates (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id      uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
@@ -25,10 +31,6 @@ CREATE TABLE IF NOT EXISTS public.account_compliance_certificates (
   certificate_type text NOT NULL,
   issued_date     date,
   expiry_date     date NOT NULL,
-  -- days_left auto-recomputes on every read; no trigger needed.
-  days_left       integer GENERATED ALWAYS AS (
-                    (expiry_date - CURRENT_DATE)::int
-                  ) STORED,
   status          text NOT NULL DEFAULT 'ok',
   document_path   text,
   notes           text,
