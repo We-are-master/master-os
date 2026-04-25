@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 const STATUS_LABEL: Record<string, string> = {
   awaiting_customer: "Awaiting your response",
-  accepted:          "Accepted",
+  awaiting_payment:  "Awaiting payment",
   rejected:          "Declined",
   converted_to_job:  "Converted to job",
   draft:             "Draft",
@@ -20,7 +20,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 const STATUS_COLOR: Record<string, string> = {
   awaiting_customer: "bg-amber-50 text-amber-700",
-  accepted:          "bg-emerald-50 text-emerald-700",
+  awaiting_payment:  "bg-amber-50 text-amber-700",
   rejected:          "bg-surface-tertiary text-text-secondary",
   converted_to_job:  "bg-emerald-50 text-emerald-700",
 };
@@ -68,7 +68,12 @@ export default async function PortalQuoteDetailPage({ params }: PageProps) {
             )}
           </div>
           <div className="text-right">
-            <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1">Total</p>
+            <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-1 flex items-center justify-end gap-1.5">
+              Total
+              <span className="inline-block rounded px-1 py-[1px] text-[9px] font-bold tracking-wide bg-emerald-100 text-emerald-700">
+                Inc VAT
+              </span>
+            </p>
             <p className="text-3xl font-black text-text-primary tabular-nums">{formatCurrency(totalValue)}</p>
             {Number(quote.deposit_required) > 0 && (
               <p className="text-xs text-amber-700 mt-1">
@@ -111,7 +116,12 @@ export default async function PortalQuoteDetailPage({ params }: PageProps) {
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-border">
-                  <td colSpan={3} className="pt-3 text-right text-sm font-semibold text-text-secondary">Total</td>
+                  <td colSpan={3} className="pt-3 text-right text-sm font-semibold text-text-secondary">
+                    Total
+                    <span className="ml-1 inline-block rounded px-1 py-[1px] text-[9px] font-bold tracking-wide bg-emerald-100 text-emerald-700 align-middle">
+                      Inc VAT
+                    </span>
+                  </td>
                   <td className="pt-3 text-right text-base font-black text-text-primary tabular-nums">
                     {formatCurrency(totalValue)}
                   </td>

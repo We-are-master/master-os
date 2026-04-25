@@ -249,7 +249,7 @@ export function Sidebar() {
       adminConfig?.filteredNavigation?.length
         ? mergeNewNavItems(adminConfig.filteredNavigation, NAVIGATION)
         : NAVIGATION,
-    [adminConfig?.filteredNavigation],
+    [adminConfig],
   );
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const sectionLabelsSig = useMemo(
@@ -258,14 +258,16 @@ export function Sidebar() {
   );
 
   useEffect(() => {
-    setCollapsedSections((prev) => {
-      const next: Record<string, boolean> = {};
-      for (const group of navGroups) {
-        next[group.label] = prev[group.label] ?? false;
-      }
-      const sameKeys = Object.keys(next).length === Object.keys(prev).length;
-      const sameValues = sameKeys && Object.keys(next).every((k) => next[k] === prev[k]);
-      return sameValues ? prev : next;
+    queueMicrotask(() => {
+      setCollapsedSections((prev) => {
+        const next: Record<string, boolean> = {};
+        for (const group of navGroups) {
+          next[group.label] = prev[group.label] ?? false;
+        }
+        const sameKeys = Object.keys(next).length === Object.keys(prev).length;
+        const sameValues = sameKeys && Object.keys(next).every((k) => next[k] === prev[k]);
+        return sameValues ? prev : next;
+      });
     });
   }, [sectionLabelsSig, navGroups]);
 

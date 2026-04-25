@@ -1,5 +1,8 @@
+import type { CompletionDelivery } from "../types";
+
 type Props = {
   forceMode: boolean;
+  completionDelivery: CompletionDelivery | null;
   canApprove: boolean;
   canForceApprove: boolean;
   submitting?: boolean;
@@ -8,8 +11,17 @@ type Props = {
   onForceApprove: () => void;
 };
 
+function primaryButtonLabel(completionDelivery: CompletionDelivery | null, force: boolean): string {
+  if (!completionDelivery) return "Choose how to complete";
+  if (completionDelivery === "email") {
+    return force ? "Force finalise & email client" : "Finalise & email client";
+  }
+  return force ? "Force finalise (no client email)" : "Finalise (no client email)";
+}
+
 export function ModalFooter({
   forceMode,
+  completionDelivery,
   canApprove,
   canForceApprove,
   submitting,
@@ -50,7 +62,7 @@ export function ModalFooter({
           }}
           onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#ED4B00")}
         >
-          <span className="text-[12px]">⚠</span> Force finalise &amp; send
+          <span className="text-[12px]">⚠</span> {primaryButtonLabel(completionDelivery, true)}
           <span className="text-[14px]">→</span>
         </button>
       ) : (
@@ -66,7 +78,7 @@ export function ModalFooter({
           }}
           onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "#020040")}
         >
-          Finalise &amp; send <span className="text-[14px]">→</span>
+          {primaryButtonLabel(completionDelivery, false)} <span className="text-[14px]">→</span>
         </button>
       )}
     </div>

@@ -90,7 +90,7 @@ export function snapshotToPromptBlock(s: OpsSnapshot): string {
 
 /** Quote pipeline detail for Manager / Operator Master Brain. */
 export async function fetchQuotesPipelineBlock(admin: SupabaseClient): Promise<string> {
-  const statuses = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"] as const;
+  const statuses = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"] as const;
   const countResults = await Promise.all(
     statuses.map((st) => admin.from("quotes").select("id", { count: "exact", head: true }).eq("status", st)),
   );

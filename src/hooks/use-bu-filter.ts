@@ -51,7 +51,7 @@ export function useBuFilter(): UseBuFilterResult {
   // Resolve client IDs whose account is in the selected BU
   useEffect(() => {
     if (!selectedBuId) {
-      setClientIds(undefined);
+      queueMicrotask(() => setClientIds(undefined));
       return;
     }
     let cancelled = false;

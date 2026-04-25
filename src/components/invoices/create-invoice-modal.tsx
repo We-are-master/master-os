@@ -11,6 +11,8 @@ import { toast } from "sonner";
 import type { InvoiceStatus, Job, Quote } from "@/types/database";
 import type { CreateInvoiceInput } from "@/services/invoices";
 import { getClient } from "@/services/clients";
+import { getSupabase } from "@/services/base";
+import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { listJobs, JOB_LIST_ALL_TAB_STATUSES } from "@/services/jobs";
 import { listQuotes } from "@/services/quotes";
 import { getInvoiceDueDateIsoForJobReference } from "@/services/invoice-due-date";
@@ -221,8 +223,13 @@ export function CreateInvoiceModal({
     setSubmitting(true);
     try {
       const row = await getClient(clientPick.client_id);
+      const billing = await resolveNominalBillingParty(getSupabase(), {
+        clientId: clientPick.client_id,
+        fallbackName: clientPick.client_name,
+        fallbackEmail: clientPick.client_email ?? null,
+      });
       await onCreate({
-        client_name: clientPick.client_name.trim(),
+        client_name: billing.displayName,
         job_reference: form.job_reference.trim() || undefined,
         source_account_id: row?.source_account_id?.trim() || undefined,
         amount: Number(form.amount),

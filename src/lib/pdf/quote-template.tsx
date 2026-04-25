@@ -14,6 +14,7 @@ export interface QuotePDFData {
   title: string;
   clientName: string;
   clientEmail: string;
+  /** VAT-inclusive grand total — matches the Total Price shown in the app drawer and portal. */
   totalValue: number;
   createdAt: string;
   expiresAt?: string;
@@ -23,6 +24,8 @@ export interface QuotePDFData {
   /** Shown in email for accept/reject so client sees full quote. */
   depositRequired?: number;
   scope?: string;
+  /** VAT rate used to back out subtotal/VAT from `totalValue`. Defaults to 20% if not provided. */
+  vatPercent?: number;
 }
 
 export interface QuoteLineItem {
@@ -345,9 +348,17 @@ export function QuotePDF({
   branding?: CompanyBranding;
 }) {
   const color = branding.primaryColor ?? "#F97316";
-  const subtotal = data.items?.reduce((s, i) => s + i.total, 0) ?? data.totalValue;
-  const vat = subtotal * 0.2;
-  const grandTotal = subtotal + vat;
+  // The Total Price shown to the customer is VAT-inclusive. Back out the
+  // subtotal/VAT from `totalValue` so the breakdown on the PDF reconciles
+  // with the app drawer and portal. We intentionally do NOT recompute from
+  // line items because line-item unit prices may or may not already include
+  // VAT depending on how the quote was created — trusting `totalValue` as
+  // the canonical VAT-inclusive grand total avoids double counting.
+  const vatPctRaw = Number(data.vatPercent);
+  const vatPct = Number.isFinite(vatPctRaw) && vatPctRaw >= 0 ? vatPctRaw : 20;
+  const grandTotal = Number(data.totalValue) || 0;
+  const subtotal = vatPct > 0 ? grandTotal / (1 + vatPct / 100) : grandTotal;
+  const vat = Math.max(0, grandTotal - subtotal);
 
   const defaultItems: QuoteLineItem[] = data.items ?? [
     { description: data.title || "Professional Services", quantity: 1, unitPrice: data.totalValue, total: data.totalValue },
@@ -431,15 +442,15 @@ export function QuotePDF({
         <View style={styles.totalSection}>
           <View style={styles.totalBox}>
             <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Subtotal</Text>
+              <Text style={styles.totalLabel}>Subtotal (ex VAT)</Text>
               <Text style={styles.totalValue}>{formatCurrency(subtotal)}</Text>
             </View>
             <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>VAT (20%)</Text>
+              <Text style={styles.totalLabel}>VAT ({vatPct}%)</Text>
               <Text style={styles.totalValue}>{formatCurrency(vat)}</Text>
             </View>
             <View style={[styles.grandTotalRow, { borderTopColor: color }]}>
-              <Text style={styles.grandTotalLabel}>Total</Text>
+              <Text style={styles.grandTotalLabel}>Total (Inc VAT)</Text>
               <Text style={[styles.grandTotalValue, { color }]}>{formatCurrency(grandTotal)}</Text>
             </View>
           </View>
@@ -459,7 +470,7 @@ export function QuotePDF({
           {[
             "This quote is valid for 30 days from the date of issue unless otherwise stated.",
             "Payment is due within 14 days of invoice date.",
-            "All prices are in GBP and exclude VAT unless otherwise stated.",
+            "All prices are in GBP and include VAT where applicable.",
             "Work will commence upon written acceptance of this quotation.",
             "Any variations to the scope of work may result in additional charges.",
           ].map((term, i) => (

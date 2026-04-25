@@ -6,6 +6,10 @@ const ACCOUNT_OWNER_MIGRATION_HINT =
   "This database is missing the account owner column or migration — run migration 107 (supabase/migrations/107_accounts_account_owner_id.sql), or clear Account owner and save.";
 const ACCOUNT_FINANCE_EMAIL_MIGRATION_HINT =
   "This database is missing the finance email column — run migration 121 (supabase/migrations/121_accounts_finance_email.sql), or clear Finance email and save.";
+const ACCOUNT_BILLING_TYPE_MIGRATION_HINT =
+  "This database is missing the billing_type column — run migration 152 (supabase/migrations/152_accounts_billing_type.sql), or set Bill invoices to End client in the database.";
+
+const VALID_BILLING_TYPE = new Set<NonNullable<Account["billing_type"]>>(["end_client", "account"]);
 
 function wantsAccountOwnerId(value: unknown): boolean {
   if (value === undefined || value === null) return false;
@@ -19,20 +23,27 @@ function wantsFinanceEmail(value: unknown): boolean {
   return t.length > 0;
 }
 
+function wantsBillingTypeAccount(value: unknown): boolean {
+  return value === "account";
+}
+
 type AccountInsert = Omit<Account, "id" | "created_at" | "total_revenue" | "active_jobs">;
 
 function normalizeAccountInsert(input: AccountInsert): AccountInsert {
   /** Owner is stored only as `account_owner_id` → `profiles.id`; do not persist legacy `owner_name`. */
-  const { owner_name: _ignoredOwnerName, ...inputRest } = input;
+  const { owner_name: _ignoredOwnerName, billing_type: _ignoredBillingIn, ...inputRest } = input;
   const account_owner_id =
     inputRest.account_owner_id === undefined
       ? undefined
       : inputRest.account_owner_id && String(inputRest.account_owner_id).trim()
         ? String(inputRest.account_owner_id).trim()
         : null;
+  const billing_type =
+    _ignoredBillingIn !== undefined && VALID_BILLING_TYPE.has(_ignoredBillingIn) ? _ignoredBillingIn : undefined;
   return {
     ...inputRest,
     ...(account_owner_id !== undefined ? { account_owner_id } : {}),
+    ...(billing_type !== undefined ? { billing_type } : {}),
     email: inputRest.email.trim().toLowerCase(),
     finance_email: inputRest.finance_email?.trim().toLowerCase() || null,
     company_name: inputRest.company_name.trim(),
@@ -68,6 +79,17 @@ function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
   if (next.contract_url !== undefined) {
     const t = typeof next.contract_url === "string" ? next.contract_url.trim() : "";
     next.contract_url = t.length > 0 ? t : null;
+  }
+  if (next.billing_type !== undefined) {
+    if (!VALID_BILLING_TYPE.has(next.billing_type)) {
+      delete next.billing_type;
+    }
+  }
+  if (next.email_include_invoice_on_final !== undefined) {
+    next.email_include_invoice_on_final = Boolean(next.email_include_invoice_on_final);
+  }
+  if (next.email_include_report_on_final !== undefined) {
+    next.email_include_report_on_final = Boolean(next.email_include_report_on_final);
   }
   return next;
 }
@@ -166,6 +188,19 @@ export async function createAccount(input: AccountInsert): Promise<Account> {
     return retry.data as Account;
   }
 
+  if (
+    isSupabaseMissingColumnError(first.error, "billing_type") &&
+    Object.prototype.hasOwnProperty.call(payload, "billing_type")
+  ) {
+    if (wantsBillingTypeAccount((payload as { billing_type?: unknown }).billing_type)) {
+      throw new Error(ACCOUNT_BILLING_TYPE_MIGRATION_HINT);
+    }
+    const { billing_type: _b, ...rest } = payload;
+    const retry = await supabase.from("accounts").insert(rest).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
   throw formatAccountDbError(first.error);
 }
 
@@ -196,6 +231,19 @@ export async function updateAccount(id: string, input: Partial<Account>): Promis
       throw new Error(ACCOUNT_FINANCE_EMAIL_MIGRATION_HINT);
     }
     const { finance_email: _f, ...rest } = payload;
+    const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();
+    if (retry.error) throw formatAccountDbError(retry.error);
+    return retry.data as Account;
+  }
+
+  if (
+    isSupabaseMissingColumnError(first.error, "billing_type") &&
+    Object.prototype.hasOwnProperty.call(payload, "billing_type")
+  ) {
+    if (wantsBillingTypeAccount((payload as { billing_type?: unknown }).billing_type)) {
+      throw new Error(ACCOUNT_BILLING_TYPE_MIGRATION_HINT);
+    }
+    const { billing_type: _b, ...rest } = payload;
     const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();
     if (retry.error) throw formatAccountDbError(retry.error);
     return retry.data as Account;

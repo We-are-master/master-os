@@ -23,7 +23,7 @@ export interface CatalogService {
 }
 
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
-export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "accepted" | "rejected" | "converted_to_job";
+export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "awaiting_payment" | "rejected" | "converted_to_job";
 export type JobStatus =
   | "unassigned"
   | "auto_assigning"
@@ -174,6 +174,9 @@ export interface ClientAddress {
   updated_at: string;
 }
 
+/** Expected job duration unit (set with `Quote.duration_value`). */
+export type QuoteDurationUnit = "day" | "week" | "month";
+
 export interface Quote {
   id: string;
   reference: string;
@@ -226,6 +229,10 @@ export interface Quote {
   images?: string[] | null;
   /** Linked physical site when using the Assets model. */
   property_id?: string | null;
+  /** Expected job duration (count of units); use with `duration_unit`. */
+  duration_value?: number | null;
+  /** Unit for `duration_value`: calendar day, week, or month. */
+  duration_unit?: QuoteDurationUnit | null;
   created_at: string;
   updated_at: string;
   expires_at?: string;
@@ -241,6 +248,19 @@ export interface QuoteLineItem {
   total: number;
   sort_order: number;
   created_at: string;
+}
+
+/** Office job documents tab: contract, RAMS, other (PDF/DOC) — files in `company-assets` under `jobs/{id}/documents/`. */
+export type JobComplianceDocKind = "contract" | "rams" | "other";
+
+export interface JobComplianceDocument {
+  id: string;
+  kind: JobComplianceDocKind;
+  label?: string | null;
+  storage_path: string;
+  public_url: string;
+  mime_type: string;
+  uploaded_at: string;
 }
 
 export interface Job {
@@ -338,6 +358,8 @@ export interface Job {
   internal_notes?: string;
   /** Site reference photos (client request / quote / office); JSON array of public storage URLs (quote-invite-images). */
   images?: string[] | null;
+  /** Office uploads: contract, RAMS, other — JSON array; files live in company-assets. */
+  compliance_documents?: JobComplianceDocument[] | null;
   /** Set when partner cancels from the app (RPC `partner_cancel_job`). */
   partner_cancelled_at?: string | null;
   /** Snapshot of cancellation fee (GBP) from company_settings at cancel time. */
@@ -505,6 +527,12 @@ export interface Account {
   logo_url?: string | null;
   /** Optional URL/path for the signed client contract document */
   contract_url?: string | null;
+  /** When clients under this account are linked: who invoices/quotes are addressed to. */
+  billing_type?: "end_client" | "account";
+  /** If true, final email to client may include invoice/payment details (see Account UI). */
+  email_include_invoice_on_final?: boolean;
+  /** If true, final email may attach report PDFs. */
+  email_include_report_on_final?: boolean;
   /** Business Unit responsible for this account — drives request/quote/job filtering. */
   bu_id?: string | null;
   total_revenue: number;

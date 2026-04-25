@@ -24,7 +24,7 @@ import {
   Check, Wrench, MessageSquarePlus, UserPlus, Edit3, Search, LayoutGrid,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { ServiceRequest, Quote, Partner } from "@/types/database";
+import type { ServiceRequest, Quote, Partner, QuoteDurationUnit } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listRequests, createRequest, updateRequestStatus, updateRequest, getRequest } from "@/services/requests";
 import {
@@ -620,6 +620,33 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
       ),
     },
     {
+      key: "request_kind",
+      label: "Request type",
+      minWidth: "7rem",
+      render: (item) => {
+        const k = item.request_kind;
+        if (k === "work") {
+          return (
+            <Badge variant="violet" size="sm">
+              Job
+            </Badge>
+          );
+        }
+        if (k === "quote") {
+          return (
+            <Badge variant="info" size="sm">
+              Quote
+            </Badge>
+          );
+        }
+        return (
+          <span className="text-xs text-text-tertiary" title="Not set (legacy)">
+            —
+          </span>
+        );
+      },
+    },
+    {
       key: "client_name", label: "Client",
       render: (item) => {
         const acct = linkedAccountDisplay(item.source_account_name);
@@ -694,7 +721,16 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   ];
 
   const [exportOpen, setExportOpen] = useState(false);
-  const requestVisibleFields = ["reference", "client_name", "service_type", "property_address", "status", "priority", "owner_name"];
+  const requestVisibleFields = [
+    "reference",
+    "request_kind",
+    "client_name",
+    "service_type",
+    "property_address",
+    "status",
+    "priority",
+    "owner_name",
+  ];
   const requestAllFields = useMemo(
     () => [...new Set(data.flatMap((row) => Object.keys(row as unknown as Record<string, unknown>)))],
     [data],
@@ -1454,7 +1490,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
         request={invitePartnerOpen}
         loadPartners={getPartnersAllCached}
         onClose={() => setInvitePartnerOpen(null)}
-        onDone={async (req, partnerIds, sendMethod, clientAddress, invitePhotoFiles) => {
+        onDone={async (req, partnerIds, sendMethod, clientAddress, invitePhotoFiles, depositRequired, duration) => {
           const perfStart = performance.now();
           try {
             if (!clientAddress?.client_id || !clientAddress?.property_address?.trim()) {
@@ -1512,7 +1548,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               sell_price: req.estimated_value ?? 0,
               margin_percent: 0,
               quote_type: "partner",
-              deposit_percent: 50,
+              deposit_percent: depositRequired ? 50 : 0,
               deposit_required: 0,
               customer_accepted: false,
               customer_deposit_paid: false,
@@ -1523,6 +1559,8 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               ...(mergedQuoteImages.length > 0 ? { images: mergedQuoteImages } : {}),
               owner_id: profile?.id,
               owner_name: profile?.full_name,
+              duration_value: duration.value,
+              duration_unit: duration.unit,
             });
             const photoUrlsForPush = mergedQuoteImages;
             const inviteBody =
@@ -1612,7 +1650,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
         request={manualQuoteOpen}
         catalogServices={catalogServices}
         onClose={() => setManualQuoteOpen(null)}
-        onDone={async (req, lineItems, clientAddress, catalogServiceId) => {
+        onDone={async (req, lineItems, clientAddress, catalogServiceId, depositRequired, duration) => {
           const perfStart = performance.now();
           try {
             if (!clientAddress?.client_id || !clientAddress?.property_address?.trim()) {
@@ -1657,7 +1695,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               sell_price: total,
               margin_percent: 0,
               quote_type: "internal",
-              deposit_percent: 50,
+              deposit_percent: depositRequired ? 50 : 0,
               deposit_required: 0,
               customer_accepted: false,
               customer_deposit_paid: false,
@@ -1668,6 +1706,8 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               ...(fromRequest.length > 0 ? { images: fromRequest } : {}),
               owner_id: profile?.id,
               owner_name: profile?.full_name,
+              duration_value: duration.value,
+              duration_unit: duration.unit,
             });
             const supabase = getSupabase();
             const items = lineItems.map((li, i) => ({
@@ -1887,7 +1927,9 @@ function InvitePartnerToQuote({
     partnerIds: string[],
     sendMethod: string,
     clientAddress: ClientAndAddressValue,
-    invitePhotoFiles: File[]
+    invitePhotoFiles: File[],
+    depositRequired: boolean,
+    duration: { value: number; unit: QuoteDurationUnit },
   ) => void | Promise<void>;
 }) {
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -1901,6 +1943,10 @@ function InvitePartnerToQuote({
   const [partnerListFilter, setPartnerListFilter] = useState<"matched" | "all">("matched");
   const [partnersLoading, setPartnersLoading] = useState(false);
   const [inviting, setInviting] = useState(false);
+  /** When disabled, accepting this quote converts directly to a job without a Stripe deposit invoice. */
+  const [depositRequired, setDepositRequired] = useState(true);
+  const [durationValue, setDurationValue] = useState("1");
+  const [durationUnit, setDurationUnit] = useState<QuoteDurationUnit>("week");
 
   useEffect(() => {
     if (!request?.id) return;
@@ -1928,6 +1974,8 @@ function InvitePartnerToQuote({
         prev.forEach((u) => URL.revokeObjectURL(u));
         return [];
       });
+      setDurationValue("1");
+      setDurationUnit("week");
       setPartnersLoading(true);
       loadPartners()
         .then((list) => {
@@ -2130,6 +2178,32 @@ function InvitePartnerToQuote({
           )}
         </div>
 
+        <div className="shrink-0 rounded-[8px] border border-[#E4E4E8] bg-white px-2.5 py-2">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">Duration *</p>
+          <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-stretch">
+            <Input
+              type="number"
+              min={0.01}
+              step={0.5}
+              value={durationValue}
+              onChange={(e) => setDurationValue(e.target.value)}
+              className="min-[420px]:max-w-[6.5rem] text-sm"
+              placeholder="e.g. 2"
+              aria-label="Duration amount"
+            />
+            <Select
+              value={durationUnit}
+              onChange={(e) => setDurationUnit(e.target.value as QuoteDurationUnit)}
+              options={[
+                { value: "day", label: "Day(s)" },
+                { value: "week", label: "Week(s)" },
+                { value: "month", label: "Month(s)" },
+              ]}
+            />
+          </div>
+          <p className="mt-1 text-[10px] text-[#6B6B70]">Expected time on site for this job.</p>
+        </div>
+
         {/* Search + segment */}
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
           <Input
@@ -2272,6 +2346,31 @@ function InvitePartnerToQuote({
         </div>
 
         <div className="shrink-0 space-y-2 border-t border-[#E4E4E8] pt-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#E4E4E8] bg-[#FAFAFB] px-2.5 py-1.5">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">Deposit required</span>
+              <span className="text-[11px] text-[#6B6B70]">
+                {depositRequired
+                  ? "Customer pays a deposit on accept (Awaiting payment)."
+                  : "Accept converts directly to a job (no deposit)."}
+              </span>
+            </div>
+            <div className="inline-flex shrink-0 rounded-lg border border-[#D8D8DD] bg-white p-0.5">
+              {([true, false] as const).map((v) => (
+                <button
+                  key={String(v)}
+                  type="button"
+                  onClick={() => setDepositRequired(v)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    depositRequired === v ? "bg-[#020040] text-white" : "text-[#6B6B70] hover:text-[#020040]",
+                  )}
+                >
+                  {v ? "Yes" : "No"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">Send via</span>
@@ -2304,10 +2403,23 @@ function InvitePartnerToQuote({
                   inviting || selectedIds.size === 0 || !clientAddress.client_id || !clientAddress.property_address
                 }
                 onClick={async () => {
+                  const durNum = Math.round(Number(durationValue) * 1000) / 1000;
+                  if (!Number.isFinite(durNum) || durNum <= 0) {
+                    toast.error("Enter a duration greater than zero.");
+                    return;
+                  }
                   setInviting(true);
                   try {
                     await Promise.resolve(
-                      onDone(request, Array.from(selectedIds), sendMethod, clientAddress, invitePhotos),
+                      onDone(
+                        request,
+                        Array.from(selectedIds),
+                        sendMethod,
+                        clientAddress,
+                        invitePhotos,
+                        depositRequired,
+                        { value: durNum, unit: durationUnit },
+                      ),
                     );
                   } finally {
                     setInviting(false);
@@ -2337,13 +2449,19 @@ function ManualQuoteModal({
     req: ServiceRequest,
     lineItems: { description: string; quantity: number; unitPrice: number; vat: boolean }[],
     clientAddress: ClientAndAddressValue,
-    catalogServiceId?: string | null
+    catalogServiceId: string | null | undefined,
+    depositRequired: boolean,
+    duration: { value: number; unit: QuoteDurationUnit },
   ) => void;
 }) {
   const [lineItems, setLineItems] = useState([{ description: "", quantity: "1", unitPrice: "0", vat: false }]);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [vatPercent, setVatPercent] = useState(20);
   const [catalogTemplateId, setCatalogTemplateId] = useState("");
+  /** When disabled, accepting this quote converts directly to a job without a Stripe deposit invoice. */
+  const [depositRequired, setDepositRequired] = useState(true);
+  const [durationValue, setDurationValue] = useState("1");
+  const [durationUnit, setDurationUnit] = useState<QuoteDurationUnit>("week");
 
   useEffect(() => {
     if (!request) return;
@@ -2351,6 +2469,8 @@ function ManualQuoteModal({
       setCatalogTemplateId(request.catalog_service_id ?? "");
       setLineItems([{ description: request.service_type, quantity: "1", unitPrice: String(request.estimated_value ?? 0), vat: false }]);
       setClientAddress(serviceRequestToClientAddressValue(request));
+      setDurationValue("1");
+      setDurationUnit("week");
     });
     void Promise.resolve(
       getSupabase().from("company_settings").select("vat_percent").limit(1).single(),
@@ -2436,12 +2556,72 @@ function ManualQuoteModal({
             <span className="text-sm font-bold text-text-primary">Total: £{fmt(totalAll)}</span>
           </div>
         </div>
+
+        <div className="space-y-1.5">
+          <p className="text-xs font-medium text-text-primary">
+            Duration <span className="text-[#ED4B00]">*</span>
+          </p>
+          <div className="flex flex-col gap-2 min-[400px]:flex-row min-[400px]:items-stretch">
+            <Input
+              type="number"
+              min={0.01}
+              step={0.5}
+              value={durationValue}
+              onChange={(e) => setDurationValue(e.target.value)}
+              className="min-w-0 min-[400px]:max-w-[7rem] text-sm"
+              placeholder="e.g. 2"
+              aria-label="Duration amount"
+            />
+            <Select
+              value={durationUnit}
+              onChange={(e) => setDurationUnit(e.target.value as QuoteDurationUnit)}
+              options={[
+                { value: "day", label: "Day(s)" },
+                { value: "week", label: "Week(s)" },
+                { value: "month", label: "Month(s)" },
+              ]}
+            />
+          </div>
+          <p className="text-[10px] text-text-tertiary">Expected time on site for this job.</p>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Deposit required</span>
+            <span className="text-[11px] text-text-tertiary">
+              {depositRequired
+                ? "Customer pays deposit on accept (Awaiting payment)."
+                : "Accept converts directly to a job (no deposit)."}
+            </span>
+          </div>
+          <div className="inline-flex shrink-0 rounded-lg border border-border-light bg-card p-0.5">
+            {([true, false] as const).map((v) => (
+              <button
+                key={String(v)}
+                type="button"
+                onClick={() => setDepositRequired(v)}
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  depositRequired === v ? "bg-[#020040] text-white" : "text-text-secondary hover:text-text-primary",
+                )}
+              >
+                {v ? "Yes" : "No"}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
             onClick={() => {
               if (!clientAddress.client_id || !clientAddress.property_address?.trim()) {
                 toast.error("Select a client from the list (click the name) and choose or add a property address.");
+                return;
+              }
+              const durNum = Math.round(Number(durationValue) * 1000) / 1000;
+              if (!Number.isFinite(durNum) || durNum <= 0) {
+                toast.error("Enter a duration greater than zero.");
                 return;
               }
               const items = lineItems.map((li) => {
@@ -2451,7 +2631,10 @@ function ManualQuoteModal({
                 return { description: li.description, quantity: qty, unitPrice: unitPriceInclVat, vat: li.vat };
               });
               const cid = catalogTemplateId.trim();
-              onDone(request, items, clientAddress, cid && isUuid(cid) ? cid : null);
+              onDone(request, items, clientAddress, cid && isUuid(cid) ? cid : null, depositRequired, {
+                value: durNum,
+                unit: durationUnit,
+              });
             }}
           >
             Create quote
@@ -2971,13 +3154,27 @@ function ConvertToJobModal({
                   <p className="text-[14px] font-semibold" style={{ color: "#020040" }}>{hourlyMarginPct}%</p>
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className={labelNavy} style={labelStyle}>
+                    Client hourly rate
+                    <FixfyHintIcon
+                      text="Prefilled from the call-out; you can override. Totals above update as you type."
+                    />
+                  </label>
+                  <Input
+                    className="mt-[6px]"
+                    type="number"
+                    value={form.hourly_client_rate}
+                    onChange={(e) => update("hourly_client_rate", e.target.value)}
+                    min="0"
+                    step="0.01"
+                  />
+                </div>
                 <div>
                   <label className={labelNavy} style={labelStyle}>
                     Partner hourly rate
-                    <FixfyHintIcon
-                      text={`Client hourly rate is loaded from Call-out type: ${formatCurrency(Number(form.hourly_client_rate) || 0)}/h. Billing rounds up in 30-min increments from timer logs (1h minimum).`}
-                    />
+                    <FixfyHintIcon text="Prefilled from the call-out; you can override. Billing: 1h minimum, then 30-min increments from timer logs." />
                   </label>
                   <Input className="mt-[6px]" type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
                 </div>

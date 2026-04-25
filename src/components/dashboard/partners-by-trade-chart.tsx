@@ -38,7 +38,13 @@ function tradeLabelsForPartner(p: Pick<Partner, "trade" | "trades">): string[] {
 }
 
 type TradeRow = { name: string; count: number; fill: string };
-type PartnerSimpleRow = { name: string; initials: string; postcodeOutward: string; status: "active" | "inactive" };
+type PartnerSimpleRow = {
+  id: string;
+  name: string;
+  initials: string;
+  postcodeOutward: string;
+  status: "active" | "inactive";
+};
 type AreaRow = { name: string; size: number; fill: string };
 
 function initialsFromName(name: string): string {
@@ -79,10 +85,10 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
       try {
         const { data, error } = await supabase
           .from("partners")
-          .select("contact_name, company_name, trade, trades, status, partner_address, location");
+          .select("id, contact_name, company_name, trade, trades, status, partner_address, location");
         if (error) throw error;
         const allPartners = (data ?? []) as Array<
-          Pick<Partner, "trade" | "trades" | "status" | "partner_address" | "location" | "contact_name" | "company_name">
+          Pick<Partner, "id" | "trade" | "trades" | "status" | "partner_address" | "location" | "contact_name" | "company_name">
         >;
         const activePartners = allPartners.filter((p) => p.status === "active");
         const inactivePartners = allPartners.filter((p) => p.status !== "active");
@@ -108,11 +114,12 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
             const rawName = (p.contact_name || p.company_name || "Partner").trim();
             const postcodeOutward = extractOutwardPostcode(`${p.partner_address ?? ""} ${p.location ?? ""}`);
             return {
+              id: p.id,
               name: rawName,
               initials: initialsFromName(rawName) || "P",
               postcodeOutward,
               status: p.status === "active" ? "active" : "inactive",
-            } as PartnerSimpleRow;
+            } satisfies PartnerSimpleRow;
           })
           .sort((a, b) => a.name.localeCompare(b.name));
         setPartnerRows(simpleRows);
@@ -333,7 +340,7 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
                 </div>
                 <div className="space-y-1.5 max-h-[190px] overflow-y-auto pr-1">
                   {visiblePartners.map((p) => (
-                    <div key={`${p.name}-${p.postcodeOutward}`} className="flex items-center gap-2 rounded-md bg-surface-hover/50 px-2 py-1.5">
+                    <div key={p.id} className="flex items-center gap-2 rounded-md bg-surface-hover/50 px-2 py-1.5">
                       <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#020040] text-[10px] font-semibold text-white">
                         {p.initials}
                       </span>

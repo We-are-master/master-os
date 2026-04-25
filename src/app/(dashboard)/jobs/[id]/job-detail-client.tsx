@@ -8,6 +8,7 @@ import { formatDistanceStrict } from "date-fns/formatDistanceStrict";
 import { differenceInCalendarDays } from "date-fns/differenceInCalendarDays";
 import { parseISO } from "date-fns/parseISO";
 import { PageTransition } from "@/components/layout/page-transition";
+import { JobDocumentsPanel } from "@/components/jobs/job-documents-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
@@ -15,7 +16,17 @@ import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { FinalReviewModal } from "@/components/job-card/FinalReviewModal/FinalReviewModal";
-import type { ReportItem } from "@/components/job-card/FinalReviewModal/types";
+import type {
+  CompletionDelivery,
+  FinalReviewSummarySnapshot,
+  ReportItem,
+} from "@/components/job-card/FinalReviewModal/types";
+import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import {
+  accountFinalEmailPolicyFromRow,
+  canSendClientEmailWithPack,
+  type AccountFinalEmailPolicy,
+} from "@/lib/account-final-email-policy";
 import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
 import type { LucideIcon } from "lucide-react";
@@ -636,7 +647,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [extraManagerSide, setExtraManagerSide] = useState<"client" | "partner" | null>(null);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
   /** Layout-only: job detail tabs and accordions (money actions use drawer modal). */
-  const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4>(0);
+  const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4 | 5>(0);
   /** One-shot: when a job lands in `final_check`, open the Reports tab by default (only on first paint for this job). */
   const detailTabInitialisedForJobRef = useRef<string | null>(null);
   const [clientEditAccordionOpen, setClientEditAccordionOpen] = useState(false);
@@ -667,6 +678,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [resumeSaving, setResumeSaving] = useState(false);
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
   const [validatingComplete, setValidatingComplete] = useState(false);
+  /** Loaded when opening Final review from the job’s client → account. */
+  const [accountEmailPolicy, setAccountEmailPolicy] = useState<AccountFinalEmailPolicy>({
+    canIncludeInvoice: true,
+    canIncludeReport: true,
+  });
+  const [completionDelivery, setCompletionDelivery] = useState<CompletionDelivery | null>(null);
+  const [includeInvoiceInEmail, setIncludeInvoiceInEmail] = useState(true);
+  const [includeReportInEmail, setIncludeReportInEmail] = useState(true);
+  const [finalReviewBillingLabel, setFinalReviewBillingLabel] = useState<{
+    invoiceTo: string;
+    email: string | null;
+    linkedAccountName: string | null;
+  } | null>(null);
+  const [finalReviewBillingLoading, setFinalReviewBillingLoading] = useState(false);
   const [approvalMode, setApprovalMode] = useState<"review_approve" | "validate_complete">("validate_complete");
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   const [forceApprovalChecked, setForceApprovalChecked] = useState(false);
@@ -794,6 +819,80 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     });
     setApprovalBilledHoursInput(String(preview.billedHours));
   }, [validateCompleteOpen, job?.id, job?.job_type]);
+
+  useEffect(() => {
+    if (!validateCompleteOpen || !job?.client_id?.trim()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const c = await getClient(job.client_id!.trim());
+        const acc = c?.source_account_id?.trim() ? await getAccount(c.source_account_id.trim()) : null;
+        const policy = accountFinalEmailPolicyFromRow(acc);
+        if (cancelled) return;
+        setAccountEmailPolicy(policy);
+        setIncludeInvoiceInEmail(policy.canIncludeInvoice);
+        setIncludeReportInEmail(policy.canIncludeReport);
+        setCompletionDelivery(canSendClientEmailWithPack(policy) ? null : "stage_only");
+      } catch {
+        if (!cancelled) {
+          const fallback: AccountFinalEmailPolicy = { canIncludeInvoice: true, canIncludeReport: true };
+          setAccountEmailPolicy(fallback);
+          setIncludeInvoiceInEmail(true);
+          setIncludeReportInEmail(true);
+          setCompletionDelivery(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [validateCompleteOpen, job?.client_id]);
+
+  useEffect(() => {
+    if (!validateCompleteOpen || !job?.client_id?.trim()) {
+      setFinalReviewBillingLabel(null);
+      setFinalReviewBillingLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setFinalReviewBillingLoading(true);
+    void resolveNominalBillingParty(getSupabase(), {
+      clientId: job.client_id.trim(),
+      fallbackName: job.client_name ?? undefined,
+    })
+      .then(async (r) => {
+        if (cancelled) return;
+        let linkedAccountName: string | null = null;
+        const aid = r.sourceAccountId?.trim();
+        if (aid) {
+          try {
+            const acc = await getAccount(aid);
+            linkedAccountName = acc?.company_name?.trim() || null;
+          } catch {
+            linkedAccountName = null;
+          }
+        }
+        if (cancelled) return;
+        setFinalReviewBillingLabel({
+          invoiceTo: r.displayName,
+          email: r.documentEmail,
+          linkedAccountName,
+        });
+        setFinalReviewBillingLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFinalReviewBillingLabel({
+          invoiceTo: job.client_name?.trim() || "—",
+          email: null,
+          linkedAccountName: null,
+        });
+        setFinalReviewBillingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [validateCompleteOpen, job?.client_id, job?.client_name]);
 
   const [partnerTimerTick, setPartnerTimerTick] = useState(0);
   useEffect(() => {
@@ -1567,7 +1666,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [job?.id, job?.additional_notes]);
 
   useEffect(() => {
-    if (!isAdmin && detailTab === 4) {
+    if (!isAdmin && detailTab === 5) {
       setDetailTab(0);
     }
   }, [isAdmin, detailTab]);
@@ -1577,7 +1676,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!job?.id) return;
     if (detailTabInitialisedForJobRef.current === job.id) return;
     detailTabInitialisedForJobRef.current = job.id;
-    if (job.status === "final_check") setDetailTab(2);
+    if (job.status === "final_check") setDetailTab(3);
   }, [job?.id, job?.status]);
 
   useEffect(() => {
@@ -3226,6 +3325,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const localPhaseIndexes = reportPhaseIndices(normalizeTotalPhases(j.total_phases));
     const localReportsUploaded = localPhaseIndexes.every((n) => Boolean(j[`report_${n}_uploaded` as keyof Job]));
     const localReportsApproved = localPhaseIndexes.every((n) => Boolean(j[`report_${n}_approved` as keyof Job]));
+    if (completionDelivery == null) {
+      toast.error("Choose how to complete: internal only, or send a client email with the selected pack.");
+      return;
+    }
     if ((!localReportsUploaded || !localReportsApproved || !ownerApprovalChecked) && !forceApprovalChecked) {
       toast.error("Complete all mandatory checks: reports uploaded/approved and owner authorization.");
       return;
@@ -3350,7 +3453,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         getInvoiceDueDateIsoForClient(current.client_id ?? null, financeAnchorDate),
       ]);
 
-      // Keep this action internal only: no external send/notify workflow.
+      // Default path is internal; optional client email runs when `completionDelivery === "email"`.
       let primaryInvoiceId = current.invoice_id ?? null;
       if (!primaryInvoiceId && linked.length > 0) {
         const pick =
@@ -3497,7 +3600,32 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ]);
         if (withNotes) current = withNotes;
       }
-      toast.success(approvalToast);
+      if (completionDelivery === "email") {
+        const wantInv = includeInvoiceInEmail && accountEmailPolicy.canIncludeInvoice;
+        const wantRep = includeReportInEmail && accountEmailPolicy.canIncludeReport;
+        try {
+          const res = await fetch(`/api/jobs/${current.id}/final-review-email`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ includeInvoice: wantInv, includeReport: wantRep }),
+          });
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          if (!res.ok) {
+            toast.success(approvalToast);
+            toast.error(
+              data.error ?? "The job is finalised, but the client email could not be sent.",
+              { duration: 10000 },
+            );
+          } else {
+            toast.success(`${approvalToast} Client email sent.`);
+          }
+        } catch {
+          toast.success(approvalToast);
+          toast.error("The job is finalised, but the client email could not be sent.", { duration: 10000 });
+        }
+      } else {
+        toast.success(approvalToast);
+      }
       /** Finance refresh fans out 4 reads; nothing in this handler depends on it — let it run while the modal closes. */
       void refreshJobFinance().catch(() => {});
       setValidateCompleteOpen(false);
@@ -3506,6 +3634,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setForceApprovalReason("");
       setSentToAccountsChecked(false);
       setApprovalBilledHoursInput("");
+      setCompletionDelivery(null);
+      setIncludeInvoiceInEmail(true);
+      setIncludeReportInEmail(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to validate and complete job");
     } finally {
@@ -3529,6 +3660,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     finForm.extras_amount,
     finForm.materials_cost,
     finForm.customer_deposit,
+    completionDelivery,
+    includeInvoiceInEmail,
+    includeReportInEmail,
+    accountEmailPolicy,
   ]);
 
   const billableRevenueForApproval = job ? jobCustomerBillableRevenueForCollections(job) : 0;
@@ -3640,6 +3775,40 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const marginPct = sale > 0 ? Math.round((margin / sale) * 1000) / 10 : 0;
     return { sale, cost, margin, marginPct };
   }, [job, jobTypeEditTarget, jobTypeEditFixedTitle, catalogServicesJobType]);
+
+  /** Must run before any early return — same render as other hooks. */
+  const finalReviewSummarySnapshot: FinalReviewSummarySnapshot | null = useMemo(() => {
+    if (!validateCompleteOpen || !job) return null;
+    const phaseCountInner = normalizeTotalPhases(job.total_phases);
+    const phaseIndexesInner = reportPhaseIndices(phaseCountInner);
+    const rows = phaseIndexesInner.map((n) => ({
+      n,
+      uploaded: Boolean(job[`report_${n}_uploaded` as keyof Job]),
+      approved: Boolean(job[`report_${n}_approved` as keyof Job]),
+    }));
+    const reportsOk = rows.length > 0 && rows.every((r) => r.uploaded && r.approved);
+    const reportsDetail = reportsOk
+      ? "All reports uploaded and approved"
+      : rows
+          .filter((r) => !r.uploaded || !r.approved)
+          .map((r) => (!r.uploaded ? `Report ${r.n}: missing` : `Report ${r.n}: not approved`))
+          .join(" · ") || "—";
+    return {
+      invoiceTo: finalReviewBillingLabel?.invoiceTo ?? job.client_name?.trim() ?? "—",
+      linkedAccountName: finalReviewBillingLabel?.linkedAccountName ?? null,
+      emailTo: finalReviewBillingLabel?.email ?? null,
+      emailLoading: finalReviewBillingLoading,
+      finalAmountLabel: formatCurrency(approvalBillableRevenue),
+      reportsOk,
+      reportsDetail,
+    };
+  }, [
+    validateCompleteOpen,
+    job,
+    approvalBillableRevenue,
+    finalReviewBillingLabel,
+    finalReviewBillingLoading,
+  ]);
 
   if (loading || !id) {
     return (
@@ -3987,7 +4156,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const approvalMarginPct = approvalBillableRevenue > 0 ? Math.round((approvalProfit / approvalBillableRevenue) * 10000) / 100 : 0;
 
   const approvalAmountDue = Math.max(0, approvalBillableRevenue - customerPaidTotal);
-  const approvalPartnerPayRemaining = Math.max(0, approvalPartnerCap - partnerPaidTotal);
+  /** Matches the main finance card: partner takes labour cap + materials reimbursement (same basis as partnerSelfBillGrossAmount). */
+  const approvalPartnerGross = Math.max(0, approvalPartnerCap + approvalMaterialsCost);
+  const approvalPartnerPayRemaining = Math.max(0, approvalPartnerGross - partnerPaidTotal);
   const approvalPrimaryInvoice = job.invoice_id
     ? jobInvoices.find((i) => i.id === job.invoice_id) ??
       jobInvoices.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
@@ -5120,9 +5291,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   [
                     { label: "Details", index: 0 as const },
                     { label: "Site Photos", index: 1 as const },
-                    { label: "Reports", index: 2 as const },
-                    { label: "Notes", index: 3 as const },
-                    ...(isAdmin ? [{ label: "Financial Setup", index: 4 as const }] : []),
+                    { label: "Documents", index: 2 as const },
+                    { label: "Reports", index: 3 as const },
+                    { label: "Notes", index: 4 as const },
+                    ...(isAdmin ? [{ label: "Financial Setup", index: 5 as const }] : []),
                   ] as const
                 ).map((tab) => (
                   <button
@@ -5320,7 +5492,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
               ) : null}
 
-              {detailTab === 2 ? (
+              {detailTab === 2 && job ? <JobDocumentsPanel job={job} onUpdate={handleJobUpdate} /> : null}
+
+              {detailTab === 3 ? (
             <>
             {/* Fixfy visual system: navy labels, inset card, coral for pending, emerald for validated success feedback. */}
             <div
@@ -5775,7 +5949,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </>
             ) : null}
 
-            {detailTab === 3 ? (
+            {detailTab === 4 ? (
             <div className="space-y-3">
               <div className="rounded-xl border border-border-light bg-card p-3 space-y-2">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Notes</p>
@@ -5851,7 +6025,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
             ) : null}
 
-            {isAdmin && detailTab === 4 ? (
+            {isAdmin && detailTab === 5 ? (
             <details className="group rounded-xl border border-border-light bg-card overflow-hidden">
               <summary className="flex items-center justify-between p-3 cursor-pointer select-none">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Financial setup</p>
@@ -6821,6 +6995,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       <FinalReviewModal
         isOpen={validateCompleteOpen}
+        reviewSummary={finalReviewSummarySnapshot}
         onClose={() => {
           if (validatingComplete) return;
           setValidateCompleteOpen(false);
@@ -6829,6 +7004,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           setForceApprovalReason("");
           setSentToAccountsChecked(false);
           setApprovalBilledHoursInput("");
+          setCompletionDelivery(null);
+          setIncludeInvoiceInEmail(true);
+          setIncludeReportInEmail(true);
         }}
         jobId={job.reference}
         jobTitle={job.title ?? ""}
@@ -6836,7 +7014,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         partnerName={job.partner_name ?? ""}
         currentUserName={attestationDisplayName}
         jobValue={approvalBillableRevenue}
-        partnerPayout={approvalPartnerCap}
+        partnerPayout={approvalPartnerGross}
         margin={approvalProfit}
         marginPct={Math.max(0, approvalMarginPct)}
         received={customerPaidTotal}
@@ -6861,6 +7039,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         onForceModeChange={setForceApprovalChecked}
         forceReason={forceApprovalReason}
         onForceReasonChange={setForceApprovalReason}
+        completionDelivery={completionDelivery}
+        onCompletionDeliveryChange={setCompletionDelivery}
+        includeInvoiceInEmail={includeInvoiceInEmail}
+        onIncludeInvoiceInEmailChange={setIncludeInvoiceInEmail}
+        includeReportInEmail={includeReportInEmail}
+        onIncludeReportInEmailChange={setIncludeReportInEmail}
+        accountEmailPolicy={accountEmailPolicy}
         submitting={validatingComplete}
         onApprove={() => {
           setForceApprovalChecked(false);

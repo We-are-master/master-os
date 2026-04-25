@@ -9,6 +9,7 @@ import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { buildNewQuoteEmail } from "@/lib/portal-email-templates";
+import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 
 function nowMs() {
   return performance.now();
@@ -145,11 +146,33 @@ export async function POST(req: NextRequest) {
           tagline: "Professional Property Services",
         };
 
+    const vatPercent =
+      settings && settings.vat_percent != null
+        ? Number(settings.vat_percent)
+        : 20;
+
+    const qForBill = quote as { client_id?: string | null; client_name?: string; client_email?: string | null };
+    const qCid = qForBill.client_id?.trim() ?? "";
+    const docParty =
+      qCid.length > 0
+        ? await resolveNominalBillingParty(supabase, {
+            clientId: qCid,
+            fallbackName: qForBill.client_name,
+            fallbackEmail: qForBill.client_email,
+          })
+        : null;
+    const pdfClientName = String(
+      (docParty ? docParty.displayName : (recipientName ?? qForBill.client_name)) ?? "",
+    );
+    const pdfClientEmail = String(
+      (docParty ? (docParty.documentEmail ?? qForBill.client_email) : (recipientEmail ?? qForBill.client_email)) ?? "",
+    );
+
     const pdfData: QuotePDFData = {
       reference: quote.reference,
       title: quote.title,
-      clientName: recipientName ?? quote.client_name,
-      clientEmail: recipientEmail ?? quote.client_email,
+      clientName: pdfClientName,
+      clientEmail: pdfClientEmail,
       totalValue: Number(quote.total_value),
       createdAt: quote.created_at,
       expiresAt: quote.expires_at ?? undefined,
@@ -163,6 +186,7 @@ export async function POST(req: NextRequest) {
           : typeof quote.scope === "string" && quote.scope.trim()
             ? quote.scope.trim()
             : undefined,
+      vatPercent,
     };
 
     const tPdf = nowMs();
@@ -361,6 +385,11 @@ export async function GET(req: NextRequest) {
           tagline: "Professional Property Services",
         };
 
+    const vatPercentPreview =
+      settings && settings.vat_percent != null
+        ? Number(settings.vat_percent)
+        : 20;
+
     const pdfData: QuotePDFData = {
       reference: quote.reference,
       title: quote.title,
@@ -374,6 +403,7 @@ export async function GET(req: NextRequest) {
       notes: settings?.quote_footer_notes ? String(settings.quote_footer_notes) : undefined,
       depositRequired: Number(quote.deposit_required ?? 0) || undefined,
       scope: typeof quote.scope === "string" && quote.scope.trim() ? quote.scope.trim() : undefined,
+      vatPercent: vatPercentPreview,
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -138,7 +138,7 @@ export function buildQuoteEmailHTML(
             <p style="margin:0;font-size:15px;font-weight:600;color:#1C1917;">${escapeHtml(data.title)}</p>
           </td>
           <td style="padding:16px;border-bottom:1px solid #E7E5E4;text-align:right;">
-            <p style="margin:0 0 4px;font-size:12px;color:#78716C;">Quoted Value</p>
+            <p style="margin:0 0 4px;font-size:12px;color:#78716C;">Quoted Value <span style="display:inline-block;padding:1px 4px;border-radius:3px;background:#DCFCE7;color:#166534;font-size:10px;font-weight:700;letter-spacing:0.3px;">INC VAT</span></p>
             <p style="margin:0;font-size:20px;font-weight:700;color:${color};">£${data.totalValue.toLocaleString("en-GB", { minimumFractionDigits: 2 })}</p>
           </td>
         </tr>

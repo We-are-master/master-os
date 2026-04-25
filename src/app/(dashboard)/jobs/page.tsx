@@ -19,7 +19,7 @@ import {
   Plus, Filter, List, LayoutGrid, Calendar, Map as MapIcon, Download, RefreshCw,
   ArrowRight, Briefcase, Receipt,
   MapPin, Building2, TrendingUp,
-  AlertTriangle, XCircle, PoundSterling,   Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, Search,
+  AlertTriangle, XCircle, PoundSterling,   Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, ChevronDown, ChevronUp, Search,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
@@ -322,6 +322,24 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted, dot: true },
 };
 
+/** Account group header tint — matches Invoices list. */
+function accountHeaderAvatarBg(accountName: string): string {
+  const n = accountName.toLowerCase();
+  if (n.includes("checkatrade")) return "#185FA5";
+  if (n.includes("housekeep")) return "#7F77DD";
+  if (n.includes("express")) return "#1D9E75";
+  let h = 0;
+  for (let i = 0; i < accountName.length; i++) h = (h * 31 + accountName.charCodeAt(i)) >>> 0;
+  const hues = [221, 200, 170, 145, 25, 330];
+  const hue = hues[h % hues.length];
+  return `hsl(${hue} 45% 46%)`;
+}
+
+function firstJobAccountLabel(jobs: Job[], clientAccountMap: Record<string, string>): string {
+  const j = jobs.find((x) => x.client_id && clientAccountMap[x.client_id]);
+  return j ? clientAccountMap[j.client_id!]! : "No account";
+}
+
 function JobsPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -386,6 +404,8 @@ function JobsPageContent() {
   const [avgMarginPct, setAvgMarginPct] = useState(0);
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
   const [clientAccountLogoByClientId, setClientAccountLogoByClientId] = useState<Record<string, string | null>>({});
+  const [clientIdToSourceAccountId, setClientIdToSourceAccountId] = useState<Record<string, string | null>>({});
+  const [expandedAwaitingPaymentAccountGroups, setExpandedAwaitingPaymentAccountGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (status === "deleted" && viewMode !== "list") setViewMode("list");
@@ -659,14 +679,16 @@ function JobsPageContent() {
     if (ids.length === 0) {
       setClientAccountMap({});
       setClientAccountLogoByClientId({});
+      setClientIdToSourceAccountId({});
       return;
     }
     const supabase = getSupabase();
     let cancelled = false;
     (async () => {
-      const [labels, logos] = await Promise.all([
+      const [labels, logos, clientRowsRes] = await Promise.all([
         batchResolveLinkedAccountLabels(supabase, ids),
         batchResolveClientAccountLogoUrls(supabase, ids),
+        supabase.from("clients").select("id, source_account_id").in("id", ids).is("deleted_at", null),
       ]);
       if (cancelled) return;
       const next: Record<string, string> = {};
@@ -679,6 +701,12 @@ function JobsPageContent() {
         nextLogo[clientId] = url;
       });
       setClientAccountLogoByClientId(nextLogo);
+      const nextSrc: Record<string, string | null> = {};
+      for (const row of clientRowsRes.data ?? []) {
+        const r = row as { id: string; source_account_id?: string | null };
+        nextSrc[r.id] = r.source_account_id?.trim() || null;
+      }
+      setClientIdToSourceAccountId(nextSrc);
     })();
     return () => { cancelled = true; };
   }, [data]);
@@ -1374,6 +1402,137 @@ function JobsPageContent() {
     },
   ];
 
+  const awaitingPaymentAccountGroups = useMemo(() => {
+    if (status !== "awaiting_payment" || sortedData.length === 0) return [] as { key: string; jobs: Job[] }[];
+    const m = new Map<string, Job[]>();
+    for (const job of sortedData) {
+      const aid = job.client_id ? clientIdToSourceAccountId[job.client_id] ?? null : null;
+      const key = aid ? `acc:${aid}` : "acc:unlinked";
+      const list = m.get(key);
+      if (list) list.push(job);
+      else m.set(key, [job]);
+    }
+    const list = [...m.entries()].map(([key, jobs]) => ({ key, jobs }));
+    list.sort((a, b) => {
+      if (a.key === "acc:unlinked") return 1;
+      if (b.key === "acc:unlinked") return -1;
+      return firstJobAccountLabel(a.jobs, clientAccountMap).localeCompare(
+        firstJobAccountLabel(b.jobs, clientAccountMap),
+      );
+    });
+    return list;
+  }, [status, sortedData, clientIdToSourceAccountId, clientAccountMap]);
+
+  const awaitingPaymentGroupKeysSig = useMemo(
+    () => awaitingPaymentAccountGroups.map((g) => g.key).join("|"),
+    [awaitingPaymentAccountGroups],
+  );
+  const prevAwaitingPaymentGroupKeysSig = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (status !== "awaiting_payment" || awaitingPaymentAccountGroups.length === 0) return;
+    if (prevAwaitingPaymentGroupKeysSig.current === awaitingPaymentGroupKeysSig) return;
+    prevAwaitingPaymentGroupKeysSig.current = awaitingPaymentGroupKeysSig;
+    setExpandedAwaitingPaymentAccountGroups(() => {
+      const next: Record<string, boolean> = {};
+      awaitingPaymentAccountGroups.forEach((g) => {
+        next[g.key] = true;
+      });
+      return next;
+    });
+  }, [status, awaitingPaymentGroupKeysSig, awaitingPaymentAccountGroups]);
+
+  const awaitingPaymentGroupedSections = useMemo(() => {
+    if (status !== "awaiting_payment" || sortedData.length === 0 || awaitingPaymentAccountGroups.length === 0) {
+      return undefined;
+    }
+    return awaitingPaymentAccountGroups.map((g) => {
+      const open = expandedAwaitingPaymentAccountGroups[g.key] ?? true;
+      const accountName =
+        g.key === "acc:unlinked" ? "Unlinked account" : firstJobAccountLabel(g.jobs, clientAccountMap);
+      const first = g.jobs[0];
+      const logo =
+        first?.client_id && clientAccountLogoByClientId[first.client_id] != null
+          ? clientAccountLogoByClientId[first.client_id]?.trim() || undefined
+          : undefined;
+      const avBg = accountHeaderAvatarBg(accountName);
+      let totalJobAmount = 0;
+      let totalDue = 0;
+      for (const j of g.jobs) {
+        totalJobAmount += j.client_price + Number(j.extras_amount ?? 0);
+        if (customerPaidSumsReady) {
+          const billable = jobCustomerBillableRevenueForCollections(j);
+          const paid = customerPaidByJobId[j.id] ?? 0;
+          totalDue += Math.max(0, billable - paid);
+        }
+      }
+      return {
+        key: g.key,
+        items: open ? g.jobs : [],
+        sectionHeader: (
+          <button
+            type="button"
+            onClick={() =>
+              setExpandedAwaitingPaymentAccountGroups((prev) => {
+                const was = prev[g.key] ?? true;
+                return { ...prev, [g.key]: !was };
+              })
+            }
+            className="w-full px-[14px] py-2.5 text-left bg-surface-secondary border-b border-border-light flex items-center justify-between gap-3"
+          >
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              {logo ? (
+                <Avatar name={accountName} src={logo} size="sm" className="shrink-0 ring-0" />
+              ) : (
+                <div
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                  style={{ backgroundColor: avBg }}
+                  aria-hidden
+                >
+                  {accountName.slice(0, 1).toUpperCase()}
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="text-[13px] font-medium text-[#020040] dark:text-text-primary truncate">{accountName}</p>
+                <p className="text-[10px] text-text-tertiary">
+                  {g.jobs.length} job{g.jobs.length !== 1 ? "s" : ""} awaiting payment
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-1">
+              <div className="text-right">
+                <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Amount due</p>
+                <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">
+                  {customerPaidSumsReady ? formatCurrency(totalDue) : "…"}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Job amount</p>
+                <p className="text-sm font-semibold tabular-nums text-[#020040] dark:text-text-primary">
+                  {formatCurrency(totalJobAmount)}
+                </p>
+              </div>
+              {open ? (
+                <ChevronUp className="h-4 w-4 text-text-tertiary shrink-0" aria-hidden />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-text-tertiary shrink-0" aria-hidden />
+              )}
+            </div>
+          </button>
+        ),
+      };
+    });
+  }, [
+    status,
+    sortedData.length,
+    awaitingPaymentAccountGroups,
+    expandedAwaitingPaymentAccountGroups,
+    clientAccountMap,
+    clientAccountLogoByClientId,
+    customerPaidSumsReady,
+    customerPaidByJobId,
+  ]);
+
   const [exportOpen, setExportOpen] = useState(false);
   const jobVisibleFields = ["reference", "title", "client_name", "property_address", "status", "partner_name", "client_price", "finance_status"];
   const jobAllFields = useMemo(
@@ -1630,6 +1789,7 @@ function JobsPageContent() {
             <DataTable
               columns={columns}
               data={sortedData}
+              groupedSections={awaitingPaymentGroupedSections}
               columnConfigKey="jobs-columns"
               columnConfigScope={status}
               loading={loading}
@@ -2574,15 +2734,22 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                   <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label><Input type="number" value={String(hourlyPreview.partnerTotal)} readOnly /></div>
                   <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials £</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min="0" step="0.01" /></div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate</label><Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" /></div>
-                  <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label><Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" /></div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate (£/h)</label>
+                    <Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate (£/h)</label>
+                    <Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Initial billed hours</label>
+                    <Input type="number" value={form.billed_hours} onChange={(e) => update("billed_hours", e.target.value)} min="1" step="0.5" />
+                  </div>
                 </div>
                 <p className="text-[11px] text-text-tertiary">
-                  Client hourly rate is loaded from Call Out type: {formatCurrency(Number(form.hourly_client_rate) || 0)}/h.
-                </p>
-                <p className="text-[11px] text-text-tertiary">
-                  Billing rule: up to 1h = 1h minimum, then rounds up in 30-minute increments from timer logs.
+                  Hourly rates are prefilled from the selected call-out; you can override. Billing: up to 1h = 1h minimum, then 30-minute increments from timer logs.
                 </p>
               </>
             ) : (
