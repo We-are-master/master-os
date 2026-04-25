@@ -92,11 +92,13 @@ COMMENT ON TABLE public.account_compliance_certificates IS
 -- =============================================
 -- 2. PPM plans
 -- =============================================
+-- Note: there's no FK to partner_contracts here on purpose — that
+-- table doesn't exist in this Supabase project yet. If/when it ships
+-- a follow-up migration can add the column + constraint.
 CREATE TABLE IF NOT EXISTS public.account_ppm_plans (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id          uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
   property_id         uuid REFERENCES public.account_properties(id) ON DELETE CASCADE,
-  partner_contract_id uuid REFERENCES public.partner_contracts(id) ON DELETE SET NULL,
   catalog_service_id  uuid REFERENCES public.service_catalog(id) ON DELETE SET NULL,
   name                text NOT NULL,
   frequency           text NOT NULL DEFAULT 'monthly',
