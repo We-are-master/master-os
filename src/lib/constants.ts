@@ -29,6 +29,8 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Requests", href: "/requests", icon: "inbox", badge: 12 },
       { label: "Quotes", href: "/quotes", icon: "file-text" },
       { label: "Jobs", href: "/jobs", icon: "briefcase" },
+      { label: "Compliance", href: "/compliance", icon: "file-check" },
+      { label: "PPM Plans", href: "/ppm", icon: "calendar-clock" },
     ],
   },
   {
