@@ -9,6 +9,7 @@ import { capJobImagesArray, coerceJobImagesArray } from "@/lib/job-images";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { ensureWeeklySelfBillForJob } from "@/services/self-bills";
+import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 
 function getServiceSupabase() {
   return createClient(
@@ -129,7 +130,9 @@ export async function POST(req: NextRequest) {
     const tLookup = performance.now();
     const { data: quote, error: fetchError } = await supabase
       .from("quotes")
-      .select("id, reference, status, title, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id")
+      .select(
+        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id",
+      )
       .eq("id", quoteId)
       .single();
     marks.push(["quote_lookup", performance.now() - tLookup]);
@@ -138,6 +141,15 @@ export async function POST(req: NextRequest) {
       marks.push(["total", performance.now() - startedAt]);
       return withServerTiming({ error: "Quote not found" }, 404, marks);
     }
+
+    const qClientId = (quote as { client_id?: string | null }).client_id?.trim() ?? "";
+    const acceptBilling = await resolveNominalBillingParty(supabase, {
+      clientId: qClientId,
+      fallbackName: quote.client_name,
+      fallbackEmail: quote.client_email,
+    });
+    const invClientName = acceptBilling.displayName;
+    const invStripeEmail = acceptBilling.documentEmail ?? quote.client_email ?? null;
 
     const depositRequired = Number(quote.deposit_required ?? 0);
 
@@ -182,6 +194,7 @@ export async function POST(req: NextRequest) {
       const baseJobRow: Record<string, unknown> = {
         reference: jobReference,
         title: quote.title ?? "Job from quote",
+        client_id: qClientId || null,
         client_name: quote.client_name ?? "",
         property_address: quote.property_address ?? "Address to be confirmed",
         partner_id: quote.partner_id ?? null,
@@ -254,7 +267,7 @@ export async function POST(req: NextRequest) {
         .from("invoices")
         .insert({
           reference: invoiceReference,
-          client_name: quote.client_name ?? "",
+          client_name: invClientName,
           job_reference: job.reference,
           amount: depositRequired,
           status: "draft",
@@ -280,7 +293,7 @@ export async function POST(req: NextRequest) {
       const tStripe = performance.now();
       const product = await stripe.products.create({
         name: `Deposit — ${quote.reference}`,
-        description: `Deposit for ${quote.client_name ?? "Client"} — ${quote.reference}`,
+        description: `Deposit for ${invClientName} — ${quote.reference}`,
         metadata: {
           invoice_id: invoice.id,
           reference: invoiceReference,
@@ -319,13 +332,13 @@ export async function POST(req: NextRequest) {
             stripe_payment_link_id: paymentLink.id,
             stripe_payment_link_url: paymentLink.url,
             stripe_payment_status: "pending",
-            stripe_customer_email: quote.client_email ?? null,
+            stripe_customer_email: invStripeEmail,
           })
           .eq("id", invoice.id),
         supabase.from("jobs").update({ invoice_id: invoice.id }).eq("id", job.id),
         supabase
           .from("quotes")
-          .update({ status: "accepted", customer_accepted: true, updated_at: now })
+          .update({ status: "awaiting_payment", customer_accepted: true, updated_at: now })
           .eq("id", quoteId)
           .then(({ error }) => { if (error) console.error("Quote accept: quote update failed", error); }),
       ]);
@@ -334,7 +347,7 @@ export async function POST(req: NextRequest) {
       if (finalRef) {
         const { error: finInvErr } = await supabase.from("invoices").insert({
           reference: finalRef,
-          client_name: quote.client_name ?? "",
+          client_name: invClientName,
           job_reference: job.reference,
           amount: finalBalance,
           status: "draft",
@@ -371,7 +384,7 @@ export async function POST(req: NextRequest) {
         action: "status_changed",
         field_name: "status",
         old_value: quote.status,
-        new_value: "accepted",
+        new_value: "awaiting_payment",
         metadata: { job_id: job.id, invoice_id: invoice.id, deposit_invoice: true },
       }).then(({ error }) => { if (error) console.error("audit_logs insert (accept)", error); });
       marks.push(["db_updates", performance.now() - tWrites]);
@@ -386,39 +399,174 @@ export async function POST(req: NextRequest) {
       }, 200, marks);
     }
 
-    // Accept with no deposit: just update quote
-    const updates: { status: string; customer_accepted?: boolean } = {
-      status: "accepted",
-      customer_accepted: true,
-    };
+    // Accept with no deposit: create the job + full-amount final invoice immediately,
+    // and mark quote as converted_to_job (skipping the Awaiting Payment stage).
+    const totalValueNoDep = Number(quote.total_value ?? 0);
 
-    const { error: updateError } = await supabase
-      .from("quotes")
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq("id", quoteId);
+    const tRefsNoDep = performance.now();
+    const [{ data: jobRefRowNoDep }, { data: invRefRowNoDep }] = await Promise.all([
+      supabase.rpc("next_job_ref"),
+      supabase.rpc("next_invoice_ref"),
+    ]);
+    marks.push(["next_refs", performance.now() - tRefsNoDep]);
+    const jobReferenceNoDep = (jobRefRowNoDep as string) ?? `JOB-${Date.now()}`;
+    const invoiceReferenceNoDep = (invRefRowNoDep as string) ?? `INV-${Date.now()}`;
 
-    if (updateError) {
-      console.error("Quote respond update error:", updateError);
-      marks.push(["total", performance.now() - startedAt]);
-      return withServerTiming({ error: "Failed to update quote" }, 500, marks);
+    const nowNoDep = new Date().toISOString();
+    const dueDateNoDep = new Date();
+    dueDateNoDep.setDate(dueDateNoDep.getDate() + 14);
+    const dueDateStrNoDep = dueDateNoDep.toISOString().split("T")[0];
+
+    const hasPartnerNoDep = !!(quote.partner_id?.trim() || (quote.partner_name && String(quote.partner_name).trim()));
+    let jobImagesNoDep = coerceJobImagesArray((quote as { images?: unknown }).images);
+    const reqIdNoDep = (quote as { request_id?: string | null }).request_id?.trim();
+    if (jobImagesNoDep.length === 0 && reqIdNoDep) {
+      const { data: reqRow } = await supabase.from("service_requests").select("images").eq("id", reqIdNoDep).maybeSingle();
+      jobImagesNoDep = capJobImagesArray(coerceJobImagesArray(reqRow?.images));
+    } else {
+      jobImagesNoDep = capJobImagesArray(jobImagesNoDep);
     }
 
-    await supabase.from("audit_logs").insert({
+    const baseJobRowNoDep: Record<string, unknown> = {
+      reference: jobReferenceNoDep,
+      title: quote.title ?? "Job from quote",
+      client_id: qClientId || null,
+      client_name: quote.client_name ?? "",
+      property_address: quote.property_address ?? "Address to be confirmed",
+      partner_id: quote.partner_id ?? null,
+      partner_name: quote.partner_name ?? null,
+      quote_id: quoteId,
+      status: hasPartnerNoDep ? "scheduled" : "unassigned",
+      progress: 0,
+      current_phase: 0,
+      total_phases: 2,
+      job_type: "fixed",
+      client_price: totalValueNoDep,
+      extras_amount: 0,
+      partner_cost: Number(quote.partner_cost ?? 0),
+      materials_cost: 0,
+      margin_percent: 0,
+      partner_agreed_value: Number(quote.partner_cost ?? 0),
+      finance_status: "unpaid",
+      service_value: totalValueNoDep,
+      report_submitted: false,
+      report_1_uploaded: false,
+      report_1_approved: false,
+      report_2_uploaded: false,
+      report_2_approved: false,
+      report_3_uploaded: false,
+      report_3_approved: false,
+      partner_payment_1: 0,
+      partner_payment_1_paid: false,
+      partner_payment_2: 0,
+      partner_payment_2_paid: false,
+      partner_payment_3: 0,
+      partner_payment_3_paid: false,
+      customer_deposit: 0,
+      customer_deposit_paid: false,
+      customer_final_payment: totalValueNoDep,
+      customer_final_paid: false,
+      cash_in: 0,
+      cash_out: 0,
+      expenses: 0,
+      commission: 0,
+      vat: 0,
+      scope: quote.scope ?? null,
+      images: jobImagesNoDep,
+    };
+
+    const tJobNoDep = performance.now();
+    const jobInsertNoDep = prepareJobRowForInsert(baseJobRowNoDep);
+    let { data: jobNoDep, error: jobErrorNoDep } = await supabase
+      .from("jobs")
+      .insert(jobInsertNoDep)
+      .select("id, reference")
+      .single();
+    if (jobErrorNoDep && isPostgrestWriteRetryableError(jobErrorNoDep)) {
+      const retry = await supabase
+        .from("jobs")
+        .insert(applyJobDbCompat(baseJobRowNoDep))
+        .select("id, reference")
+        .single();
+      jobNoDep = retry.data;
+      jobErrorNoDep = retry.error;
+    }
+    marks.push(["job_insert", performance.now() - tJobNoDep]);
+
+    if (jobErrorNoDep || !jobNoDep) {
+      console.error("Quote accept (no deposit): job creation failed", jobErrorNoDep);
+      marks.push(["total", performance.now() - startedAt]);
+      return withServerTiming({ error: "Failed to create job" }, 500, marks);
+    }
+
+    const tInvNoDep = performance.now();
+    const { data: finalInvoice, error: finalInvError } = await supabase
+      .from("invoices")
+      .insert({
+        reference: invoiceReferenceNoDep,
+        client_name: invClientName,
+        job_reference: jobNoDep.reference,
+        amount: totalValueNoDep,
+        status: "draft",
+        due_date: dueDateStrNoDep,
+        collection_stage: "awaiting_final",
+        collection_stage_locked: false,
+        invoice_kind: "final",
+      })
+      .select("id")
+      .single();
+    marks.push(["invoice_insert", performance.now() - tInvNoDep]);
+
+    if (finalInvError || !finalInvoice) {
+      console.error("Quote accept (no deposit): final invoice creation failed", finalInvError);
+      // Job was created but invoice failed: we leave the job in place so the operator can investigate,
+      // and surface a clear error so the customer can retry (idempotency is handled by the operator).
+      marks.push(["total", performance.now() - startedAt]);
+      return withServerTiming({ error: "Failed to create final invoice" }, 500, marks);
+    }
+
+    await Promise.all([
+      supabase.from("jobs").update({ invoice_id: finalInvoice.id }).eq("id", jobNoDep.id),
+      supabase
+        .from("quotes")
+        .update({ status: "converted_to_job", customer_accepted: true, updated_at: nowNoDep })
+        .eq("id", quoteId)
+        .then(({ error }) => { if (error) console.error("Quote accept (no deposit): quote update failed", error); }),
+    ]);
+
+    /** Downstream syncs + audit log don't gate the response — fire-and-forget. */
+    void (async () => {
+      try {
+        await syncInvoicesFromJobCustomerPayments(supabase, jobNoDep.id);
+      } catch (e) {
+        console.error("Quote accept (no deposit): downstream sync failed", e);
+      }
+    })();
+    if (hasPartnerNoDep) {
+      void ensureWeeklySelfBillForJob({ ...baseJobRowNoDep, id: jobNoDep.id, reference: jobNoDep.reference } as Parameters<typeof ensureWeeklySelfBillForJob>[0])
+        .then((sbId) => {
+          if (sbId) void supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", jobNoDep.id);
+        })
+        .catch((e) => console.error("Quote accept (no deposit): self-bill create failed", e));
+    }
+    void supabase.from("audit_logs").insert({
       entity_type: "quote",
       entity_id: quoteId,
       entity_ref: quote.reference,
       action: "status_changed",
       field_name: "status",
       old_value: quote.status,
-      new_value: "accepted",
-    });
+      new_value: "converted_to_job",
+      metadata: { job_id: jobNoDep.id, invoice_id: finalInvoice.id, deposit_invoice: false },
+    }).then(({ error }) => { if (error) console.error("audit_logs insert (accept no deposit)", error); });
 
     marks.push(["total", performance.now() - startedAt]);
     return withServerTiming({
       success: true,
       action: "accept",
       reference: quote.reference,
-      message: "Quote accepted. We will be in touch shortly.",
+      message: "Quote accepted. Your job has been created and a final invoice is on the way.",
+      jobReference: jobNoDep.reference,
     }, 200, marks);
   } catch (err) {
     console.error("Quote respond error:", err);

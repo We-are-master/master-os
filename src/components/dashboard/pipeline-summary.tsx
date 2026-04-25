@@ -60,7 +60,7 @@ export function PipelineSummary() {
           .from("quotes")
           .select(quotesSentSel)
           .is("customer_pdf_sent_at", null)
-          .in("status", ["awaiting_customer", "accepted"]);
+          .in("status", ["awaiting_customer", "awaiting_payment"]);
         if (fromIso && toIso) {
           quotesFallbackQ = quotesFallbackQ.gte("created_at", fromIso).lte("created_at", toIso);
         }
@@ -109,7 +109,7 @@ export function PipelineSummary() {
 
         if (quotesPdfRes.error) {
           const legacy = "total_value, status, created_at";
-          let q1 = supabase.from("quotes").select(legacy).in("status", ["awaiting_customer", "accepted"]);
+          let q1 = supabase.from("quotes").select(legacy).in("status", ["awaiting_customer", "awaiting_payment"]);
           if (fromIso && toIso) q1 = q1.gte("created_at", fromIso).lte("created_at", toIso);
           const leg = await q1;
           quoteRowsPdf = (leg.data ?? []) as QuoteVal[];

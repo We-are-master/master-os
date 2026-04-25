@@ -2110,7 +2110,9 @@ function ContractsTab({ partnerId }: { partnerId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    queueMicrotask(() => {
+      if (!cancelled) setLoading(true);
+    });
     const supabase = getSupabase();
     Promise.all([
       supabase

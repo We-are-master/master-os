@@ -23,6 +23,10 @@ interface KpiCardProps {
   description?: string;
   /** When true, render the description as a hover `!` tooltip next to the title instead of a body line. */
   descriptionAsTooltip?: boolean;
+  /** Optional secondary number rendered below the main value (same format), with its own label. */
+  secondaryValue?: string | number;
+  secondaryLabel?: string;
+  secondaryFormat?: "currency" | "number" | "percent" | "none";
   /** Tighter padding + smaller type — use in dense layouts like the Live Map header row. */
   compact?: boolean;
   className?: string;
@@ -47,18 +51,26 @@ export function KpiCard({
   accent = "primary",
   description,
   descriptionAsTooltip = false,
+  secondaryValue,
+  secondaryLabel,
+  secondaryFormat,
   compact = false,
   className,
 }: KpiCardProps) {
-  const formattedValue = (() => {
-    if (typeof value === "string") return value;
-    switch (format) {
-      case "currency": return formatCurrency(value);
-      case "number": return formatNumber(value);
-      case "percent": return `${value}%`;
-      default: return String(value);
+  const formatFor = (fmt: NonNullable<KpiCardProps["format"]>, v: string | number) => {
+    if (typeof v === "string") return v;
+    switch (fmt) {
+      case "currency": return formatCurrency(v);
+      case "number": return formatNumber(v);
+      case "percent": return `${v}%`;
+      default: return String(v);
     }
-  })();
+  };
+  const formattedValue = formatFor(format, value);
+  const formattedSecondary =
+    secondaryValue !== undefined && secondaryValue !== null
+      ? formatFor(secondaryFormat ?? format, secondaryValue)
+      : null;
 
   const isPositive = change !== undefined && change >= 0;
 
@@ -95,6 +107,23 @@ export function KpiCard({
             >
               {formattedValue}
             </p>
+            {formattedSecondary !== null ? (
+              <div
+                className={cn(
+                  "flex flex-wrap items-baseline gap-x-1 gap-y-0 min-w-0",
+                  compact ? "text-[10px]" : "text-[11px]",
+                )}
+              >
+                {secondaryLabel ? (
+                  <span className="font-medium uppercase tracking-wide text-text-tertiary whitespace-nowrap">
+                    {secondaryLabel}
+                  </span>
+                ) : null}
+                <span className="font-semibold tabular-nums text-text-secondary whitespace-nowrap">
+                  {formattedSecondary}
+                </span>
+              </div>
+            ) : null}
             {change !== undefined && (
               <div className="flex items-center gap-1.5">
                 <span

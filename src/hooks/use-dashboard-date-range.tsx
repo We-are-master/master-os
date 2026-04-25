@@ -55,7 +55,7 @@ export function DashboardDateRangeProvider({ children }: { children: ReactNode }
   const [customTo, setCustomTo] = useState("");
 
   useEffect(() => {
-    setPresetState(readStoredPreset());
+    queueMicrotask(() => setPresetState(readStoredPreset()));
   }, []);
 
   const setPreset = useCallback((p: DateRangePreset) => {

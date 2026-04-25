@@ -32,7 +32,7 @@ export interface PortalQuoteDetail extends PortalQuoteRow {
 
 const PORTAL_VISIBLE_QUOTE_STATUSES = [
   "awaiting_customer",
-  "accepted",
+  "awaiting_payment",
   "rejected",
   "converted_to_job",
 ];

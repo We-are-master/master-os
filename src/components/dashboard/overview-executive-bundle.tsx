@@ -406,14 +406,14 @@ export function OverviewExecutiveBundle() {
               const leg = await supabase
                 .from("quotes")
                 .select("id")
-                .in("status", ["awaiting_customer", "accepted"]);
+                .in("status", ["awaiting_customer", "awaiting_payment"]);
               return (leg.data ?? []).length;
             }
             const fbAll = await supabase
               .from("quotes")
               .select("id")
               .is("customer_pdf_sent_at", null)
-              .in("status", ["awaiting_customer", "accepted"]);
+              .in("status", ["awaiting_customer", "awaiting_payment"]);
             return (pdfAll.data ?? []).length + (fbAll.error ? 0 : (fbAll.data ?? []).length);
           }
           const pdf = await supabase
@@ -426,7 +426,7 @@ export function OverviewExecutiveBundle() {
             const leg = await supabase
               .from("quotes")
               .select("id")
-              .in("status", ["awaiting_customer", "accepted"])
+              .in("status", ["awaiting_customer", "awaiting_payment"])
               .gte("created_at", bounds.fromIso)
               .lte("created_at", bounds.toIso);
             return (leg.data ?? []).length;
@@ -435,7 +435,7 @@ export function OverviewExecutiveBundle() {
             .from("quotes")
             .select("id")
             .is("customer_pdf_sent_at", null)
-            .in("status", ["awaiting_customer", "accepted"])
+            .in("status", ["awaiting_customer", "awaiting_payment"])
             .gte("created_at", bounds.fromIso)
             .lte("created_at", bounds.toIso);
           return (pdf.data ?? []).length + (fb.error ? 0 : (fb.data ?? []).length);

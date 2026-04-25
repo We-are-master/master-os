@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, type ReactNode } from "react";
 import type { RefObject } from "react";
 import mapboxgl from "mapbox-gl";
+import type { MapLayerMouseEvent } from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { MapPin, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -557,7 +558,7 @@ export function ScheduleLiveMap({
     if (!mapReady) return;
     if (!map.getLayer(PARTNER_CIRCLE_LAYER_ID) || !map.getLayer(JOB_CIRCLE_LAYER_ID)) return;
 
-    const handlePartnerEnter = (e: any) => {
+    const handlePartnerEnter = (e: MapLayerMouseEvent) => {
       const feature = e.features?.[0];
       const id = feature?.properties?.id as string | undefined;
       if (!id) return;
@@ -586,7 +587,7 @@ export function ScheduleLiveMap({
       partnerPopupRef.current?.remove();
     };
 
-    const handleJobEnter = (e: any) => {
+    const handleJobEnter = (e: MapLayerMouseEvent) => {
       const feature = e.features?.[0];
       const id = feature?.properties?.id as string | undefined;
       if (!id) return;
@@ -618,7 +619,7 @@ export function ScheduleLiveMap({
       jobPopupRef.current?.remove();
     };
 
-    const handleJobClick = (e: any) => {
+    const handleJobClick = (e: MapLayerMouseEvent) => {
       const id = e.features?.[0]?.properties?.id as string | undefined;
       if (!id || !onJobMarkerClick) return;
       onJobMarkerClick(id);

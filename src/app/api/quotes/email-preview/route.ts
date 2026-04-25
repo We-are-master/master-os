@@ -4,6 +4,7 @@ import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createQuoteResponseToken } from "@/lib/quote-response-token";
 import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
 import type { QuotePDFData, CompanyBranding } from "@/lib/pdf/quote-template";
+import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 
 function getServiceSupabase() {
   return createClient(
@@ -96,11 +97,33 @@ async function buildPreview(req: NextRequest, payload?: {
           tagline: "Professional Property Services",
         };
 
+    const vatPercentPreview =
+      settings && settings.vat_percent != null
+        ? Number(settings.vat_percent)
+        : 20;
+
+    const qPrev = quote as { client_id?: string | null; client_name?: string; client_email?: string | null };
+    const qCid = qPrev.client_id?.trim() ?? "";
+    const docPartyPrev =
+      qCid.length > 0
+        ? await resolveNominalBillingParty(supabase, {
+            clientId: qCid,
+            fallbackName: qPrev.client_name,
+            fallbackEmail: qPrev.client_email,
+          })
+        : null;
+    const previewClientName = String(
+      (docPartyPrev ? docPartyPrev.displayName : (recipientName ?? qPrev.client_name)) ?? "",
+    );
+    const previewClientEmail = String(
+      (docPartyPrev ? (docPartyPrev.documentEmail ?? qPrev.client_email) : qPrev.client_email) ?? "",
+    );
+
     const pdfData: QuotePDFData = {
       reference: quote.reference,
       title: quote.title,
-      clientName: recipientName ?? quote.client_name,
-      clientEmail: quote.client_email,
+      clientName: previewClientName,
+      clientEmail: previewClientEmail,
       totalValue: Number(quote.total_value),
       createdAt: quote.created_at,
       expiresAt: quote.expires_at ?? undefined,
@@ -114,6 +137,7 @@ async function buildPreview(req: NextRequest, payload?: {
           : typeof quote.scope === "string" && quote.scope.trim()
             ? quote.scope.trim()
             : undefined,
+      vatPercent: vatPercentPreview,
     };
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;

@@ -1,7 +1,9 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
+import { canSendClientEmailWithPack } from "@/lib/account-final-email-policy";
 import { modalTransition, overlayTransition } from "@/lib/motion";
+import { FinalCompletionDeliverySection } from "./components/FinalCompletionDeliverySection";
 import { FinanceCards } from "./components/FinanceCards";
 import { ForceApproveBlock } from "./components/ForceApproveBlock";
 import { MarginHero } from "./components/MarginHero";
@@ -15,6 +17,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   const {
     isOpen,
     onClose,
+    reviewSummary,
     jobId,
     jobTitle,
     clientName,
@@ -33,6 +36,13 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     invoiceReference,
     selfBillReference,
     reports,
+    completionDelivery,
+    onCompletionDeliveryChange,
+    includeInvoiceInEmail,
+    onIncludeInvoiceInEmailChange,
+    includeReportInEmail,
+    onIncludeReportInEmailChange,
+    accountEmailPolicy,
     confirmed,
     onConfirmedChange,
     sentToAccounts,
@@ -54,10 +64,18 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     reports.every((r) => r.uploaded) &&
     reports.every((r) => r.approved);
 
+  const canSendEmailPack = canSendClientEmailWithPack(accountEmailPolicy);
+  const emailPackHasContent =
+    (includeReportInEmail && accountEmailPolicy.canIncludeReport) ||
+    (includeInvoiceInEmail && accountEmailPolicy.canIncludeInvoice);
+  const deliverChoiceOk =
+    completionDelivery !== null &&
+    (completionDelivery === "stage_only" || (completionDelivery === "email" && canSendEmailPack && emailPackHasContent));
+
   const attestationsOk = confirmed && sentToAccounts;
-  const canApprove = attestationsOk && allStepsComplete && !forceMode && !submitting;
+  const canApprove = deliverChoiceOk && attestationsOk && allStepsComplete && !forceMode && !submitting;
   const canForceApprove =
-    attestationsOk && forceMode && forceReason.trim().length >= 20 && !submitting;
+    deliverChoiceOk && attestationsOk && forceMode && forceReason.trim().length >= 20 && !submitting;
 
   return (
     <AnimatePresence>
@@ -91,6 +109,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               jobTitle={jobTitle}
               clientName={clientName}
               onClose={onClose}
+              reviewSummary={reviewSummary ?? null}
             />
 
             <div className="min-h-0 overflow-y-auto overscroll-contain">
@@ -137,6 +156,16 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               {hourlySlot ? <div className="px-6 pb-[18px]">{hourlySlot}</div> : null}
             </div>
 
+            <FinalCompletionDeliverySection
+              completionDelivery={completionDelivery}
+              onCompletionDeliveryChange={onCompletionDeliveryChange}
+              accountPolicy={accountEmailPolicy}
+              includeInvoice={includeInvoiceInEmail}
+              onIncludeInvoiceChange={onIncludeInvoiceInEmailChange}
+              includeReport={includeReportInEmail}
+              onIncludeReportChange={onIncludeReportInEmailChange}
+            />
+
             <ResponsibilityCheck
               confirmed={confirmed}
               onChange={onConfirmedChange}
@@ -147,6 +176,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
 
             <ModalFooter
               forceMode={forceMode}
+              completionDelivery={completionDelivery}
               canApprove={canApprove}
               canForceApprove={canForceApprove}
               submitting={submitting}

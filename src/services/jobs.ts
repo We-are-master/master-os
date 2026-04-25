@@ -27,6 +27,7 @@ import {
 } from "@/lib/job-partner-assign";
 import { resolveJobGeocode } from "@/lib/job-geocode-client";
 import { officePartnerTimerResetPatch } from "@/lib/partner-live-timer";
+import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 
 /** Slim rows for Jobs Management KPIs (avg ticket, avg margin); loaded in chunks to avoid pagination bias. */
 export type JobFinancialKpiRow = Pick<
@@ -513,6 +514,13 @@ export async function createJob(
   if (error) throw error;
   let job = data as Job;
 
+  const jobBilling = await resolveNominalBillingParty(supabase, {
+    clientId: job.client_id?.trim() ?? "",
+    fallbackName: job.client_name,
+    fallbackEmail: null,
+  });
+  const invoiceClientLabel = jobBilling.displayName;
+
   /**
    * Invoice draft is created for every new job (quote or direct-from-modal) so Finance always has
    * a paired draft invoice + draft self-bill to review. Invoice stays `draft` — the Finance
@@ -534,7 +542,7 @@ export async function createJob(
       const hasDeposit = Number(job.customer_deposit ?? 0) > 0.01;
       const inv = await createInvoice(
         {
-          client_name: job.client_name,
+          client_name: invoiceClientLabel,
           job_reference: job.reference,
           amount: invoiceTotal,
           status: "draft",
@@ -549,7 +557,7 @@ export async function createJob(
       console.error("createJob invoice auto-create failed:", e);
       try {
         const inv = await createOrAppendJobInvoice(job, {
-          client_name: job.client_name ?? "Client",
+          client_name: invoiceClientLabel,
           amount: invoiceTotal,
           status: "draft",
           invoice_kind: "final",
@@ -620,7 +628,7 @@ export async function createJob(
       if (!invoiceId) {
         try {
           const inv = await createOrAppendJobInvoice(job, {
-            client_name: job.client_name ?? "Client",
+            client_name: invoiceClientLabel,
             amount: invoiceTotal,
             status: "draft",
             invoice_kind: "final",

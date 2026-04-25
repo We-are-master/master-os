@@ -695,8 +695,9 @@ function AccountDetailDrawer({
   const [drawerAssignableUsers, setDrawerAssignableUsers] = useState<AssignableUser[]>([]);
   const logoFileRef = useRef<HTMLInputElement>(null);
   const contractFileRef = useRef<HTMLInputElement>(null);
-  /** Frontend-only until backend adds billing_type column. */
   const [billingType, setBillingType] = useState<"end_client" | "account">("end_client");
+  const [emailIncludeInvoiceOnFinal, setEmailIncludeInvoiceOnFinal] = useState(true);
+  const [emailIncludeReportOnFinal, setEmailIncludeReportOnFinal] = useState(true);
   const [termsModalOpen, setTermsModalOpen] = useState(false);
   const [edit, setEdit] = useState({
     company_name: "",
@@ -718,6 +719,9 @@ function AccountDetailDrawer({
   useEffect(() => {
     if (!account) return;
     setBillingType(((account as unknown as Record<string, unknown>).billing_type as "end_client" | "account") ?? "end_client");
+    const a = account as unknown as Record<string, unknown>;
+    setEmailIncludeInvoiceOnFinal(a.email_include_invoice_on_final !== false);
+    setEmailIncludeReportOnFinal(a.email_include_report_on_final !== false);
     setEdit({
       company_name: account.company_name,
       contact_name: account.contact_name,
@@ -910,6 +914,9 @@ function AccountDetailDrawer({
         payment_terms: edit.payment_terms,
         logo_url: edit.logo_url.trim() || null,
         contract_url: edit.contract_url.trim() || null,
+        billing_type: billingType,
+        email_include_invoice_on_final: emailIncludeInvoiceOnFinal,
+        email_include_report_on_final: emailIncludeReportOnFinal,
       });
       const fresh = await getAccount(account.id);
       const next = fresh ?? updated;
@@ -1079,6 +1086,46 @@ function AccountDetailDrawer({
                 </div>
               </div>
 
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">
+                  When a job is finalised (client email)
+                </label>
+                <p className="text-[11px] text-text-tertiary mb-2 leading-snug">
+                  Controls what the team can put in the completion email on the job. If you handle your own self-bill, you can turn off invoice lines but still receive final report PDFs.
+                </p>
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 rounded border-border"
+                      checked={emailIncludeInvoiceOnFinal}
+                      onChange={(e) => setEmailIncludeInvoiceOnFinal(e.target.checked)}
+                    />
+                    <span>
+                      <span className="font-medium">Include invoice / payment in the email</span>
+                      <span className="block text-[11px] text-text-tertiary font-normal">Uncheck if you generate your own self-bill and do not want our invoice copy in the message.</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 rounded border-border"
+                      checked={emailIncludeReportOnFinal}
+                      onChange={(e) => setEmailIncludeReportOnFinal(e.target.checked)}
+                    />
+                    <span>
+                      <span className="font-medium">Attach final report PDFs</span>
+                      <span className="block text-[11px] text-text-tertiary font-normal">Uncheck to send a notice without report attachments (rare).</span>
+                    </span>
+                  </label>
+                </div>
+                {!emailIncludeInvoiceOnFinal && !emailIncludeReportOnFinal ? (
+                  <p className="text-[11px] text-amber-800 dark:text-amber-200 mt-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 px-2 py-1.5 border border-amber-200/80 dark:border-amber-800/60">
+                    With both off, final review can only move the job internally (no client email until you re-enable at least one).
+                  </p>
+                ) : null}
+              </div>
+
               {/* Payment Terms + Billing Email */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -1108,8 +1155,8 @@ function AccountDetailDrawer({
                   />
                   <p className="text-[10px] text-text-tertiary mt-1">
                     {billingType === "account"
-                      ? "Required for account-direct billing"
-                      : "Optional — overrides client email on invoices"}
+                      ? 'Required for account-direct billing; also used for customer sends when "This account" is selected.'
+                      : 'Optional for some invoice outputs. With "End client", job completion emails go to each contact\'s email on the client record — not this field.'}
                   </p>
                 </div>
               </div>
@@ -1725,7 +1772,10 @@ function PaymentTermsModal({
   open, value, onClose, onSave,
 }: { open: boolean; value: string; onClose: () => void; onSave: (v: string) => void }) {
   const [local, setLocal] = useState(value);
-  useEffect(() => { if (open) setLocal(value); }, [open, value]);
+  useEffect(() => {
+    if (!open) return;
+    queueMicrotask(() => setLocal(value));
+  }, [open, value]);
 
   const iso = local ? dueDateIsoFromPaymentTerms(new Date(), local) : null;
   const nextLabel = iso
@@ -1809,16 +1859,18 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
 
   useEffect(() => {
     const p = parseCycleValue(value);
-    if (p) {
-      setMode("cycle");
-      setFreq(p.freq);
-      setCutoffDay(p.cutoffDay);
-      setCutoffWeekday(p.cutoffWeekday);
-      setPayWeekday(p.payWeekday);
-      if (p.refDate) setRefDate(p.refDate);
-    } else {
-      setMode("standard");
-    }
+    queueMicrotask(() => {
+      if (p) {
+        setMode("cycle");
+        setFreq(p.freq);
+        setCutoffDay(p.cutoffDay);
+        setCutoffWeekday(p.cutoffWeekday);
+        setPayWeekday(p.payWeekday);
+        if (p.refDate) setRefDate(p.refDate);
+      } else {
+        setMode("standard");
+      }
+    });
   }, [value]);
 
   const emit = (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { staggerContainer, tableRowVariant } from "@/lib/motion";
@@ -58,6 +58,12 @@ interface DataTableProps<T> {
   columnConfigKey?: string;
   /** Optional scope (e.g. active tab id) appended to storage key. */
   columnConfigScope?: string;
+  /**
+   * When set (non-empty), each section is rendered as a full-width header row
+   * followed by data rows, instead of a single flat `data` list. Selection and
+   * pagination use all section items in order; `data` is ignored for body rows.
+   */
+  groupedSections?: { key: string; sectionHeader: ReactNode; items: T[] }[];
   /** Client-side column sort (optional). When set, sortable columns show icons and call `onSortChange`. */
   sortColumnKey?: string | null;
   sortDirection?: "asc" | "desc";
@@ -120,6 +126,7 @@ export function DataTable<T>({
   sortColumnKey,
   sortDirection = "asc",
   onSortChange,
+  groupedSections,
 }: DataTableProps<T>) {
   const configStorageKey = columnConfigKey
     ? `${columnConfigKey}:${columnConfigScope ?? "default"}`
@@ -197,7 +204,13 @@ export function DataTable<T>({
     }
   };
 
-  const allIds = data.map((item, i) => getRowId?.(item) ?? String(i));
+  const isGrouped = Boolean(groupedSections && groupedSections.length > 0);
+  const tableRows = useMemo(
+    () => (isGrouped ? (groupedSections as NonNullable<typeof groupedSections>).flatMap((s) => s.items) : data),
+    [isGrouped, groupedSections, data],
+  );
+  const allIds = tableRows.map((item, i) => getRowId?.(item) ?? String(i));
+  const colSpanFull = (selectable ? 1 : 0) + visibleColumns.length + (supportsColumnConfig ? 1 : 0);
   const allSelected = selectable && allIds.length > 0 && allIds.every((id) => selectedIds?.has(id));
   const someSelected = selectable && allIds.some((id) => selectedIds?.has(id));
   const selectionCount = selectedIds?.size ?? 0;
@@ -492,7 +505,7 @@ export function DataTable<T>({
                   </tr>
                 ))}
               </tbody>
-            ) : data.length === 0 ? (
+            ) : !isGrouped && tableRows.length === 0 ? (
               <tbody>
                 <tr>
                   <td colSpan={visibleColumns.length + (selectable ? 1 : 0) + (supportsColumnConfig ? 1 : 0)} className="px-5 py-16 text-center">
@@ -507,6 +520,72 @@ export function DataTable<T>({
                   </td>
                 </tr>
               </tbody>
+            ) : isGrouped ? (
+              <motion.tbody
+                variants={staggerContainer}
+                initial="hidden"
+                animate="visible"
+              >
+                {(() => {
+                  let globalRowIndex = 0;
+                  return groupedSections!.flatMap((section) => {
+                    const header = (
+                      <tr key={`${section.key}__account-hdr`} className="border-b border-border-light bg-surface-secondary">
+                        <td colSpan={colSpanFull} className="p-0">
+                          {section.sectionHeader}
+                        </td>
+                      </tr>
+                    );
+                    const dataRows = section.items.map((item, si) => {
+                      const index = globalRowIndex++;
+                      const id = getRowId?.(item) ?? String(`${section.key}-${si}`);
+                      const isRowSelected = selectedId === id;
+                      const isChecked = selectedIds?.has(id) ?? false;
+                      const isZebra = !isChecked && !isRowSelected && index % 2 === 1;
+                      return (
+                        <motion.tr
+                          key={id}
+                          variants={tableRowVariant}
+                          onClick={() => onRowClick?.(item)}
+                          className={cn(
+                            "border-b border-border-light/50 transition-colors duration-150",
+                            onRowClick && "cursor-pointer",
+                            isChecked
+                              ? "bg-primary/[0.04]"
+                              : isRowSelected
+                                ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
+                                : "hover:bg-surface-hover border-l-[3px] border-l-transparent",
+                            isZebra && "bg-[#F5F5F7]",
+                          )}
+                        >
+                          {selectable && (
+                            <td className={cn("w-12 px-3 sm:px-4 py-3.5", isZebra && "bg-[#F5F5F7]")}>
+                              <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
+                            </td>
+                          )}
+                          {visibleColumns.map((col) => (
+                            <td
+                              key={col.key}
+                              style={{ minWidth: col.minWidth ?? col.width }}
+                              className={cn(
+                                "px-3 sm:px-5 py-3.5 text-sm align-top",
+                                col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : "text-left",
+                                col.cellClassName,
+                                isZebra && "bg-[#F5F5F7]",
+                              )}
+                            >
+                              {col.render
+                                ? col.render(item, index)
+                                : String((item as Record<string, unknown>)[col.key] ?? "")}
+                            </td>
+                          ))}
+                        </motion.tr>
+                      );
+                    });
+                    return [header, ...dataRows];
+                  });
+                })()}
+              </motion.tbody>
             ) : (
               <motion.tbody
                 variants={staggerContainer}

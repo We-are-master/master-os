@@ -27,6 +27,7 @@ import { createInvoice, updateInvoice, type CreateInvoiceInput } from "@/service
 import { updateJob } from "@/services/jobs";
 import { cancelOpenSelfBillsForJobCancellation } from "@/services/self-bills";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
+import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import { reopenInvoiceToPending } from "@/lib/invoice-reopen";
@@ -380,6 +381,7 @@ interface LinkedJob {
   extras_amount?: number | null;
   partner_cost: number;
   partner_agreed_value?: number | null;
+  partner_extras_amount?: number | null;
   materials_cost: number;
   margin_percent: number;
   scheduled_date?: string;
@@ -429,6 +431,8 @@ export default function InvoicesPage() {
   const [savingDueDateId, setSavingDueDateId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkSaving, setBulkSaving] = useState(false);
+  /** True while `handleSyncAll` is iterating linked jobs — blocks the button to avoid hammering Supabase. */
+  const [syncingAll, setSyncingAll] = useState(false);
   const [accountNameById, setAccountNameById] = useState<Record<string, string>>({});
   /** `accounts.id` → `logo_url` (HTTPS) for group header */
   const [accountLogoById, setAccountLogoById] = useState<Record<string, string | null>>({});
@@ -896,6 +900,52 @@ export default function InvoicesPage() {
     } catch { toast.error("Failed to create invoice"); }
   }, [loadPageData, profile?.id, profile?.full_name]);
 
+  /**
+   * Manual trigger when users spot a mismatch between invoice totals and job ledger.
+   * For each linked job we re-fetch the row and call `bumpLinkedInvoiceAmountsToJobSchedule`,
+   * which realigns invoice `amount` to the job schedule (deposit/final/full) AND internally
+   * calls `syncInvoicesFromJobCustomerPayments` so `amount_paid`, `status` and dates also update.
+   * Sequential (not Promise.all) to avoid hammering Supabase with N writes in parallel.
+   */
+  const handleSyncAll = useCallback(async () => {
+    const jobIds = Array.from(
+      new Set(
+        filteredInvoices
+          .map((inv) => (inv.job_reference ? jobsByRef[inv.job_reference]?.id : null))
+          .filter((x): x is string => !!x),
+      ),
+    );
+    if (!jobIds.length) {
+      toast.error("No linked jobs in view to sync");
+      return;
+    }
+    setSyncingAll(true);
+    const supabase = getSupabase();
+    let ok = 0;
+    for (const jobId of jobIds) {
+      try {
+        const { data: jobRow } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
+        const job = jobRow as Job | null;
+        if (job) {
+          await bumpLinkedInvoiceAmountsToJobSchedule(job);
+        } else {
+          /** Fallback: row gone but keep payment-side sync so we don't leave stale `amount_paid`. */
+          await syncInvoicesFromJobCustomerPayments(supabase, jobId);
+        }
+        ok++;
+      } catch (e) {
+        console.error("handleSyncAll: sync invoices for job", jobId, e);
+      }
+    }
+    try {
+      await loadPageData();
+    } finally {
+      setSyncingAll(false);
+    }
+    if (ok === jobIds.length) toast.success(`Synced ${ok} job${ok === 1 ? "" : "s"}`);
+    else toast.error(`Synced ${ok}/${jobIds.length} jobs — see console for failures`);
+  }, [filteredInvoices, jobsByRef, loadPageData]);
+
   const handleInvoiceDueDateSave = useCallback(
     async (invoice: Invoice, nextYmd: string) => {
       if (invoice.status === "paid" || invoice.status === "cancelled") return;
@@ -965,7 +1015,7 @@ export default function InvoicesPage() {
         jobYmd ?? "",
         String(inv.amount),
         String(invoiceAmountPaid(inv)),
-        String(invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId)),
+        String(inv.status === "cancelled" ? 0 : invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId)),
         inv.due_date,
         inv.status,
         jobStatusLabel,
@@ -1042,7 +1092,8 @@ export default function InvoicesPage() {
       const accountName = accId
         ? accountNameById[accId] || "Loading account..."
         : "Unlinked account";
-      const due = invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
+      /** Cancelled invoices have no outstanding balance — force DUE to 0 at aggregation time while keeping TOTAL / PAID intact. */
+      const due = inv.status === "cancelled" ? 0 : invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
       const paid = invoiceListCollectedAmount(inv, jobsByRef, customerPaidByJobId);
       const row =
         groups.get(key) ??
@@ -1177,6 +1228,19 @@ export default function InvoicesPage() {
               title="Reload invoices from the server"
             >
               Refresh
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleSyncAll}
+              loading={syncingAll}
+              disabled={loading || syncingAll || filteredInvoices.length === 0}
+              icon={<RefreshCw className={cn("h-3.5 w-3.5", syncingAll && "animate-spin")} />}
+              aria-label="Sync all visible invoices from their jobs"
+              title="Recompute amount, amount_paid, status and dates for every invoice in view using its linked job ledger"
+            >
+              {syncingAll ? "Syncing…" : "Sync all"}
             </Button>
             <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={handleExportCSV}>
               Export
@@ -1430,7 +1494,8 @@ export default function InvoicesPage() {
                           const ref = inv.job_reference?.trim();
                           const job = ref ? jobsByRef[ref] : undefined;
                           const ymd = displayDateYmdForInvoiceRow(inv, job);
-                          const due = invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
+                          /** Cancelled rows show 0 due so the list / account totals don't inflate outstanding balance. */
+                          const due = inv.status === "cancelled" ? 0 : invoiceListBalanceDue(inv, jobsByRef, customerPaidByJobId);
                           const paidRow = invoiceListCollectedAmount(inv, jobsByRef, customerPaidByJobId);
                           const isSimpleStatus = inv.status === "paid" || inv.status === "cancelled";
                           const statusDisp = invoiceRowStatusDisplay(inv, listTodayYmd);
@@ -1750,7 +1815,7 @@ function InvoiceDetailDrawer({
   onInvoiceUpdated?: (invoice: Invoice) => void;
 }) {
   const { profile } = useProfile();
-  const [tab, setTab] = useState("details");
+  const [tab, setTab] = useState("overview");
   const [linkedJob, setLinkedJob] = useState<LinkedJob | null>(null);
   const [loadingJob, setLoadingJob] = useState(false);
   const [relatedInvoices, setRelatedInvoices] = useState<Invoice[]>([]);
@@ -1790,6 +1855,12 @@ function InvoiceDetailDrawer({
   const [linkedJobSalesCostsOpen, setLinkedJobSalesCostsOpen] = useState(false);
   /** Sum of customer_deposit + customer_final on linked job (aligns invoice paid/due with job card). */
   const [jobCustomerPaidSum, setJobCustomerPaidSum] = useState<number | null>(null);
+  /** Sum of `partner` payments on linked job — used by the Details tab for "Partner paid so far". */
+  const [jobPartnerPaidSum, setJobPartnerPaidSum] = useState<number | null>(null);
+  /** All non-cancelled invoices sharing this job_reference — Details tab per-invoice list. */
+  const [jobLinkedInvoices, setJobLinkedInvoices] = useState<Invoice[]>([]);
+  /** Manual header-button sync spinner (separate from silent sync on drawer open). */
+  const [manualSyncing, setManualSyncing] = useState(false);
 
   const onInvoiceUpdatedRef = useRef(onInvoiceUpdated);
   onInvoiceUpdatedRef.current = onInvoiceUpdated;
@@ -1798,9 +1869,11 @@ function InvoiceDetailDrawer({
     if (!invoice) return;
     let cancelled = false;
 
-    setTab("details");
+    setTab("overview");
     setLinkedJob(null);
     setRelatedInvoices([]);
+    setJobPartnerPaidSum(null);
+    setJobLinkedInvoices([]);
     setStripeState({
       linkUrl: invoice.stripe_payment_link_url ?? undefined,
       linkId: invoice.stripe_payment_link_id ?? undefined,
@@ -1863,15 +1936,34 @@ function InvoiceDetailDrawer({
               .from("job_payments")
               .select("amount, type, note")
               .eq("job_id", jid)
-              .in("type", ["customer_deposit", "customer_final"])
+              .in("type", ["customer_deposit", "customer_final", "partner"])
               .is("deleted_at", null);
-            let sum = 0;
+            let customerSum = 0;
+            let partnerSum = 0;
             for (const p of payRows ?? []) {
               const row = p as { amount?: number; type?: string; note?: string | null };
+              if (row.type === "partner") {
+                partnerSum += Number(row.amount ?? 0);
+                continue;
+              }
               if (isLegacyMisclassifiedCustomerPayment(row as { type: string; note?: string | null })) continue;
-              sum += Number(row.amount ?? 0);
+              customerSum += Number(row.amount ?? 0);
             }
-            if (!cancelled) setJobCustomerPaidSum(Math.round(sum * 100) / 100);
+            if (!cancelled) {
+              setJobCustomerPaidSum(Math.round(customerSum * 100) / 100);
+              setJobPartnerPaidSum(Math.round(partnerSum * 100) / 100);
+            }
+          }
+
+          const jobRef = (jobData as { reference?: string } | null)?.reference?.trim();
+          if (jobRef) {
+            const { data: linkedRows } = await supabase
+              .from("invoices")
+              .select("*")
+              .eq("job_reference", jobRef)
+              .is("deleted_at", null)
+              .order("created_at", { ascending: true });
+            if (!cancelled) setJobLinkedInvoices((linkedRows ?? []) as Invoice[]);
           }
 
           if (jid && onInvoiceUpdatedRef.current) {
@@ -2032,6 +2124,42 @@ function InvoiceDetailDrawer({
       setLinkCopied(true);
       toast.success("Payment link copied!");
       setTimeout(() => setLinkCopied(false), 2000);
+    }
+  };
+
+  /**
+   * Manual re-sync from the linked job. Pulls the latest job row and calls
+   * `bumpLinkedInvoiceAmountsToJobSchedule`, which updates invoice `amount`
+   * (deposit / final / full total) AND internally runs `syncInvoicesFromJobCustomerPayments`
+   * so `amount_paid`, `status` and dates follow. Refetches the invoice after to push
+   * the fresh row up to the parent list.
+   */
+  const handleManualSync = async () => {
+    if (!invoice || !invoice.job_reference || !linkedJob?.id) return;
+    setManualSyncing(true);
+    try {
+      const supabase = getSupabase();
+      const { data: jobRow } = await supabase.from("jobs").select("*").eq("id", linkedJob.id).maybeSingle();
+      const jobFull = jobRow as Job | null;
+      if (jobFull) {
+        await bumpLinkedInvoiceAmountsToJobSchedule(jobFull);
+      } else {
+        await syncInvoicesFromJobCustomerPayments(supabase, linkedJob.id);
+      }
+      const { data: freshRow } = await supabase
+        .from("invoices")
+        .select("*")
+        .eq("id", invoice.id)
+        .maybeSingle();
+      const fresh = freshRow as Invoice | null;
+      if (fresh && onInvoiceUpdatedRef.current) onInvoiceUpdatedRef.current(fresh);
+      if (jobFull) setLinkedJob(jobFull as unknown as LinkedJob);
+      toast.success("Invoice synced from job");
+    } catch (e) {
+      console.error("InvoiceDrawer handleManualSync", e);
+      toast.error(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setManualSyncing(false);
     }
   };
 
@@ -2213,6 +2341,7 @@ function InvoiceDetailDrawer({
     invoice.status !== "audit_required";
 
   const drawerTabs: Array<{ id: string; label: string; count?: number }> = [
+    { id: "overview", label: "Overview" },
     { id: "details", label: "Details" },
     { id: "stripe", label: "Stripe" },
     { id: "job", label: "Job" },
@@ -2311,7 +2440,7 @@ function InvoiceDetailDrawer({
         subtitle={undefined}
         width="w-[580px]"
         headerExtra={(
-          <div className="flex items-center gap-1 text-[11px] text-text-secondary">
+          <div className="flex items-center gap-2 text-[11px] text-text-secondary">
             <span>Issued {issuedLabel}</span>
             {invoice.job_reference ? (
               <>
@@ -2326,9 +2455,33 @@ function InvoiceDetailDrawer({
                 </a>
               </>
             ) : null}
+            <button
+              type="button"
+              onClick={() => void handleManualSync()}
+              disabled={
+                manualSyncing ||
+                !invoice.job_reference ||
+                !linkedJob?.id ||
+                invoice.status === "cancelled"
+              }
+              aria-label="Sync invoice from job"
+              title={
+                !invoice.job_reference
+                  ? "Invoice has no linked job to sync from"
+                  : invoice.status === "cancelled"
+                    ? "Cancelled invoice — sync disabled"
+                    : !linkedJob?.id
+                      ? "Waiting for linked job to load…"
+                      : "Recompute amount_paid, status and dates from the linked job ledger"
+              }
+              className="ml-1 inline-flex items-center gap-1 rounded-md border border-border-light px-2 py-0.5 text-[11px] font-medium text-text-secondary transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-light disabled:hover:text-text-secondary"
+            >
+              <RefreshCw className={cn("h-3 w-3", manualSyncing && "animate-spin")} />
+              {manualSyncing ? "Syncing…" : "Sync"}
+            </button>
           </div>
         )}
-        footer={tab === "details" ? (
+        footer={tab === "overview" ? (
           <div className="px-4 pb-3 pt-2 space-y-2">
             <div className="flex gap-2">
               {invoice.status === "paid" ? (
@@ -2465,8 +2618,8 @@ function InvoiceDetailDrawer({
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            {/* ===== DETAILS TAB ===== */}
-            {tab === "details" && (
+            {/* ===== OVERVIEW TAB ===== */}
+            {tab === "overview" && (
               <div className="space-y-4 p-[22px]">
                 {/* ── Status row ── */}
                 <div
@@ -2730,6 +2883,262 @@ function InvoiceDetailDrawer({
                     </Button>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* ===== DETAILS TAB (finance breakdown: client vs partner) ===== */}
+            {tab === "details" && (
+              <div className="space-y-4 p-[22px]">
+                {loadingJob && (
+                  <div className="space-y-2">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="animate-pulse h-12 bg-surface-hover rounded-[10px]" />
+                    ))}
+                  </div>
+                )}
+
+                {!loadingJob && !linkedJob && (
+                  <div className="py-16 text-center">
+                    <Briefcase className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
+                    <p className="text-[12px] font-medium text-text-secondary">No linked job</p>
+                    <p className="text-[11px] text-text-tertiary mt-1">
+                      Details breakdown needs a job. Link a job reference first.
+                    </p>
+                  </div>
+                )}
+
+                {!loadingJob && linkedJob && (() => {
+                  /** Client side — totals mirror the job finance card (client_price + extras_amount). */
+                  const clientInitial = Math.round(Number(linkedJob.client_price ?? 0) * 100) / 100;
+                  const clientExtras = Math.round(Number(linkedJob.extras_amount ?? 0) * 100) / 100;
+                  const clientBillable = Math.round((clientInitial + clientExtras) * 100) / 100;
+                  const clientPaid = Math.round((jobCustomerPaidSum ?? 0) * 100) / 100;
+                  const clientOutstanding = Math.max(0, Math.round((clientBillable - clientPaid) * 100) / 100);
+                  const clientProgress = clientBillable > 0.01 ? Math.min(100, (clientPaid / clientBillable) * 100) : 0;
+
+                  /** Partner side — cap + materials mirrors `partnerSelfBillGrossAmount`. */
+                  const partnerCost = Math.round(Number(linkedJob.partner_cost ?? 0) * 100) / 100;
+                  const partnerAgreed = Math.round(Number(linkedJob.partner_agreed_value ?? 0) * 100) / 100;
+                  const partnerCap = partnerAgreed > 0.01 ? partnerAgreed : partnerCost;
+                  const partnerExtras = Math.round(Number(linkedJob.partner_extras_amount ?? 0) * 100) / 100;
+                  const materials = Math.round(Number(linkedJob.materials_cost ?? 0) * 100) / 100;
+                  const partnerGross = Math.round((partnerCap + materials) * 100) / 100;
+                  const partnerPaid = Math.round((jobPartnerPaidSum ?? 0) * 100) / 100;
+                  const partnerOutstanding = Math.max(0, Math.round((partnerGross - partnerPaid) * 100) / 100);
+                  const partnerProgress = partnerGross > 0.01 ? Math.min(100, (partnerPaid / partnerGross) * 100) : 0;
+
+                  return (
+                    <>
+                      {/* Hero totals — client vs partner side-by-side */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-[10px] border border-[#020040]/25 bg-[#020040]/5 px-3 py-2.5 dark:bg-[#020040]/20">
+                          <p className="text-[9px] uppercase tracking-[0.4px] text-text-tertiary">Client still owes</p>
+                          <p className="mt-0.5 text-[18px] font-bold tabular-nums text-[#020040] dark:text-sky-300">
+                            {formatCurrency(clientOutstanding)}
+                          </p>
+                          <p className="text-[10px] text-text-tertiary tabular-nums">
+                            {formatCurrency(clientPaid)} paid of {formatCurrency(clientBillable)}
+                          </p>
+                          <div className="mt-1.5 h-1 rounded-full bg-[#020040]/15">
+                            <div
+                              className="h-1 rounded-full bg-[#020040] dark:bg-sky-400"
+                              style={{ width: `${clientProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="rounded-[10px] border border-[#ED4B00]/25 bg-[#ED4B00]/5 px-3 py-2.5">
+                          <p className="text-[9px] uppercase tracking-[0.4px] text-text-tertiary">Partner still to receive</p>
+                          <p className="mt-0.5 text-[18px] font-bold tabular-nums text-[#ED4B00]">
+                            {formatCurrency(partnerOutstanding)}
+                          </p>
+                          <p className="text-[10px] text-text-tertiary tabular-nums">
+                            {formatCurrency(partnerPaid)} paid of {formatCurrency(partnerGross)}
+                          </p>
+                          <div className="mt-1.5 h-1 rounded-full bg-[#ED4B00]/15">
+                            <div
+                              className="h-1 rounded-full bg-[#ED4B00]"
+                              style={{ width: `${partnerProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Client breakdown */}
+                      <div className="overflow-hidden rounded-[10px] border border-[#020040]/25">
+                        <div className="bg-[#020040] px-3 py-2 flex items-center justify-between">
+                          <p className="text-[11px] font-semibold text-white uppercase tracking-[0.4px]">
+                            Client — {linkedJob.client_name}
+                          </p>
+                          <Badge variant="default" size="sm" className="bg-white/10 text-white border-white/20">
+                            Navy
+                          </Badge>
+                        </div>
+                        <div className="divide-y divide-border bg-card">
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <span className="text-[11px] text-text-secondary">Initial balance (client price)</span>
+                            <span className="text-[12px] font-semibold text-text-primary tabular-nums">
+                              {formatCurrency(clientInitial)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <span className="text-[11px] text-text-secondary">Extras (labour / CCZ / parking / materials)</span>
+                            <span className="text-[12px] font-medium text-text-primary tabular-nums">
+                              {clientExtras > 0.005 ? `+${formatCurrency(clientExtras)}` : formatCurrency(0)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between bg-[#020040]/5 px-3 py-2 dark:bg-[#020040]/20">
+                            <span className="text-[11px] font-semibold text-text-primary">Total billable</span>
+                            <span className="text-[13px] font-bold text-[#020040] dark:text-sky-300 tabular-nums">
+                              {formatCurrency(clientBillable)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <span className="text-[11px] text-text-secondary">Paid so far (deposits + finals)</span>
+                            <span className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400 tabular-nums">
+                              {clientPaid > 0.005 ? `−${formatCurrency(clientPaid)}` : formatCurrency(0)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between bg-amber-50 px-3 py-2 dark:bg-amber-900/20">
+                            <span className="text-[11px] font-semibold text-text-primary">Outstanding</span>
+                            <span className="text-[13px] font-bold text-amber-700 dark:text-amber-300 tabular-nums">
+                              {formatCurrency(clientOutstanding)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Partner breakdown */}
+                      <div className="overflow-hidden rounded-[10px] border border-[#ED4B00]/25">
+                        <div className="bg-[#ED4B00] px-3 py-2 flex items-center justify-between">
+                          <p className="text-[11px] font-semibold text-white uppercase tracking-[0.4px]">
+                            Partner — {linkedJob.partner_name?.trim() || "Unassigned"}
+                          </p>
+                          <Badge variant="default" size="sm" className="bg-white/15 text-white border-white/20">
+                            Orange
+                          </Badge>
+                        </div>
+                        <div className="divide-y divide-border bg-card">
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <span className="text-[11px] text-text-secondary">Initial balance (subcontract labour)</span>
+                            <span className="text-[12px] font-semibold text-text-primary tabular-nums">
+                              {formatCurrency(partnerCost)}
+                            </span>
+                          </div>
+                          {partnerAgreed > 0.005 && partnerAgreed !== partnerCost ? (
+                            <div className="flex items-center justify-between px-3 py-2">
+                              <span className="text-[11px] text-text-secondary">Agreed value cap</span>
+                              <span className="text-[12px] font-medium text-text-primary tabular-nums">
+                                {formatCurrency(partnerAgreed)}
+                              </span>
+                            </div>
+                          ) : null}
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <span className="text-[11px] text-text-secondary">Partner extras (labour / CCZ / parking)</span>
+                            <span className="text-[12px] font-medium text-text-primary tabular-nums">
+                              {partnerExtras > 0.005 ? `+${formatCurrency(partnerExtras)}` : formatCurrency(0)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <span className="text-[11px] text-text-secondary">Materials reimbursement</span>
+                            <span className="text-[12px] font-medium text-text-primary tabular-nums">
+                              {materials > 0.005 ? `+${formatCurrency(materials)}` : formatCurrency(0)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between bg-[#ED4B00]/5 px-3 py-2">
+                            <span className="text-[11px] font-semibold text-text-primary">Total cash-out</span>
+                            <span className="text-[13px] font-bold text-[#ED4B00] tabular-nums">
+                              {formatCurrency(partnerGross)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <span className="text-[11px] text-text-secondary">Paid so far (self-bill + direct)</span>
+                            <span className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400 tabular-nums">
+                              {partnerPaid > 0.005 ? `−${formatCurrency(partnerPaid)}` : formatCurrency(0)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between bg-amber-50 px-3 py-2 dark:bg-amber-900/20">
+                            <span className="text-[11px] font-semibold text-text-primary">Outstanding</span>
+                            <span className="text-[13px] font-bold text-amber-700 dark:text-amber-300 tabular-nums">
+                              {formatCurrency(partnerOutstanding)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Per-invoice list */}
+                      <div>
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-[11px] uppercase tracking-[0.5px] text-text-secondary">
+                            Invoices for this job
+                          </p>
+                          <span className="text-[10px] text-text-tertiary tabular-nums">
+                            {jobLinkedInvoices.length} invoice{jobLinkedInvoices.length === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                        {jobLinkedInvoices.length === 0 ? (
+                          <div className="rounded-[10px] border border-border bg-surface-hover/40 px-3 py-4 text-center text-[11px] text-text-tertiary">
+                            No invoices linked yet for this job.
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-border overflow-hidden rounded-[10px] border border-border bg-card">
+                            {jobLinkedInvoices.map((inv) => {
+                              const amt = Math.round(Number(inv.amount ?? 0) * 100) / 100;
+                              const paid = Math.round(invoiceAmountPaid(inv) * 100) / 100;
+                              const bal = Math.max(0, Math.round((amt - paid) * 100) / 100);
+                              const isCurrent = inv.id === invoice.id;
+                              const statusBadge = inv.status === "paid"
+                                ? "success"
+                                : inv.status === "partially_paid"
+                                  ? "info"
+                                  : inv.status === "cancelled"
+                                    ? "default"
+                                    : "warning";
+                              return (
+                                <div
+                                  key={inv.id}
+                                  className={cn(
+                                    "flex items-center justify-between gap-3 px-3 py-2.5",
+                                    isCurrent && "bg-primary/5",
+                                  )}
+                                >
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <p className="text-[12px] font-semibold text-text-primary truncate">
+                                        {inv.reference}
+                                      </p>
+                                      <Badge variant={statusBadge} size="sm">
+                                        {inv.status === "partially_paid" ? "Partial" : inv.status}
+                                      </Badge>
+                                      {isCurrent ? (
+                                        <span className="text-[9px] uppercase tracking-[0.4px] text-text-tertiary">
+                                          Current
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <p className="mt-0.5 text-[10px] text-text-tertiary">
+                                      {inv.due_date ? `Due ${formatDate(inv.due_date)}` : "No due date"}
+                                      {inv.invoice_kind && inv.invoice_kind !== "other"
+                                        ? ` · ${inv.invoice_kind}`
+                                        : ""}
+                                    </p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="text-[12px] font-bold text-text-primary tabular-nums">
+                                      {formatCurrency(amt)}
+                                    </p>
+                                    <p className="text-[10px] text-text-tertiary tabular-nums">
+                                      Paid {formatCurrency(paid)} · Due {formatCurrency(bal)}
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
@@ -3087,7 +3496,7 @@ function InvoiceDetailDrawer({
                       key={inv.id}
                       variants={staggerItem}
                       className="p-3 rounded-xl border border-border-light hover:border-border transition-colors cursor-pointer"
-                      onClick={() => setTab("details")}
+                      onClick={() => setTab("overview")}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">

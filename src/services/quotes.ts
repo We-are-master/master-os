@@ -51,6 +51,8 @@ const QUOTE_WRITABLE_KEYS = new Set<string>([
   "deleted_at",
   "deleted_by",
   "property_id",
+  "duration_value",
+  "duration_unit",
 ]);
 
 function pickQuotePayload(input: Record<string, unknown>): Record<string, unknown> {

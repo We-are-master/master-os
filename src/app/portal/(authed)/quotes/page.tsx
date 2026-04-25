@@ -8,14 +8,14 @@ export const dynamic = "force-dynamic";
 
 const STATUS_LABEL: Record<string, string> = {
   awaiting_customer: "Awaiting your response",
-  accepted:          "Accepted",
+  awaiting_payment:  "Awaiting payment",
   rejected:          "Declined",
   converted_to_job:  "Converted to job",
 };
 
 const STATUS_COLOR: Record<string, string> = {
   awaiting_customer: "bg-amber-50 text-amber-700",
-  accepted:          "bg-emerald-50 text-emerald-700",
+  awaiting_payment:  "bg-amber-50 text-amber-700",
   rejected:          "bg-surface-tertiary text-text-secondary",
   converted_to_job:  "bg-emerald-50 text-emerald-700",
 };

@@ -14,7 +14,7 @@ import type { Quote } from "@/types/database";
 import type { ListResult } from "@/services/base";
 
 /** Mirrors `PIPELINE_STATUS_IN` in /quotes/page.tsx — keep in sync. */
-const PIPELINE_STATUS = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"] as const;
+const PIPELINE_STATUS = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"] as const;
 
 interface FetchQuotesOptions {
   status?: string;

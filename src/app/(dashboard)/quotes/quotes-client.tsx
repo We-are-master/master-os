@@ -24,19 +24,19 @@ import {
   Send, CheckCircle2, RotateCcw, RefreshCw, XCircle,
   Mail,
   Loader2, Eye, Trash2, Briefcase, Users, SlidersHorizontal, Save,
-  ClipboardList, MapPin, Gavel, UserRound, Building2, Sparkles, ChevronDown, Brain,
+  ClipboardList, MapPin, Gavel, UserRound, Building2, Sparkles, ChevronDown, ChevronUp, Brain,
   Wallet, Percent, PoundSterling, ImagePlus, X, Pencil, UserPlus,
   MailCheck,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatCurrency, cn, normalizeCalendarDateToYmd, formatYmdUkDisplay } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Quote, Partner, Job, Account } from "@/types/database";
+import type { Quote, Partner, Job, Account, QuoteDurationUnit } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
 import { getClient } from "@/services/clients";
 import { getAccount, listAccounts } from "@/services/accounts";
-import { getAccountProperty } from "@/services/account-properties";
+import { createAccountProperty, getAccountProperty, listAccountProperties } from "@/services/account-properties";
 import { getAccountIdsForBu } from "@/services/business-units";
 import {
   findDuplicateJobs,
@@ -46,6 +46,7 @@ import {
 } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
 import { createJob, getJobByQuoteId } from "@/services/jobs";
+import { createJobPayment } from "@/services/job-payments";
 import { listPartners } from "@/services/partners";
 import { useBuFilter } from "@/hooks/use-bu-filter";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
@@ -67,6 +68,7 @@ import { getErrorMessage, isUuid, isValidIsoDateTime, parseIsoDateOnly } from "@
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
 import { getScheduleRangeYmd, ukTodayYmd, type ScheduleDatePreset } from "@/lib/uk-schedule-range";
 import { insertQuoteLineItemsResilient } from "@/lib/quote-line-items-insert";
+import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { TYPE_OF_WORK_OPTIONS, withTypeOfWorkFallback, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
@@ -109,7 +111,7 @@ function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>)
   }
 }
 
-const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "rejected", "converted_to_job"] as const;
+const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment", "rejected", "converted_to_job"] as const;
 
 /**
  * Label for proposal line 1: type of work only.
@@ -124,6 +126,17 @@ function proposalFirstLineLabel(q: Quote): string {
   const i = t.indexOf(sep);
   if (i > 0) return t.slice(0, i).trim();
   return t;
+}
+
+function formatQuoteDurationDisplay(q: Pick<Quote, "duration_value" | "duration_unit">): string | null {
+  const u = q.duration_unit;
+  const v = q.duration_value;
+  if (u == null || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const w =
+    u === "day" ? (n === 1 ? "day" : "days") : u === "week" ? (n === 1 ? "week" : "weeks") : n === 1 ? "month" : "months";
+  return `${n} ${w}`;
 }
 
 /** Second line under quote reference: postcode only (column + parse from property address). */
@@ -381,7 +394,7 @@ const statusLabels: Record<string, string> = {
   in_survey: "In Survey",
   bidding: "Bidding",
   awaiting_customer: "Awaiting Customer",
-  accepted: "Accepted",
+  awaiting_payment: "Awaiting Payment",
   rejected: "Rejected",
   converted_to_job: "Converted to Job",
 };
@@ -391,13 +404,13 @@ const statusConfig: Record<string, { variant: "default" | "primary" | "success" 
   in_survey: { variant: "info", dot: true },
   bidding: { variant: "warning", dot: true },
   awaiting_customer: { variant: "primary", dot: true },
-  accepted: { variant: "success", dot: true },
+  awaiting_payment: { variant: "warning", dot: true },
   rejected: { variant: "danger", dot: true },
   converted_to_job: { variant: "success", dot: true },
 };
 
-/** Open pipeline: every status that still needs internal/customer work before job conversion. */
-const PIPELINE_STATUS_IN = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"] as const;
+/** Active pipeline: quotes actively moving through the sales funnel (bids out / with customer / awaiting deposit). */
+const PIPELINE_STATUS_IN = ["bidding", "awaiting_customer", "awaiting_payment"] as const;
 
 async function listQuotesForPage(params: ListParams): Promise<ListResult<Quote>> {
   const { status, ...rest } = params;
@@ -417,7 +430,7 @@ const QUOTE_STATUS_SORT_ORDER: Record<string, number> = {
   in_survey: 1,
   bidding: 2,
   awaiting_customer: 3,
-  accepted: 4,
+  awaiting_payment: 4,
   rejected: -1,
   converted_to_job: 5,
 };
@@ -457,6 +470,12 @@ const QUOTE_SORT_AMOUNT: ColumnSortOption[] = [
   ...QUOTE_SORT_CREATED,
 ];
 
+const QUOTE_SORT_DEPOSIT: ColumnSortOption[] = [
+  { label: "Low to high", sortKey: "deposit_required", direction: "asc" },
+  { label: "High to low", sortKey: "deposit_required", direction: "desc" },
+  ...QUOTE_SORT_CREATED,
+];
+
 const QUOTE_SORT_MARGIN: ColumnSortOption[] = [
   { label: "Low to high", sortKey: "margin_percent", direction: "asc" },
   { label: "High to low", sortKey: "margin_percent", direction: "desc" },
@@ -474,12 +493,12 @@ const STAGE_META: { id: string; label: string; short: string; icon: typeof Clipb
   { id: "in_survey", label: "Survey", short: "Survey", icon: MapPin },
   { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
   { id: "awaiting_customer", label: "Awaiting customer", short: "Awaiting customer", icon: UserRound },
-  { id: "accepted", label: "Accepted", short: "Won", icon: CheckCircle2 },
+  { id: "awaiting_payment", label: "Awaiting payment", short: "Awaiting payment", icon: CheckCircle2 },
 ];
 
 function QuoteStageColumn({ status }: { status: string }) {
   const stepMap: Record<string, number> = {
-    draft: 0, in_survey: 1, bidding: 2, awaiting_customer: 3, accepted: 4, rejected: -1, converted_to_job: 5,
+    draft: 0, in_survey: 1, bidding: 2, awaiting_customer: 3, awaiting_payment: 4, rejected: -1, converted_to_job: 5,
   };
   const current = stepMap[status] ?? 0;
   if (current === -1) {
@@ -544,10 +563,10 @@ function getStageGuidance(status: string): {
         headline: "Waiting on the customer",
         detail: "You can still edit the proposal or pricing, then use Resend Quote (under Move this quote) so the client gets an updated attachment — links stay the same.",
       };
-    case "accepted":
+    case "awaiting_payment":
       return {
-        headline: "Ready to convert",
-        detail: "Create a job from this quote when you are ready to schedule work.",
+        headline: "Awaiting customer payment",
+        detail: "Customer accepted the quote. Job will be created once the deposit is paid via Stripe, or convert manually if paid elsewhere.",
       };
     case "rejected":
       return { headline: "Quote closed", detail: "You can reactivate from Draft or leave as lost." };
@@ -605,9 +624,16 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const kpiDateFilterRef = useRef<HTMLDivElement>(null);
   const [kpiLoading, setKpiLoading] = useState(false);
   const [kpiSummary, setKpiSummary] = useState({
+    /** Total value of all quotes (any status) in the date window. */
     totalQuotedValue: 0,
-    biddingCount: 0,
-    rejectedValue: 0,
+    /** Value of quotes currently with the customer awaiting their response. */
+    awaitingCustomerValue: 0,
+    /** Sum of deposit amounts still to be collected on quotes awaiting payment. */
+    awaitingDepositValue: 0,
+    /** Sum of post-deposit remainder on quotes awaiting payment (received later). */
+    awaitingRemainderValue: 0,
+    /** Value of quotes that have converted into jobs. */
+    convertedValue: 0,
     conversionPct: 0,
     convertedCount: 0,
     totalCount: 0,
@@ -624,6 +650,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [propertyIdToAccountId, setPropertyIdToAccountId] = useState<Record<string, string>>({});
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [quoteToConvert, setQuoteToConvert] = useState<Quote | null>(null);
+  /** When true, the Create Job flow will record the deposit as a received client payment right after job creation. */
+  const [convertMarkDepositPaid, setConvertMarkDepositPaid] = useState(false);
   const [drawerPendingTab, setDrawerPendingTab] = useState<"overview" | "bids" | null>(null);
   const consumeDrawerPendingTab = useCallback(() => setDrawerPendingTab(null), []);
   const kpiRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -807,11 +835,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, []);
 
   const quoteKanbanColumns = useMemo(() => {
-    const ids = ["draft", "in_survey", "bidding", "awaiting_customer", "accepted"];
+    const ids = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"];
     return ids.map((id) => ({
       id,
       title: statusLabels[id] ?? id,
-      color: id === "accepted" ? "bg-emerald-500" : id === "awaiting_customer" ? "bg-blue-500" : "bg-primary",
+      color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : "bg-primary",
       items: filteredQuotes.filter((q) => q.status === id),
     }));
   }, [filteredQuotes]);
@@ -856,29 +884,60 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       setKpiLoading(true);
       try {
         const supabase = getSupabase();
-        const base = supabase.from("quotes").select("status,total_value,created_at");
+        const base = supabase.from("quotes").select("status,total_value,deposit_required,created_at");
         const { data, error } = kpiDateBounds
           ? await base.gte("created_at", kpiDateBounds.from).lte("created_at", kpiDateBounds.to)
           : await base;
         if (error) throw error;
-        const rows = (data ?? []) as Array<{ status: string; total_value?: number | null }>;
-        const openStatuses = new Set(["draft", "in_survey", "bidding", "awaiting_customer", "accepted", "converted_to_job"]);
-        const totalQuotedValue = rows
-          .filter((r) => openStatuses.has(r.status))
+        const rows = (data ?? []) as Array<{
+          status: string;
+          total_value?: number | null;
+          deposit_required?: number | null;
+        }>;
+        const sumBy = (status: string) => rows
+          .filter((r) => r.status === status)
           .reduce((s, r) => s + (Number(r.total_value) || 0), 0);
-        const biddingCount = rows.filter((r) => r.status === "bidding").length;
-        const rejectedValue = rows
-          .filter((r) => r.status === "rejected")
-          .reduce((s, r) => s + (Number(r.total_value) || 0), 0);
+        const totalQuotedValue = rows.reduce((s, r) => s + (Number(r.total_value) || 0), 0);
+        const awaitingCustomerValue = sumBy("awaiting_customer");
+        const awaitingPaymentRows = rows.filter((r) => r.status === "awaiting_payment");
+        const awaitingDepositValue = awaitingPaymentRows.reduce((s, r) => {
+          const total = Number(r.total_value) || 0;
+          const deposit = Math.min(Number(r.deposit_required) || 0, total);
+          return s + deposit;
+        }, 0);
+        const awaitingRemainderValue = awaitingPaymentRows.reduce((s, r) => {
+          const total = Number(r.total_value) || 0;
+          const deposit = Math.min(Number(r.deposit_required) || 0, total);
+          return s + Math.max(total - deposit, 0);
+        }, 0);
+        const convertedValue = sumBy("converted_to_job");
         const convertedCount = rows.filter((r) => r.status === "converted_to_job").length;
         const totalCount = rows.length;
         const conversionPct = totalCount > 0 ? Math.round((convertedCount / totalCount) * 1000) / 10 : 0;
         if (!cancelled) {
-          setKpiSummary({ totalQuotedValue, biddingCount, rejectedValue, conversionPct, convertedCount, totalCount });
+          setKpiSummary({
+            totalQuotedValue,
+            awaitingCustomerValue,
+            awaitingDepositValue,
+            awaitingRemainderValue,
+            convertedValue,
+            conversionPct,
+            convertedCount,
+            totalCount,
+          });
         }
       } catch {
         if (!cancelled) {
-          setKpiSummary({ totalQuotedValue: 0, biddingCount: 0, rejectedValue: 0, conversionPct: 0, convertedCount: 0, totalCount: 0 });
+          setKpiSummary({
+            totalQuotedValue: 0,
+            awaitingCustomerValue: 0,
+            awaitingDepositValue: 0,
+            awaitingRemainderValue: 0,
+            convertedValue: 0,
+            conversionPct: 0,
+            convertedCount: 0,
+            totalCount: 0,
+          });
         }
       } finally {
         if (!cancelled) setKpiLoading(false);
@@ -890,23 +949,20 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, [kpiDateBounds]);
 
   const pipelineCount =
-    (statusCounts.draft ?? 0) +
-    (statusCounts.in_survey ?? 0) +
     (statusCounts.bidding ?? 0) +
     (statusCounts.awaiting_customer ?? 0) +
-    (statusCounts.accepted ?? 0);
+    (statusCounts.awaiting_payment ?? 0);
 
   /** Same tab strip pattern as Requests: underline + count badges. */
   const quoteStageTabs = useMemo(
     () => [
-      { id: "pipeline", label: "Active pipeline", count: pipelineCount },
+      { id: "pipeline", label: "Active", count: pipelineCount },
       { id: "draft", label: "Draft", count: statusCounts.draft ?? 0 },
       { id: "bidding", label: "Bidding", count: statusCounts.bidding ?? 0 },
       { id: "awaiting_customer", label: "Awaiting customer", count: statusCounts.awaiting_customer ?? 0 },
-      { id: "accepted", label: "Accepted", count: statusCounts.accepted ?? 0 },
-      { id: "rejected", label: "Rejected", count: statusCounts.rejected ?? 0 },
-      { id: "all", label: "All quotes", count: statusCounts.all ?? 0 },
+      { id: "awaiting_payment", label: "Awaiting payment", count: statusCounts.awaiting_payment ?? 0 },
       { id: "converted_to_job", label: "Converted", count: statusCounts.converted_to_job ?? 0 },
+      { id: "rejected", label: "Rejected", count: statusCounts.rejected ?? 0 },
     ],
     [statusCounts, pipelineCount],
   );
@@ -932,12 +988,23 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           formData.property_id && isUuid(String(formData.property_id).trim())
             ? String(formData.property_id).trim()
             : undefined;
+        let resolvedName = formData.client_name ?? "";
+        let resolvedEmail = formData.client_email ?? "";
+        if (formData.client_id?.trim()) {
+          const b = await resolveNominalBillingParty(getSupabase(), {
+            clientId: formData.client_id.trim(),
+            fallbackName: resolvedName,
+            fallbackEmail: resolvedEmail,
+          });
+          resolvedName = b.displayName;
+          resolvedEmail = b.documentEmail ?? resolvedEmail;
+        }
         const result = await createQuote({
           title: formData.title ?? "",
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
-          client_name: formData.client_name ?? "",
-          client_email: formData.client_email ?? "",
+          client_name: resolvedName,
+          client_email: resolvedEmail,
           ...(pid ? { property_id: pid } : {}),
           catalog_service_id: formData.catalog_service_id && isUuid(String(formData.catalog_service_id).trim())
             ? String(formData.catalog_service_id).trim()
@@ -965,6 +1032,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           email_attach_request_photos: formData.email_attach_request_photos ?? false,
           owner_id: profile?.id,
           owner_name: profile?.full_name,
+          duration_value: formData.duration_value ?? null,
+          duration_unit: (formData.duration_unit as QuoteDurationUnit | null | undefined) ?? null,
         });
 
         const manualLines = options?.manualLineItems;
@@ -1034,7 +1103,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   }, [selectedIds, profile?.id, refreshWithKpis]);
 
   const handleConfirmCreateJob = useCallback(
-    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => {
+    async (formData: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; depositOverrideReason?: string; job_type?: "fixed" | "hourly"; scope?: string }) => {
       const perfStart = performance.now();
       if (!quoteToConvert) return;
       const effectivePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
@@ -1071,6 +1140,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         const noDeposit = !!formData.createWithoutDeposit;
         const scheduledDeposit = noDeposit ? 0 : (quoteToConvert.deposit_required ?? 0);
         const scheduledFinal = Math.max(0, formData.client_price - scheduledDeposit);
+        const shouldRecordDepositPaid = convertMarkDepositPaid && !noDeposit && scheduledDeposit > 0.02;
         const quotePartnerId = formData.partner_id ?? quoteToConvert.partner_id;
         const quotePartnerName = (formData.partner_name ?? quoteToConvert.partner_name)?.trim();
         const hasPartner = !!(quotePartnerId?.trim() || quotePartnerName);
@@ -1127,12 +1197,38 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         });
 
         /** Draft invoice is created inside `createJob` (unified for quote + modal paths). */
+        const auditMetadata: Record<string, unknown> = { from_quote: quoteToConvert.reference };
+        if (noDeposit && (quoteToConvert.deposit_required ?? 0) > 0.02) {
+          auditMetadata.deposit_override = true;
+          auditMetadata.deposit_override_reason = formData.depositOverrideReason ?? "";
+          auditMetadata.deposit_waived_amount = quoteToConvert.deposit_required ?? 0;
+        }
         await Promise.all([
           updateQuote(quoteToConvert.id, { status: "converted_to_job" }),
-          logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: { from_quote: quoteToConvert.reference }, userId: profile?.id, userName: profile?.full_name }),
+          logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: auditMetadata, userId: profile?.id, userName: profile?.full_name }),
         ]);
-        setQuoteToConvert(null); setSelectedQuote(null);
-        toast.success(`Job ${job.reference} created`);
+
+        if (shouldRecordDepositPaid) {
+          try {
+            await createJobPayment({
+              job_id: job.id,
+              type: "customer_deposit",
+              amount: scheduledDeposit,
+              payment_date: new Date().toISOString().slice(0, 10),
+              payment_method: "bank_transfer",
+              note: `Deposit marked as paid from quote ${quoteToConvert.reference}`,
+              created_by: profile?.id,
+            });
+          } catch (err) {
+            console.error("Failed to record deposit payment on new job:", err);
+            toast.error("Job created, but failed to record the deposit as paid. You can add it manually from the job.");
+          }
+        }
+
+        setQuoteToConvert(null);
+        setConvertMarkDepositPaid(false);
+        setSelectedQuote(null);
+        toast.success(shouldRecordDepositPaid ? `Job ${job.reference} created & deposit recorded as paid` : `Job ${job.reference} created`);
         refreshWithKpis();
         router.push(`/jobs?jobId=${job.id}`);
         trackUiPerf("quotes.convert_to_job_ms", performance.now() - perfStart, { hasPartner: hasPartner });
@@ -1140,12 +1236,18 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         toast.error(getErrorMessage(err, "Failed to create job"));
       }
     },
-    [quoteToConvert, refreshWithKpis, profile?.id, profile?.full_name, router, confirmDespiteDuplicates]
+    [quoteToConvert, refreshWithKpis, profile?.id, profile?.full_name, router, confirmDespiteDuplicates, convertMarkDepositPaid]
   );
 
   const handleStatusChange = useCallback(
     async (quote: Quote, newStatus: string, opts?: { successToast?: string }): Promise<boolean> => {
       if (newStatus === "create_job") {
+        setConvertMarkDepositPaid(false);
+        setQuoteToConvert(quote);
+        return true;
+      }
+      if (newStatus === "mark_as_paid") {
+        setConvertMarkDepositPaid(true);
         setQuoteToConvert(quote);
         return true;
       }
@@ -1164,9 +1266,6 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         const updated = await updateQuote(quote.id, { status: newStatus as Quote["status"] });
         await logAudit({ entityType: "quote", entityId: quote.id, entityRef: quote.reference, action: "status_changed", fieldName: "status", oldValue: quote.status, newValue: newStatus, userId: profile?.id, userName: profile?.full_name });
         setSelectedQuote(updated);
-        if (newStatus === "accepted") {
-          setQuoteToConvert(updated);
-        }
         toast.success(opts?.successToast ?? `Quote moved to ${statusLabels[newStatus] ?? newStatus}`);
         refreshWithKpis();
         if (newStatus === "bidding" && quote.service_type) {
@@ -1262,22 +1361,24 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         minWidth: "8.5rem",
         sortable: true,
         sortOptions: quoteSortTextCol("client_name", "Client"),
-        render: (item) => (
-          <div className="flex items-start gap-2 min-w-0">
-            <Avatar
-              name={item.client_name}
-              size="sm"
-              className="shrink-0 mt-0.5"
-              src={item.source_account_logo_url?.trim() || undefined}
-            />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-text-primary truncate">{item.client_name}</p>
-              {item.source_account_name?.trim() ? (
-                <p className="text-[11px] text-text-tertiary truncate max-w-[200px]">{item.source_account_name}</p>
-              ) : null}
+        render: (item) => {
+          const accountLabel = item.source_account_name?.trim() || item.client_name?.trim() || "—";
+          const postcode = quoteListSubtitlePostcode(item);
+          return (
+            <div className="flex items-start gap-2 min-w-0">
+              <Avatar
+                name={accountLabel}
+                size="sm"
+                className="shrink-0 mt-0.5"
+                src={item.source_account_logo_url?.trim() || undefined}
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-text-primary truncate">{accountLabel}</p>
+                <p className="text-[11px] text-text-tertiary truncate max-w-[200px]">{postcode}</p>
+              </div>
             </div>
-          </div>
-        ),
+          );
+        },
       },
       {
         key: "service_type",
@@ -1327,34 +1428,81 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         );
       },
     };
-    const tail: Column<Quote>[] = [
-      {
-        key: "total_value",
-        label: "Amount",
-        minWidth: "5.5rem",
-        align: "right" as const,
-        sortable: true,
-        sortOptions: QUOTE_SORT_AMOUNT,
-        render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>,
+    const depositColumn: Column<Quote> = {
+      key: "deposit_required",
+      label: "Deposit",
+      minWidth: "5.5rem",
+      align: "right" as const,
+      sortable: true,
+      sortOptions: QUOTE_SORT_DEPOSIT,
+      render: (item) => {
+        const total = Number(item.total_value) || 0;
+        const dep = Math.min(Number(item.deposit_required) || 0, total);
+        const pct = Number(item.deposit_percent) || (total > 0 ? Math.round((dep / total) * 100) : 0);
+        if (!(dep > 0)) return <span className="text-sm text-text-tertiary">—</span>;
+        return (
+          <div className="flex flex-col items-end">
+            <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(dep)}</span>
+            {pct > 0 ? (
+              <span className="text-[10px] text-text-tertiary tabular-nums">{pct}%</span>
+            ) : null}
+          </div>
+        );
       },
-      {
-        key: "margin_percent",
-        label: "Margin",
-        minWidth: "4.75rem",
-        sortable: true,
-        sortOptions: QUOTE_SORT_MARGIN,
-        render: (item) => item.margin_percent ? (
-          <span className={`text-xs font-semibold ${item.margin_percent >= 30 ? "text-emerald-600" : item.margin_percent >= 20 ? "text-amber-600" : "text-red-500"}`}>
-            {item.margin_percent}%
-          </span>
-        ) : <span className="text-xs text-text-tertiary">—</span>,
+    };
+    const finalBalanceColumn: Column<Quote> = {
+      key: "final_balance",
+      label: "Final balance",
+      minWidth: "6rem",
+      align: "right" as const,
+      /** Column is non-sortable (derived). Override the default `th uppercase` so it matches the mixed case of sortable headers. */
+      headerClassName: "normal-case",
+      render: (item) => {
+        const total = Number(item.total_value) || 0;
+        const dep = Math.min(Number(item.deposit_required) || 0, total);
+        const remainder = Math.max(0, total - dep);
+        const pct = total > 0 ? Math.round((remainder / total) * 100) : 0;
+        if (total <= 0) return <span className="text-sm text-text-tertiary">—</span>;
+        return (
+          <div className="flex flex-col items-end">
+            <span className="text-sm font-semibold text-text-primary tabular-nums">{formatCurrency(remainder)}</span>
+            {pct > 0 && pct < 100 ? (
+              <span className="text-[10px] text-text-tertiary tabular-nums">{pct}%</span>
+            ) : null}
+          </div>
+        );
       },
-      {
-        key: "actions", label: "", width: "40px",
-        render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" />,
-      },
-    ];
-    return status === "bidding" ? [...lead, avgBidColumn, ...tail] : [...lead, ...tail];
+    };
+    const amountColumn: Column<Quote> = {
+      key: "total_value",
+      label: "Amount",
+      minWidth: "5.5rem",
+      align: "right" as const,
+      sortable: true,
+      sortOptions: QUOTE_SORT_AMOUNT,
+      render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(Number(item.total_value) || 0)}</span>,
+    };
+    const marginColumn: Column<Quote> = {
+      key: "margin_percent",
+      label: "Margin",
+      minWidth: "4.75rem",
+      sortable: true,
+      sortOptions: QUOTE_SORT_MARGIN,
+      render: (item) => item.margin_percent ? (
+        <span className={`text-xs font-semibold ${item.margin_percent >= 30 ? "text-emerald-600" : item.margin_percent >= 20 ? "text-amber-600" : "text-red-500"}`}>
+          {item.margin_percent}%
+        </span>
+      ) : <span className="text-xs text-text-tertiary">—</span>,
+    };
+    const actionsColumn: Column<Quote> = {
+      key: "actions", label: "", width: "40px",
+      render: () => <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors" />,
+    };
+    if (status === "bidding") return [...lead, avgBidColumn, amountColumn, marginColumn, actionsColumn];
+    if (status === "awaiting_customer" || status === "awaiting_payment") {
+      return [...lead, amountColumn, depositColumn, finalBalanceColumn, marginColumn, actionsColumn];
+    }
+    return [...lead, amountColumn, marginColumn, actionsColumn];
   }, [status, avgBidByQuoteId]);
 
   return (
@@ -1452,32 +1600,52 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           </div>
         </PageHeader>
 
-        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <KpiCard
             title="Total Quoted"
             value={kpiSummary.totalQuotedValue}
             format="currency"
             icon={BarChart3}
             accent="primary"
-            description="Includes Awaiting Customer value"
+            description="Total value of all quotes in range"
             descriptionAsTooltip
           />
           <KpiCard
-            title="Bidding"
-            value={kpiSummary.biddingCount}
-            format="number"
-            icon={FileText}
-            accent="blue"
-            description="No. of quotes in bidding"
+            title="Awaiting Customer"
+            value={kpiSummary.awaitingCustomerValue}
+            format="currency"
+            icon={Mail}
+            accent="amber"
+            description="Quotes sent, waiting for customer response"
             descriptionAsTooltip
           />
-          <KpiCard title="Rejected Value" value={kpiSummary.rejectedValue} format="currency" icon={XCircle} accent="amber" />
+          <KpiCard
+            title="Awaiting Payment"
+            value={kpiSummary.awaitingDepositValue}
+            format="currency"
+            icon={FileText}
+            accent="blue"
+            description="Main number is the deposit still to be collected. 'To receive later' is the remainder due after the deposit."
+            descriptionAsTooltip
+            secondaryLabel="To receive later"
+            secondaryValue={kpiSummary.awaitingRemainderValue}
+            secondaryFormat="currency"
+          />
+          <KpiCard
+            title="Converted"
+            value={kpiSummary.convertedValue}
+            format="currency"
+            icon={Briefcase}
+            accent="emerald"
+            description="Value of quotes converted to jobs"
+            descriptionAsTooltip
+          />
           <KpiCard
             title="Conversion Rate"
             value={quoteToJobConversion.pct}
             format="percent"
-            icon={Briefcase}
-            accent="emerald"
+            icon={BarChart3}
+            accent="amber"
             description={
               quoteToJobConversion.total === 0
                 ? "No quotes yet"
@@ -1573,7 +1741,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                   <span className="text-xs font-medium text-white/80">{selectedIds.size} selected</span>
                   <BulkBtn label="Bidding" onClick={() => handleBulkStatusChange("bidding")} variant="default" />
                   <BulkBtn label="Awaiting Customer" onClick={() => handleBulkStatusChange("awaiting_customer")} variant="warning" />
-                  <BulkBtn label="Accept" onClick={() => handleBulkStatusChange("accepted")} variant="success" />
+                  <BulkBtn label="Awaiting payment" onClick={() => handleBulkStatusChange("awaiting_payment")} variant="success" />
                   <BulkBtn label="Reject" onClick={() => handleBulkStatusChange("rejected")} variant="danger" />
                   <BulkBtn label="Archive" onClick={handleBulkArchive} variant="warning" />
                 </div>
@@ -1618,7 +1786,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         <CreateJobFromQuoteModal
           key={quoteToConvert.id}
           quote={quoteToConvert}
-          onClose={() => setQuoteToConvert(null)}
+          markDepositAsPaid={convertMarkDepositPaid}
+          onClose={() => {
+            setQuoteToConvert(null);
+            setConvertMarkDepositPaid(false);
+          }}
           onSubmit={handleConfirmCreateJob}
         />
       ) : null}
@@ -1696,12 +1868,12 @@ function PartnerBidMiniDash({
   );
 }
 
-/** Quote pipeline without Survey — Draft → Bids → Awaiting → Won (in_survey maps to Draft). */
+/** Quote pipeline without Survey — Draft → Bids → Awaiting customer → Awaiting payment (in_survey maps to Draft). */
 const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
   { id: "draft", label: "Draft", short: "Draft", icon: ClipboardList },
   { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
-  { id: "awaiting_customer", label: "Awaiting customer", short: "Awaiting", icon: UserRound },
-  { id: "accepted", label: "Accepted", short: "Won", icon: CheckCircle2 },
+  { id: "awaiting_customer", label: "Awaiting customer", short: "Awaiting customer", icon: UserRound },
+  { id: "awaiting_payment", label: "Awaiting payment", short: "Awaiting payment", icon: CheckCircle2 },
 ];
 
 const QUOTE_NAVY = "#020040";
@@ -1713,7 +1885,7 @@ function QuotePipelineStepper({ status }: { status: string }) {
     in_survey: 0,
     bidding: 1,
     awaiting_customer: 2,
-    accepted: 3,
+    awaiting_payment: 3,
     rejected: -1,
     converted_to_job: 5,
   };
@@ -1878,8 +2050,19 @@ function QuoteDetailDrawer({
     property_address: "",
   });
   const [savingClient, setSavingClient] = useState(false);
+  /** Account picker in the "Account on this quote" panel: full list for the dropdown. */
+  const [drawerAccountRows, setDrawerAccountRows] = useState<Account[]>([]);
+  /** Draft selection in the account picker (persisted on Save). Empty string = no account. */
+  const [drawerAccountDraftId, setDrawerAccountDraftId] = useState("");
+  /** Yes = ClientAddressPicker (client becomes the primary contact). No = free-text site address, no contact client. */
+  const [drawerAddClient, setDrawerAddClient] = useState(true);
+  /** Free-text address used when "Add contact client" is off. */
+  const [drawerManualAddress, setDrawerManualAddress] = useState("");
   // Send to customer / preview — must stay above useLayoutEffect (Rules of Hooks).
   const [depositPercent, setDepositPercent] = useState("50");
+  /** "percent" = deposit % of sell total; "amount" = fixed £ (stored on quote as `deposit_required` + inferred %). */
+  const [depositInputMode, setDepositInputMode] = useState<"percent" | "amount">("percent");
+  const [depositAmountInput, setDepositAmountInput] = useState("");
   const [startDate1, setStartDate1] = useState("");
   const [startDate2, setStartDate2] = useState("");
   const [customMessage, setCustomMessage] = useState("");
@@ -1894,19 +2077,23 @@ function QuoteDetailDrawer({
   const [proposalDetailsExpanded, setProposalDetailsExpanded] = useState(false);
   /** Earliest selectable day for proposed start dates (local calendar day). */
   const minProposalStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
-
   useLayoutEffect(() => {
+    const lateStage =
+      quote.status === "awaiting_customer" ||
+      quote.status === "awaiting_payment" ||
+      quote.status === "converted_to_job" ||
+      quote.status === "rejected";
     if (pendingInitialTab === "bids" || pendingInitialTab === "overview") {
-      setTab(pendingInitialTab);
+      setTab(pendingInitialTab === "bids" && lateStage ? "overview" : pendingInitialTab);
       lastTabInitQuoteIdRef.current = quote.id;
       onConsumePendingInitialTab?.();
       return;
     }
     if (lastTabInitQuoteIdRef.current !== quote.id) {
       lastTabInitQuoteIdRef.current = quote.id;
-      setTab(quote.quote_type === "partner" ? "bids" : "overview");
+      setTab(quote.quote_type === "partner" && !lateStage ? "bids" : "overview");
     }
-  }, [quote.id, quote.quote_type, pendingInitialTab, onConsumePendingInitialTab]);
+  }, [quote.id, quote.quote_type, quote.status, pendingInitialTab, onConsumePendingInitialTab]);
 
   // Only when switching to another quote — not when the same quote is refreshed after send (keeps "Resend email" label).
   useEffect(() => {
@@ -1936,6 +2123,10 @@ function QuoteDetailDrawer({
       quote.deposit_percent != null && Number.isFinite(Number(quote.deposit_percent))
         ? String(Number(quote.deposit_percent))
         : String(inferDepositPercentFromLegacy(Number(quote.deposit_required ?? 0), Number(quote.total_value ?? 0))),
+    );
+    setDepositInputMode("percent");
+    setDepositAmountInput(
+      (Math.round((Number(quote.deposit_required ?? 0) || 0) * 100) / 100).toFixed(2),
     );
     setStartDate1(normalizeCalendarDateToYmd(bidPayloadTrimmedString(quote.start_date_option_1 as unknown)) || "");
     setStartDate2(normalizeCalendarDateToYmd(bidPayloadTrimmedString(quote.start_date_option_2 as unknown)) || "");
@@ -1974,6 +2165,10 @@ function QuoteDetailDrawer({
               email: mainEmail || "—",
               financeEmail: feRaw.length > 0 ? feRaw : null,
             });
+            /** Default the Customer email field to the account primary email when the quote has none yet. */
+            if (mainEmail && !bidPayloadTrimmedString(quote.client_email as unknown)) {
+              setSendEmail((prev) => (prev?.trim() ? prev : mainEmail));
+            }
           }
         } catch {
           if (!cancelled) setLinkedAccountPreview(null);
@@ -2011,6 +2206,10 @@ function QuoteDetailDrawer({
               email: mainEmail || "—",
               financeEmail: feRaw.length > 0 ? feRaw : null,
             });
+            /** Property-linked flow: same default for the Customer email when the quote has none yet. */
+            if (mainEmail && !bidPayloadTrimmedString(quote.client_email as unknown)) {
+              setSendEmail((prev) => (prev?.trim() ? prev : mainEmail));
+            }
           }
         } catch {
           if (!cancelled) setLinkedAccountPreview(null);
@@ -2026,8 +2225,50 @@ function QuoteDetailDrawer({
     };
   }, [quote.client_id, quote.property_id, quoteClientPick.client_id, quote.updated_at]);
 
+  /** Lazily load the accounts list the first time the Account panel is opened. */
   useEffect(() => {
-    if (quote.status === "accepted" || quote.status === "converted_to_job") {
+    if (!clientOnQuoteOpen || drawerAccountRows.length > 0) return;
+    let cancelled = false;
+    void listAccounts({ page: 1, pageSize: 500, status: "all" })
+      .then((r) => { if (!cancelled) setDrawerAccountRows(r.data ?? []); })
+      .catch(() => { if (!cancelled) setDrawerAccountRows([]); });
+    return () => { cancelled = true; };
+  }, [clientOnQuoteOpen, drawerAccountRows.length]);
+
+  /** Infer the account id currently linked to this quote (via client OR property). */
+  useEffect(() => {
+    let cancelled = false;
+    const clientId = quote.client_id?.trim();
+    const propId = quote.property_id?.trim();
+    void (async () => {
+      try {
+        if (clientId) {
+          const client = await getClient(clientId);
+          const sid = client?.source_account_id?.trim();
+          if (!cancelled) setDrawerAccountDraftId(sid || "");
+          return;
+        }
+        if (propId) {
+          const prop = await getAccountProperty(propId);
+          if (!cancelled) setDrawerAccountDraftId(prop?.account_id?.trim() || "");
+          return;
+        }
+        if (!cancelled) setDrawerAccountDraftId("");
+      } catch {
+        if (!cancelled) setDrawerAccountDraftId("");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [quote.id, quote.client_id, quote.property_id, quote.updated_at]);
+
+  /** Keep manual-address draft aligned with what's currently stored when toggling to "No client". */
+  useEffect(() => {
+    setDrawerManualAddress(bidPayloadTrimmedString(quote.property_address as unknown));
+    setDrawerAddClient(Boolean(quote.client_id?.trim()));
+  }, [quote.id, quote.client_id, quote.property_address, quote.updated_at]);
+
+  useEffect(() => {
+    if (quote.status === "awaiting_payment" || quote.status === "converted_to_job") {
       getJobByQuoteId(quote.id).then(setConvertedJob);
     } else {
       setConvertedJob(null);
@@ -2050,7 +2291,7 @@ function QuoteDetailDrawer({
           notes: bidPayloadTrimmedString(li.notes as unknown),
         }),
       );
-      const padStatuses = ["draft", "in_survey", "bidding", "awaiting_customer"];
+      const padStatuses = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"];
       if (rows.length < 2 && padStatuses.includes(q.status)) {
         const firstLine = proposalFirstLineLabel(q);
         if (rows.length === 0) {
@@ -2102,14 +2343,13 @@ function QuoteDetailDrawer({
   const loadBids = useCallback(
     async (quoteId: string) => {
       setBidsLoading(true);
-      let clearedBidsLoadingEarly = false;
       try {
         const list = await getBidsByQuoteId(quoteId);
         if (quoteRef.current.id !== quoteId) return;
         setBids(list);
         setSelectedReviewBidId((prev) => (prev && list.some((b) => b.id === prev) ? prev : null));
       } finally {
-        if (quoteRef.current.id === quoteId && !clearedBidsLoadingEarly) setBidsLoading(false);
+        if (quoteRef.current.id === quoteId) setBidsLoading(false);
       }
     },
     [],
@@ -2233,7 +2473,18 @@ function QuoteDetailDrawer({
 
   const proposalMarginAbs = lineTotal - effectiveProposalPartnerTotal;
   const proposalSummaryMarginPct = marginPctOnSell(lineTotal, effectiveProposalPartnerTotal);
-  const proposalDepositAmount = depositAmountFromPercent(lineTotal, Number(depositPercent));
+  /** Preview £ matching the active deposit input mode (for hints and save). */
+  const proposalDepositAmount = useMemo(() => {
+    if (depositInputMode === "amount") {
+      const raw = Math.max(0, Number(depositAmountInput) || 0);
+      return lineTotal > 0 ? Math.min(lineTotal, Math.round(raw * 100) / 100) : 0;
+    }
+    return depositAmountFromPercent(lineTotal, Number(depositPercent));
+  }, [depositInputMode, depositAmountInput, lineTotal, depositPercent]);
+  const proposalInferredDepositPercent = useMemo(() => {
+    if (lineTotal < 0.01) return 0;
+    return inferDepositPercentFromLegacy(proposalDepositAmount, lineTotal);
+  }, [lineTotal, proposalDepositAmount]);
   const partnerBasisLines01 = proposalLine0Partner + proposalLine1Partner;
   const canUseProposalMarginSlider = partnerBasisLines01 > 0;
 
@@ -2243,11 +2494,13 @@ function QuoteDetailDrawer({
     lineItems.some((li) => bidPayloadTrimmedString(li.description as unknown).length > 0);
   const sendStep2Ready = !!startDate1 || !!startDate2;
   const sendDepositPercentNum = Number(depositPercent);
-  const sendStep3Ready =
-    sendDepositPercentNum >= 0 &&
-    sendDepositPercentNum <= 100 &&
-    !Number.isNaN(sendDepositPercentNum) &&
-    bidPayloadTrimmedString(sendEmail as unknown).includes("@");
+  const sendDepositStepReady =
+    depositInputMode === "amount"
+      ? Number.isFinite(Number(depositAmountInput)) && !Number.isNaN(Number(depositAmountInput)) && Number(depositAmountInput) >= 0
+      : sendDepositPercentNum >= 0 &&
+        sendDepositPercentNum <= 100 &&
+        !Number.isNaN(sendDepositPercentNum);
+  const sendStep3Ready = sendDepositStepReady && bidPayloadTrimmedString(sendEmail as unknown).includes("@");
 
   /** Recipient preview in “Client on this quote” header (matches send email field). */
   const confirmSendEmail = useMemo(
@@ -2262,11 +2515,26 @@ function QuoteDetailDrawer({
     [quoteClientPick.client_name, quote.client_name],
   );
 
-  const drawerTabs = [
-    { id: "overview", label: "Review & Send" },
-    { id: "bids", label: "Bids" },
-    { id: "history", label: "History" },
-  ];
+  /**
+   * Late-stage statuses expose a read-only "Details" snapshot of the quote (what was sent to the customer)
+   * instead of the Bids board — bids aren't actionable after the quote moved past Bidding.
+   */
+  const isLateStageQuote =
+    quote.status === "awaiting_customer" ||
+    quote.status === "awaiting_payment" ||
+    quote.status === "converted_to_job" ||
+    quote.status === "rejected";
+  const drawerTabs = isLateStageQuote
+    ? [
+        { id: "overview", label: "Review & Send" },
+        { id: "details", label: "Details" },
+        { id: "history", label: "History" },
+      ]
+    : [
+        { id: "overview", label: "Review & Send" },
+        { id: "bids", label: "Bids" },
+        { id: "history", label: "History" },
+      ];
 
   const guidance = getStageGuidance(quote.status);
 
@@ -2274,8 +2542,11 @@ function QuoteDetailDrawer({
     setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "0", partnerUnitCost: "0", notes: "" }]);
   const removeLineItem = (idx: number) => {
     setLineItems((prev) => {
-      if (prev.length <= 2 && ["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status)) {
-        toast.info("Keep at least two lines (type of work and materials). Remove extra rows only.");
+      if (
+        prev.length <= 1 &&
+        ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status)
+      ) {
+        toast.info("Keep at least the labour line.");
         return prev;
       }
       return prev.filter((_, i) => i !== idx);
@@ -2319,7 +2590,6 @@ function QuoteDetailDrawer({
     const d2Raw = opts?.startDate2Override !== undefined ? opts.startDate2Override : startDate2;
     const d1 = normalizeCalendarDateToYmd(d1Raw) || "";
     const d2 = normalizeCalendarDateToYmd(d2Raw) || "";
-    const depPctStr = opts?.depositOverride !== undefined ? opts.depositOverride : depositPercent;
     const partnerTotalFromLines = lines.reduce((s, li) => s + linePartnerSubtotal(li), 0);
     const partnerTotal = opts?.partnerCostOverride ?? partnerTotalFromLines;
 
@@ -2341,8 +2611,29 @@ function QuoteDetailDrawer({
     const lineTot = lines.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
     const marginPct =
       lineTot > 0 && partnerTotal >= 0 ? Math.round(((lineTot - partnerTotal) / lineTot) * 1000) / 10 : 0;
-    const depositPct = clampDepositPercent(Number(depPctStr) || 0);
-    const depositRequiredAmount = depositAmountFromPercent(lineTot, depositPct);
+    let depositPct: number;
+    let depositRequiredAmount: number;
+    if (opts?.depositOverride !== undefined) {
+      depositPct = clampDepositPercent(Number(opts.depositOverride) || 0);
+      depositRequiredAmount = depositAmountFromPercent(lineTot, depositPct);
+    } else if (depositInputMode === "amount") {
+      const raw = Math.max(0, Number(depositAmountInput) || 0);
+      depositRequiredAmount = lineTot > 0 ? Math.min(lineTot, Math.round(raw * 100) / 100) : 0;
+      depositPct = inferDepositPercentFromLegacy(depositRequiredAmount, lineTot);
+    } else {
+      depositPct = clampDepositPercent(Number(depositPercent) || 0);
+      depositRequiredAmount = depositAmountFromPercent(lineTot, depositPct);
+    }
+
+    let clientNamePatch: { client_name?: string } = {};
+    if (quote.client_id?.trim()) {
+      const b = await resolveNominalBillingParty(supabase, {
+        clientId: quote.client_id.trim(),
+        fallbackName: quote.client_name,
+        fallbackEmail: quote.client_email,
+      });
+      clientNamePatch = { client_name: b.displayName };
+    }
 
     return updateQuote(quote.id, {
       partner_cost: partnerTotal,
@@ -2357,6 +2648,7 @@ function QuoteDetailDrawer({
       client_email: bidPayloadTrimmedString(sendEmail as unknown),
       email_custom_message: bidPayloadTrimmedString(customMessage as unknown) || null,
       email_attach_request_photos: emailAttachRequestPhotos,
+      ...clientNamePatch,
     });
   };
 
@@ -2376,6 +2668,8 @@ function QuoteDetailDrawer({
       setStartDate1(d1);
       setStartDate2(d2);
       setDepositPercent(depPct);
+      setDepositInputMode("percent");
+      setDepositAmountInput("");
       setProposalScalePercent(100);
       setSelectedReviewBidId(bid.id);
       setProposalSaving(true);
@@ -2414,6 +2708,8 @@ function QuoteDetailDrawer({
           ? String(Number(q.deposit_percent))
           : String(inferDepositPercentFromLegacy(Number(q.deposit_required ?? 0), Number(q.total_value ?? 0))),
       );
+      setDepositInputMode("percent");
+      setDepositAmountInput((Math.round((Number(q.deposit_required ?? 0) || 0) * 100) / 100).toFixed(2));
       setStartDate1(normalizeCalendarDateToYmd(bidPayloadTrimmedString(q.start_date_option_1 as unknown)) || "");
       setStartDate2(normalizeCalendarDateToYmd(bidPayloadTrimmedString(q.start_date_option_2 as unknown)) || "");
       setProposalScalePercent(100);
@@ -2584,8 +2880,13 @@ function QuoteDetailDrawer({
           >
             <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
               <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
-                <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total Price</p>
+                <p className="whitespace-nowrap text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total Price</p>
                 <p className="mt-0.5 text-base font-bold tabular-nums leading-none text-text-primary">{formatCurrency(lineTotal)}</p>
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[9px] tabular-nums text-text-tertiary">
+                  <span className="shrink-0 whitespace-nowrap rounded-sm bg-emerald-100 px-1 py-[1px] text-[8px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                    Inc VAT
+                  </span>
+                </p>
               </div>
               <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
                 <div className="flex items-center gap-1 text-text-tertiary">
@@ -2629,13 +2930,6 @@ function QuoteDetailDrawer({
                 </div>
               ) : null}
 
-              {quote.quote_type !== "partner" ? (
-                <div className="flex items-start gap-2 rounded-lg border border-border-light/70 bg-surface-hover/50 px-2.5 py-1.5">
-                  <p className="text-[10px] font-medium text-text-secondary">Manual quote</p>
-                  <FixfyHintIcon text="No partner bid stats. Set sell and costs in Customer proposal below." />
-                </div>
-              ) : null}
-
               <div
                 key={`client-on-quote-${quote.id}`}
                 className="rounded-lg border border-border-light bg-card shadow-sm dark:border-border dark:bg-card"
@@ -2643,51 +2937,37 @@ function QuoteDetailDrawer({
                 <div className="flex items-start gap-2 px-2.5 pt-2.5 pb-1 sm:px-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client on this quote</p>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Account on this quote</p>
                       <FixfyHintIcon
                         text={
                           quote.status === "awaiting_customer"
-                            ? "The PDF uses the client and property shown here."
-                            : "Recipients and property for this proposal — expand below to change."
+                            ? "The PDF uses the account and property shown here."
+                            : "Recipient account and property for this proposal — expand below to change."
                         }
                       />
                     </div>
                     <p className="mt-0.5 text-[10px] leading-snug text-text-tertiary">
                       {quote.status === "awaiting_customer"
-                        ? "PDF will be sent to the addresses below."
-                        : "This quote will be sent to the client email below."}
+                        ? "PDF will be sent to the account below."
+                        : "This quote will be sent to the account email below."}
                     </p>
                   </div>
                   <button
                     type="button"
-                    className="shrink-0 rounded-md p-1 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-secondary"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border-light bg-card px-2 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-surface-hover"
                     aria-expanded={clientOnQuoteOpen}
-                    aria-label={clientOnQuoteOpen ? "Hide change client" : "Change client or property"}
+                    aria-label={clientOnQuoteOpen ? "Hide change account" : "Change account or property"}
                     onClick={() => setClientOnQuoteOpen((o) => !o)}
                   >
+                    <span>{clientOnQuoteOpen ? "Close" : "Change"}</span>
                     <ChevronDown
-                      className={cn("h-4 w-4 transition-transform duration-200", clientOnQuoteOpen && "rotate-180")}
+                      className={cn("h-3.5 w-3.5 transition-transform duration-200", clientOnQuoteOpen && "rotate-180")}
                       aria-hidden
                     />
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 gap-2 px-2.5 pb-2.5 sm:grid-cols-2 sm:gap-2.5 sm:px-3">
-                  <div className="min-w-0 rounded-md border border-border-light/90 bg-surface-hover/35 px-2 py-2 dark:bg-surface-secondary/20">
-                    <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Contact</p>
-                    <div className="mt-1.5 flex items-start gap-2">
-                      <Avatar
-                        name={confirmClientName || "?"}
-                        size="sm"
-                        className="shrink-0"
-                        src={quote.source_account_logo_url?.trim() || undefined}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold leading-tight text-text-primary">{confirmClientName || "—"}</p>
-                        <p className="mt-0.5 break-all text-[11px] leading-snug text-text-secondary">{confirmSendEmail || "—"}</p>
-                      </div>
-                    </div>
-                  </div>
+                <div className="px-2.5 pb-2.5 sm:px-3">
                   <div className="min-w-0 rounded-md border border-border-light/90 bg-surface-hover/35 px-2 py-2 dark:bg-surface-secondary/20">
                     <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Account</p>
                     <div className="mt-1.5 flex items-start gap-2">
@@ -2727,15 +3007,84 @@ function QuoteDetailDrawer({
                 {clientOnQuoteOpen ? (
                   <div className="space-y-3 border-t border-dashed border-border-light px-2.5 pb-3 pt-2.5 sm:px-3 dark:border-border">
                     <div className="flex items-center gap-1.5">
-                      <p className="text-[11px] font-medium text-text-secondary">Change client or property</p>
-                      <FixfyHintIcon text="Change the client or property if you need to send the proposal to someone else." />
+                      <p className="text-[11px] font-medium text-text-secondary">Change account, client or property</p>
+                      <FixfyHintIcon text="Pick a different account. You can optionally attach a contact client; otherwise we save just the site address." />
                     </div>
-                    <ClientAddressPicker
-                      value={quoteClientPick}
-                      onChange={setQuoteClientPick}
-                      labelClient="Client"
-                      labelAddress="Property address"
-                    />
+
+                    <div>
+                      <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        Account
+                      </label>
+                      <Select
+                        value={drawerAccountDraftId}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setDrawerAccountDraftId(next);
+                          setQuoteClientPick({ client_name: "", property_address: "" });
+                        }}
+                        options={[
+                          { value: "", label: "— No account —" },
+                          ...drawerAccountRows.map((a) => ({
+                            value: a.id,
+                            label:
+                              bidPayloadTrimmedString(a.company_name as unknown) ||
+                              bidPayloadTrimmedString(a.contact_name as unknown) ||
+                              a.id,
+                          })),
+                        ]}
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border-light bg-surface-hover/40 px-2.5 py-2 dark:bg-surface-secondary/20">
+                      <p className="text-[11px] font-medium text-text-secondary">Add a contact client to this quote?</p>
+                      <div className="ml-auto inline-flex overflow-hidden rounded-md border border-border-light">
+                        <button
+                          type="button"
+                          className={cn(
+                            "px-2.5 py-1 text-[11px] font-medium transition-colors",
+                            drawerAddClient ? "bg-primary text-white" : "bg-card text-text-secondary hover:bg-surface-hover",
+                          )}
+                          onClick={() => setDrawerAddClient(true)}
+                        >
+                          Yes
+                        </button>
+                        <button
+                          type="button"
+                          className={cn(
+                            "border-l border-border-light px-2.5 py-1 text-[11px] font-medium transition-colors",
+                            !drawerAddClient ? "bg-primary text-white" : "bg-card text-text-secondary hover:bg-surface-hover",
+                          )}
+                          onClick={() => setDrawerAddClient(false)}
+                        >
+                          No
+                        </button>
+                      </div>
+                    </div>
+
+                    {drawerAddClient ? (
+                      <ClientAddressPicker
+                        value={quoteClientPick}
+                        onChange={setQuoteClientPick}
+                        labelClient="Client"
+                        labelAddress="Property address"
+                        restrictToSourceAccountId={drawerAccountDraftId.trim() || undefined}
+                      />
+                    ) : (
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                          Property / site address
+                        </label>
+                        <Input
+                          value={drawerManualAddress}
+                          onChange={(e) => setDrawerManualAddress(e.target.value)}
+                          placeholder="Street, city, postcode…"
+                        />
+                        <p className="mt-1 text-[10px] text-text-tertiary">
+                          No contact client will be stored. The account label above will be used as the recipient name.
+                        </p>
+                      </div>
+                    )}
+
                     <Button
                       type="button"
                       size="sm"
@@ -2743,36 +3092,123 @@ function QuoteDetailDrawer({
                       disabled={savingClient}
                       icon={savingClient ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined}
                       onClick={async () => {
-                        if (!quoteClientPick.client_id || !quoteClientPick.property_address?.trim()) {
-                          toast.error("Select a client and property address");
+                        const accountRow = drawerAccountRows.find((a) => a.id === drawerAccountDraftId);
+                        const accountDisplayName =
+                          bidPayloadTrimmedString(accountRow?.company_name as unknown) ||
+                          bidPayloadTrimmedString(accountRow?.contact_name as unknown) ||
+                          "";
+                        if (drawerAddClient) {
+                          if (!quoteClientPick.client_id || !quoteClientPick.property_address?.trim()) {
+                            toast.error("Select a client and property address");
+                            return;
+                          }
+                        } else if (!drawerManualAddress.trim()) {
+                          toast.error("Enter a site address (or switch the toggle to Yes to pick a client).");
                           return;
                         }
                         setSavingClient(true);
                         try {
-                          const updated = await updateQuote(quote.id, {
-                            client_id: quoteClientPick.client_id,
-                            client_address_id: quoteClientPick.client_address_id,
-                            client_name: quoteClientPick.client_name,
-                            client_email: quoteClientPick.client_email ?? "",
-                            property_address: quoteClientPick.property_address,
-                          });
+                          let updates: Partial<Quote>;
+                          if (drawerAddClient) {
+                            updates = {
+                              client_id: quoteClientPick.client_id,
+                              client_address_id: quoteClientPick.client_address_id,
+                              client_name: quoteClientPick.client_name,
+                              client_email: quoteClientPick.client_email ?? "",
+                              property_address: quoteClientPick.property_address,
+                            };
+                            if (quoteClientPick.client_id?.trim()) {
+                              const b = await resolveNominalBillingParty(getSupabase(), {
+                                clientId: quoteClientPick.client_id.trim(),
+                                fallbackName: quoteClientPick.client_name,
+                                fallbackEmail: quoteClientPick.client_email,
+                              });
+                              updates = {
+                                ...updates,
+                                client_name: b.displayName,
+                                client_email: b.documentEmail ?? updates.client_email,
+                              };
+                            }
+                          } else {
+                            const addr = drawerManualAddress.trim();
+                            /**
+                             * Account-only flow: ensure an AccountProperty exists so the preview can resolve
+                             * account → account_id (falls back to free-text if the account isn't selected).
+                             */
+                            let resolvedPropertyId: string | null = null;
+                            const accountId = drawerAccountDraftId.trim();
+                            if (accountId) {
+                              try {
+                                const existing = await listAccountProperties({
+                                  accountId,
+                                  page: 1,
+                                  pageSize: 50,
+                                  search: addr.slice(0, 40),
+                                });
+                                const needle = addr.toLowerCase();
+                                const match = (existing.data ?? []).find(
+                                  (p) =>
+                                    bidPayloadTrimmedString(p.full_address as unknown).toLowerCase() === needle,
+                                );
+                                if (match) {
+                                  resolvedPropertyId = match.id;
+                                } else {
+                                  const created = await createAccountProperty({
+                                    account_id: accountId,
+                                    name: addr.split(",")[0]?.trim() || "Site",
+                                    full_address: addr,
+                                    property_type: "Other",
+                                  });
+                                  resolvedPropertyId = created.id;
+                                }
+                              } catch (e) {
+                                console.error("Ensure account property failed", e);
+                              }
+                            }
+                            updates = {
+                              client_id: null as unknown as undefined,
+                              client_address_id: null as unknown as undefined,
+                              client_name: accountDisplayName || quote.client_name || "Account",
+                              client_email: "",
+                              property_address: addr,
+                              ...(resolvedPropertyId ? { property_id: resolvedPropertyId } : {}),
+                            };
+                          }
+                          const updated = await updateQuote(quote.id, updates);
                           onQuoteUpdate?.(updated);
                           setSendEmail(bidPayloadTrimmedString(updated.client_email as unknown));
-                          toast.success("Client updated on this quote");
+                          if (!drawerAddClient && accountRow) {
+                            /**
+                             * Set the preview optimistically so the header card reflects the picked account
+                             * even if we could not create/find an AccountProperty (e.g. stale PostgREST schema cache).
+                             */
+                            const mainEmail = bidPayloadTrimmedString(accountRow.email as unknown);
+                            const feRaw = bidPayloadTrimmedString(accountRow.finance_email as unknown);
+                            setLinkedAccountPreview({
+                              companyName: accountDisplayName || "—",
+                              email: mainEmail || "—",
+                              financeEmail: feRaw.length > 0 ? feRaw : null,
+                            });
+                            /** No contact client: push the account primary email into the Customer email field. */
+                            if (mainEmail) setSendEmail(mainEmail);
+                          }
+                          toast.success(drawerAddClient ? "Client updated on this quote" : "Account updated on this quote");
+                          setClientOnQuoteOpen(false);
                         } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "Failed to update client");
+                          toast.error(e instanceof Error ? e.message : "Failed to update quote");
                         } finally {
                           setSavingClient(false);
                         }
                       }}
                     >
-                      {savingClient ? "Saving…" : "Save client to quote"}
+                      {savingClient ? "Saving…" : drawerAddClient ? "Save client to quote" : "Save account to quote"}
                     </Button>
                   </div>
                 ) : null}
               </div>
 
-              {/* Bid Summary — partner submission (read-only reference); pricing control is in Customer proposal */}
+              {/* Bid Summary — partner submission (read-only reference); pricing control is in Customer proposal. Hidden for manual quotes with no invited partners. */}
+              {quote.quote_type === "partner" ? (
               <details
                 key={`bid-summary-${quote.id}`}
                 className="group rounded-xl border border-border-light bg-gradient-to-br from-surface-hover to-surface-tertiary open:shadow-sm dark:from-surface-secondary dark:to-surface-tertiary dark:border-border dark:open:shadow-md dark:open:shadow-black/20"
@@ -2878,6 +3314,7 @@ function QuoteDetailDrawer({
                 )}
                 </div>
               </details>
+              ) : null}
 
               {convertedJob && (
                 <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200">
@@ -2888,20 +3325,40 @@ function QuoteDetailDrawer({
                 </div>
               )}
 
-              {["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status) && (
+              {["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) && (
                 <div className="space-y-3 rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-2.5">
                   {quote.status === "awaiting_customer" && (
                     <div className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-2.5 py-2 dark:border-amber-800/50 dark:bg-amber-950/25">
                       <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">Edit after sending</p>
-                      <FixfyHintIcon text="You can still change line items, scope, dates, deposit, message, use the customer sell scale below, and review Bid Summary. Use Save Quote to store only, or Resend Quote under Move this quote to email the PDF." />
+                      <FixfyHintIcon
+                        text={
+                          quote.quote_type === "partner"
+                            ? "You can still change line items, scope, dates, deposit, message, use the customer sell scale below, and review Bid Summary. Use Save Quote to store only, or Resend Quote under Move this quote to email the PDF."
+                            : "You can still change line items, scope, dates, deposit, message and use the customer sell scale below. Use Save Quote to store only, or Resend Quote under Move this quote to email the PDF."
+                        }
+                      />
+                    </div>
+                  )}
+                  {quote.status === "awaiting_payment" && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-2.5 py-2 dark:border-amber-800/50 dark:bg-amber-950/25">
+                      <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">Edit while awaiting payment</p>
+                      <FixfyHintIcon
+                        text={
+                          "Change line items, sell totals, scope, start dates, deposit % and customer email as needed. Save Quote updates the record and figures; if deposit or final amounts differ from linked invoices, sync them from the Invoices page after saving."
+                        }
+                      />
                     </div>
                   )}
                   <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                     <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#020040]" aria-hidden />
                     <span className="text-xs font-semibold text-text-primary">Customer proposal</span>
-                    {quote.status !== "awaiting_customer" ? (
+                    {["draft", "in_survey", "bidding"].includes(quote.status) ? (
                       <span className="rounded-full bg-[#ED4B00]/12 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#C4461F]">
                         Required before send
+                      </span>
+                    ) : quote.status === "awaiting_payment" ? (
+                      <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                        Awaiting deposit
                       </span>
                     ) : null}
                     <FixfyHintIcon text={customerProposalTitleHint} />
@@ -2919,8 +3376,13 @@ function QuoteDetailDrawer({
                   >
                     <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-3">
                       <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
-                        <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total Price</p>
+                        <p className="whitespace-nowrap text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total Price</p>
                         <p className="mt-0.5 text-base font-bold tabular-nums leading-none text-text-primary">{formatCurrency(lineTotal)}</p>
+                        <p className="mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[9px] tabular-nums text-text-tertiary">
+                          <span className="shrink-0 whitespace-nowrap rounded-sm bg-emerald-100 px-1 py-[1px] text-[8px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                            Inc VAT
+                          </span>
+                        </p>
                       </div>
                       <div className="min-w-0 rounded-md bg-black/[0.04] px-2 py-1.5 dark:bg-white/[0.06]">
                         <div className="flex items-center gap-1 text-text-tertiary">
@@ -2974,7 +3436,12 @@ function QuoteDetailDrawer({
                       }}
                       className="h-2 w-full cursor-pointer appearance-none rounded-full bg-border accent-[#020040] disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-700"
                     />
-                    <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
+                    <div
+                      className={cn(
+                        "grid grid-cols-1 gap-2 pt-1",
+                        lineItems.length > 1 ? "sm:grid-cols-2" : "sm:grid-cols-1",
+                      )}
+                    >
                       <div className="rounded-lg border border-border-light bg-surface-hover/80 px-2.5 py-2">
                         <p className="text-[9px] font-semibold uppercase text-text-tertiary">Line 1 · Labour</p>
                         <p className="mt-1 text-[11px] text-text-secondary">
@@ -2995,26 +3462,28 @@ function QuoteDetailDrawer({
                           Margin {proposalMarginLabourPct}%
                         </p>
                       </div>
-                      <div className="rounded-lg border border-border-light bg-surface-hover/80 px-2.5 py-2">
-                        <p className="text-[9px] font-semibold uppercase text-text-tertiary">Line 2 · Materials</p>
-                        <p className="mt-1 text-[11px] text-text-secondary">
-                          Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine1Partner)}</span>
-                          {" · "}
-                          Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine1Sell)}</span>
-                        </p>
-                        <p
-                          className={cn(
-                            "mt-0.5 text-xs font-bold tabular-nums",
-                            proposalMarginMaterialsPct > 0
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : proposalMarginMaterialsPct === 0
-                                ? "text-amber-600 dark:text-amber-400"
-                                : "text-red-600 dark:text-red-400",
-                          )}
-                        >
-                          Margin {proposalMarginMaterialsPct}%
-                        </p>
-                      </div>
+                      {lineItems.length > 1 ? (
+                        <div className="rounded-lg border border-border-light bg-surface-hover/80 px-2.5 py-2">
+                          <p className="text-[9px] font-semibold uppercase text-text-tertiary">Line 2 · Materials</p>
+                          <p className="mt-1 text-[11px] text-text-secondary">
+                            Partner <span className="font-semibold tabular-nums">{formatCurrency(proposalLine1Partner)}</span>
+                            {" · "}
+                            Sell <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalLine1Sell)}</span>
+                          </p>
+                          <p
+                            className={cn(
+                              "mt-0.5 text-xs font-bold tabular-nums",
+                              proposalMarginMaterialsPct > 0
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : proposalMarginMaterialsPct === 0
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-red-600 dark:text-red-400",
+                            )}
+                          >
+                            Margin {proposalMarginMaterialsPct}%
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
@@ -3040,7 +3509,7 @@ function QuoteDetailDrawer({
                     <>
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Scope / line items</label>
+                      <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Line items / notes</label>
                       <div className="flex gap-2">
                         <button type="button" onClick={addLineItem} className="text-[11px] font-medium text-primary hover:underline">+ Add item</button>
                       </div>
@@ -3164,8 +3633,20 @@ function QuoteDetailDrawer({
                           </div>
                           <div className="flex flex-col items-end gap-1 pt-1 shrink-0">
                             <span className="text-xs font-semibold text-text-primary tabular-nums">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
-                            {lineItems.length > 1 && (idx >= 2 || !["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status)) && (
-                              <button type="button" onClick={() => removeLineItem(idx)} className="text-text-tertiary hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                            {lineItems.length > 1 &&
+                              (idx >= 1 ||
+                                !["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(
+                                  quote.status,
+                                )) && (
+                              <button
+                                type="button"
+                                onClick={() => removeLineItem(idx)}
+                                className="text-text-tertiary hover:text-red-500"
+                                title={idx === 1 ? "Remove materials line" : "Remove line"}
+                                aria-label={idx === 1 ? "Remove materials line" : "Remove line"}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
                             )}
                           </div>
                         </div>
@@ -3197,20 +3678,75 @@ function QuoteDetailDrawer({
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Deposit (% of total)</label>
-                    <Input
-                      type="number"
-                      value={depositPercent}
-                      onChange={(e) => setDepositPercent(e.target.value)}
-                      placeholder="50"
-                      min={0}
-                      max={100}
-                      step={0.5}
-                    />
-                    <p className="text-[10px] text-text-tertiary mt-1.5">
-                      Deposit amount:{" "}
-                      <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalDepositAmount)}</span>
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                      <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Deposit</label>
+                      <div className="inline-flex shrink-0 rounded-lg border border-border-light bg-surface-tertiary/40 p-0.5 gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDepositInputMode("percent");
+                          }}
+                          className={cn(
+                            "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
+                            depositInputMode === "percent"
+                              ? "bg-[#020040] text-white dark:bg-primary dark:text-white"
+                              : "text-text-secondary hover:text-text-primary",
+                          )}
+                        >
+                          % of total
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (depositInputMode !== "amount") {
+                              setDepositAmountInput(proposalDepositAmount.toFixed(2));
+                            }
+                            setDepositInputMode("amount");
+                          }}
+                          className={cn(
+                            "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
+                            depositInputMode === "amount"
+                              ? "bg-[#020040] text-white dark:bg-primary dark:text-white"
+                              : "text-text-secondary hover:text-text-primary",
+                          )}
+                        >
+                          Fixed £
+                        </button>
+                      </div>
+                    </div>
+                    {depositInputMode === "percent" ? (
+                      <>
+                        <Input
+                          type="number"
+                          value={depositPercent}
+                          onChange={(e) => setDepositPercent(e.target.value)}
+                          placeholder="50"
+                          min={0}
+                          max={100}
+                          step={0.5}
+                        />
+                        <p className="text-[10px] text-text-tertiary mt-1.5">
+                          Deposit amount:{" "}
+                          <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(proposalDepositAmount)}</span>
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <Input
+                          type="number"
+                          value={depositAmountInput}
+                          onChange={(e) => setDepositAmountInput(e.target.value)}
+                          placeholder="0.00"
+                          min={0}
+                          step={0.01}
+                        />
+                        <p className="text-[10px] text-text-tertiary mt-1.5">
+                          ≈{" "}
+                          <span className="font-semibold tabular-nums text-text-primary">{proposalInferredDepositPercent.toFixed(1)}%</span>{" "}
+                          of total ({formatCurrency(lineTotal)})
+                        </p>
+                      </>
+                    )}
                   </div>
 
                   <div>
@@ -3244,10 +3780,20 @@ function QuoteDetailDrawer({
                     </Button>
                   </div>
 
-                  <div className="flex flex-wrap gap-2 text-[11px]">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
                     <span className={cn("rounded-md px-2 py-0.5", sendStep1Ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-surface-hover text-text-tertiary")}>1 Scope / items</span>
                     <span className={cn("rounded-md px-2 py-0.5", sendStep2Ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-surface-hover text-text-tertiary")}>2 Start dates</span>
                     <span className={cn("rounded-md px-2 py-0.5", sendStep3Ready ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-surface-hover text-text-tertiary")}>3 Deposit & email</span>
+                    <button
+                      type="button"
+                      onClick={() => setProposalDetailsExpanded(false)}
+                      className="ml-auto inline-flex items-center gap-1 rounded-md border border-border-light bg-card px-2 py-0.5 text-[11px] font-medium text-text-secondary hover:bg-surface-hover transition-colors"
+                      aria-label="Hide scope, line items, dates &amp; email"
+                      title="Hide scope, line items, dates &amp; email"
+                    >
+                      <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                      <span>Hide</span>
+                    </button>
                   </div>
                     </>
                   ) : null}
@@ -3267,7 +3813,8 @@ function QuoteDetailDrawer({
                 </div>
               )}
 
-              {quote.request_id && !["draft", "in_survey", "bidding", "awaiting_customer"].includes(quote.status) ? (
+              {quote.request_id &&
+              !["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) ? (
                 <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border-light bg-card/60 px-3 py-2.5">
                   <input
                     type="checkbox"
@@ -3342,7 +3889,7 @@ function QuoteDetailDrawer({
                     "[&_button]:shrink-0",
                   )}
                 >
-                  {quote.status === "awaiting_customer" && (
+                  {(quote.status === "awaiting_customer" || quote.status === "awaiting_payment") && (
                     <Button
                       type="button"
                       variant="outline"
@@ -3350,7 +3897,11 @@ function QuoteDetailDrawer({
                       disabled={sendState === "sending" || !sendStep3Ready}
                       icon={sendState === "sending" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                       onClick={() => void handleSendToCustomer()}
-                      title="Saves the latest proposal and emails the PDF (Accept / Reject links stay the same)"
+                      title={
+                        quote.status === "awaiting_payment"
+                          ? "Saves the latest figures and emails the updated PDF to the customer"
+                          : "Saves the latest proposal and emails the PDF (Accept / Reject links stay the same)"
+                      }
                     >
                       {sendState === "sending" ? "Saving…" : "Resend Quote"}
                     </Button>
@@ -3742,6 +4293,211 @@ function QuoteDetailDrawer({
             </div>
           )}
 
+          {/* DETAILS TAB — read-only snapshot of the quote sent to the customer (late-stage statuses only) */}
+          {tab === "details" && (
+            <div className="space-y-4 p-3 sm:p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={statusConfig[quote.status]?.variant ?? "default"} dot>
+                    {statusLabels[quote.status] ?? quote.status}
+                  </Badge>
+                  <span className="text-xs text-text-secondary">
+                    Updated {formatYmdUkDisplay(quote.updated_at?.slice(0, 10) ?? "") || "—"}
+                  </span>
+                </div>
+              </div>
+
+              {quote.status === "rejected" && quote.rejection_reason?.trim() ? (
+                <div className="rounded-xl border border-red-200/80 bg-red-50/80 px-3.5 py-3 text-sm leading-snug text-text-primary dark:border-red-900/40 dark:bg-red-950/30">
+                  <p className="mb-1 text-xs font-semibold text-red-800 dark:text-red-200">Rejection reason</p>
+                  <p className="text-text-secondary dark:text-red-100/90">{quote.rejection_reason}</p>
+                </div>
+              ) : null}
+
+              <section>
+                <h3 className="mb-2 text-xs font-semibold text-text-primary">Summary</h3>
+                <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border/50 bg-border/25 shadow-sm">
+                  <div className="bg-card p-3.5 sm:p-4">
+                    <p className="text-[11px] font-medium text-text-secondary">Total price</p>
+                    <p className="mt-0.5 text-lg font-bold tabular-nums leading-tight text-text-primary sm:text-xl">
+                      {formatCurrency(Number(quote.total_value) || 0)}
+                    </p>
+                    <span className="mt-1.5 inline-flex rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                      Inc VAT
+                    </span>
+                  </div>
+                  <div className="bg-card p-3.5 sm:p-4">
+                    <p className="text-[11px] font-medium text-text-secondary">Margin</p>
+                    <p
+                      className={cn(
+                        "mt-0.5 text-lg font-bold tabular-nums leading-tight sm:text-xl",
+                        (quote.margin_percent ?? 0) >= 40
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : (quote.margin_percent ?? 0) >= 25
+                            ? "text-amber-600 dark:text-amber-500"
+                            : "text-red-600 dark:text-red-400",
+                      )}
+                    >
+                      {Number(quote.margin_percent ?? 0).toFixed(1)}%
+                    </p>
+                    <p className="mt-1.5 text-[11px] text-text-secondary">
+                      Partner {formatCurrency(Number(quote.partner_cost) || 0)}
+                    </p>
+                  </div>
+                  <div className="bg-card p-3.5 sm:p-4">
+                    <p className="text-[11px] font-medium text-text-secondary">Deposit</p>
+                    <p className="mt-0.5 text-base font-semibold tabular-nums text-text-primary sm:text-lg">
+                      {formatCurrency(Number(quote.deposit_required) || 0)}
+                    </p>
+                    <p className="mt-1.5 text-[11px] text-text-secondary">
+                      {Number(quote.deposit_percent) || 0}% of total
+                    </p>
+                  </div>
+                  <div className="bg-card p-3.5 sm:p-4">
+                    <p className="text-[11px] font-medium text-text-secondary">Final balance</p>
+                    <p className="mt-0.5 text-base font-semibold tabular-nums text-text-primary sm:text-lg">
+                      {formatCurrency(Math.max(0, (Number(quote.total_value) || 0) - (Number(quote.deposit_required) || 0)))}
+                    </p>
+                    <p className="mt-1.5 text-[11px] text-text-secondary">
+                      {quote.customer_deposit_paid ? "Deposit received" : "After deposit"}
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="overflow-hidden rounded-2xl border border-border/50 bg-card shadow-sm">
+                <h3 className="border-b border-border/50 bg-surface/40 px-3.5 py-2.5 text-xs font-semibold text-text-primary">
+                  Account & contact
+                </h3>
+                <div className="divide-y divide-border/40">
+                  {linkedAccountPreview ? (
+                    <div className="flex items-start gap-3 p-3.5">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-xs font-bold text-primary">
+                        {linkedAccountPreview.companyName.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-text-secondary">Account</p>
+                        <p className="text-sm font-semibold text-text-primary">{linkedAccountPreview.companyName}</p>
+                        <p className="mt-0.5 break-all text-sm text-text-secondary">{linkedAccountPreview.email}</p>
+                        {linkedAccountPreview.financeEmail &&
+                        linkedAccountPreview.financeEmail.toLowerCase() !== linkedAccountPreview.email.toLowerCase() ? (
+                          <p className="mt-1 text-xs text-text-tertiary">Billing: {linkedAccountPreview.financeEmail}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                  {quote.client_id ? (
+                    <div className="p-3.5">
+                      <p className="text-xs text-text-secondary">Contact</p>
+                      <p className="text-sm font-semibold text-text-primary">{quote.client_name || "—"}</p>
+                      {quote.client_email ? <p className="mt-0.5 text-sm text-text-secondary">{quote.client_email}</p> : null}
+                    </div>
+                  ) : null}
+                  <div className="p-3.5">
+                    <p className="text-xs text-text-secondary">Property</p>
+                    <p className="text-sm font-medium leading-relaxed text-text-primary whitespace-pre-wrap">
+                      {quote.property_address?.trim() || "—"}
+                    </p>
+                    {quote.postcode?.trim() ? (
+                      <p className="mt-1 text-xs font-medium text-text-secondary">{quote.postcode}</p>
+                    ) : null}
+                  </div>
+                </div>
+              </section>
+
+              {lineItems.length > 0 ? (
+                <section className="overflow-hidden rounded-2xl border border-border/50 bg-card shadow-sm">
+                  <h3 className="border-b border-border/50 bg-surface/40 px-3.5 py-2.5 text-xs font-semibold text-text-primary">
+                    Line items
+                  </h3>
+                  <ul className="divide-y divide-border/40">
+                    {lineItems.map((li, idx) => {
+                      const qty = Number(li.quantity) || 0;
+                      const unit = Number(li.unitPrice) || 0;
+                      const total = qty * unit;
+                      const desc = (li.description ?? "").trim() || (idx === 0 ? "Labour" : idx === 1 ? "Materials" : `Line ${idx + 1}`);
+                      const lineNoteDisplay = proposalLineHintDisplay(parseProposalLineNotes(li.notes));
+                      return (
+                        <li key={idx} className="flex flex-col gap-1.5 px-3.5 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-text-primary">{desc}</p>
+                            <p className="mt-0.5 text-xs tabular-nums text-text-secondary">
+                              {qty} × {formatCurrency(unit)}
+                            </p>
+                            {lineNoteDisplay.trim() ? (
+                              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-text-primary/90">{lineNoteDisplay}</p>
+                            ) : null}
+                          </div>
+                          <p className="shrink-0 text-right text-sm font-semibold tabular-nums text-text-primary sm:pt-0.5 sm:text-base">
+                            {formatCurrency(total)}
+                          </p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div className="flex items-center justify-between border-t border-border/50 bg-surface/30 px-3.5 py-3">
+                    <span className="text-xs font-medium text-text-secondary">Subtotal (inc. VAT)</span>
+                    <span className="text-base font-bold tabular-nums text-text-primary">{formatCurrency(lineTotal)}</span>
+                  </div>
+                </section>
+              ) : null}
+
+              {formatQuoteDurationDisplay(quote) ? (
+                <section className="rounded-2xl border border-border/50 bg-card px-3.5 py-3 shadow-sm">
+                  <h3 className="text-xs font-semibold text-text-primary">Duration</h3>
+                  <p className="mt-1 text-sm text-text-primary">{formatQuoteDurationDisplay(quote)}</p>
+                </section>
+              ) : null}
+
+              {quote.scope?.trim() ? (
+                <section className="overflow-hidden rounded-2xl border border-border/50 bg-card shadow-sm">
+                  <h3 className="border-b border-border/50 bg-surface/40 px-3.5 py-2.5 text-xs font-semibold text-text-primary">
+                    Scope & notes
+                  </h3>
+                  <div className="max-h-[min(50vh,22rem)] overflow-y-auto px-3.5 py-3">
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-primary/95">{quote.scope}</p>
+                  </div>
+                </section>
+              ) : null}
+
+              {quote.partner_id || quote.partner_name?.trim() ? (
+                <section className="rounded-2xl border border-border/50 bg-card px-3.5 py-3 shadow-sm">
+                  <h3 className="text-xs font-semibold text-text-primary">Partner</h3>
+                  <p className="mt-1 text-sm font-medium text-text-primary">{quote.partner_name?.trim() || quote.partner_id}</p>
+                  <p className="mt-1 text-sm text-text-secondary tabular-nums">
+                    Agreed cost {formatCurrency(Number(quote.partner_cost) || 0)}
+                  </p>
+                </section>
+              ) : null}
+
+              <section className="overflow-hidden rounded-2xl border border-border/50 bg-card shadow-sm">
+                <h3 className="border-b border-border/50 bg-surface/40 px-3.5 py-2.5 text-xs font-semibold text-text-primary">
+                  Timeline
+                </h3>
+                <dl className="grid grid-cols-1 gap-3 p-3.5 sm:grid-cols-2 sm:gap-x-4 sm:gap-y-3.5">
+                  {(
+                    [
+                      ["Created", formatYmdUkDisplay(quote.created_at?.slice(0, 10) ?? "") || "—"],
+                      ["Quote expires", formatYmdUkDisplay(quote.expires_at?.slice(0, 10) ?? "") || "—"],
+                      ["Start option 1", formatYmdUkDisplay(quote.start_date_option_1?.slice(0, 10) ?? "") || "—"],
+                      ["Start option 2", formatYmdUkDisplay(quote.start_date_option_2?.slice(0, 10) ?? "") || "—"],
+                      [
+                        "Customer PDF sent",
+                        formatYmdUkDisplay(quote.customer_pdf_sent_at?.slice(0, 10) ?? "") || "Not sent",
+                      ],
+                      ["Owner", quote.owner_name?.trim() || "—"],
+                    ] as const
+                  ).map(([label, value]) => (
+                    <div key={label}>
+                      <dt className="text-[11px] text-text-secondary">{label}</dt>
+                      <dd className="mt-0.5 text-sm font-medium text-text-primary">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            </div>
+          )}
+
           {/* HISTORY TAB */}
           {tab === "history" && (
             <div className="p-6"><AuditTimeline entityType="quote" entityId={quote.id} /></div>
@@ -3992,12 +4748,13 @@ function getQuoteActions(quote: Quote) {
       ];
     case "awaiting_customer":
       return [
-        { label: "Mark Accepted", status: "accepted", icon: CheckCircle2, primary: true },
+        { label: "Mark Awaiting payment", status: "awaiting_payment", icon: CheckCircle2, primary: true },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
-    case "accepted":
+    case "awaiting_payment":
       return [
-        { label: "Create Job", status: "create_job", icon: Briefcase, primary: true },
+        { label: "Mark as paid", status: "mark_as_paid", icon: CheckCircle2, primary: true },
+        { label: "Create Job", status: "create_job", icon: Briefcase, primary: false },
         { label: "Reopen", status: "draft", icon: RotateCcw, primary: false },
       ];
     case "rejected":
@@ -4041,15 +4798,31 @@ function mergeCreateJobScopeFromQuote(q: Quote, approvedBid: QuoteBid | null): s
   return (bidScope || quoteScope || plainBidNotes).trim();
 }
 
-function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
+function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid = false }: {
   quote: Quote | null; onClose: () => void;
-  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; job_type?: "fixed" | "hourly"; scope?: string }) => void;
+  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; depositOverrideReason?: string; job_type?: "fixed" | "hourly"; scope?: string }) => void;
+  /** When true, the caller will record the deposit as a received client payment on the newly created job. */
+  markDepositAsPaid?: boolean;
 }) {
   const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "", scope: "", createWithoutDeposit: false, job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
   /** DB / approved-bid partner when not in `partners` list (label for Select + submit). */
   const [partnerFromQuote, setPartnerFromQuote] = useState<{ id: string; name: string } | null>(null);
+  /** Account inherited from the quote (via client.source_account_id or property.account_id). */
+  const [linkedAccount, setLinkedAccount] = useState<{
+    id: string;
+    name: string;
+    email: string | null;
+    logoUrl: string | null;
+  } | null>(null);
+  /** When true → render the ClientAddressPicker below and attach a contact. When false → use the account only. */
+  const [addContactClient, setAddContactClient] = useState<boolean>(true);
+  /** Manual property/site address used in the "no contact client" branch. */
+  const [manualPropertyAddress, setManualPropertyAddress] = useState<string>("");
+  /** Deposit override fields — only relevant when coming from "Create Job" and deposit_required > 0. */
+  const [depositOverrideReason, setDepositOverrideReason] = useState<string>("");
+  const [depositOverrideAgreed, setDepositOverrideAgreed] = useState<boolean>(false);
 
   /* eslint-disable react-hooks/set-state-in-effect -- one-shot form bootstrap when modal opens (parent uses key=quote.id) */
   useEffect(() => {
@@ -4142,6 +4915,40 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
         });
       });
     }
+    setAddContactClient(Boolean(quote.client_id));
+    setManualPropertyAddress(quote.property_address ?? "");
+    setDepositOverrideReason("");
+    setDepositOverrideAgreed(false);
+    (async () => {
+      let accountId: string | null = null;
+      try {
+        if (quote.client_id) {
+          const client = await getClient(quote.client_id);
+          accountId = client?.source_account_id?.trim() || null;
+        }
+        if (!accountId && quote.property_id?.trim()) {
+          const prop = await getAccountProperty(String(quote.property_id).trim());
+          accountId = prop?.account_id?.trim() || null;
+        }
+        if (!accountId) {
+          if (!cancelled) setLinkedAccount(null);
+          return;
+        }
+        const acc = await getAccount(accountId);
+        if (cancelled || !acc) {
+          if (!cancelled) setLinkedAccount(null);
+          return;
+        }
+        setLinkedAccount({
+          id: acc.id,
+          name: (acc.company_name || acc.contact_name || "—").trim(),
+          email: (acc.email ?? "").trim() || null,
+          logoUrl: (acc.logo_url ?? "").trim() || null,
+        });
+      } catch {
+        if (!cancelled) setLinkedAccount(null);
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -4165,16 +4972,41 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
 
   if (!quote) return null;
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
+  const depositRequired = Math.max(0, Number(quote.deposit_required ?? 0));
+  const showDepositOverride = !markDepositAsPaid && depositRequired > 0.02;
+  const overrideActive = showDepositOverride && form.createWithoutDeposit;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title?.trim()) { toast.error("Job title is required"); return; }
-    if (!clientAddress.client_id) {
-      toast.error("Select a client from the list (click the name or press Enter) — typing alone does not link the client.");
-      return;
+    if (addContactClient) {
+      if (!clientAddress.client_id) {
+        toast.error("Select a client from the list (click the name or press Enter) — typing alone does not link the client.");
+        return;
+      }
+      if (!clientAddress.property_address?.trim()) {
+        toast.error("Choose a property address or add a new one under Property address.");
+        return;
+      }
+    } else {
+      if (!linkedAccount) {
+        toast.error("This quote has no linked account. Enable 'Add a contact client' to proceed.");
+        return;
+      }
+      if (!manualPropertyAddress.trim()) {
+        toast.error("Add the property / site address before creating the job.");
+        return;
+      }
     }
-    if (!clientAddress.property_address?.trim()) {
-      toast.error("Choose a property address or add a new one under Property address.");
-      return;
+    if (overrideActive) {
+      if (!depositOverrideReason.trim()) {
+        toast.error("Add a reason for overriding the deposit.");
+        return;
+      }
+      if (!depositOverrideAgreed) {
+        toast.error("Confirm you accept responsibility for overriding the deposit.");
+        return;
+      }
     }
     const selectedPartner = partners.find((p) => p.id === form.partner_id);
     const partnerNameResolved =
@@ -4228,7 +5060,7 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
     const scopeTrimmed = (form.scope ?? "").trim();
     if (effectivePartnerId) {
       const block = getPartnerAssignmentBlockReason({
-        property_address: clientAddress.property_address,
+        property_address: addContactClient ? clientAddress.property_address : manualPropertyAddress,
         scope: scopeTrimmed || (quote.scope ?? "").trim(),
         scheduled_date,
         scheduled_start_at,
@@ -4240,12 +5072,18 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
         return;
       }
     }
+    const effectiveClientName = addContactClient
+      ? clientAddress.client_name
+      : (linkedAccount?.name || quote.client_name || "");
+    const effectivePropertyAddress = addContactClient
+      ? clientAddress.property_address
+      : manualPropertyAddress.trim();
     onSubmit({
       title: form.title.trim(),
-      client_id: clientAddress.client_id,
-      client_address_id: clientAddress.client_address_id,
-      client_name: clientAddress.client_name,
-      property_address: clientAddress.property_address,
+      client_id: addContactClient ? clientAddress.client_id : undefined,
+      client_address_id: addContactClient ? clientAddress.client_address_id : undefined,
+      client_name: effectiveClientName,
+      property_address: effectivePropertyAddress,
       partner_id: form.partner_id || undefined,
       partner_name: partnerNameResolved,
       client_price: Number(form.client_price) || 0,
@@ -4255,15 +5093,32 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
       scheduled_start_at,
       scheduled_end_at,
       scheduled_finish_date,
-      createWithoutDeposit: form.createWithoutDeposit,
+      createWithoutDeposit: overrideActive,
+      depositOverrideReason: overrideActive ? depositOverrideReason.trim() : undefined,
       job_type: form.job_type as "fixed" | "hourly",
       scope: scopeTrimmed || (quote.scope ?? "").trim(),
     });
   };
 
+  const depositForBanner = markDepositAsPaid ? Math.max(0, Number(quote.deposit_required ?? 0)) : 0;
+
   return (
-    <Modal open={!!quote} onClose={onClose} title="Create Job from Quote" subtitle={`${quote.reference} — create job`} size="lg">
+    <Modal
+      open={!!quote}
+      onClose={onClose}
+      title={markDepositAsPaid ? "Mark as paid & create job" : "Create Job from Quote"}
+      subtitle={`${quote.reference} — ${markDepositAsPaid ? "record deposit paid & create job" : "create job"}`}
+      size="lg"
+    >
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        {markDepositAsPaid && depositForBanner > 0.02 ? (
+          <div className="rounded-lg border border-emerald-300/70 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-200">
+            <p className="font-semibold">Deposit will be recorded as paid</p>
+            <p className="mt-0.5 opacity-90">
+              After the job is created, a client payment of {formatCurrency(depositForBanner)} will be logged as customer deposit received.
+            </p>
+          </div>
+        ) : null}
         <Select
           label="Type of work *"
           value={form.title}
@@ -4282,12 +5137,84 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
             { value: "hourly", label: "Hourly" },
           ]}
         />
-        {!quote.client_id ? (
-          <p className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-text-secondary dark:border-primary/30 dark:bg-primary/10">
-            This quote has no linked contact yet. Select or create a client below before creating the job.
-          </p>
-        ) : null}
-        <ClientAddressPicker value={clientAddress} onChange={setClientAddress} loadAllClientsOnOpen />
+        <div className="rounded-xl border border-border bg-surface/60 p-3 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Account on this job</p>
+              {linkedAccount ? (
+                <div className="mt-1 flex items-center gap-2 min-w-0">
+                  {linkedAccount.logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={linkedAccount.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-md border border-border object-contain bg-white" />
+                  ) : (
+                    <div className="h-7 w-7 shrink-0 rounded-md border border-border bg-surface flex items-center justify-center text-[10px] font-semibold uppercase text-text-tertiary">
+                      {linkedAccount.name.slice(0, 2)}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-text-primary">{linkedAccount.name}</p>
+                    {linkedAccount.email ? (
+                      <p className="truncate text-[11px] text-text-secondary">{linkedAccount.email}</p>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-1 text-xs text-text-secondary">No account linked to this quote — a contact client is required.</p>
+              )}
+            </div>
+          </div>
+          {linkedAccount ? (
+            <div className="rounded-lg border border-border/70 bg-card/60 p-2.5">
+              <p className="text-[11px] font-medium text-text-secondary mb-1.5">Add a contact client to this job?</p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAddContactClient(true)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${addContactClient ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary hover:bg-surface"}`}
+                >
+                  Yes, add a contact
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddContactClient(false)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${!addContactClient ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-text-secondary hover:bg-surface"}`}
+                >
+                  No, keep account only
+                </button>
+              </div>
+              <p className="mt-1.5 text-[10px] text-text-tertiary">
+                {addContactClient
+                  ? "Attach a contact (person) from this account. The job will show the contact on the client card."
+                  : "The job will be billed to the account. No personal contact will be attached."}
+              </p>
+            </div>
+          ) : null}
+          {addContactClient || !linkedAccount ? (
+            <div>
+              {!quote.client_id ? (
+                <p className="mb-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-text-secondary dark:border-primary/30 dark:bg-primary/10">
+                  This quote has no linked contact yet. Select or create a client below before creating the job.
+                </p>
+              ) : null}
+              <ClientAddressPicker
+                value={clientAddress}
+                onChange={setClientAddress}
+                loadAllClientsOnOpen
+                restrictToSourceAccountId={linkedAccount?.id}
+              />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">Property / site address *</label>
+              <Input
+                value={manualPropertyAddress}
+                onChange={(e) => setManualPropertyAddress(e.target.value)}
+                placeholder="Full site address for the job"
+              />
+              <p className="mt-1 text-[10px] text-text-tertiary">Pre-filled from the quote property address when available.</p>
+            </div>
+          )}
+        </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Scope of work *</label>
           <textarea
@@ -4320,10 +5247,50 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit }: {
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Partner Cost</label><Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min={0} step="0.01" /></div>
           <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Materials</label><Input type="number" value={form.materials_cost} onChange={(e) => update("materials_cost", e.target.value)} min={0} step="0.01" /></div>
         </div>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={form.createWithoutDeposit} onChange={(e) => setForm((p) => ({ ...p, createWithoutDeposit: e.target.checked }))} className="rounded border-border text-primary focus:ring-primary" />
-          <span className="text-sm text-text-secondary">Create job without deposit (override)</span>
-        </label>
+        {showDepositOverride ? (
+          <div className="rounded-xl border border-amber-300/60 bg-amber-50/60 p-3 space-y-2 dark:border-amber-500/30 dark:bg-amber-950/20">
+            <div>
+              <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">Deposit required on this quote</p>
+              <p className="mt-0.5 text-[11px] text-amber-700/90 dark:text-amber-200/80">
+                A deposit of {formatCurrency(depositRequired)} ({quote.deposit_percent || 0}%) is due. Override only when justified.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.createWithoutDeposit}
+                onChange={(e) => setForm((p) => ({ ...p, createWithoutDeposit: e.target.checked }))}
+                className="rounded border-border text-primary focus:ring-primary"
+              />
+              <span className="text-xs font-medium text-text-primary">Override deposit (create job without deposit)</span>
+            </label>
+            {overrideActive ? (
+              <div className="space-y-2 pl-6">
+                <div>
+                  <label className="block text-[11px] font-medium text-text-secondary mb-1">Reason for override *</label>
+                  <textarea
+                    value={depositOverrideReason}
+                    onChange={(e) => setDepositOverrideReason(e.target.value)}
+                    rows={2}
+                    placeholder="Why are we proceeding without the deposit? (logged for audit)"
+                    className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
+                  />
+                </div>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={depositOverrideAgreed}
+                    onChange={(e) => setDepositOverrideAgreed(e.target.checked)}
+                    className="mt-0.5 rounded border-border text-primary focus:ring-primary"
+                  />
+                  <span className="text-[11px] leading-snug text-text-secondary">
+                    I confirm the client has agreed to the job terms without a deposit and I accept responsibility for this override.
+                  </span>
+                </label>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" size="sm" onClick={onClose} type="button">Cancel</Button>
           <Button type="submit" size="sm">Create Job</Button>
@@ -4509,6 +5476,12 @@ function CreateQuoteForm({
   const [startDate1, setStartDate1] = useState("");
   const [startDate2, setStartDate2] = useState("");
   const [depositPercent, setDepositPercent] = useState("50");
+  const [depositInputMode, setDepositInputMode] = useState<"percent" | "amount">("percent");
+  const [depositAmountInput, setDepositAmountInput] = useState("");
+  /** When disabled, the quote will skip the Awaiting Payment stage and convert directly to a job on customer accept. */
+  const [depositRequiredEnabled, setDepositRequiredEnabled] = useState(true);
+  const [durationValue, setDurationValue] = useState("1");
+  const [durationUnit, setDurationUnit] = useState<QuoteDurationUnit>("week");
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnersLoading, setPartnersLoading] = useState(false);
   const [selectedPartnerIds, setSelectedPartnerIds] = useState<Set<string>>(new Set());
@@ -4537,7 +5510,17 @@ function CreateQuoteForm({
   const lineSellTotal = lineItems.reduce((s, li) => s + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const createProposalMarginAbs = lineSellTotal - linePartnerTotal;
   const createProposalMarginPct = marginPctOnSell(lineSellTotal, linePartnerTotal);
-  const createDepositAmount = depositAmountFromPercent(lineSellTotal, Number(depositPercent));
+  const createDepositAmount = useMemo(() => {
+    if (depositInputMode === "amount") {
+      const raw = Math.max(0, Number(depositAmountInput) || 0);
+      return lineSellTotal > 0 ? Math.min(lineSellTotal, Math.round(raw * 100) / 100) : 0;
+    }
+    return depositAmountFromPercent(lineSellTotal, Number(depositPercent));
+  }, [depositInputMode, depositAmountInput, lineSellTotal, depositPercent]);
+  const createInferredDepositPercent = useMemo(() => {
+    if (lineSellTotal < 0.01) return 0;
+    return inferDepositPercentFromLegacy(createDepositAmount, lineSellTotal);
+  }, [lineSellTotal, createDepositAmount]);
   const minCreateStartDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [marginPct, setMarginPct] = useState(0);
 
@@ -4586,6 +5569,8 @@ function CreateQuoteForm({
     setLineItems(seedManualProposalLines(form.title));
     setScopeText("");
     setDepositPercent("50");
+    setDepositInputMode("percent");
+    setDepositAmountInput("");
     setStartDate1("");
     setStartDate2("");
   }, [quoteType, form.title]);
@@ -4664,6 +5649,12 @@ function CreateQuoteForm({
       }
     }
 
+    const durNum = Math.round(Number(durationValue) * 1000) / 1000;
+    if (!Number.isFinite(durNum) || durNum <= 0) {
+      toast.error("Enter a duration greater than zero.");
+      return;
+    }
+
     let imageUrls: string[] | undefined;
     if (invitePhotos.length > 0) {
       setUploadingPhotos(true);
@@ -4681,8 +5672,18 @@ function CreateQuoteForm({
       setUploadingPhotos(false);
     }
 
-    const depPct = clampDepositPercent(Number(depositPercent));
-    const depAmt = depositAmountFromPercent(lineSellTotal, depPct);
+    let depPct = 0;
+    let depAmt = 0;
+    if (depositRequiredEnabled) {
+      if (depositInputMode === "amount") {
+        const raw = Math.max(0, Number(depositAmountInput) || 0);
+        depAmt = lineSellTotal > 0 ? Math.min(lineSellTotal, Math.round(raw * 100) / 100) : 0;
+        depPct = inferDepositPercentFromLegacy(depAmt, lineSellTotal);
+      } else {
+        depPct = clampDepositPercent(Number(depositPercent));
+        depAmt = depositAmountFromPercent(lineSellTotal, depPct);
+      }
+    }
 
     const accountDisplayName = selectedAccountLabel || "Account";
     const noClientAddress = addContactClient
@@ -4722,6 +5723,8 @@ function CreateQuoteForm({
       deposit_required: quoteType === "internal" ? depAmt : 0,
       ...(form.title.trim() ? { service_type: form.title.trim() } : {}),
       ...(imageUrls?.length ? { images: imageUrls } : {}),
+      duration_value: durNum,
+      duration_unit: durationUnit,
     };
     onSubmit(payload, quoteType === "internal" ? { manualLineItems: lineItems } : undefined);
     inviteUploadFolderRef.current = `create-${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
@@ -4733,8 +5736,12 @@ function CreateQuoteForm({
     setLineItems(seedManualProposalLines(""));
     setScopeText("");
     setDepositPercent("50");
+    setDepositInputMode("percent");
+    setDepositAmountInput("");
     setStartDate1("");
     setStartDate2("");
+    setDurationValue("1");
+    setDurationUnit("week");
     setQuoteType("internal");
     setPartners([]);
     setSelectedPartnerIds(new Set());
@@ -4899,6 +5906,34 @@ function CreateQuoteForm({
           ...typeOfWorkOptions,
         ]}
       />
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium text-text-primary">
+          Duration <span className="text-[#ED4B00]">*</span>
+        </p>
+        <div className="flex flex-col gap-2 min-[400px]:flex-row min-[400px]:items-stretch">
+          <Input
+            type="number"
+            min={0.01}
+            step={0.5}
+            value={durationValue}
+            onChange={(e) => setDurationValue(e.target.value)}
+            className="min-w-0 min-[400px]:max-w-[7rem]"
+            placeholder="e.g. 2"
+            aria-label="Duration amount"
+          />
+          <Select
+            value={durationUnit}
+            onChange={(e) => setDurationUnit(e.target.value as QuoteDurationUnit)}
+            options={[
+              { value: "day", label: "Day(s)" },
+              { value: "week", label: "Week(s)" },
+              { value: "month", label: "Month(s)" },
+            ]}
+            aria-label="Duration unit"
+          />
+        </div>
+        <p className="text-[10px] text-text-tertiary">Expected time on site for this job.</p>
+      </div>
       <div
         className="rounded-xl border border-border-light bg-card px-2.5 py-2.5 shadow-sm"
         role="region"
@@ -5012,7 +6047,7 @@ function CreateQuoteForm({
         <>
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <label className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Scope / line items</label>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Line items / notes</label>
               <button
                 type="button"
                 onClick={() =>
@@ -5120,21 +6155,120 @@ function CreateQuoteForm({
             </div>
           </div>
 
-          <div>
-            <label className="block text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-1.5">Deposit (% of total)</label>
-            <Input
-              type="number"
-              value={depositPercent}
-              onChange={(e) => setDepositPercent(e.target.value)}
-              placeholder="50"
-              min={0}
-              max={100}
-              step={0.5}
-            />
-            <p className="text-[10px] text-text-tertiary mt-1.5">
-              Deposit amount:{" "}
-              <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(createDepositAmount)}</span>
-            </p>
+          <div className="rounded-xl border border-border-light bg-surface-hover/40 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Deposit required</label>
+                  <FixfyHintIcon text="When ON the customer must pay a deposit via Stripe before the quote converts to a job. When OFF, customer accept converts straight to a job — use this for trusted / repeat clients or account billing." />
+                </div>
+                <p className="mt-0.5 text-[11px] text-text-secondary">
+                  {depositRequiredEnabled
+                    ? "Customer pays a deposit on accept; quote sits in Awaiting payment until Stripe confirms."
+                    : "No deposit — quote converts directly to a job when the customer accepts."}
+                </p>
+              </div>
+              <div className="inline-flex shrink-0 rounded-lg border border-border-light bg-card p-0.5 gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => setDepositRequiredEnabled(true)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
+                    depositRequiredEnabled
+                      ? "bg-[#020040] text-white"
+                      : "text-text-secondary hover:text-text-primary",
+                  )}
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDepositRequiredEnabled(false)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
+                    !depositRequiredEnabled
+                      ? "bg-[#020040] text-white"
+                      : "text-text-secondary hover:text-text-primary",
+                  )}
+                >
+                  No
+                </button>
+              </div>
+            </div>
+
+            {depositRequiredEnabled ? (
+              <div className="mt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                  <span className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Deposit</span>
+                  <div className="inline-flex shrink-0 rounded-lg border border-border-light bg-card p-0.5 gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setDepositInputMode("percent")}
+                      className={cn(
+                        "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
+                        depositInputMode === "percent"
+                          ? "bg-[#020040] text-white"
+                          : "text-text-secondary hover:text-text-primary",
+                      )}
+                    >
+                      % of total
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (depositInputMode !== "amount") {
+                          setDepositAmountInput(createDepositAmount.toFixed(2));
+                        }
+                        setDepositInputMode("amount");
+                      }}
+                      className={cn(
+                        "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
+                        depositInputMode === "amount"
+                          ? "bg-[#020040] text-white"
+                          : "text-text-secondary hover:text-text-primary",
+                      )}
+                    >
+                      Fixed £
+                    </button>
+                  </div>
+                </div>
+                {depositInputMode === "percent" ? (
+                  <>
+                    <Input
+                      type="number"
+                      value={depositPercent}
+                      onChange={(e) => setDepositPercent(e.target.value)}
+                      placeholder="50"
+                      min={0}
+                      max={100}
+                      step={0.5}
+                    />
+                    <p className="text-[10px] text-text-tertiary mt-1.5">
+                      Deposit amount:{" "}
+                      <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(createDepositAmount)}</span>
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      type="number"
+                      value={depositAmountInput}
+                      onChange={(e) => setDepositAmountInput(e.target.value)}
+                      placeholder="0.00"
+                      min={0}
+                      step={0.01}
+                    />
+                    <p className="text-[10px] text-text-tertiary mt-1.5">
+                      ≈{" "}
+                      <span className="font-semibold tabular-nums text-text-primary">
+                        {createInferredDepositPercent.toFixed(1)}%
+                      </span>{" "}
+                      of total ({formatCurrency(lineSellTotal)})
+                    </p>
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
 
           {linePartnerTotal > 0 && (
