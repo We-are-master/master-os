@@ -948,3 +948,65 @@ export interface JobExtraEntry {
   deleted_by_name?: string | null;
   deleted_reason?: string | null;
 }
+
+// =============================================================================
+// Compliance Certificates (mig 155)
+// =============================================================================
+export type ComplianceCertificateType =
+  | "gas_safe"
+  | "eicr"
+  | "epc"
+  | "pat"
+  | "fire_safety"
+  | "legionella"
+  | "asbestos"
+  | "other";
+
+export type ComplianceCertificateStatus = "ok" | "expiring" | "expired" | "missing";
+
+export interface AccountComplianceCertificate {
+  id: string;
+  account_id: string;
+  property_id?: string | null;
+  certificate_type: ComplianceCertificateType;
+  issued_date?: string | null;
+  expiry_date: string;
+  status: ComplianceCertificateStatus;
+  document_path?: string | null;
+  notes?: string | null;
+  last_checked_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
+// =============================================================================
+// PPM Plans (mig 155)
+// =============================================================================
+export type PpmFrequency =
+  | "weekly"
+  | "fortnightly"
+  | "monthly"
+  | "quarterly"
+  | "semi_annual"
+  | "yearly"
+  | "custom";
+
+export type PpmStatus = "active" | "paused" | "cancelled";
+
+export interface AccountPpmPlan {
+  id: string;
+  account_id: string;
+  property_id?: string | null;
+  catalog_service_id?: string | null;
+  name: string;
+  frequency: PpmFrequency;
+  frequency_days?: number | null;
+  next_visit_date?: string | null;
+  last_visit_date?: string | null;
+  status: PpmStatus;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
