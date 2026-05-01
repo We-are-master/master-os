@@ -30,11 +30,16 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *     description?:     string,  // → jobs.report_notes (free-form context)
  *     client_price?:    number,  // £ charged to the client (default 0)
  *     partner_cost?:    number,  // £ paid to the partner   (default 0)
- *     auto_assign?:     boolean  // when true → status='auto_assigning'
+ *     auto_assign?:     boolean, // when true → status='auto_assigning'
  *                                  + push notify partners matching service_type
  *                                  via the existing offer-window mechanism
  *                                  (mig 080). Default false → status='unassigned',
  *                                  staff picks partner manually.
+ *     ticket_id?:       string   // Zendesk ticket id — stored as
+ *                                  //   external_source='zendesk',
+ *                                  //   external_ref=ticket_id.
+ *                                  //   Re-posting the same id returns the
+ *                                  //   existing job (idempotent).
  *   }
  *
  * Behavior:
@@ -82,6 +87,7 @@ export async function POST(req: NextRequest) {
   const clientPrice     = num(body.client_price);
   const partnerCost     = num(body.partner_cost);
   const autoAssign      = body.auto_assign === true || /^true$/i.test(str(body.auto_assign));
+  const ticketId        = str(body.ticket_id) || null;
 
   // ─── Validation ──────────────────────────────────────────────────────
   if (
@@ -121,6 +127,23 @@ export async function POST(req: NextRequest) {
 
   // ─── DB ──────────────────────────────────────────────────────────────
   const supabase = createServiceClient();
+
+  // Idempotency: if a Zendesk ticket id was supplied and we already have a
+  // job for it, return the existing row instead of duplicating.
+  if (ticketId) {
+    const { data: dup } = await supabase
+      .from("jobs")
+      .select("id, reference, status")
+      .eq("external_source", "zendesk")
+      .eq("external_ref", ticketId)
+      .maybeSingle();
+    if (dup) {
+      return NextResponse.json(
+        { id: dup.id, reference: dup.reference, status: dup.status, action: "existing" },
+        { status: 200 },
+      );
+    }
+  }
 
   // Account exists?
   const { data: account, error: accErr } = await supabase
@@ -226,6 +249,10 @@ export async function POST(req: NextRequest) {
   };
   if (autoAssign && matchedPartnerIds.length > 0) {
     jobRow.auto_assign_invited_partner_ids = matchedPartnerIds;
+  }
+  if (ticketId) {
+    jobRow.external_source = "zendesk";
+    jobRow.external_ref    = ticketId;
   }
 
   const { data: inserted, error: insErr } = await supabase

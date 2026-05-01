@@ -26,7 +26,12 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *     client_email:     string,                // required
  *     description?:     string,                // → quotes.scope
  *     service_type?:    string,                // trade label (Plumbing, Electrical, etc.)
- *     type_of_quoting?: "manual" | "bidding"   // default "manual"
+ *     type_of_quoting?: "manual" | "bidding",  // default "manual" (case-insensitive)
+ *     ticket_id?:       string                 // Zendesk ticket id — stored as
+ *                                              //   external_source='zendesk',
+ *                                              //   external_ref=ticket_id.
+ *                                              //   Re-posting the same id returns
+ *                                              //   the existing quote (idempotent).
  *   }
  *
  * Behavior:
@@ -70,6 +75,7 @@ export async function POST(req: NextRequest) {
   const clientEmail     = str(body.client_email).toLowerCase();
   const description     = str(body.description) || null;
   const serviceType     = str(body.service_type) || null;
+  const ticketId        = str(body.ticket_id) || null;
   const typeOfQuotingRaw = str(body.type_of_quoting) || "manual";
   // Accept "Manual"/"Bidding"/"manual"/"bidding"/etc. — regex-anchored,
   // case-insensitive. Normalised to lowercase for the rest of the route.
@@ -118,6 +124,23 @@ export async function POST(req: NextRequest) {
 
   // ─── DB ──────────────────────────────────────────────────────────────
   const supabase = createServiceClient();
+
+  // Idempotency: if a Zendesk ticket id was supplied and we already have a
+  // quote for it, return the existing row instead of duplicating.
+  if (ticketId) {
+    const { data: dup } = await supabase
+      .from("quotes")
+      .select("id, reference, status")
+      .eq("external_source", "zendesk")
+      .eq("external_ref", ticketId)
+      .maybeSingle();
+    if (dup) {
+      return NextResponse.json(
+        { id: dup.id, reference: dup.reference, status: dup.status, action: "existing" },
+        { status: 200 },
+      );
+    }
+  }
 
   // Account exists?
   const { data: account, error: accErr } = await supabase
@@ -201,6 +224,7 @@ export async function POST(req: NextRequest) {
       quote_type:           quoteType,
       customer_accepted:    false,
       customer_deposit_paid: false,
+      ...(ticketId ? { external_source: "zendesk", external_ref: ticketId } : {}),
     })
     .select("id, reference, status")
     .single();
