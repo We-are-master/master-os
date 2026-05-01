@@ -62,26 +62,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const accountId      = str(body.account_id);
-  const date           = str(body.date);
-  const hour           = str(body.hour);
-  const title          = str(body.title);
-  const clientName     = str(body.client_name);
-  const clientEmail    = str(body.client_email).toLowerCase();
-  const description    = str(body.description) || null;
-  const serviceType    = str(body.service_type) || null;
-  const typeOfQuoting  = (str(body.type_of_quoting) || "manual").toLowerCase();
+  const accountId       = str(body.account_id);
+  const date            = str(body.date);
+  const hour            = str(body.hour);
+  const title           = str(body.title);
+  const clientName      = str(body.client_name);
+  const clientEmail     = str(body.client_email).toLowerCase();
+  const description     = str(body.description) || null;
+  const serviceType     = str(body.service_type) || null;
+  const typeOfQuotingRaw = str(body.type_of_quoting) || "manual";
+  // Accept "Manual"/"Bidding"/"manual"/"bidding"/etc. — regex-anchored,
+  // case-insensitive. Normalised to lowercase for the rest of the route.
+  if (!/^(manual|bidding)$/i.test(typeOfQuotingRaw)) {
+    return NextResponse.json(
+      { error: "type_of_quoting must be 'manual' or 'bidding' (case-insensitive)." },
+      { status: 400 },
+    );
+  }
+  const typeOfQuoting   = typeOfQuotingRaw.toLowerCase() as "manual" | "bidding";
 
   // ─── Validation ──────────────────────────────────────────────────────
   if (!accountId || !date || !hour || !title || !clientName || !clientEmail) {
     return NextResponse.json(
       { error: "account_id, date, hour, title, client_name, and client_email are required." },
-      { status: 400 },
-    );
-  }
-  if (typeOfQuoting !== "manual" && typeOfQuoting !== "bidding") {
-    return NextResponse.json(
-      { error: "type_of_quoting must be 'manual' or 'bidding'." },
       { status: 400 },
     );
   }
