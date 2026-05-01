@@ -15,7 +15,7 @@ export const runtime  = "nodejs";
  * Body (JSON):
  *   {
  *     account_id:    uuid,           // accounts.id — required
- *     date:          "YYYY-MM-DD",   // required
+ *     date:          string,         // YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, DD/MM/YY
  *     hour:          "HH:MM",        // required, 24h
  *     title:         string,         // required
  *     client_name:   string,         // required
@@ -72,8 +72,12 @@ export async function POST(req: NextRequest) {
   if (!isValidUUID(accountId)) {
     return NextResponse.json({ error: "account_id must be a valid UUID." }, { status: 400 });
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return NextResponse.json({ error: "date must be YYYY-MM-DD." }, { status: 400 });
+  const isoDate = normalizeDateToIso(date);
+  if (!isoDate) {
+    return NextResponse.json(
+      { error: "date must be YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, or DD/MM/YY." },
+      { status: 400 },
+    );
   }
   if (!/^\d{2}:\d{2}$/.test(hour)) {
     return NextResponse.json({ error: "hour must be HH:MM (24h)." }, { status: 400 });
@@ -82,7 +86,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "client_email must be a valid email." }, { status: 400 });
   }
 
-  const startIso = combineDateHourToIso(date, hour);
+  const startIso = combineDateHourToIso(isoDate, hour);
   if (!startIso) {
     return NextResponse.json({ error: "date + hour did not parse to a valid timestamp." }, { status: 400 });
   }
@@ -187,6 +191,39 @@ export async function POST(req: NextRequest) {
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
+}
+
+/** Accepts `YYYY-MM-DD`, `DD-MM-YYYY`, `DD-MM-YY`, `DD/MM/YYYY`, or
+ *  `DD/MM/YY` and returns canonical `YYYY-MM-DD`. Two-digit years are
+ *  read as 20YY (UK B2B context — not bookings 100 years in the past).
+ *  Returns null if the format doesn't match or the calendar date is
+ *  invalid (e.g. 31-02-2026). */
+function normalizeDateToIso(input: string): string | null {
+  // Already ISO?
+  let m = input.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return validateYmd(m[1], m[2], m[3]);
+
+  // DD-MM-YYYY or DD/MM/YYYY
+  m = input.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (m) return validateYmd(m[3], m[2], m[1]);
+
+  // DD-MM-YY or DD/MM/YY → 20YY
+  m = input.match(/^(\d{2})[-/](\d{2})[-/](\d{2})$/);
+  if (m) return validateYmd(`20${m[3]}`, m[2], m[1]);
+
+  return null;
+}
+
+function validateYmd(yyyy: string, mm: string, dd: string): string | null {
+  const dt = new Date(`${yyyy}-${mm}-${dd}T00:00:00Z`);
+  if (Number.isNaN(dt.getTime())) return null;
+  // Reject calendar overflow (e.g. 31-02 → 03-03 silently).
+  if (
+    dt.getUTCFullYear() !== Number(yyyy) ||
+    dt.getUTCMonth() + 1 !== Number(mm) ||
+    dt.getUTCDate() !== Number(dd)
+  ) return null;
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 /** Combines `YYYY-MM-DD` + `HH:MM` into an ISO timestamp (local-naive,
