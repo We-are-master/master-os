@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { isValidUUID } from "@/lib/auth-api";
+import { safePostgrestEnumValue } from "@/lib/supabase/sanitize";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
+
+const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
 /**
  * POST /api/quotes
@@ -14,14 +18,15 @@ export const runtime  = "nodejs";
  *
  * Body (JSON):
  *   {
- *     account_id:    uuid,           // accounts.id — required
- *     date:          string,         // YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, DD/MM/YY
- *     hour:          "HH:MM",        // required, 24h
- *     title:         string,         // required
- *     client_name:   string,         // required
- *     client_email:  string,         // required
- *     description?:  string,         // → quotes.scope
- *     service_type?: string          // trade label (Plumbing, Electrical, etc.)
+ *     account_id:       uuid,                  // accounts.id — required
+ *     date:             string,                // YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, DD/MM/YY
+ *     hour:             "HH:MM",               // required, 24h
+ *     title:            string,                // required
+ *     client_name:      string,                // required
+ *     client_email:     string,                // required
+ *     description?:     string,                // → quotes.scope
+ *     service_type?:    string,                // trade label (Plumbing, Electrical, etc.)
+ *     type_of_quoting?: "manual" | "bidding"   // default "manual"
  *   }
  *
  * Behavior:
@@ -29,9 +34,13 @@ export const runtime  = "nodejs";
  *     client_email, then attaches the new quote to it. The account
  *     linkage flows through clients.source_account_id → accounts.id.
  *   - date + hour are combined into quotes.start_date_option_1 (ISO).
- *   - status is hard-coded to 'draft'.
+ *   - type_of_quoting='manual'  → status='draft', quote_type='internal'
+ *   - type_of_quoting='bidding' → status='bidding', quote_type='partner',
+ *     and active partners whose trades match service_type get an Expo
+ *     push notification with the quote details. service_type is required
+ *     in this mode (no trade = no one to invite).
  *
- * Response: 201 { id, reference, status }
+ * Response: 201 { id, reference, status, partners_notified? }
  */
 export async function POST(req: NextRequest) {
   // ─── Auth ────────────────────────────────────────────────────────────
@@ -53,19 +62,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const accountId   = str(body.account_id);
-  const date        = str(body.date);
-  const hour        = str(body.hour);
-  const title       = str(body.title);
-  const clientName  = str(body.client_name);
-  const clientEmail = str(body.client_email).toLowerCase();
-  const description = str(body.description) || null;
-  const serviceType = str(body.service_type) || null;
+  const accountId      = str(body.account_id);
+  const date           = str(body.date);
+  const hour           = str(body.hour);
+  const title          = str(body.title);
+  const clientName     = str(body.client_name);
+  const clientEmail    = str(body.client_email).toLowerCase();
+  const description    = str(body.description) || null;
+  const serviceType    = str(body.service_type) || null;
+  const typeOfQuoting  = (str(body.type_of_quoting) || "manual").toLowerCase();
 
   // ─── Validation ──────────────────────────────────────────────────────
   if (!accountId || !date || !hour || !title || !clientName || !clientEmail) {
     return NextResponse.json(
       { error: "account_id, date, hour, title, client_name, and client_email are required." },
+      { status: 400 },
+    );
+  }
+  if (typeOfQuoting !== "manual" && typeOfQuoting !== "bidding") {
+    return NextResponse.json(
+      { error: "type_of_quoting must be 'manual' or 'bidding'." },
+      { status: 400 },
+    );
+  }
+  if (typeOfQuoting === "bidding" && !serviceType) {
+    return NextResponse.json(
+      { error: "service_type is required when type_of_quoting is 'bidding' (used to match partners)." },
       { status: 400 },
     );
   }
@@ -152,12 +174,15 @@ export async function POST(req: NextRequest) {
   }
 
   // Insert the quote.
+  const status    = typeOfQuoting === "bidding" ? "bidding"  : "draft";
+  const quoteType = typeOfQuoting === "bidding" ? "partner"  : "internal";
+
   const { data: inserted, error: insErr } = await supabase
     .from("quotes")
     .insert({
       reference:            ref,
       title,
-      status:               "draft",
+      status,
       client_id:            clientId,
       client_name:          clientName,
       client_email:         clientEmail,
@@ -170,7 +195,7 @@ export async function POST(req: NextRequest) {
       margin_percent:       0,
       partner_cost:         0,
       partner_quotes_count: 0,
-      quote_type:           "internal",
+      quote_type:           quoteType,
       customer_accepted:    false,
       customer_deposit_paid: false,
     })
@@ -181,10 +206,118 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: insErr?.message ?? "Could not create quote." }, { status: 500 });
   }
 
+  // Broadcast to matching partners if this is a bidding quote.
+  // Don't fail the whole request if push fails — quote is already saved.
+  let partnersNotified: { sent: number; errors: number; tokensFound: number } | undefined;
+  if (typeOfQuoting === "bidding" && serviceType) {
+    try {
+      partnersNotified = await broadcastQuoteToPartners(supabase, {
+        quoteId:     String(inserted.id),
+        reference:   String(inserted.reference),
+        title,
+        serviceType,
+        startIso,
+      });
+    } catch (err) {
+      console.error("[api/quotes] partner broadcast failed:", err);
+      partnersNotified = { sent: 0, errors: 0, tokensFound: 0 };
+    }
+  }
+
   return NextResponse.json(
-    { id: inserted.id, reference: inserted.reference, status: inserted.status },
+    {
+      id:        inserted.id,
+      reference: inserted.reference,
+      status:    inserted.status,
+      ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
+    },
     { status: 201 },
   );
+}
+
+/** Broadcast an Expo push to every active partner whose trades array
+ *  contains `serviceType` (or the legacy single `trade` column matches).
+ *  Mirrors the logic in /api/push/notify-partner but runs inline because
+ *  this webhook has no user session. */
+async function broadcastQuoteToPartners(
+  supabase: SupabaseClient,
+  args: {
+    quoteId:     string;
+    reference:   string;
+    title:       string;
+    serviceType: string;
+    startIso:    string;
+  },
+): Promise<{ sent: number; errors: number; tokensFound: number }> {
+  const safeTrade = safePostgrestEnumValue(args.serviceType);
+  if (!safeTrade) return { sent: 0, errors: 0, tokensFound: 0 };
+
+  const { data: partners, error } = await supabase
+    .from("partners")
+    .select("id, auth_user_id, expo_push_token")
+    .or(`trades.cs.{${safeTrade}},trade.eq.${safeTrade}`)
+    .eq("status", "active");
+  if (error) {
+    console.error("[api/quotes] partners lookup failed:", error.message);
+    return { sent: 0, errors: 0, tokensFound: 0 };
+  }
+
+  const rows = partners ?? [];
+  const directTokens = rows
+    .map((r) => r.expo_push_token as string | null)
+    .filter((t): t is string => !!t);
+  const missingAuthIds = rows
+    .filter((r) => !r.expo_push_token && r.auth_user_id)
+    .map((r) => r.auth_user_id as string);
+
+  let fallbackTokens: string[] = [];
+  if (missingAuthIds.length > 0) {
+    const { data: users } = await supabase
+      .from("users")
+      .select("id, fcmToken")
+      .in("id", missingAuthIds)
+      .not("fcmToken", "is", null);
+    fallbackTokens = (users ?? [])
+      .map((u: { fcmToken: string | null }) => u.fcmToken)
+      .filter((t): t is string => !!t);
+  }
+
+  const tokens = [...new Set([...directTokens, ...fallbackTokens])];
+  if (tokens.length === 0) return { sent: 0, errors: 0, tokensFound: 0 };
+
+  const data = {
+    type:      "quote_invite" as const,
+    quoteId:   args.quoteId,
+    reference: args.reference,
+    serviceType: args.serviceType,
+    startAt:   args.startIso,
+  };
+  const messages = tokens.map((to) => ({
+    to,
+    title: `New job available — ${args.serviceType}`,
+    body:  args.title,
+    data,
+    sound: "default",
+  }));
+
+  try {
+    const res = await fetch(EXPO_PUSH_URL, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body:    JSON.stringify(messages),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[api/quotes] Expo push ${res.status}:`, text);
+      return { sent: 0, errors: tokens.length, tokensFound: tokens.length };
+    }
+    const json = await res.json();
+    const errors = (json?.data ?? []).filter((r: { status?: string }) => r.status === "error").length;
+    return { sent: tokens.length - errors, errors, tokensFound: tokens.length };
+  } catch (err) {
+    console.error("[api/quotes] Expo fetch failed:", err);
+    return { sent: 0, errors: tokens.length, tokensFound: tokens.length };
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
