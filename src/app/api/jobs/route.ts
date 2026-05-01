@@ -40,6 +40,11 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *                                  //   external_ref=ticket_id.
  *                                  //   Re-posting the same id returns the
  *                                  //   existing job (idempotent).
+ *                                  //   If a QUOTE already exists with this
+ *                                  //   ticket_id (e.g. created by an earlier
+ *                                  //   Zendesk macro), the job is created
+ *                                  //   linked to it (jobs.quote_id) and the
+ *                                  //   quote is marked status='converted_to_job'.
  *   }
  *
  * Behavior:
@@ -130,18 +135,35 @@ export async function POST(req: NextRequest) {
 
   // Idempotency: if a Zendesk ticket id was supplied and we already have a
   // job for it, return the existing row instead of duplicating.
+  let convertingFromQuote: { id: string; clientId: string | null } | null = null;
   if (ticketId) {
-    const { data: dup } = await supabase
+    const { data: dupJob } = await supabase
       .from("jobs")
       .select("id, reference, status")
       .eq("external_source", "zendesk")
       .eq("external_ref", ticketId)
       .maybeSingle();
-    if (dup) {
+    if (dupJob) {
       return NextResponse.json(
-        { id: dup.id, reference: dup.reference, status: dup.status, action: "existing" },
+        { id: dupJob.id, reference: dupJob.reference, status: dupJob.status, action: "existing" },
         { status: 200 },
       );
+    }
+
+    // Conversion path: a QUOTE for this ticket already exists (created by an
+    // earlier Zendesk macro). Carry over its client_id and mark it converted
+    // once the job is in.
+    const { data: existingQuote } = await supabase
+      .from("quotes")
+      .select("id, client_id, status")
+      .eq("external_source", "zendesk")
+      .eq("external_ref", ticketId)
+      .maybeSingle();
+    if (existingQuote) {
+      convertingFromQuote = {
+        id:       existingQuote.id as string,
+        clientId: (existingQuote.client_id as string | null) ?? null,
+      };
     }
   }
 
@@ -159,9 +181,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Account not found." }, { status: 404 });
   }
 
-  // Find or create a client in this account matching the email.
-  let clientId: string | null = null;
-  {
+  // Find or create a client in this account matching the email — unless we're
+  // converting an existing quote, in which case we trust its linkage.
+  let clientId: string | null = convertingFromQuote?.clientId ?? null;
+  if (!clientId) {
     const { data: existing, error: findErr } = await supabase
       .from("clients")
       .select("id")
@@ -254,6 +277,9 @@ export async function POST(req: NextRequest) {
     jobRow.external_source = "zendesk";
     jobRow.external_ref    = ticketId;
   }
+  if (convertingFromQuote) {
+    jobRow.quote_id = convertingFromQuote.id;
+  }
 
   const { data: inserted, error: insErr } = await supabase
     .from("jobs")
@@ -263,6 +289,18 @@ export async function POST(req: NextRequest) {
   if (insErr || !inserted) {
     console.error("[api/jobs] insert failed:", insErr?.message);
     return NextResponse.json({ error: insErr?.message ?? "Could not create job." }, { status: 500 });
+  }
+
+  // Mark the source quote as converted (best-effort — the job is already in,
+  // so don't fail the request if the status flip stumbles).
+  if (convertingFromQuote) {
+    const { error: convErr } = await supabase
+      .from("quotes")
+      .update({ status: "converted_to_job" })
+      .eq("id", convertingFromQuote.id);
+    if (convErr) {
+      console.error("[api/jobs] quote conversion status update failed:", convErr.message);
+    }
   }
 
   // ─── Push notifications (best effort) ───────────────────────────────
@@ -285,6 +323,8 @@ export async function POST(req: NextRequest) {
       id:        inserted.id,
       reference: inserted.reference,
       status:    inserted.status,
+      action:    convertingFromQuote ? "converted_from_quote" : "created",
+      ...(convertingFromQuote ? { from_quote_id: convertingFromQuote.id } : {}),
       ...(partnersNotified ? { partners_notified: partnersNotified } : {}),
     },
     { status: 201 },
