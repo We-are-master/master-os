@@ -27,7 +27,7 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  *     client_email:     string,  // required
  *     property_address: string,  // required (geocoded by app for partner map)
  *     service_type:     string,  // required (trade — used for partner matching)
- *     description?:     string,  // → jobs.report_notes (free-form context)
+ *     description?:     string,  // → jobs.scope (work brief — same field as quotes.scope)
  *     client_price?:    number,  // £ charged to the client (default 0)
  *     partner_cost?:    number,  // £ paid to the partner   (default 0)
  *     auto_assign?:     boolean, // when true → status='auto_assigning'
@@ -268,7 +268,7 @@ export async function POST(req: NextRequest) {
     current_phase:      0,
     job_type:           "fixed",
     finance_status:     "unpaid",
-    report_notes:       description,
+    scope:              description,
   };
   if (autoAssign && matchedPartnerIds.length > 0) {
     jobRow.auto_assign_invited_partner_ids = matchedPartnerIds;
