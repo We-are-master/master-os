@@ -11,6 +11,7 @@ import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { buildNewQuoteEmail } from "@/lib/portal-email-templates";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { isZendeskConfigured, uploadAttachment as zdUpload, updateTicket as zdUpdate } from "@/lib/zendesk";
+import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
 
 /** Custom status ID set on the Zendesk ticket once the quote is sent to the customer. */
 const ZENDESK_STATUS_QUOTE_SENT = 5688280626847;
@@ -199,6 +200,57 @@ export async function POST(req: NextRequest) {
     );
     marks.push(["pdf_render", nowMs() - tPdf]);
 
+    // Build accept/reject URLs upfront so the Zendesk HTML can include CTAs.
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
+    const responseToken = createQuoteResponseToken(quoteId);
+    const acceptUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=accept`;
+    const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
+
+    // ─── Zendesk sync (fire-and-forget) ─────────────────────────────────────
+    // Runs before the email early-returns so a Zendesk-linked quote still
+    // gets the customer-facing comment + PDF on the main ticket even when
+    // Resend isn't configured or the quote has no client_email on file.
+    const zdTicketId = (quote as { external_source?: string | null; external_ref?: string | null }).external_source === "zendesk"
+      ? (quote as { external_ref?: string | null }).external_ref ?? null
+      : null;
+    if (!zdTicketId) {
+      console.log("[send-pdf] Skipping Zendesk sync — quote has no external_ref/external_source.");
+    } else if (!isZendeskConfigured()) {
+      console.warn("[send-pdf] Quote linked to Zendesk ticket", zdTicketId, "but ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN are not configured.");
+    } else {
+      void (async () => {
+        try {
+          const uploadToken = await zdUpload(
+            pdfBuffer,
+            `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
+            "application/pdf",
+          );
+          const html = buildQuoteSentHtml({
+            customerName:    pdfClientName || (quote as { client_name?: string }).client_name || "",
+            reference:       String(quote.reference ?? ""),
+            title:           String(quote.title ?? "Quote"),
+            propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
+            scope:           pdfData.scope ?? null,
+            totalGbp:        Number(quote.total_value) || 0,
+            expiresAt:       quote.expires_at ?? null,
+            items:           lineItemsForPdf,
+            acceptUrl,
+            rejectUrl,
+          });
+          await zdUpdate({
+            ticketId:       zdTicketId,
+            customStatusId: ZENDESK_STATUS_QUOTE_SENT,
+            htmlBody:       html,
+            uploadTokens:   [uploadToken],
+            publicComment:  true,
+          });
+          console.log("[send-pdf] Zendesk ticket", zdTicketId, "updated for quote", quote.reference);
+        } catch (err) {
+          console.error("[send-pdf] Zendesk sync failed for ticket", zdTicketId, ":", err);
+        }
+      })();
+    }
+
     const emailTo = recipientEmail ?? quote.client_email;
     if (!emailTo) {
       marks.push(["total", nowMs() - startedAt]);
@@ -208,11 +260,6 @@ export async function POST(req: NextRequest) {
         marks,
       );
     }
-
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
-    const responseToken = createQuoteResponseToken(quoteId);
-    const acceptUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=accept`;
-    const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
 
     const fromEmail = process.env.RESEND_FROM_EMAIL ?? `${branding.companyName} <quotes@${branding.website ?? "mastergroup.com"}>`;
 
@@ -301,42 +348,6 @@ export async function POST(req: NextRequest) {
       console.error("[send-pdf] portal notification failed:", err);
     });
 
-    // ─── Zendesk sync (fire-and-forget) ─────────────────────────────────────
-    // If the quote was created from a Zendesk ticket, mirror the send: set the
-    // custom status and post a public comment with the PDF attached.
-    const ticketId = (quote as { external_source?: string | null; external_ref?: string | null }).external_source === "zendesk"
-      ? (quote as { external_ref?: string | null }).external_ref ?? null
-      : null;
-    if (ticketId && isZendeskConfigured()) {
-      void (async () => {
-        try {
-          const uploadToken = await zdUpload(
-            pdfBuffer,
-            `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
-            "application/pdf",
-          );
-          const total = Number(quote.total_value).toLocaleString("en-GB", {
-            style: "currency",
-            currency: "GBP",
-          });
-          const body =
-            `Quote ${quote.reference} sent to ${pdfClientName || emailTo}.\n\n` +
-            `Title: ${quote.title}\n` +
-            `Total: ${total}\n\n` +
-            `PDF is attached to this comment.`;
-          await zdUpdate({
-            ticketId,
-            customStatusId: ZENDESK_STATUS_QUOTE_SENT,
-            commentBody:    body,
-            uploadTokens:   [uploadToken],
-            publicComment:  true,
-          });
-        } catch (err) {
-          console.error("[send-pdf] Zendesk sync failed:", err);
-        }
-      })();
-    }
-
     marks.push(["db_updates", nowMs() - tWrite]);
     marks.push(["total", nowMs() - startedAt]);
 
@@ -349,8 +360,9 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("Quote PDF/send error:", err);
     const marks: Array<[string, number]> = [["total", nowMs() - startedAt]];
+    const detail = err instanceof Error ? err.message : String(err);
     return withServerTiming(
-      { error: "Failed to generate or send quote PDF" },
+      { error: "Failed to generate or send quote PDF", detail },
       500,
       marks,
     );

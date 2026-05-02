@@ -3103,12 +3103,11 @@ function QuoteDetailDrawer({
                       />
                     ) : (
                       <div>
-                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                          Property / site address
-                        </label>
-                        <Input
+                        <AddressAutocomplete
+                          label="Property / site address"
                           value={drawerManualAddress}
-                          onChange={(e) => setDrawerManualAddress(e.target.value)}
+                          onChange={(v) => setDrawerManualAddress(v)}
+                          onSelect={(parts: AddressParts) => setDrawerManualAddress(parts.full_address)}
                           placeholder="Street, city, postcode…"
                         />
                         <p className="mt-1 text-[10px] text-text-tertiary">
@@ -3939,22 +3938,19 @@ function QuoteDetailDrawer({
                     </Button>
                   )}
                   {overviewActions.map((action) => {
+                    /**
+                     * Send-to-customer click: route through handleSendToCustomer so the
+                     * full pipeline runs (save proposal → POST /api/quotes/send-pdf →
+                     * Resend email → Zendesk main-ticket sync → status flip to
+                     * awaiting_customer). Previously this only flipped status without
+                     * generating a PDF or notifying Zendesk.
+                     */
                     const sendToCustomerClick = async () => {
                       if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
                         toast.error("Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).");
                         return;
                       }
-                      setProposalSaving(true);
-                      try {
-                        const updated = await persistProposalToQuote();
-                        onQuoteUpdate?.(updated);
-                        const result = await Promise.resolve(onStatusChange(updated, "awaiting_customer"));
-                        if (result === false) return;
-                      } catch (e) {
-                        toast.error(e instanceof Error ? e.message : "Failed to save proposal");
-                      } finally {
-                        setProposalSaving(false);
-                      }
+                      await handleSendToCustomer();
                     };
                     const showMarkAsSent =
                       action.status === "awaiting_customer" && ["draft", "in_survey", "bidding"].includes(quote.status);
