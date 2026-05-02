@@ -1764,7 +1764,7 @@ function SystemTab() {
               description="Square ICO / PNG / SVG. Leave empty to use the default site icon."
               value={form.favicon_url}
               onChange={(v) => update("favicon_url", v)}
-              placeholder="https://…/favicon.png"
+              placeholder="https://…/favicon.svg"
               previewClass="h-8 w-8"
             />
             <div>

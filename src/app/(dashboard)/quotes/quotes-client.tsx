@@ -34,6 +34,8 @@ import { toast } from "sonner";
 import type { Quote, Partner, Job, Account, QuoteDurationUnit } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listQuotes, createQuote, updateQuote, getQuote } from "@/services/quotes";
+import { notifyAssignedPartnerAboutJob } from "@/lib/notify-partner-job-push";
+import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import { getClient } from "@/services/clients";
 import { getAccount, listAccounts } from "@/services/accounts";
 import { createAccountProperty, getAccountProperty, listAccountProperties } from "@/services/account-properties";
@@ -1234,6 +1236,23 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           }).catch((err) => {
             console.error("Failed to record deposit payment on new job:", err);
             toast.error("Job created, but failed to record the deposit as paid. You can add it manually from the job.");
+          });
+        }
+
+        // Partner is assigned at creation (not via UPDATE), so the
+        // standard "assignedFresh" path in job-detail-client never fires.
+        // Trigger push + Zendesk side conversation manually here.
+        if (hasPartner && job.partner_id) {
+          notifyAssignedPartnerAboutJob({
+            partnerId: job.partner_id,
+            job,
+            kind: "job_assigned",
+          });
+          void notifyPartnerJobChange({
+            jobId: job.id,
+            jobReference: job.reference,
+            kind: "assigned",
+            skipPush: true, // notifyAssignedPartnerAboutJob already pushed
           });
         }
 

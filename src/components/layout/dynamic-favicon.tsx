@@ -16,7 +16,7 @@ function guessIconType(href: string): string {
 }
 
 /**
- * Applies company favicon from `company_settings.favicon_url`, or falls back to `/favicon.ico`.
+ * Applies company favicon from `company_settings.favicon_url`, or falls back to `/favicon.svg`.
  * Listens for `master-os-company-settings` after Settings save.
  */
 export function DynamicFavicon() {
@@ -25,7 +25,7 @@ export function DynamicFavicon() {
       try {
         const s = await getCompanySettings();
         const raw = s?.favicon_url?.trim();
-        const href = raw && raw.length > 0 ? raw : "/favicon.ico";
+        const href = raw && raw.length > 0 ? raw : "/favicon.svg";
 
         if (typeof document === "undefined") return;
 
