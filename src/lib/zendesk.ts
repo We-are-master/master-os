@@ -106,6 +106,8 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
     throw new Error(`Zendesk ticket update failed (${res.status}): ${text}`);
   }
 }
+
+/**
  * Zendesk Side Conversations API helper.
  *
  * Side conversations let us reach out to a partner via email *from inside*
@@ -113,23 +115,7 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
  * originating ticket and the support team can see all communication.
  *
  * Docs: https://developer.zendesk.com/api-reference/ticketing/side_conversation/side_conversation/
- *
- * Auth: HTTP Basic with `{email}/token:{api_token}` (Base64 encoded).
  */
-
-const ZENDESK_SUBDOMAIN  = process.env.ZENDESK_SUBDOMAIN?.trim();
-const ZENDESK_EMAIL      = process.env.ZENDESK_EMAIL?.trim();
-const ZENDESK_API_TOKEN  = process.env.ZENDESK_API_TOKEN?.trim();
-
-function isConfigured(): boolean {
-  return Boolean(ZENDESK_SUBDOMAIN && ZENDESK_EMAIL && ZENDESK_API_TOKEN);
-}
-
-function authHeader(): string {
-  if (!isConfigured()) throw new Error("Zendesk not configured");
-  const creds = `${ZENDESK_EMAIL}/token:${ZENDESK_API_TOKEN}`;
-  return `Basic ${Buffer.from(creds).toString("base64")}`;
-}
 
 export interface SideConversationParams {
   /** Zendesk ticket id (numeric, but accepted as string for safety). */
@@ -164,14 +150,14 @@ export interface SideConversationResult {
 export async function createSideConversation(
   params: SideConversationParams,
 ): Promise<SideConversationResult> {
-  if (!isConfigured()) {
+  if (!isZendeskConfigured()) {
     return { ok: false, error: "Zendesk not configured (set ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN)" };
   }
   if (!params.ticketId || !params.toEmail) {
     return { ok: false, error: "ticketId and toEmail are required" };
   }
 
-  const url = `https://${ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/tickets/${params.ticketId}/side_conversations`;
+  const url = `${baseUrl()}/tickets/${params.ticketId}/side_conversations`;
 
   const body = {
     message: {
@@ -222,14 +208,14 @@ export async function replyToSideConversation(params: {
   htmlBody: string;
   bodyText?: string;
 }): Promise<SideConversationResult> {
-  if (!isConfigured()) {
+  if (!isZendeskConfigured()) {
     return { ok: false, error: "Zendesk not configured" };
   }
   if (!params.ticketId || !params.sideConversationId) {
     return { ok: false, error: "ticketId and sideConversationId are required" };
   }
 
-  const url = `https://${ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/tickets/${params.ticketId}/side_conversations/${params.sideConversationId}/reply`;
+  const url = `${baseUrl()}/tickets/${params.ticketId}/side_conversations/${params.sideConversationId}/reply`;
   const body = {
     message: {
       body: params.bodyText ?? stripHtml(params.htmlBody),
