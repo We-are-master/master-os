@@ -64,7 +64,7 @@ export function PortalSettingsClient({ account, portalUser }: PortalSettingsClie
       <div>
         <h1 className="text-2xl font-black text-text-primary">Account settings</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Manage how the Master team reaches you and where invoices are sent.
+          Manage how the Fixfy team reaches you and where invoices are sent.
         </p>
       </div>
 
@@ -152,9 +152,9 @@ export function PortalSettingsClient({ account, portalUser }: PortalSettingsClie
           <h2 className="text-base font-bold text-text-primary">Account profile</h2>
           <p className="text-xs text-text-tertiary mt-1 flex items-center gap-1.5">
             <Lock className="w-3 h-3" />
-            Managed by the Master team. Email{" "}
-            <a href="mailto:hello@wearemaster.com" className="text-orange-600 font-medium">
-              hello@wearemaster.com
+            Managed by the Fixfy team. Email{" "}
+            <a href="mailto:support@getfixfy.com" className="text-orange-600 font-medium">
+              support@getfixfy.com
             </a>{" "}
             to change these.
           </p>

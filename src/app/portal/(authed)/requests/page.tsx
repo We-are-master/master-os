@@ -37,7 +37,7 @@ export default async function PortalRequestsPage() {
         <div>
           <h1 className="text-2xl font-black text-text-primary">Service requests</h1>
           <p className="text-sm text-text-secondary mt-1">
-            Open new requests for jobs and track their status as the Master team responds.
+            Open new requests for jobs and track their status as the Fixfy team responds.
           </p>
         </div>
         <Link
@@ -57,7 +57,7 @@ export default async function PortalRequestsPage() {
             </div>
             <h2 className="text-base font-bold text-text-primary mb-1">No requests yet</h2>
             <p className="text-sm text-text-secondary mb-5">
-              Start by opening a new request &mdash; the Master team will get back to you with a quote.
+              Start by opening a new request &mdash; the Fixfy team will get back to you with a quote.
             </p>
             <Link
               href="/portal/requests/new"

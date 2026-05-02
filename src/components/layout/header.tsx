@@ -308,7 +308,7 @@ export function Header() {
           type="button"
           onClick={() => window.dispatchEvent(new CustomEvent("master-brain-open"))}
           className="h-9 w-9 rounded-lg flex items-center justify-center text-text-secondary hover:bg-primary/10 hover:text-primary transition-colors"
-          title="Master Brain"
+          title="Fixfy Brain"
         >
           <Sparkles className="h-[18px] w-[18px]" />
         </button>

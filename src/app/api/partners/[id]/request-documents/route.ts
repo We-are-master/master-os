@@ -8,7 +8,7 @@ import { buildPartnerUploadEmailHTML } from "@/lib/partner-upload-email-template
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
 
 /** Default fallback FROM if no env override is set. */
-const DEFAULT_FROM_EMAIL = "Master Group <hello@wearemaster.com>";
+const DEFAULT_FROM_EMAIL = "Fixfy <support@getfixfy.com>";
 
 const ALLOWED_DOC_TYPES = new Set([
   "insurance",
@@ -214,11 +214,11 @@ async function handlePost(
       .single();
     const s = (settings ?? {}) as Record<string, unknown>;
     branding = {
-      companyName: String(s.company_name ?? "Master Group"),
+      companyName: String(s.company_name ?? "Fixfy"),
       logoUrl: s.logo_url ? String(s.logo_url) : undefined,
       address: String(s.address ?? "124 City Road, London, UK"),
       phone: String(s.phone ?? ""),
-      email: String(s.email ?? "hello@wearemaster.com"),
+      email: String(s.email ?? "support@getfixfy.com"),
       website: s.website ? String(s.website) : undefined,
       vatNumber: s.vat_number ? String(s.vat_number) : undefined,
       primaryColor: String(s.primary_color ?? "#F97316"),
@@ -226,10 +226,10 @@ async function handlePost(
     };
   } catch {
     branding = {
-      companyName: "Master Group",
+      companyName: "Fixfy",
       address: "124 City Road, London, UK",
       phone: "",
-      email: "hello@wearemaster.com",
+      email: "support@getfixfy.com",
       primaryColor: "#F97316",
     };
   }

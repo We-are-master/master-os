@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
  *  - email        (account-of-record contact — internal only)
  *  - industry, payment_terms, credit_limit, account_owner_id, etc.
  *
- * If they need any of those changed, they email hello@wearemaster.com.
+ * If they need any of those changed, they email support@getfixfy.com.
  */
 const PORTAL_ACCOUNT_WRITABLE_FIELDS = new Set<string>([
   "contact_name",

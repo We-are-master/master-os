@@ -1731,52 +1731,22 @@ function SystemTab() {
                 The sidebar switches logo when users toggle light or dark mode. Use a light mark on transparent or dark background for <strong>dark theme</strong>, and a dark mark for <strong>light theme</strong>. If one is empty, the other (or the PDF logo below) is used as fallback.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="flex items-center gap-2 text-xs font-medium text-text-secondary mb-1.5">
-                    <Moon className="h-3.5 w-3.5 text-text-tertiary" />
-                    Logo — dark theme
-                  </label>
-                  <Input
-                    value={form.logo_dark_theme_url}
-                    onChange={(e) => update("logo_dark_theme_url", e.target.value)}
-                    placeholder="https://…/logo-dark-mode.png"
-                  />
-                  {form.logo_dark_theme_url ? (
-                    <div className="mt-2 p-3 rounded-xl bg-[#0a0a0a] border border-white/10 flex items-center justify-center min-h-[52px]">
-                      <img
-                        src={form.logo_dark_theme_url}
-                        alt=""
-                        className="max-h-9 max-w-full object-contain"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-                <div>
-                  <label className="flex items-center gap-2 text-xs font-medium text-text-secondary mb-1.5">
-                    <Sun className="h-3.5 w-3.5 text-text-tertiary" />
-                    Logo — light theme
-                  </label>
-                  <Input
-                    value={form.logo_light_theme_url}
-                    onChange={(e) => update("logo_light_theme_url", e.target.value)}
-                    placeholder="https://…/logo-light-mode.png"
-                  />
-                  {form.logo_light_theme_url ? (
-                    <div className="mt-2 p-3 rounded-xl bg-white border border-border flex items-center justify-center min-h-[52px]">
-                      <img
-                        src={form.logo_light_theme_url}
-                        alt=""
-                        className="max-h-9 max-w-full object-contain"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                </div>
+                <BrandingImageUpload
+                  kind="sidebar-dark"
+                  label="Logo — dark theme"
+                  value={form.logo_dark_theme_url}
+                  onChange={(v) => update("logo_dark_theme_url", v)}
+                  placeholder="https://…/logo-dark-mode.png"
+                  previewClass="h-9 w-auto"
+                />
+                <BrandingImageUpload
+                  kind="sidebar-light"
+                  label="Logo — light theme"
+                  value={form.logo_light_theme_url}
+                  onChange={(v) => update("logo_light_theme_url", v)}
+                  placeholder="https://…/logo-light-mode.png"
+                  previewClass="h-9 w-auto"
+                />
               </div>
             </div>
             <BrandingImageUpload

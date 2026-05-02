@@ -1,7 +1,7 @@
 import type { Job } from "@/types/database";
 import { isJobOnSiteWorkStatus } from "@/lib/job-phases";
 
-/** Seed live timer when staff sets job to phase 1 from Master OS (partner app uses the same columns via RPC). */
+/** Seed live timer when staff sets job to phase 1 from Fixfy OS (partner app uses the same columns via RPC). */
 export function officePartnerTimerStartPatch(): Pick<
   Job,
   | "partner_timer_started_at"

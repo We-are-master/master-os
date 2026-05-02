@@ -179,10 +179,10 @@ export async function POST(req: NextRequest) {
 <p style="font-size:14px">Or copy this address into your browser:<br/><a href="${escapeHtmlAttr(primaryUrl)}">${escapeHtml(primaryUrl)}</a></p>
 ${longAlt}
 <p style="margin-top:24px;font-size:12px;color:#666">If you did not expect this message, you can ignore it or contact the office.</p>
-<p style="font-size:12px;color:#666">— Master OS</p>
+<p style="font-size:12px;color:#666">— Fixfy OS</p>
 `;
       const resend = new Resend(resendKey);
-      const fromEmail = process.env.RESEND_FROM_EMAIL ?? "Master OS <onboarding@resend.dev>";
+      const fromEmail = process.env.RESEND_FROM_EMAIL ?? "Fixfy OS <onboarding@resend.dev>";
       const { error } = await resend.emails.send({
         from: fromEmail,
         to: [partnerEmail],

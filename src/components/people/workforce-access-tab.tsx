@@ -48,6 +48,9 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
   const [savingActive, setSavingActive] = useState(false);
   const [resettingPw, setResettingPw] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  // Login email — controls auth.users.email so the user signs in with this address.
+  const [editEmail, setEditEmail] = useState("");
+  const [savingEmail, setSavingEmail] = useState(false);
 
   const payrollEmail = (() => {
     const p = person.payroll_profile as unknown;
@@ -73,7 +76,9 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
         .maybeSingle();
       setProfile(data as Profile | null);
       if (data) {
-        setEditRole((data as Profile).role);
+        const p = data as Profile;
+        setEditRole(p.role);
+        setEditEmail(p.email ?? "");
       }
     } finally {
       setLoading(false);
@@ -199,6 +204,30 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
     }
   };
 
+  const handleEmailSave = async () => {
+    if (!profile) return;
+    const cleanEmail = editEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      toast.error("Enter a valid email");
+      return;
+    }
+    if (cleanEmail === (profile.email ?? "").toLowerCase()) return;
+    setSavingEmail(true);
+    try {
+      if (
+        await patchProfile(
+          { email: cleanEmail },
+          "Login email updated. The user signs in with the new address from now on.",
+        )
+      ) {
+        await loadProfile();
+        await onSaved();
+      }
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
   const handleSoftDelete = async () => {
     if (!profile) return;
     if (
@@ -244,7 +273,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
                 No dashboard access
               </p>
               <p className="text-xs text-text-tertiary mt-0.5">
-                This person does not have a Master OS login. Create one below so they can access the web dashboard.
+                This person does not have a Fixfy OS login. Create one below so they can access the web dashboard.
               </p>
             </div>
           </div>
@@ -324,6 +353,36 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
           <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
             <KeyRound className="h-3 w-3" />
             User must change password on next login
+          </div>
+        )}
+      </div>
+
+      {/* Login email */}
+      <div className="space-y-2 rounded-xl border border-border-light p-4">
+        <p className="text-xs font-semibold text-text-secondary">Login email</p>
+        <p className="text-[11px] text-text-tertiary">
+          The address the user types to sign in. Changes here update <code className="font-mono text-[10px]">auth.users</code> AND <code className="font-mono text-[10px]">profiles</code> together — the old email stops working immediately.
+        </p>
+        <Input
+          type="email"
+          value={editEmail}
+          onChange={(e) => setEditEmail(e.target.value)}
+          placeholder="user@example.com"
+          autoComplete="email"
+        />
+        {editEmail.trim().toLowerCase() !== (profile.email ?? "").toLowerCase() && (
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={handleEmailSave} disabled={savingEmail}>
+              {savingEmail ? "Saving..." : "Save email"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setEditEmail(profile.email ?? "")}
+              disabled={savingEmail}
+            >
+              Cancel
+            </Button>
           </div>
         )}
       </div>

@@ -115,7 +115,7 @@ export default async function PortalJobDetailPage({ params }: PageProps) {
           <DetailRow
             icon={<User className="w-4 h-4" />}
             label="Assigned to"
-            value={job.partner_name || "Master team"}
+            value={job.partner_name || "Fixfy team"}
           />
           {job.property_address && (
             <DetailRow

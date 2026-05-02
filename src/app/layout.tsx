@@ -15,10 +15,10 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Master OS — Operations System",
-  description: "Master internal operations management system",
+  title: "Fixfy OS — Operations System",
+  description: "Fixfy internal operations management system",
   icons: {
-    icon: "https://wearemaster.com/favicon.png",
+    icon: "/favicon.png",
   },
 };
 

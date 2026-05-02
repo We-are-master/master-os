@@ -2,8 +2,8 @@ import { Suspense } from "react";
 import { JoinClient } from "./join-client";
 
 export const metadata = {
-  title: "Become a Master Partner",
-  description: "Join the Master partner network. Apply in minutes and start earning.",
+  title: "Become a Fixfy Partner",
+  description: "Join the Fixfy partner network. Apply in minutes and start earning.",
 };
 
 export default function JoinPage() {

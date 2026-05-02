@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * POST /api/portal/tickets/[id]/messages
  * Body: { body: string }
  *
- * Portal user adds a message to their ticket. Notifies hello@wearemaster.com
+ * Portal user adds a message to their ticket. Notifies support@getfixfy.com
  * and the assigned staff member (if any).
  */
 export async function POST(
@@ -84,9 +84,9 @@ export async function POST(
       const resendKey = process.env.RESEND_API_KEY?.trim();
       if (!resendKey) return;
       const resend = new Resend(resendKey);
-      const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "Master Group <hello@wearemaster.com>";
+      const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <support@getfixfy.com>";
       const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "https://app.getfixfy.com";
-      const recipients = ["hello@wearemaster.com"];
+      const recipients = ["support@getfixfy.com"];
 
       if (t.assigned_to) {
         const { data: staff } = await supabase

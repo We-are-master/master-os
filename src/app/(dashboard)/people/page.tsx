@@ -761,7 +761,7 @@ export default function PeoplePage() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-text-primary">Create dashboard access</p>
                 <p className="text-[11px] text-text-tertiary mt-0.5">
-                  Grant this person a Master OS web login. You can also add this later from the Dashboard Access tab.
+                  Grant this person a Fixfy OS web login. You can also add this later from the Dashboard Access tab.
                 </p>
               </div>
             </label>
