@@ -32,12 +32,12 @@ export function buildNewQuoteEmail({
   const html = `
     <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#0f172a">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
-        <img src="https://wearemaster.com/favicon.png" alt="Master" style="width:40px;height:40px" />
-        <strong style="font-size:18px;color:#0f172a">Master Portal</strong>
+        <img src="/favicon.png" alt="Fixfy" style="width:40px;height:40px" />
+        <strong style="font-size:18px;color:#0f172a">Fixfy Portal</strong>
       </div>
       <h1 style="font-size:22px;margin:0 0 8px;color:#0f172a">A new quote is ready for you</h1>
       <p style="color:#64748b;margin:0 0 24px;line-height:1.5">
-        Hi ${escapeHtml(accountName)} team — the Master team just sent quote
+        Hi ${escapeHtml(accountName)} team — the Fixfy team just sent quote
         <strong>${escapeHtml(quoteRef)}</strong> for <strong>${escapeHtml(quoteTitle)}</strong>.
         Review the line items, scope, and total in your portal and accept or decline whenever you&rsquo;re ready.
       </p>
@@ -48,7 +48,7 @@ export function buildNewQuoteEmail({
       <p style="color:#94a3b8;font-size:12px;margin:32px 0 0;line-height:1.5">
         This is an automatic notification from the Master account portal.
         If you weren&rsquo;t expecting this, you can safely ignore it or reply to
-        <a href="mailto:hello@wearemaster.com" style="color:#E94A02">hello@wearemaster.com</a>.
+        <a href="mailto:support@getfixfy.com" style="color:#E94A02">support@getfixfy.com</a>.
       </p>
     </div>
   `;

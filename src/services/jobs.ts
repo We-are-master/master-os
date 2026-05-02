@@ -443,14 +443,26 @@ export async function createJob(
   input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Job> {
   const supabase = getSupabase();
-  /** Every job gets a paired draft invoice in Finance (amount may be 0 until pricing is set). */
-  const [jobRefRes, invRefRes, coords, dueDateStrPre] = await Promise.all([
+  /**
+   * Critical-path parallel kick-off:
+   *   - 2 ref RPCs + due-date + nominal billing party are all data we need
+   *     BEFORE we can insert the job + invoice
+   *   - Geocoding is NOT here: it's a 500-2000ms external API call and the
+   *     job page loads fine without coords. We fire it post-insert and
+   *     PATCH lat/lng when it returns. This was the single biggest source
+   *     of perceived "Create Job" latency.
+   */
+  const [jobRefRes, invRefRes, dueDateStrPre, jobBilling] = await Promise.all([
     supabase.rpc("next_job_ref"),
     supabase.rpc("next_invoice_ref"),
-    resolveJobGeocode(input.property_address),
     getInvoiceDueDateIsoForClient(input.client_id ?? null).catch(
       () => new Date().toISOString().slice(0, 10),
     ),
+    resolveNominalBillingParty(supabase, {
+      clientId: input.client_id?.trim() ?? "",
+      fallbackName: input.client_name,
+      fallbackEmail: null,
+    }).catch(() => ({ displayName: input.client_name } as { displayName: string })),
   ]);
   if (jobRefRes.error) throw jobRefRes.error;
   if (invRefRes.error) throw invRefRes.error;
@@ -469,10 +481,6 @@ export async function createJob(
   /** Partner set → leave the auto-assign queue (manual pick or post-create assign). */
   if (jobHasPartnerSet(input as Job) && (input as Job).status === "auto_assigning") {
     baseRow.status = "scheduled";
-  }
-  if (coords) {
-    baseRow.latitude = coords.latitude;
-    baseRow.longitude = coords.longitude;
   }
   const row = prepareJobRowForInsert(baseRow);
   let attemptPayload: Record<string, unknown> = { ...row };
@@ -514,11 +522,15 @@ export async function createJob(
   if (error) throw error;
   let job = data as Job;
 
-  const jobBilling = await resolveNominalBillingParty(supabase, {
-    clientId: job.client_id?.trim() ?? "",
-    fallbackName: job.client_name,
-    fallbackEmail: null,
-  });
+  // Geocode in the background — patch lat/lng asynchronously when ready.
+  // Map / route preview waits a moment instead of blocking the redirect.
+  void resolveJobGeocode(input.property_address)
+    .then((coords) => {
+      if (!coords) return;
+      return supabase.from("jobs").update({ latitude: coords.latitude, longitude: coords.longitude }).eq("id", job.id);
+    })
+    .catch((err) => console.error("[createJob] background geocode failed:", err));
+
   const invoiceClientLabel = jobBilling.displayName;
 
   /**
@@ -603,11 +615,12 @@ export async function createJob(
   }
 
   /**
-   * Final consistency pass:
-   * - ensure links exist when docs are expected
-   * - verify through the same sources used by Invoices/Self-bills tabs
-   * - self-heal missing job foreign keys when documents already exist
+   * Final consistency pass — moved to background. Re-checks invoice + self-bill
+   * are linked; self-heals missing FKs by re-querying. The parallel
+   * invoiceTask + selfBillTask above already create them on the happy path,
+   * so this is best-effort cleanup that doesn't need to block the user.
    */
+  void (async () => {
   try {
     // Every job should have a draft invoice (amount may be 0).
     {
@@ -681,6 +694,7 @@ export async function createJob(
     // Never block job creation at this stage; this pass is best-effort verification/relink.
     console.error("createJob financial docs verification failed:", e);
   }
+  })();
 
   void syncSelfBillAfterJobChange(job).catch(() => {});
   return job;

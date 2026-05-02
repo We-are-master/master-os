@@ -33,7 +33,7 @@ export default async function PortalQuotesPage() {
       <div>
         <h1 className="text-2xl font-black text-text-primary">Quotes</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Review and respond to quotes from the Master team.
+          Review and respond to quotes from the Fixfy team.
         </p>
       </div>
 
@@ -45,7 +45,7 @@ export default async function PortalQuotesPage() {
             </div>
             <h2 className="text-base font-bold text-text-primary mb-1">No quotes yet</h2>
             <p className="text-sm text-text-secondary">
-              Quotes you receive from the Master team will appear here.
+              Quotes you receive from the Fixfy team will appear here.
             </p>
           </div>
         ) : (

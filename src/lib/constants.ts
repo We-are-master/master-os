@@ -1,4 +1,4 @@
-export const APP_NAME = "Master OS";
+export const APP_NAME = "Fixfy OS";
 export const APP_DESCRIPTION = "Master Operations System";
 
 export type NavItem = {

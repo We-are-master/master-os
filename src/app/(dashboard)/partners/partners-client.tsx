@@ -2511,7 +2511,7 @@ function PartnerDetailDrawer({
       const match =
         (found ?? []).find((r) => (r.email ?? "").toLowerCase() === raw.toLowerCase()) ?? (found ?? [])[0];
       if (!match?.id) {
-        toast.error("No profile with that email. They need to register in the Master Services app first.");
+        toast.error("No profile with that email. They need to register in the Fixfy app first.");
         return;
       }
       const { data: clash } = await supabase
@@ -3662,7 +3662,7 @@ function PartnerDetailDrawer({
               <div className="rounded-2xl border border-border-light bg-white p-4 space-y-3">
                 <div className="flex items-center gap-1.5">
                   <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Mobile app account</p>
-                  <span title="Link this partner to their Master Services app login so they show under Team (App) even before their first job" className="text-text-tertiary cursor-help">
+                  <span title="Link this partner to their Fixfy app login so they show under Team (App) even before their first job" className="text-text-tertiary cursor-help">
                     <Info className="h-3.5 w-3.5" />
                   </span>
                 </div>

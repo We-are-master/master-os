@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     }
 
     const resend = new Resend(resendKey);
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "Master <quotes@example.com>";
+    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "Fixfy <quotes@example.com>";
 
     const imgHtml = photoUrls
       .map((u, i) => {
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     const storeBlock =
       storeLinks.length > 0
         ? `<p style="margin:12px 0">${storeLinks.join(" · ")}</p>`
-        : `<p style="margin:12px 0;color:#444;font-size:14px">Install <strong>Master Services</strong> from the App Store or Google Play, sign in, then open <strong>Invites</strong> to view this request and submit your bid.</p>`;
+        : `<p style="margin:12px 0;color:#444;font-size:14px">Install <strong>Fixfy</strong> from the App Store or Google Play, sign in, then open <strong>Invites</strong> to view this request and submit your bid.</p>`;
 
     const officeQuoteUrl = `${publicOsBaseUrl(req)}/quotes?quoteId=${encodeURIComponent(quoteId)}&drawerTab=bids`;
     const officeEsc = escapeHtmlAttr(officeQuoteUrl);
@@ -108,8 +108,8 @@ export async function POST(req: NextRequest) {
         ${imgHtml || "<p><em>No site photos were attached to this request.</em></p>"}
         <p style="margin-top:20px"><strong>Submit your bid in the partner app</strong></p>
         ${storeBlock}
-        <p style="margin:12px 0;font-size:14px"><a href="${deepEsc}">Open invitation in app</a> (tap after installing Master Services)</p>
-        <p style="margin-top:16px;font-size:12px;color:#666">Office link (login required): <a href="${officeEsc}">View quote in Master OS</a></p>
+        <p style="margin:12px 0;font-size:14px"><a href="${deepEsc}">Open invitation in app</a> (tap after installing Fixfy)</p>
+        <p style="margin-top:16px;font-size:12px;color:#666">Office link (login required): <a href="${officeEsc}">View quote in Fixfy OS</a></p>
       `;
       const { error } = await resend.emails.send({
         from: fromEmail,

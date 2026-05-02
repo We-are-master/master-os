@@ -46,7 +46,7 @@ function appendInstructions(base: string, extra: string | null | undefined): str
 }
 
 /**
- * Master Brain chat — admin / manager / operator when enabled in company_settings + OPENAI_API_KEY.
+ * Fixfy Brain chat — admin / manager / operator when enabled in company_settings + OPENAI_API_KEY.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
   const { data: prof, error: pErr } = await admin.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
   const role = prof?.role as AppRole | undefined;
   if (pErr || !role || !["admin", "manager", "operator"].includes(role)) {
-    return NextResponse.json({ error: "Master Brain is not available for this profile." }, { status: 403 });
+    return NextResponse.json({ error: "Fixfy Brain is not available for this profile." }, { status: 403 });
   }
 
   const { data: settingsRow } = await admin
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
 
   const settings = settingsRow as CompanyAiRow | null;
   if (!allowedForRole(settings, role)) {
-    return NextResponse.json({ error: "Master Brain is disabled for your role in company settings." }, { status: 403 });
+    return NextResponse.json({ error: "Fixfy Brain is disabled for your role in company settings." }, { status: 403 });
   }
 
   let body: Body;
@@ -109,18 +109,18 @@ export async function POST(req: NextRequest) {
   if (snapResult.status === "fulfilled") {
     contextParts.push(`General operational context:\n${snapshotToPromptBlock(snapResult.value)}`);
   } else {
-    console.error("Master Brain snapshot:", snapResult.reason);
+    console.error("Fixfy Brain snapshot:", snapResult.reason);
     contextParts.push("General operational context: (could not load)");
   }
   if (needsQuotes && qBlockResult.status === "fulfilled" && qBlockResult.value) {
     contextParts.push(`Quotes focus:\n${qBlockResult.value}`);
   } else if (needsQuotes && qBlockResult.status === "rejected") {
-    console.error("Master Brain quotes block:", qBlockResult.reason);
+    console.error("Fixfy Brain quotes block:", qBlockResult.reason);
   }
   if (needsJobs && jBlockResult.status === "fulfilled" && jBlockResult.value) {
     contextParts.push(`This user's assignments:\n${jBlockResult.value}`);
   } else if (needsJobs && jBlockResult.status === "rejected") {
-    console.error("Master Brain jobs block:", jBlockResult.reason);
+    console.error("Fixfy Brain jobs block:", jBlockResult.reason);
   }
 
   if (role === "operator") {
@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
     { role: "system", content: systemPrompt },
     {
       role: "system",
-      content: `Fresh data from Master OS (use only as facts; may be partial):\n\n${contextParts.join("\n\n---\n\n")}`,
+      content: `Fresh data from Fixfy OS (use only as facts; may be partial):\n\n${contextParts.join("\n\n---\n\n")}`,
     },
   ];
 

@@ -86,7 +86,7 @@ export default async function PortalQuoteDetailPage({ params }: PageProps) {
         {/* Custom message from the team */}
         {quote.email_custom_message && (
           <div className="px-6 py-5 border-b border-border-light bg-surface-secondary">
-            <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Message from Master</p>
+            <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-2">Message from Fixfy</p>
             <p className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">{quote.email_custom_message}</p>
           </div>
         )}

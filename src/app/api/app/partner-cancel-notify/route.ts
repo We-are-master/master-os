@@ -89,11 +89,11 @@ export async function POST(req: NextRequest) {
     <p><strong>Cancellation fee (GBP):</strong> ${fee}</p>
     <p><strong>Partner:</strong> ${String(partner.company_name ?? partner.contact_name ?? "—")} (${String(partner.email ?? "—")})</p>
     <p><strong>Reason:</strong> ${reason}</p>
-    <p><a href="${escapeHtmlAttr(jobUrl)}">Open in Master OS</a></p>
+    <p><a href="${escapeHtmlAttr(jobUrl)}">Open in Fixfy OS</a></p>
   `;
 
   try {
-    const from = process.env.RESEND_FROM_EMAIL ?? "Master OS <onboarding@resend.dev>";
+    const from = process.env.RESEND_FROM_EMAIL ?? "Fixfy OS <onboarding@resend.dev>";
     await resend.emails.send({
       from,
       to: recipients,

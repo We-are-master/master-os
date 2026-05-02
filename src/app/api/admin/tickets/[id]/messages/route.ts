@@ -59,7 +59,7 @@ export async function POST(
   }
 
   // Insert message
-  const senderName = p?.full_name ?? p?.email ?? "Master team";
+  const senderName = p?.full_name ?? p?.email ?? "Fixfy team";
   const { error: msgErr } = await supabase.from("ticket_messages").insert({
     ticket_id:   ticketId,
     sender_id:   auth.user.id,
@@ -93,7 +93,7 @@ export async function POST(
       const resendKey = process.env.RESEND_API_KEY?.trim();
       if (!resendKey) return;
       const resend = new Resend(resendKey);
-      const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "Master Group <hello@wearemaster.com>";
+      const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <support@getfixfy.com>";
       const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "https://app.getfixfy.com";
 
       const { data: portalUsers } = await supabase

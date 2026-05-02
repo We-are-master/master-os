@@ -2,8 +2,8 @@ import { Suspense } from "react";
 import { PortalLoginClient } from "./portal-login-client";
 
 export const metadata = {
-  title: "Portal — Sign In | Master",
-  description: "Sign in to the Master account portal",
+  title: "Portal — Sign In | Fixfy",
+  description: "Sign in to the Fixfy account portal",
 };
 
 export default function PortalLoginPage() {

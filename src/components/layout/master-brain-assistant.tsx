@@ -230,7 +230,7 @@ export function MasterBrainAssistant() {
       <Drawer
         open={open}
         onClose={() => setOpen(false)}
-        title="Master Brain"
+        title="Fixfy Brain"
         subtitle={MODE_LABEL[mode]}
         width="w-[min(100vw-0.5rem,480px)]"
         footer={footer}
@@ -240,7 +240,7 @@ export function MasterBrainAssistant() {
             <div className="rounded-2xl border border-dashed border-border bg-surface-hover/60 px-4 py-3 text-xs text-text-secondary leading-relaxed">
               <p className="font-medium text-text-primary mb-1">How to use</p>
               <p>
-                Use the shortcuts below or type freely. Replies use real Master OS data (metrics and, for Manager/Operator, a focus on{" "}
+                Use the shortcuts below or type freely. Replies use real Fixfy OS data (metrics and, for Manager/Operator, a focus on{" "}
                 <strong>quotes</strong> and <strong>your jobs</strong> when you are the owner).
               </p>
               <p className="mt-2 text-text-tertiary">

@@ -28,7 +28,7 @@ export function buildDailyBriefHtml(params: {
   const brain =
     params.insightsHtml && params.insightsHtml.trim()
       ? `<div style="margin-top:24px;padding:16px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0">
-          <p style="margin:0 0 8px;font-family:system-ui,sans-serif;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase">Master Brain insights</p>
+          <p style="margin:0 0 8px;font-family:system-ui,sans-serif;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase">Fixfy Brain insights</p>
           <div style="font-family:system-ui,sans-serif;font-size:14px;color:#1e293b;line-height:1.5">${params.insightsHtml}</div>
         </div>`
       : "";
@@ -40,7 +40,7 @@ export function buildDailyBriefHtml(params: {
       ${table}
       ${recent}
       ${brain}
-      <p style="font-family:system-ui,sans-serif;font-size:11px;color:#94a3b8;margin-top:28px">Sent by Master OS · configure in Settings → AI &amp; Daily brief</p>
+      <p style="font-family:system-ui,sans-serif;font-size:11px;color:#94a3b8;margin-top:28px">Sent by Fixfy OS · configure in Settings → AI &amp; Daily brief</p>
     </div>
   </body></html>`;
 }

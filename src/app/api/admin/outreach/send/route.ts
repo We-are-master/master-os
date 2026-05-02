@@ -125,7 +125,7 @@ export async function POST(req: NextRequest) {
       partners[0] ?? {
         id: "",
         contact_name: profileName ?? "Admin",
-        company_name: "Master Group",
+        company_name: "Fixfy",
         email: testEmail,
         trade: "geral",
       };

@@ -1,6 +1,6 @@
 import { bidPayloadTrimmedString } from "@/lib/quote-bid-payload";
 
-/** Stored in `quote_line_items.notes` for lines 0–1 (partner app ↔ Master OS). */
+/** Stored in `quote_line_items.notes` for lines 0–1 (partner app ↔ Fixfy OS). */
 export const PROPOSAL_LINE_META_V = 1 as const;
 
 /** Mirrors partner submit: labour hourly vs fixed; materials unit vs bulk. */

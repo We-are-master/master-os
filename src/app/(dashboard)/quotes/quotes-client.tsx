@@ -1194,6 +1194,14 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           customer_final_paid: false,
           scope: jobScope || undefined,
           images: siteImages.length ? siteImages : undefined,
+          // Carry the Zendesk lineage from the originating quote so that
+          // partner notifications (assignment, reschedule, cancel, …) can
+          // reuse the same ticket / side conversation.
+          external_source: quoteToConvert.external_source ?? undefined,
+          external_ref: quoteToConvert.external_ref ?? undefined,
+          ...(quoteToConvert.zendesk_side_conversation_id
+            ? { zendesk_side_conversation_id: quoteToConvert.zendesk_side_conversation_id }
+            : {}),
         });
 
         /** Draft invoice is created inside `createJob` (unified for quote + modal paths). */
@@ -1203,33 +1211,38 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           auditMetadata.deposit_override_reason = formData.depositOverrideReason ?? "";
           auditMetadata.deposit_waived_amount = quoteToConvert.deposit_required ?? 0;
         }
-        await Promise.all([
-          updateQuote(quoteToConvert.id, { status: "converted_to_job" }),
-          logAudit({ entityType: "job", entityId: job.id, entityRef: job.reference, action: "created", metadata: auditMetadata, userId: profile?.id, userName: profile?.full_name }),
-        ]);
+
+        // Fire-and-forget: quote status flip + audit log + deposit payment record.
+        // Each is independent of the redirect — cuts ~300-500ms off perceived latency.
+        // Errors are surfaced in console but don't block the user navigating to the job.
+        void updateQuote(quoteToConvert.id, { status: "converted_to_job" })
+          .catch((e) => console.error("[convert-to-job] updateQuote failed:", e));
+        void logAudit({
+          entityType: "job", entityId: job.id, entityRef: job.reference, action: "created",
+          metadata: auditMetadata, userId: profile?.id, userName: profile?.full_name,
+        }).catch((e) => console.error("[convert-to-job] logAudit failed:", e));
 
         if (shouldRecordDepositPaid) {
-          try {
-            await createJobPayment({
-              job_id: job.id,
-              type: "customer_deposit",
-              amount: scheduledDeposit,
-              payment_date: new Date().toISOString().slice(0, 10),
-              payment_method: "bank_transfer",
-              note: `Deposit marked as paid from quote ${quoteToConvert.reference}`,
-              created_by: profile?.id,
-            });
-          } catch (err) {
+          void createJobPayment({
+            job_id: job.id,
+            type: "customer_deposit",
+            amount: scheduledDeposit,
+            payment_date: new Date().toISOString().slice(0, 10),
+            payment_method: "bank_transfer",
+            note: `Deposit marked as paid from quote ${quoteToConvert.reference}`,
+            created_by: profile?.id,
+          }).catch((err) => {
             console.error("Failed to record deposit payment on new job:", err);
             toast.error("Job created, but failed to record the deposit as paid. You can add it manually from the job.");
-          }
+          });
         }
 
         setQuoteToConvert(null);
         setConvertMarkDepositPaid(false);
         setSelectedQuote(null);
         toast.success(shouldRecordDepositPaid ? `Job ${job.reference} created & deposit recorded as paid` : `Job ${job.reference} created`);
-        refreshWithKpis();
+        // Defer KPI refresh so the navigation isn't queued behind the SWR refetch.
+        setTimeout(() => refreshWithKpis(), 100);
         router.push(`/jobs?jobId=${job.id}`);
         trackUiPerf("quotes.convert_to_job_ms", performance.now() - perfStart, { hasPartner: hasPartner });
       } catch (err) {
@@ -4800,10 +4813,11 @@ function mergeCreateJobScopeFromQuote(q: Quote, approvedBid: QuoteBid | null): s
 
 function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid = false }: {
   quote: Quote | null; onClose: () => void;
-  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; depositOverrideReason?: string; job_type?: "fixed" | "hourly"; scope?: string }) => void;
+  onSubmit: (data: { title: string; client_id?: string; client_address_id?: string; client_name: string; property_address: string; partner_id?: string; partner_name?: string; client_price: number; partner_cost: number; materials_cost: number; scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null; createWithoutDeposit?: boolean; depositOverrideReason?: string; job_type?: "fixed" | "hourly"; scope?: string }) => void | Promise<void>;
   /** When true, the caller will record the deposit as a received client payment on the newly created job. */
   markDepositAsPaid?: boolean;
 }) {
+  const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({ title: "", partner_id: "", client_price: "", partner_cost: "", materials_cost: "", scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "", scope: "", createWithoutDeposit: false, job_type: "fixed" });
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -4976,8 +4990,9 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
   const showDepositOverride = !markDepositAsPaid && depositRequired > 0.02;
   const overrideActive = showDepositOverride && form.createWithoutDeposit;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     if (!form.title?.trim()) { toast.error("Job title is required"); return; }
     if (addContactClient) {
       if (!clientAddress.client_id) {
@@ -5078,26 +5093,31 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
     const effectivePropertyAddress = addContactClient
       ? clientAddress.property_address
       : manualPropertyAddress.trim();
-    onSubmit({
-      title: form.title.trim(),
-      client_id: addContactClient ? clientAddress.client_id : undefined,
-      client_address_id: addContactClient ? clientAddress.client_address_id : undefined,
-      client_name: effectiveClientName,
-      property_address: effectivePropertyAddress,
-      partner_id: form.partner_id || undefined,
-      partner_name: partnerNameResolved,
-      client_price: Number(form.client_price) || 0,
-      partner_cost: Number(form.partner_cost) || 0,
-      materials_cost: Number(form.materials_cost) || 0,
-      scheduled_date,
-      scheduled_start_at,
-      scheduled_end_at,
-      scheduled_finish_date,
-      createWithoutDeposit: overrideActive,
-      depositOverrideReason: overrideActive ? depositOverrideReason.trim() : undefined,
-      job_type: form.job_type as "fixed" | "hourly",
-      scope: scopeTrimmed || (quote.scope ?? "").trim(),
-    });
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        title: form.title.trim(),
+        client_id: addContactClient ? clientAddress.client_id : undefined,
+        client_address_id: addContactClient ? clientAddress.client_address_id : undefined,
+        client_name: effectiveClientName,
+        property_address: effectivePropertyAddress,
+        partner_id: form.partner_id || undefined,
+        partner_name: partnerNameResolved,
+        client_price: Number(form.client_price) || 0,
+        partner_cost: Number(form.partner_cost) || 0,
+        materials_cost: Number(form.materials_cost) || 0,
+        scheduled_date,
+        scheduled_start_at,
+        scheduled_end_at,
+        scheduled_finish_date,
+        createWithoutDeposit: overrideActive,
+        depositOverrideReason: overrideActive ? depositOverrideReason.trim() : undefined,
+        job_type: form.job_type as "fixed" | "hourly",
+        scope: scopeTrimmed || (quote.scope ?? "").trim(),
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const depositForBanner = markDepositAsPaid ? Math.max(0, Number(quote.deposit_required ?? 0)) : 0;
@@ -5292,10 +5312,27 @@ function CreateJobFromQuoteModal({ quote, onClose, onSubmit, markDepositAsPaid =
           </div>
         ) : null}
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" size="sm" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit" size="sm">Create Job</Button>
+          <Button variant="outline" size="sm" onClick={onClose} type="button" disabled={submitting}>Cancel</Button>
+          <Button type="submit" size="sm" disabled={submitting}>
+            {submitting ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Creating job…
+              </>
+            ) : (
+              "Create Job"
+            )}
+          </Button>
         </div>
       </form>
+      {submitting ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/70 backdrop-blur-[1px]">
+          <div className="flex items-center gap-2 rounded-full bg-card border border-border px-4 py-2 shadow-md">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="text-sm font-medium text-text-primary">Creating job…</span>
+          </div>
+        </div>
+      ) : null}
     </Modal>
   );
 }

@@ -178,13 +178,13 @@ export async function POST(req: NextRequest) {
   // Return immediately — don't block the user waiting for the email.
   const response = NextResponse.json({ ok: true, ticketId, reference });
 
-  // Email to hello@wearemaster.com (fire-and-forget)
+  // Email to support@getfixfy.com (fire-and-forget)
   void (async () => {
     try {
       const resendKey = process.env.RESEND_API_KEY?.trim();
       if (!resendKey) return;
       const resend = new Resend(resendKey);
-      const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "Master Group <hello@wearemaster.com>";
+      const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <support@getfixfy.com>";
       const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") || "https://app.getfixfy.com";
       const { subject: emailSubject, html } = buildNewTicketInternalEmail({
         accountName,
@@ -198,7 +198,7 @@ export async function POST(req: NextRequest) {
       });
       await resend.emails.send({
         from: fromEmail,
-        to:   ["hello@wearemaster.com"],
+        to:   ["support@getfixfy.com"],
         subject: emailSubject,
         html,
       });

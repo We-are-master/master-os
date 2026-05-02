@@ -23,7 +23,7 @@ function escapeHtml(s: string): string {
 export interface OutreachShellOptions {
   bodyHtml: string;
   branding: CompanyBranding;
-  /** When set, shown as a grey preheader chip (e.g. "Sent by Master OS"). */
+  /** When set, shown as a grey preheader chip (e.g. "Sent by Fixfy OS"). */
   preheader?: string;
 }
 
@@ -55,10 +55,10 @@ export function wrapOutreachHtml({ bodyHtml, branding, preheader }: OutreachShel
 }
 
 export const DEFAULT_BRANDING: CompanyBranding = {
-  companyName: "Master Group",
+  companyName: "Fixfy",
   address: "124 City Road, London, UK",
   phone: "+44 20 1234 5678",
-  email: "hello@wearemaster.com",
+  email: "support@getfixfy.com",
   primaryColor: "#F97316",
   tagline: "Professional Property Services",
 };

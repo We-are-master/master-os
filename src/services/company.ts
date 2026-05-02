@@ -21,7 +21,7 @@ export interface CompanySettings {
   tagline?: string;
   quote_footer_notes?: string;
   invoice_footer_notes?: string;
-  /** Admin: show Master Brain floating assistant */
+  /** Admin: show Fixfy Brain floating assistant */
   master_brain_enabled?: boolean;
   master_brain_manager_enabled?: boolean;
   master_brain_operator_enabled?: boolean;

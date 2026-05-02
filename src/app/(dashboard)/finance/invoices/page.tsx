@@ -2797,7 +2797,7 @@ function InvoiceDetailDrawer({
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                          <p className="text-[13px] font-semibold text-text-primary">Master fee</p>
+                          <p className="text-[13px] font-semibold text-text-primary">Fixfy fee</p>
                           <span className="rounded-[3px] bg-[#FEF3C7] px-[6px] py-[1px] text-[10px] font-semibold text-[#78350F]">
                             [inc VAT]
                           </span>
@@ -2814,7 +2814,7 @@ function InvoiceDetailDrawer({
                     </div>
                     <div className="flex items-center justify-between border-b border-border bg-card px-3 py-2.5">
                       <p className="text-[11px] text-text-secondary">
-                        VAT 20% <span className="text-[#9CA3AF]">· on Master fee only</span>
+                        VAT 20% <span className="text-[#9CA3AF]">· on Fixfy fee only</span>
                       </p>
                       <p className="text-[12px] text-text-primary tabular-nums">{formatCurrency(breakdownVat)}</p>
                     </div>

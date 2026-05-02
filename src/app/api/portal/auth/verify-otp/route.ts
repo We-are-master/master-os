@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             error:
-              "This email is not registered as a portal user. If you're a Master team member, sign in at /login instead.",
+              "This email is not registered as a portal user. If you're a Fixfy team member, sign in at /login instead.",
           },
           { status: 403 },
         );
