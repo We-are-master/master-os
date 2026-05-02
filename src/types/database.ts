@@ -409,6 +409,10 @@ export interface Job {
   on_hold_snapshot_scheduled_start_at?: string | null;
   on_hold_snapshot_scheduled_end_at?: string | null;
   on_hold_snapshot_scheduled_finish_date?: string | null;
+  /** External system that originated the job (e.g. "zendesk"). */
+  external_source?: string | null;
+  /** Stable id from the external system (e.g. Zendesk ticket id). */
+  external_ref?: string | null;
   created_at: string;
   updated_at: string;
 }

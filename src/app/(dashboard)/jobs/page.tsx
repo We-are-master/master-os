@@ -96,6 +96,7 @@ import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { ExportCsvModal } from "@/components/shared/export-csv-modal";
 import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 import {
@@ -1849,7 +1850,10 @@ function JobsPageContent() {
                           </div>
                         ) : null}
                         <div className="p-3 flex flex-col flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
+                            <ZendeskTicketBadge source={j.external_source} ref={j.external_ref} size="xs" />
+                          </div>
                           <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(j.title) || j.title}</p>
                           <div className="mt-1 flex flex-wrap items-center gap-1 min-w-0">
                             <p className="text-[10px] text-text-tertiary truncate">{sc.label}</p>
@@ -3000,6 +3004,7 @@ function JobsMapView({ jobs, loading, onSelectJob }: { jobs: Job[]; loading: boo
             <div className="p-3 sm:p-4 flex flex-col flex-1 min-w-0">
               <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                 <p className="text-sm font-semibold text-text-primary truncate">{j.reference}</p>
+                <ZendeskTicketBadge source={j.external_source} ref={j.external_ref} size="xs" />
                 <JobOverdueBadge job={j} />
               </div>
               <p className="text-xs text-text-tertiary truncate mt-0.5">{normalizeTypeOfWork(j.title) || j.title}</p>
