@@ -5,11 +5,16 @@ import { isValidUUID } from "@/lib/auth-api";
 import { partnerMatchesTypeOfWork } from "@/lib/partner-type-of-work-match";
 import type { Partner } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isZendeskConfigured, updateTicket as zdUpdate } from "@/lib/zendesk";
+import { buildJobConfirmationHtml } from "@/lib/zendesk-job-confirmation";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+
+/** Custom Zendesk status set on the main ticket once the job is created. */
+const ZENDESK_STATUS_JOB_CREATED = 5688453749919;
 
 /**
  * POST /api/jobs
@@ -301,6 +306,32 @@ export async function POST(req: NextRequest) {
     if (convErr) {
       console.error("[api/jobs] quote conversion status update failed:", convErr.message);
     }
+  }
+
+  // ─── Zendesk main-ticket confirmation (fire-and-forget) ─────────────
+  // When the job came from a Zendesk-linked request, post a public booking
+  // confirmation comment back on the MAIN ticket and flip its custom status.
+  // The side-conversation creation happens elsewhere (Zendesk macro / agent
+  // workflow) — this is the customer-facing reply on the parent ticket.
+  if (ticketId && isZendeskConfigured()) {
+    const html = buildJobConfirmationHtml({
+      customerName:    clientName,
+      reference:       String(inserted.reference),
+      title,
+      propertyAddress,
+      scope:           description,
+      scheduledDate:   isoDate,
+      scheduledHour:   hour,
+      totalGbp:        clientPrice,
+    });
+    void zdUpdate({
+      ticketId,
+      customStatusId: ZENDESK_STATUS_JOB_CREATED,
+      htmlBody:       html,
+      publicComment:  true,
+    }).catch((err) => {
+      console.error("[api/jobs] Zendesk confirmation failed:", err);
+    });
   }
 
   // ─── Push notifications (best effort) ───────────────────────────────

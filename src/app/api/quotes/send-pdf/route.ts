@@ -10,6 +10,10 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { buildNewQuoteEmail } from "@/lib/portal-email-templates";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import { isZendeskConfigured, uploadAttachment as zdUpload, updateTicket as zdUpdate } from "@/lib/zendesk";
+
+/** Custom status ID set on the Zendesk ticket once the quote is sent to the customer. */
+const ZENDESK_STATUS_QUOTE_SENT = 5688280626847;
 
 function nowMs() {
   return performance.now();
@@ -296,6 +300,42 @@ export async function POST(req: NextRequest) {
     }).catch((err) => {
       console.error("[send-pdf] portal notification failed:", err);
     });
+
+    // ─── Zendesk sync (fire-and-forget) ─────────────────────────────────────
+    // If the quote was created from a Zendesk ticket, mirror the send: set the
+    // custom status and post a public comment with the PDF attached.
+    const ticketId = (quote as { external_source?: string | null; external_ref?: string | null }).external_source === "zendesk"
+      ? (quote as { external_ref?: string | null }).external_ref ?? null
+      : null;
+    if (ticketId && isZendeskConfigured()) {
+      void (async () => {
+        try {
+          const uploadToken = await zdUpload(
+            pdfBuffer,
+            `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
+            "application/pdf",
+          );
+          const total = Number(quote.total_value).toLocaleString("en-GB", {
+            style: "currency",
+            currency: "GBP",
+          });
+          const body =
+            `Quote ${quote.reference} sent to ${pdfClientName || emailTo}.\n\n` +
+            `Title: ${quote.title}\n` +
+            `Total: ${total}\n\n` +
+            `PDF is attached to this comment.`;
+          await zdUpdate({
+            ticketId,
+            customStatusId: ZENDESK_STATUS_QUOTE_SENT,
+            commentBody:    body,
+            uploadTokens:   [uploadToken],
+            publicComment:  true,
+          });
+        } catch (err) {
+          console.error("[send-pdf] Zendesk sync failed:", err);
+        }
+      })();
+    }
 
     marks.push(["db_updates", nowMs() - tWrite]);
     marks.push(["total", nowMs() - startedAt]);

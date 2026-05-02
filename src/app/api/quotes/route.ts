@@ -19,11 +19,13 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
  * Body (JSON):
  *   {
  *     account_id:       uuid,                  // accounts.id — required
- *     date:             string,                // YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, DD/MM/YY
- *     hour:             "HH:MM",               // required, 24h
  *     title:            string,                // required
- *     client_name:      string,                // required
- *     client_email:     string,                // required
+ *     date?:            string,                // optional. YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, DD/MM/YY
+ *     hour?:            "HH:MM",               // optional, 24h. Combined with `date` into start_date_option_1.
+ *     client_name?:     string,                // optional. When BOTH name+email are present we look up
+ *     client_email?:    string,                //   the client by email and create one if missing.
+ *                                              //   When either is omitted the quote is saved with
+ *                                              //   client_id=null and the free-text fields kept as-is.
  *     description?:     string,                // → quotes.scope
  *     service_type?:    string,                // trade label (Plumbing, Electrical, etc.)
  *     type_of_quoting?: "manual" | "bidding",  // default "manual" (case-insensitive)
@@ -88,9 +90,12 @@ export async function POST(req: NextRequest) {
   const typeOfQuoting   = typeOfQuotingRaw.toLowerCase() as "manual" | "bidding";
 
   // ─── Validation ──────────────────────────────────────────────────────
-  if (!accountId || !date || !hour || !title || !clientName || !clientEmail) {
+  // Only `account_id` and `title` are strictly required. Date/hour and the
+  // client identity are optional — quotes can be drafted without a confirmed
+  // schedule or before a client record exists in the OS.
+  if (!accountId || !title) {
     return NextResponse.json(
-      { error: "account_id, date, hour, title, client_name, and client_email are required." },
+      { error: "account_id and title are required." },
       { status: 400 },
     );
   }
@@ -103,22 +108,28 @@ export async function POST(req: NextRequest) {
   if (!isValidUUID(accountId)) {
     return NextResponse.json({ error: "account_id must be a valid UUID." }, { status: 400 });
   }
-  const isoDate = normalizeDateToIso(date);
-  if (!isoDate) {
-    return NextResponse.json(
-      { error: "date must be YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, or DD/MM/YY." },
-      { status: 400 },
-    );
+
+  // Date/hour: only validated if provided. If only one of the two is given
+  // we ignore the partial input rather than fail the whole request.
+  let isoDate: string | null = null;
+  if (date) {
+    isoDate = normalizeDateToIso(date);
+    if (!isoDate) {
+      return NextResponse.json(
+        { error: "date must be YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, or DD/MM/YY." },
+        { status: 400 },
+      );
+    }
   }
-  if (!/^\d{2}:\d{2}$/.test(hour)) {
+  if (hour && !/^\d{2}:\d{2}$/.test(hour)) {
     return NextResponse.json({ error: "hour must be HH:MM (24h)." }, { status: 400 });
   }
-  if (!clientEmail.includes("@")) {
+  if (clientEmail && !clientEmail.includes("@")) {
     return NextResponse.json({ error: "client_email must be a valid email." }, { status: 400 });
   }
 
-  const startIso = combineDateHourToIso(isoDate, hour);
-  if (!startIso) {
+  const startIso = isoDate && hour ? combineDateHourToIso(isoDate, hour) : null;
+  if (isoDate && hour && !startIso) {
     return NextResponse.json({ error: "date + hour did not parse to a valid timestamp." }, { status: 400 });
   }
 
@@ -156,9 +167,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Account not found." }, { status: 404 });
   }
 
-  // Find or create a client in this account matching the email.
+  // Client linkage:
+  //   - If both `client_name` and `client_email` are provided, look up an
+  //     existing client in this account by email and create one if not found.
+  //   - If either is missing, leave `client_id = null` and just keep the
+  //     free-text fields (or null) on the quote row.
   let clientId: string | null = null;
-  {
+  if (clientEmail && clientName) {
     const { data: existing, error: findErr } = await supabase
       .from("clients")
       .select("id")
@@ -176,10 +191,10 @@ export async function POST(req: NextRequest) {
       const { data: created, error: createErr } = await supabase
         .from("clients")
         .insert({
-          full_name: clientName,
-          email: clientEmail,
-          client_type: "commercial",
-          source: "corporate",
+          full_name:         clientName,
+          email:             clientEmail,
+          client_type:       "commercial",
+          source:            "corporate",
           source_account_id: accountId,
         })
         .select("id")
@@ -210,8 +225,8 @@ export async function POST(req: NextRequest) {
       title,
       status,
       client_id:            clientId,
-      client_name:          clientName,
-      client_email:         clientEmail,
+      client_name:          clientName || null,
+      client_email:         clientEmail || null,
       scope:                description,
       service_type:         serviceType,
       start_date_option_1:  startIso,
@@ -273,7 +288,7 @@ async function broadcastQuoteToPartners(
     reference:   string;
     title:       string;
     serviceType: string;
-    startIso:    string;
+    startIso:    string | null;
   },
 ): Promise<{ sent: number; errors: number; tokensFound: number }> {
   const safeTrade = safePostgrestEnumValue(args.serviceType);
