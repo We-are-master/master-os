@@ -206,51 +206,108 @@ export async function POST(req: NextRequest) {
     const acceptUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=accept`;
     const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
 
-    // ─── Zendesk sync (fire-and-forget) ─────────────────────────────────────
-    // Runs before the email early-returns so a Zendesk-linked quote still
-    // gets the customer-facing comment + PDF on the main ticket even when
-    // Resend isn't configured or the quote has no client_email on file.
+    // ─── Choose delivery channel ────────────────────────────────────────────
+    // Zendesk takes priority when the quote came from a ticket — the customer
+    // already receives ticket replies through Zendesk, so duplicating the same
+    // PDF via Resend would land twice in their inbox. Resend is only used
+    // for quotes with no Zendesk linkage.
     const zdTicketId = (quote as { external_source?: string | null; external_ref?: string | null }).external_source === "zendesk"
       ? (quote as { external_ref?: string | null }).external_ref ?? null
       : null;
-    if (!zdTicketId) {
-      console.log("[send-pdf] Skipping Zendesk sync — quote has no external_ref/external_source.");
-    } else if (!isZendeskConfigured()) {
-      console.warn("[send-pdf] Quote linked to Zendesk ticket", zdTicketId, "but ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN are not configured.");
-    } else {
-      void (async () => {
-        try {
-          const uploadToken = await zdUpload(
-            pdfBuffer,
-            `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
-            "application/pdf",
-          );
-          const html = buildQuoteSentHtml({
-            customerName:    pdfClientName || (quote as { client_name?: string }).client_name || "",
-            reference:       String(quote.reference ?? ""),
-            title:           String(quote.title ?? "Quote"),
-            propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
-            scope:           pdfData.scope ?? null,
-            totalGbp:        Number(quote.total_value) || 0,
-            expiresAt:       quote.expires_at ?? null,
-            items:           lineItemsForPdf,
-            acceptUrl,
-            rejectUrl,
-          });
-          await zdUpdate({
-            ticketId:       zdTicketId,
-            customStatusId: ZENDESK_STATUS_QUOTE_SENT,
-            htmlBody:       html,
-            uploadTokens:   [uploadToken],
-            publicComment:  true,
-          });
-          console.log("[send-pdf] Zendesk ticket", zdTicketId, "updated for quote", quote.reference);
-        } catch (err) {
-          console.error("[send-pdf] Zendesk sync failed for ticket", zdTicketId, ":", err);
-        }
-      })();
+    const useZendesk = Boolean(zdTicketId && isZendeskConfigured());
+
+    if (zdTicketId && !isZendeskConfigured()) {
+      console.warn("[send-pdf] Quote linked to Zendesk ticket", zdTicketId, "but ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN are not configured. Falling back to Resend.");
     }
 
+    if (useZendesk) {
+      // ─── Zendesk delivery (awaited — sole channel) ────────────────────────
+      const tZd = nowMs();
+      try {
+        const uploadToken = await zdUpload(
+          pdfBuffer,
+          `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
+          "application/pdf",
+        );
+        const html = buildQuoteSentHtml({
+          customerName:    pdfClientName || (quote as { client_name?: string }).client_name || "",
+          reference:       String(quote.reference ?? ""),
+          title:           String(quote.title ?? "Quote"),
+          propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
+          scope:           pdfData.scope ?? null,
+          totalGbp:        Number(quote.total_value) || 0,
+          expiresAt:       quote.expires_at ?? null,
+          items:           lineItemsForPdf,
+          acceptUrl,
+          rejectUrl,
+        });
+        await zdUpdate({
+          ticketId:       zdTicketId!,
+          customStatusId: ZENDESK_STATUS_QUOTE_SENT,
+          htmlBody:       html,
+          uploadTokens:   [uploadToken],
+          publicComment:  true,
+        });
+        console.log("[send-pdf] Zendesk ticket", zdTicketId, "updated for quote", quote.reference);
+      } catch (err) {
+        console.error("[send-pdf] Zendesk delivery failed for ticket", zdTicketId, ":", err);
+        marks.push(["zendesk_send", nowMs() - tZd]);
+        marks.push(["total", nowMs() - startedAt]);
+        return withServerTiming(
+          { error: "Failed to deliver quote via Zendesk", detail: err instanceof Error ? err.message : String(err) },
+          500,
+          marks,
+        );
+      }
+      marks.push(["zendesk_send", nowMs() - tZd]);
+
+      // Status update + audit log + portal notification (same as Resend path)
+      const sentAt = new Date().toISOString();
+      const tWrite = nowMs();
+      await supabase
+        .from("quotes")
+        .update({ status: "awaiting_customer", customer_pdf_sent_at: sentAt })
+        .eq("id", quoteId);
+
+      void supabase.from("audit_logs").insert({
+        entity_type: "quote",
+        entity_id:   quoteId,
+        entity_ref:  quote.reference,
+        action:      "status_changed",
+        field_name:  "status",
+        old_value:   quote.status,
+        new_value:   "awaiting_customer",
+        metadata:    { channel: "zendesk", ticket_id: zdTicketId },
+      }).then(({ error }) => { if (error) console.error("audit_logs insert (send-pdf zd)", error); });
+
+      // Portal users live in the OS portal, not in the Zendesk thread —
+      // notify them through Resend if it's configured (independent of the
+      // customer-facing Zendesk delivery above).
+      const portalResendKey = process.env.RESEND_API_KEY?.trim();
+      const portalResend    = portalResendKey ? new Resend(portalResendKey) : null;
+      const portalFromEmail = portalResend
+        ? (process.env.RESEND_FROM_EMAIL ?? `${branding.companyName} <quotes@${branding.website ?? "mastergroup.com"}>`)
+        : null;
+      void notifyPortalUsersForQuote(supabase, portalResend, portalFromEmail, {
+        quoteId,
+        quoteRef:    quote.reference,
+        quoteTitle:  quote.title ?? "Quote",
+        clientId:    (quote as { client_id?: string | null }).client_id ?? null,
+      }).catch((err) => {
+        console.error("[send-pdf] portal notification failed:", err);
+      });
+
+      marks.push(["db_updates", nowMs() - tWrite]);
+      marks.push(["total", nowMs() - startedAt]);
+      return withServerTiming({
+        pdfGenerated: true,
+        emailSent:    true,
+        channel:      "zendesk",
+        ticketId:     zdTicketId,
+      }, 200, marks);
+    }
+
+    // ─── Resend path (no Zendesk linkage) ────────────────────────────────
     const emailTo = recipientEmail ?? quote.client_email;
     if (!emailTo) {
       marks.push(["total", nowMs() - startedAt]);
@@ -489,8 +546,8 @@ export async function GET(req: NextRequest) {
  */
 async function notifyPortalUsersForQuote(
   supabase: ReturnType<typeof createServiceClient>,
-  resend:   Resend,
-  fromEmail: string,
+  resend:   Resend | null,
+  fromEmail: string | null,
   args: {
     quoteId:    string;
     quoteRef:   string;
@@ -499,6 +556,7 @@ async function notifyPortalUsersForQuote(
   },
 ): Promise<void> {
   if (!args.clientId) return;
+  if (!resend || !fromEmail) return;
 
   // Resolve the client → account → portal users chain
   const { data: client } = await supabase
