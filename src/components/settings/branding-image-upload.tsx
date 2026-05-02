@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-export type BrandingImageKind = "pdf-logo" | "favicon" | "email-header";
+export type BrandingImageKind = "pdf-logo" | "favicon" | "email-header" | "sidebar-dark" | "sidebar-light";
 
 interface BrandingImageUploadProps {
   /** Logical kind — drives the upload path under the bucket. */

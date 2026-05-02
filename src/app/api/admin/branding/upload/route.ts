@@ -14,7 +14,7 @@ const ALLOWED_MIME = new Set([
   "image/svg+xml", "image/x-icon", "image/vnd.microsoft.icon",
 ]);
 
-const ALLOWED_KINDS = new Set(["pdf-logo", "favicon", "email-header"]);
+const ALLOWED_KINDS = new Set(["pdf-logo", "favicon", "email-header", "sidebar-dark", "sidebar-light"]);
 const ALLOWED_ROLES = new Set(["admin", "manager"]);
 
 function extForMime(mime: string): string {
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   const kind = String(form.get("kind") ?? "").trim();
 
   if (!ALLOWED_KINDS.has(kind)) {
-    return NextResponse.json({ error: "kind must be one of: pdf-logo, favicon, email-header" }, { status: 400 });
+    return NextResponse.json({ error: "kind must be one of: pdf-logo, favicon, email-header, sidebar-dark, sidebar-light" }, { status: 400 });
   }
   if (!(file instanceof File) || file.size === 0) {
     return NextResponse.json({ error: "file is required" }, { status: 400 });
