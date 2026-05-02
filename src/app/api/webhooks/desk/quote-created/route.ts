@@ -9,7 +9,7 @@ export const runtime  = "nodejs";
  * POST /api/webhooks/desk/quote-created
  *
  * Inbound webhook from Zoho Desk. Each Desk ticket gets mirrored as a
- * service_requests row with source = "zoho_desk" and external_ref = ticket id
+ * service_requests row with source = "zendesk" and external_ref = ticket id
  * so re-deliveries upsert instead of duplicating.
  *
  * Auth: header `X-API-Key` must match env `ZOHO_DESK_WEBHOOK_API_KEY`.
@@ -27,7 +27,7 @@ export const runtime  = "nodejs";
  */
 export async function POST(req: NextRequest) {
   const provided = req.headers.get("x-api-key");
-  const expected = process.env.ZOHO_DESK_WEBHOOK_API_KEY?.trim();
+  const expected = (process.env.ZENDESK_WEBHOOK_API_KEY ?? process.env.ZOHO_DESK_WEBHOOK_API_KEY)?.trim();
   if (!expected) {
     console.error("[webhook/desk] ZOHO_DESK_WEBHOOK_API_KEY not configured");
     return NextResponse.json({ error: "Webhook not configured." }, { status: 500 });
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   const { data: existing } = await supabase
     .from("service_requests")
     .select("id, reference")
-    .eq("external_source", "zoho_desk")
+    .eq("external_source", "zendesk")
     .eq("external_ref", ticketId)
     .maybeSingle();
 
@@ -117,10 +117,10 @@ export async function POST(req: NextRequest) {
       description:      notes || `Imported from Zoho Desk ticket ${ticketId}`,
       status:           "new",
       priority,
-      source:           "zoho_desk",
+      source:           "zendesk",
       notes:            notes || null,
-      external_source:  "zoho_desk",
-      external_ref:     ticketId,
+      external_source: "zendesk",
+      external_ref:    ticketId,
     })
     .select("id, reference")
     .single();
