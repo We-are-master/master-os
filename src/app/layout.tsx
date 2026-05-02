@@ -15,11 +15,10 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Master OS — Operations System",
-  description: "Master internal operations management system",
-  icons: {
-    icon: "https://wearemaster.com/favicon.png",
-  },
+  title: "Fixfy OS — Operations System",
+  description: "Fixfy internal operations management system",
+  // Favicon picked up automatically by Next.js from src/app/icon.svg
+  // (App Router convention — overrides legacy /public/favicon.ico).
 };
 
 export default function RootLayout({

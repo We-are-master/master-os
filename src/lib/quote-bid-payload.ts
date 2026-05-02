@@ -2,7 +2,7 @@
  * Optional JSON the partner app can send in `quote_bids.notes` to pre-fill the customer proposal.
  * Plain text notes still work; JSON can be the whole string or prefixed with BID_JSON:
  *
- * **Pricing (optional, Master OS mirrors in proposal lines 1–2 `notes` JSON):**
+ * **Pricing (optional, Fixfy OS mirrors in proposal lines 1–2 `notes` JSON):**
  * - `labour_pricing` `"hourly"` | `"fixed"` (default fixed). If hourly, set `labour_hours` + `labour_rate` (£/hr) so they × ≈ `labour_cost`.
  * - `materials_pricing` `"unit"` | `"bulk"` (default unit). If unit, optional `materials_quantity` + `materials_partner_unit` (£/unit) so they × ≈ `materials_cost`.
  */

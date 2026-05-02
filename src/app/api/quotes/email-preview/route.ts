@@ -89,7 +89,7 @@ async function buildPreview(req: NextRequest, payload?: {
           tagline: settings.tagline ? String(settings.tagline) : undefined,
         }
       : {
-          companyName: "Master Group",
+          companyName: "Fixfy",
           address: "123 Business Street, London, UK",
           phone: "+44 20 1234 5678",
           email: "info@mastergroup.com",

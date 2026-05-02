@@ -130,7 +130,7 @@ export function TemplateEditorModal({ open, onClose, template, onSaved }: Templa
             onChange={(e) => setSubject(e.target.value)}
             onFocus={() => setSubjectFocused(true)}
             onBlur={() => setSubjectFocused(false)}
-            placeholder="Ex: Bem-vindo à rede Master, {{nome}}!"
+            placeholder="Ex: Bem-vindo à rede Fixfy, {{nome}}!"
           />
         </div>
 

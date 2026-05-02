@@ -12,6 +12,8 @@ import { JobDocumentsPanel } from "@/components/jobs/job-documents-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
+import { JobZendeskStatus } from "@/components/jobs/job-zendesk-status";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
@@ -141,6 +143,7 @@ import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
+import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
 import {
   effectiveJobStatusForDisplay,
   getPartnerAssignmentBlockReason,
@@ -172,7 +175,7 @@ import {
   buildOfficeCancellationReasonText,
   officeCancellationDetailRequired,
 } from "@/lib/job-office-cancellation";
-import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd } from "@/lib/schedule-calendar";
+import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd, formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
 import { invoiceAmountPaid, invoiceBalanceDue, isInvoiceFullyPaidByAmount } from "@/lib/invoice-balance";
@@ -1741,11 +1744,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           userName: profile?.full_name,
         });
         if (updated.partner_id) {
+          const statusLabel = statusConfig.final_check?.label ?? "Final check";
           notifyAssignedPartnerAboutJob({
             partnerId: updated.partner_id,
             job: updated,
             kind: "job_status_changed",
-            statusLabel: statusConfig.final_check?.label ?? "Final check",
+            statusLabel,
+          });
+          void notifyPartnerJobChange({
+            jobId: updated.id,
+            jobReference: updated.reference,
+            kind: "status_changed",
+            newStatusLabel: statusLabel,
+            skipPush: true,
           });
         }
       } else if (!opts?.silent) {
@@ -1770,6 +1781,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             job: updated,
             kind: assignedFresh ? "job_assigned" : "job_updated",
           });
+          // Zendesk side conversation: only on FRESH assignment to this partner.
+          // No-op server-side when the job didn't come from Zendesk.
+          if (assignedFresh) {
+            void notifyPartnerJobChange({
+              jobId,
+              jobReference: updated.reference,
+              kind: "assigned",
+              skipPush: true, // notifyAssignedPartnerAboutJob already pushed
+            });
+          } else {
+            // Detect a reschedule (date or time-window changed without
+            // changing the partner). Send the rescheduled email + push.
+            const SCHEDULE_KEYS = ["scheduled_date", "scheduled_start_at", "scheduled_end_at", "scheduled_finish_date"] as const;
+            const scheduleTouched = SCHEDULE_KEYS.some((k) => k in updates);
+            if (scheduleTouched) {
+              void notifyPartnerJobChange({
+                jobId,
+                jobReference: updated.reference,
+                kind: "rescheduled",
+                oldDateLine: (current && formatJobScheduleLine(current)) || "Previously scheduled",
+                oldTimeLine: null,
+                newDateLine: formatJobScheduleLine(updated) || "New schedule",
+                newTimeLine: null,
+                skipPush: true, // notifyAssignedPartnerAboutJob already pushed
+              });
+            }
+          }
         }
       }
       return updated;
@@ -2301,6 +2339,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           kind: "job_cancelled_by_office",
           cancellationReason: reasonText,
         });
+        void notifyPartnerJobChange({
+          jobId: updated.id,
+          jobReference: updated.reference,
+          kind: "cancelled",
+          reason: reasonText,
+          newStatusLabel: "Cancelled",
+          skipPush: true,
+        });
       }
       return true;
     } catch (err) {
@@ -2460,11 +2506,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         );
       }
       if (updated.partner_id && j.status !== newStatus) {
+        const statusLabel = statusConfig[newStatus]?.label ?? newStatus;
         notifyAssignedPartnerAboutJob({
           partnerId: updated.partner_id,
           job: updated,
           kind: "job_status_changed",
-          statusLabel: statusConfig[newStatus]?.label ?? newStatus,
+          statusLabel,
+        });
+        // Map OS status → Zendesk email kind so the partner gets the right copy.
+        const zdKind: "on_hold" | "resumed" | "completed" | "status_changed" =
+          newStatus === "on_hold"
+            ? "on_hold"
+            : j.status === "on_hold"
+              ? "resumed"
+              : newStatus === "completed"
+                ? "completed"
+                : "status_changed";
+        const reason = newStatus === "on_hold" ? (updated.on_hold_reason ?? null) : null;
+        void notifyPartnerJobChange({
+          jobId: updated.id,
+          jobReference: updated.reference,
+          kind: zdKind,
+          newStatusLabel: statusLabel,
+          reason,
+          skipPush: true,
         });
       }
       return updated;
@@ -4338,6 +4403,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   aria-label="Refresh job"
                 />
                 <h1 className="text-lg font-bold text-text-primary tabular-nums">{job.reference}</h1>
+                <ZendeskTicketBadge source={job.external_source} ref={job.external_ref} />
                 <Badge variant={config.variant} dot={config.dot} size="sm" className={statusColors.topBadgeClass || undefined}>
                   {config.label}
                 </Badge>
@@ -4444,6 +4510,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ) : null}
           </div>
         ) : null}
+        {/* Zendesk delivery status — hidden when the job didn't come from Zendesk */}
+        <JobZendeskStatus jobId={job.id} zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null} />
         {job.status === "completed" ? (
           <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-text-secondary">
             <p className="font-semibold text-text-primary">Job approval</p>

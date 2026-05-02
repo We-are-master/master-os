@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
           tagline: settings.tagline ? String(settings.tagline) : undefined,
         }
       : {
-          companyName: "Master Group",
+          companyName: "Fixfy",
           address: "123 Business Street, London, UK",
           phone: "+44 20 1234 5678",
           email: "info@mastergroup.com",
@@ -417,10 +417,10 @@ export async function GET(req: NextRequest) {
           tagline: settings.tagline ? String(settings.tagline) : undefined,
         }
       : {
-          companyName: "Master Group",
+          companyName: "Fixfy",
           address: "124 City Road, London, UK",
           phone: "+44 20 1234 5678",
-          email: "hello@wearemaster.com",
+          email: "support@getfixfy.com",
           primaryColor: "#F97316",
           tagline: "Professional Property Services",
         };

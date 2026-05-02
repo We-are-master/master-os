@@ -237,6 +237,11 @@ export async function POST(req: NextRequest) {
         vat: 0,
         scope: quote.scope ?? null,
         images: jobImages,
+        // Carry the Zendesk lineage so partner notifications on the new
+        // job land on the same ticket / side conversation.
+        external_source: (quote as { external_source?: string | null }).external_source ?? null,
+        external_ref: (quote as { external_ref?: string | null }).external_ref ?? null,
+        zendesk_side_conversation_id: (quote as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null,
       };
       const tJob = performance.now();
       const jobInsert = prepareJobRowForInsert(baseJobRow);
@@ -473,6 +478,9 @@ export async function POST(req: NextRequest) {
       vat: 0,
       scope: quote.scope ?? null,
       images: jobImagesNoDep,
+      external_source: (quote as { external_source?: string | null }).external_source ?? null,
+      external_ref: (quote as { external_ref?: string | null }).external_ref ?? null,
+      zendesk_side_conversation_id: (quote as { zendesk_side_conversation_id?: string | null }).zendesk_side_conversation_id ?? null,
     };
 
     const tJobNoDep = performance.now();

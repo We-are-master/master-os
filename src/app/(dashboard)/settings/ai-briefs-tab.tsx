@@ -174,7 +174,7 @@ export function AiBriefsTab() {
           AI &amp; Daily brief
         </h3>
         <p className="text-sm text-text-tertiary mt-1">
-          Master Brain uses OpenAI on the server (<strong>never</strong> put API keys in the browser). Daily briefs are sent by a secured cron endpoint.
+          Fixfy Brain uses OpenAI on the server (<strong>never</strong> put API keys in the browser). Daily briefs are sent by a secured cron endpoint.
         </p>
       </div>
 
@@ -214,7 +214,7 @@ export function AiBriefsTab() {
                 disabled={!canEditConfig}
                 onChange={(e) => update("master_brain_enabled", e.target.checked)}
               />
-              Enable Master Brain for <strong>Admin</strong>
+              Enable Fixfy Brain for <strong>Admin</strong>
             </label>
             <p className="text-[11px] text-text-tertiary leading-relaxed">
               Company-wide view: jobs, quotes, requests, invoices and the audit trail.
@@ -238,7 +238,7 @@ export function AiBriefsTab() {
                 disabled={!canEditConfig}
                 onChange={(e) => update("master_brain_manager_enabled", e.target.checked)}
               />
-              Enable Master Brain for <strong>Manager</strong>
+              Enable Fixfy Brain for <strong>Manager</strong>
             </label>
             <p className="text-[11px] text-text-tertiary leading-relaxed">
               Focus on the quotes pipeline, margins and follow-up. Uses the same operational summary plus quote-level detail.
@@ -273,7 +273,7 @@ export function AiBriefsTab() {
                 disabled={!canEditConfig}
                 onChange={(e) => update("master_brain_operator_enabled", e.target.checked)}
               />
-              Enable Master Brain for <strong>Operator</strong>
+              Enable Fixfy Brain for <strong>Operator</strong>
             </label>
             <p className="text-[11px] text-text-tertiary leading-relaxed">
               Day-to-day in the field: jobs where the user is <code className="text-[10px]">owner</code>, plus quotes context.

@@ -17,7 +17,7 @@ function ymdUtc(d: Date): string {
 }
 
 /**
- * Aggregate operational metrics for daily brief / Master Brain context (service role client).
+ * Aggregate operational metrics for daily brief / Fixfy Brain context (service role client).
  */
 export async function fetchOpsSnapshot(admin: SupabaseClient): Promise<OpsSnapshot> {
   const todayUtc = ymdUtc(new Date());
@@ -88,7 +88,7 @@ export function snapshotToPromptBlock(s: OpsSnapshot): string {
   ].join("\n");
 }
 
-/** Quote pipeline detail for Manager / Operator Master Brain. */
+/** Quote pipeline detail for Manager / Operator Fixfy Brain. */
 export async function fetchQuotesPipelineBlock(admin: SupabaseClient): Promise<string> {
   const statuses = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"] as const;
   const countResults = await Promise.all(

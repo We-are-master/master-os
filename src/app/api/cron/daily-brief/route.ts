@@ -113,7 +113,7 @@ export async function GET(req: NextRequest) {
   }
 
   const snapshot = await fetchOpsSnapshot(admin);
-  const companyName = String(row.company_name ?? "Master OS");
+  const companyName = String(row.company_name ?? "Fixfy OS");
   const resend = new Resend(resendKey);
   const fromEmail =
     process.env.RESEND_FROM_EMAIL ?? `${companyName} <onboarding@resend.dev>`;

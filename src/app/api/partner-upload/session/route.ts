@@ -166,7 +166,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       expiresAt: session.expiresAt,
       branding: {
-        companyName: branding?.company_name ?? "Master",
+        companyName: branding?.company_name ?? "Fixfy",
         logoUrl: branding?.logo_url ?? null,
         logoLightUrl: branding?.logo_light_theme_url ?? null,
       },

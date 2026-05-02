@@ -12,7 +12,7 @@ const SLIDES = [
   {
     gradient: "linear-gradient(160deg,#020034 0%,#0A0054 50%,#1A0085 100%)",
     icon: "flash",
-    title: "Welcome to\nMaster Partner",
+    title: "Welcome to\nFixfy Partner",
     subtitle: "Your professional hub for jobs, earnings, and schedules — all in one place.",
   },
   {
@@ -584,13 +584,13 @@ function RegistrationForm() {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="https://wearemaster.com/favicon.png"
-            alt="Master"
+            src="/favicon.svg"
+            alt="Fixfy"
             className="w-12 h-12 object-contain"
           />
         </div>
         <h1 className="text-3xl font-black text-white tracking-tight">Become a Partner</h1>
-        <p className="text-white/55 text-sm mt-1">Join the Master network and start earning</p>
+        <p className="text-white/55 text-sm mt-1">Join the Fixfy network and start earning</p>
       </div>
 
       {/* Step indicator */}

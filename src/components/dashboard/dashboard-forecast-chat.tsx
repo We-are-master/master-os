@@ -58,7 +58,7 @@ export function DashboardForecastChat({
           content:
             e instanceof Error
               ? e.message
-              : "Forecast chat is unavailable. Enable Master Brain for your role and ensure OPENAI_API_KEY is set.",
+              : "Forecast chat is unavailable. Enable Fixfy Brain for your role and ensure OPENAI_API_KEY is set.",
         },
       ]);
     } finally {
@@ -73,7 +73,7 @@ export function DashboardForecastChat({
         Forecast assistant
       </div>
       <p className="text-[11px] text-text-tertiary leading-relaxed">
-        Ask about trends in weekly sold pipeline. Uses the same weekly series as the chart above and Master Brain (same rules as the AI button).
+        Ask about trends in weekly sold pipeline. Uses the same weekly series as the chart above and Fixfy Brain (same rules as the AI button).
       </p>
       <div className="max-h-[200px] overflow-y-auto space-y-2 rounded-lg border border-border-light/60 bg-card/80 p-2 min-h-[72px]">
         {messages.length === 0 && !loading && (

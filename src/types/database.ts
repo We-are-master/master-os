@@ -233,6 +233,12 @@ export interface Quote {
   duration_value?: number | null;
   /** Unit for `duration_value`: calendar day, week, or month. */
   duration_unit?: QuoteDurationUnit | null;
+  /** External system that originated the quote (e.g. "zendesk"). */
+  external_source?: string | null;
+  /** Stable id from the external system (e.g. Zendesk ticket id). */
+  external_ref?: string | null;
+  /** Persisted Zendesk side conversation id so follow-ups reply on the same thread. */
+  zendesk_side_conversation_id?: string | null;
   created_at: string;
   updated_at: string;
   expires_at?: string;
@@ -373,7 +379,7 @@ export interface Job {
   customer_review_rating?: number | null;
   customer_review_comment?: string | null;
   customer_review_submitted_at?: string | null;
-  /** Partner app work timer — synced for Master OS live display */
+  /** Partner app work timer — synced for Fixfy OS live display */
   partner_timer_started_at?: string | null;
   partner_timer_ended_at?: string | null;
   partner_timer_accum_paused_ms?: number | null;
@@ -409,6 +415,12 @@ export interface Job {
   on_hold_snapshot_scheduled_start_at?: string | null;
   on_hold_snapshot_scheduled_end_at?: string | null;
   on_hold_snapshot_scheduled_finish_date?: string | null;
+  /** External system that originated the job (e.g. "zendesk"). */
+  external_source?: string | null;
+  /** Stable id from the external system (e.g. Zendesk ticket id). */
+  external_ref?: string | null;
+  /** Persisted Zendesk side conversation id so follow-ups reply on the same thread. */
+  zendesk_side_conversation_id?: string | null;
   created_at: string;
   updated_at: string;
 }

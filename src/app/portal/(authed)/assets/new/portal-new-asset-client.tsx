@@ -110,7 +110,7 @@ export function PortalNewAssetClient({
         <Select
           label="Primary site contact (optional)"
           options={[
-            { value: "", label: contacts.length ? "None" : "Add contacts in Master OS first" },
+            { value: "", label: contacts.length ? "None" : "Add contacts in Fixfy OS first" },
             ...contacts.map((c) => ({
               value: c.id,
               label: c.full_name + (c.email ? ` (${c.email})` : ""),

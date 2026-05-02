@@ -55,8 +55,8 @@ export function buildTicketReplyPortalEmail(args: TicketReplyEmailArgs): { subje
     html: `
       <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#0f172a">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
-          <img src="https://wearemaster.com/favicon.png" alt="Master" style="width:40px;height:40px" />
-          <strong style="font-size:18px;color:#0f172a">Master Portal</strong>
+          <img src="/favicon.png" alt="Fixfy" style="width:40px;height:40px" />
+          <strong style="font-size:18px;color:#0f172a">Fixfy Portal</strong>
         </div>
         <h1 style="font-size:20px;margin:0 0 8px">New reply on your ticket</h1>
         <p style="color:#64748b;margin:0 0 24px">
@@ -68,7 +68,7 @@ export function buildTicketReplyPortalEmail(args: TicketReplyEmailArgs): { subje
         </div>
         <a href="${args.portalUrl}" style="display:inline-block;background:#E94A02;color:white;padding:12px 24px;border-radius:12px;text-decoration:none;font-weight:700">View in portal</a>
         <p style="color:#94a3b8;font-size:12px;margin:32px 0 0">
-          Reply at <a href="mailto:hello@wearemaster.com" style="color:#E94A02">hello@wearemaster.com</a> or through the portal.
+          Reply at <a href="mailto:support@getfixfy.com" style="color:#E94A02">support@getfixfy.com</a> or through the portal.
         </p>
       </div>
     `,

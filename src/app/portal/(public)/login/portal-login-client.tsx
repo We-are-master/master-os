@@ -26,7 +26,7 @@ export function PortalLoginClient() {
       setError("That sign-in link is invalid. Enter your email below to get a new one.");
     } else if (initialError === "not_portal_user") {
       setError(
-        "This email is not registered as a portal user. If you're a Master team member, sign in at /login instead.",
+        "This email is not registered as a portal user. If you're a Fixfy team member, sign in at /login instead.",
       );
     }
   }, [initialError]);
@@ -121,13 +121,13 @@ export function PortalLoginClient() {
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="https://wearemaster.com/favicon.png"
-              alt="Master"
+              src="/favicon.svg"
+              alt="Fixfy"
               className="w-12 h-12 object-contain"
             />
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight">Account Portal</h1>
-          <p className="text-white/55 text-sm mt-1">Sign in to manage your account with Master</p>
+          <p className="text-white/55 text-sm mt-1">Sign in to manage your account with Fixfy</p>
         </div>
 
         {/* Card */}
@@ -185,7 +185,7 @@ export function PortalLoginClient() {
 
               <p className="text-xs text-slate-400 mt-5 text-center">
                 Didn&rsquo;t receive it? Check your spam folder or{" "}
-                <a href="mailto:hello@wearemaster.com" className="text-orange-600 font-medium">
+                <a href="mailto:support@getfixfy.com" className="text-orange-600 font-medium">
                   contact us
                 </a>
               </p>
@@ -236,7 +236,7 @@ export function PortalLoginClient() {
 
               <p className="text-xs text-slate-400 text-center mt-5">
                 Don&rsquo;t have an account?{" "}
-                <a href="mailto:hello@wearemaster.com" className="text-orange-600 font-medium">
+                <a href="mailto:support@getfixfy.com" className="text-orange-600 font-medium">
                   Contact us
                 </a>
               </p>

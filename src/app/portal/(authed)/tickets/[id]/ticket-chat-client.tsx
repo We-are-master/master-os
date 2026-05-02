@@ -165,7 +165,7 @@ export function TicketChatClient({ ticketId, messages, isOpen, currentUserId }: 
                   )}
                 </div>
                 <div className={`flex items-center gap-2 mt-1 text-[10px] text-text-tertiary ${isMe ? "justify-end" : ""}`}>
-                  <span>{msg.sender_name ?? (isMe ? "You" : "Master team")}</span>
+                  <span>{msg.sender_name ?? (isMe ? "You" : "Fixfy team")}</span>
                   <span>{fmtTime(msg.created_at)}</span>
                 </div>
               </div>

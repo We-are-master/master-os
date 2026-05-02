@@ -38,7 +38,7 @@ function safeExtForMime(mime: string): string {
  *   - serviceType, description, propertyId (account property / asset), desiredDate (optional), images[]
  *
  * Creates a service_requests row scoped to the caller's account, uploads
- * any images to the quote-invite-images bucket, and emails hello@wearemaster.com
+ * any images to the quote-invite-images bucket, and emails support@getfixfy.com
  * to notify the internal team.
  */
 export async function POST(req: NextRequest) {
@@ -264,14 +264,14 @@ export async function POST(req: NextRequest) {
       .eq("id", newRequestId);
   }
 
-  // ─── Notify hello@wearemaster.com ────────────────────────────────────
+  // ─── Notify support@getfixfy.com ────────────────────────────────────
   try {
     const resendKey = process.env.RESEND_API_KEY?.trim();
     if (resendKey) {
       const resend  = new Resend(resendKey);
       const fromEmail =
         process.env.RESEND_FROM_EMAIL?.trim() ||
-        "Master Group <hello@wearemaster.com>";
+        "Fixfy <support@getfixfy.com>";
       const appUrl =
         process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") ||
         "https://app.getfixfy.com";
@@ -299,7 +299,7 @@ export async function POST(req: NextRequest) {
       `;
       await resend.emails.send({
         from:    fromEmail,
-        to:      ["hello@wearemaster.com"],
+        to:      ["support@getfixfy.com"],
         subject,
         html,
       });

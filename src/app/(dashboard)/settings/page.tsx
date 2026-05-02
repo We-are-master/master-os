@@ -42,6 +42,7 @@ import type { Profile, CommissionTier, CommissionPoolShare } from "@/types/datab
 import type { NavGroup } from "@/lib/constants";
 import type { PermissionKey, RoleKey, PermissionsByRole, UserPermissionOverride } from "@/types/admin-config";
 import { saveUserPermissions, resolvePermission } from "@/services/admin-config";
+import { BrandingImageUpload } from "@/components/settings/branding-image-upload";
 import { AiBriefsTab } from "./ai-briefs-tab";
 import { getAllConfigurableComplianceRequirementDefs } from "@/lib/partner-required-docs";
 
@@ -1730,93 +1731,42 @@ function SystemTab() {
                 The sidebar switches logo when users toggle light or dark mode. Use a light mark on transparent or dark background for <strong>dark theme</strong>, and a dark mark for <strong>light theme</strong>. If one is empty, the other (or the PDF logo below) is used as fallback.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="flex items-center gap-2 text-xs font-medium text-text-secondary mb-1.5">
-                    <Moon className="h-3.5 w-3.5 text-text-tertiary" />
-                    Logo — dark theme
-                  </label>
-                  <Input
-                    value={form.logo_dark_theme_url}
-                    onChange={(e) => update("logo_dark_theme_url", e.target.value)}
-                    placeholder="https://…/logo-dark-mode.png"
-                  />
-                  {form.logo_dark_theme_url ? (
-                    <div className="mt-2 p-3 rounded-xl bg-[#0a0a0a] border border-white/10 flex items-center justify-center min-h-[52px]">
-                      <img
-                        src={form.logo_dark_theme_url}
-                        alt=""
-                        className="max-h-9 max-w-full object-contain"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-                <div>
-                  <label className="flex items-center gap-2 text-xs font-medium text-text-secondary mb-1.5">
-                    <Sun className="h-3.5 w-3.5 text-text-tertiary" />
-                    Logo — light theme
-                  </label>
-                  <Input
-                    value={form.logo_light_theme_url}
-                    onChange={(e) => update("logo_light_theme_url", e.target.value)}
-                    placeholder="https://…/logo-light-mode.png"
-                  />
-                  {form.logo_light_theme_url ? (
-                    <div className="mt-2 p-3 rounded-xl bg-white border border-border flex items-center justify-center min-h-[52px]">
-                      <img
-                        src={form.logo_light_theme_url}
-                        alt=""
-                        className="max-h-9 max-w-full object-contain"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                </div>
+                <BrandingImageUpload
+                  kind="sidebar-dark"
+                  label="Logo — dark theme"
+                  value={form.logo_dark_theme_url}
+                  onChange={(v) => update("logo_dark_theme_url", v)}
+                  placeholder="https://…/logo-dark-mode.png"
+                  previewClass="h-9 w-auto"
+                />
+                <BrandingImageUpload
+                  kind="sidebar-light"
+                  label="Logo — light theme"
+                  value={form.logo_light_theme_url}
+                  onChange={(v) => update("logo_light_theme_url", v)}
+                  placeholder="https://…/logo-light-mode.png"
+                  previewClass="h-9 w-auto"
+                />
               </div>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">PDF &amp; email logo URL</label>
-              <Input value={form.logo_url} onChange={(e) => update("logo_url", e.target.value)} placeholder="https://your-domain.com/logo.png" />
-              {form.logo_url && (
-                <div className="mt-2 p-3 rounded-xl bg-surface-hover flex items-center gap-3">
-                  <img src={form.logo_url} alt="Logo preview" className="h-8 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                  <span className="text-xs text-text-tertiary">Used on quote PDFs and customer emails only</span>
-                </div>
-              )}
-            </div>
-            <div className="p-3 rounded-xl bg-surface-hover border border-border-light space-y-2">
-              <label className="flex items-center gap-2 text-xs font-semibold text-text-primary">
-                <Image className="h-3.5 w-3.5 text-text-tertiary" />
-                Favicon (browser tab)
-              </label>
-              <p className="text-[11px] text-text-tertiary leading-snug">
-                Public URL to a square <strong className="text-text-secondary">.ico</strong>, <strong className="text-text-secondary">.png</strong> or <strong className="text-text-secondary">.svg</strong> (e.g. from your Supabase storage). Leave empty to use the default site icon.
-              </p>
-              <Input
-                value={form.favicon_url}
-                onChange={(e) => update("favicon_url", e.target.value)}
-                placeholder="https://…/favicon.png"
-              />
-              {form.favicon_url ? (
-                <div className="flex items-center gap-3 pt-1">
-                  <div className="h-10 w-10 rounded-lg border border-border bg-card flex items-center justify-center overflow-hidden shrink-0">
-                    <img
-                      src={form.favicon_url}
-                      alt=""
-                      className="max-h-8 max-w-8 object-contain"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  </div>
-                  <span className="text-xs text-text-tertiary">Updates the tab icon after you save (all pages).</span>
-                </div>
-              ) : null}
-            </div>
+            <BrandingImageUpload
+              kind="pdf-logo"
+              label="PDF & email logo"
+              description="Used on quote PDFs and customer emails. PNG / JPG / SVG (max 5 MB)."
+              value={form.logo_url}
+              onChange={(v) => update("logo_url", v)}
+              placeholder="https://your-domain.com/logo.png"
+              previewClass="h-10 w-auto"
+            />
+            <BrandingImageUpload
+              kind="favicon"
+              label="Favicon (browser tab)"
+              description="Square ICO / PNG / SVG. Leave empty to use the default site icon."
+              value={form.favicon_url}
+              onChange={(v) => update("favicon_url", v)}
+              placeholder="https://…/favicon.svg"
+              previewClass="h-8 w-8"
+            />
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Tagline</label>
               <Input value={form.tagline} onChange={(e) => update("tagline", e.target.value)} placeholder="Professional Property Services" />
