@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="10" fill="#020040"/>
+  <g fill="#ffffff" transform="translate(32 33)">
+    <!-- Gear (cog) -->
+    <path d="M0-20a20 20 0 0 1 17.32 30L13.4 7.74A14 14 0 1 0 0-6a14 14 0 0 0 4.94.9l5.66 9.8A20 20 0 1 1 0-20z M-3.5-19.7l-1.4-7.3 8.8 0-1.4 7.3a20 20 0 0 0-6 0z M-15.7-13l-6.4-3.7 4.4-7.6 5 5.4a20 20 0 0 0-3 5.9z M19.7-7l7.3 1.4 0 8.8-7.3-1.4a20 20 0 0 0 0-8.8z M15.7 13l6.4 3.7-4.4 7.6-5-5.4a20 20 0 0 0 3-5.9z"/>
+    <!-- Hammer -->
+    <g transform="rotate(35)">
+      <rect x="-2" y="-15" width="4" height="22" rx="1" fill="#020040"/>
+      <rect x="-9" y="-19" width="18" height="9" rx="2" fill="#020040"/>
+    </g>
+    <g transform="rotate(35)">
+      <rect x="-1.5" y="-14" width="3" height="20" rx="1"/>
+      <rect x="-8" y="-18" width="16" height="7" rx="1.5"/>
+    </g>
+  </g>
+</svg>

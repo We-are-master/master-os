@@ -17,9 +17,8 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Fixfy OS — Operations System",
   description: "Fixfy internal operations management system",
-  icons: {
-    icon: "/favicon.png",
-  },
+  // Favicon picked up automatically by Next.js from src/app/icon.svg
+  // (App Router convention — overrides legacy /public/favicon.ico).
 };
 
 export default function RootLayout({

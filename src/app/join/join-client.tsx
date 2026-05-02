@@ -584,7 +584,7 @@ function RegistrationForm() {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/favicon.png"
+            src="/favicon.svg"
             alt="Fixfy"
             className="w-12 h-12 object-contain"
           />

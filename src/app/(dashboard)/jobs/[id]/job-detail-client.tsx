@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
+import { JobZendeskStatus } from "@/components/jobs/job-zendesk-status";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
@@ -4509,6 +4510,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ) : null}
           </div>
         ) : null}
+        {/* Zendesk delivery status — hidden when the job didn't come from Zendesk */}
+        <JobZendeskStatus jobId={job.id} zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null} />
         {job.status === "completed" ? (
           <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs text-text-secondary">
             <p className="font-semibold text-text-primary">Job approval</p>

@@ -80,7 +80,7 @@ export function PortalShell({ accountName, userEmail, userFullName, children }: 
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/favicon.png"
+              src="/favicon.svg"
               alt="Fixfy"
               className="w-9 h-9 object-contain"
             />
@@ -147,7 +147,7 @@ export function PortalShell({ accountName, userEmail, userFullName, children }: 
             <div className="p-5 border-b border-border-light flex items-center justify-between">
               <div className="flex items-center gap-3 min-w-0">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/favicon.png" alt="Fixfy" className="w-9 h-9 object-contain" />
+                <img src="/favicon.svg" alt="Fixfy" className="w-9 h-9 object-contain" />
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide">Fixfy</p>
                   <p className="text-sm font-bold text-text-primary truncate">{accountName || "Portal"}</p>
@@ -220,7 +220,7 @@ export function PortalShell({ accountName, userEmail, userFullName, children }: 
             <Menu className="w-5 h-5 text-text-secondary" />
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/favicon.png" alt="Fixfy" className="w-7 h-7 object-contain" />
+          <img src="/favicon.svg" alt="Fixfy" className="w-7 h-7 object-contain" />
           <p className="text-sm font-bold text-text-primary truncate">{accountName || "Portal"}</p>
         </header>
 
