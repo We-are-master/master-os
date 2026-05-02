@@ -59,6 +59,17 @@ function formatGbp(value: number): string {
   }).format(value);
 }
 
+/**
+ * Zendesk renders \n as visible line breaks inside ticket comments, which
+ * shatters our layout. Strip whitespace between tags (but never inside
+ * text content) so the final HTML is one continuous string.
+ */
+function compactHtml(html: string): string {
+  // Strip whitespace BETWEEN tags only — text content (e.g. user-typed scope
+  // with paragraph breaks) and the body of <p>/<td> stay untouched.
+  return html.replace(/>\s+</g, "><").trim();
+}
+
 export function buildQuoteSentHtml(args: QuoteSentArgs): string {
   const fname    = escapeHtml(firstName(args.customerName) || "there");
   const ref      = escapeHtml(args.reference);
@@ -117,7 +128,7 @@ export function buildQuoteSentHtml(args: QuoteSentArgs): string {
     </tr>
   </table>` : "";
 
-  return `
+  const html = `
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0A0A1F;max-width:600px;">
   <h2 style="margin:0 0 12px;font-size:24px;line-height:32px;font-weight:700;letter-spacing:-0.3px;">
     Hi ${fname}, your quote is ready ✓
@@ -176,5 +187,7 @@ export function buildQuoteSentHtml(args: QuoteSentArgs): string {
     Got a question or want to talk through the proposal? Reply to this email and we'll get back to you.
   </p>
 </div>
-  `.trim();
+  `;
+
+  return compactHtml(html);
 }
