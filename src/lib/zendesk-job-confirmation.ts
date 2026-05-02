@@ -49,6 +49,15 @@ function formatGbp(value: number): string {
   }).format(value);
 }
 
+/**
+ * Zendesk renders \n as visible line breaks inside ticket comments.
+ * Strip whitespace BETWEEN tags only — text content inside <p>/<td> stays
+ * untouched so user-supplied scope keeps its paragraph breaks.
+ */
+function compactHtml(html: string): string {
+  return html.replace(/>\s+</g, "><").trim();
+}
+
 export function buildJobConfirmationHtml(args: BookingArgs): string {
   const fname     = escapeHtml(firstName(args.customerName) || "there");
   const dateLong  = escapeHtml(formatLongDate(args.scheduledDate));
@@ -59,7 +68,7 @@ export function buildJobConfirmationHtml(args: BookingArgs): string {
   const scope     = args.scope ? escapeHtml(args.scope) : "";
   const total     = escapeHtml(formatGbp(args.totalGbp));
 
-  return `
+  const html = `
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0A0A1F;max-width:600px;">
   <h2 style="margin:0 0 12px;font-size:24px;line-height:32px;font-weight:700;letter-spacing:-0.3px;">
     Hi ${fname}, your booking is confirmed ✓
@@ -112,5 +121,7 @@ export function buildJobConfirmationHtml(args: BookingArgs): string {
     Need to reschedule or change anything? Just reply to this email and we'll sort it out.
   </p>
 </div>
-  `.trim();
+  `;
+
+  return compactHtml(html);
 }
