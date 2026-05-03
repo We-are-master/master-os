@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createClient } from "@supabase/supabase-js";
-import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
+import { createSideConversation, replyToSideConversation, updateTicket as zdUpdateTicket } from "@/lib/zendesk";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
   buildJobRescheduledEmail,
+  buildPartnerJobOnHoldEmail,
   type PartnerJobStatusKind,
 } from "@/lib/emails/partner-job-confirmation";
 
@@ -15,6 +16,9 @@ export const runtime  = "nodejs";
 
 const ALLOWED_ROLES = new Set(["admin", "manager", "operator"]);
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+
+/** Custom Zendesk status set on the main ticket while the job is on hold. */
+const ZENDESK_STATUS_JOB_ON_HOLD = 5679178036127;
 
 type NotifyKind = "assigned" | PartnerJobStatusKind;
 
@@ -188,6 +192,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       newDateLine: body.newDateLine ?? "New schedule",
       newTimeLine: body.newTimeLine ?? null,
     });
+  } else if (kind === "on_hold") {
+    email = buildPartnerJobOnHoldEmail({
+      partnerFirstName,
+      jobReference:    job.reference,
+      jobTitle:        job.title || "Maintenance job",
+      propertyAddress: job.property_address || "—",
+    });
   } else {
     email = buildPartnerJobStatusUpdateEmail({
       kind,
@@ -243,6 +254,21 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           .update({ zendesk_side_conversation_id: r.id })
           .eq("id", job.id);
       }
+    }
+
+    // ─── Sync custom_status_id on the main ticket for on_hold ──────────
+    // The side conversation goes to the partner; this flips the Zendesk
+    // ticket's own status so the support team sees the job is paused.
+    // Fire-and-forget: a status sync failure must not block the partner
+    // notification or the API response.
+    if (kind === "on_hold") {
+      void zdUpdateTicket({
+        ticketId:       zendeskTicketId,
+        customStatusId: ZENDESK_STATUS_JOB_ON_HOLD,
+      }).then(
+        () => console.log("[notify-partner-zendesk] Zendesk ticket", zendeskTicketId, "status set to on-hold for job", job.reference),
+        (err) => console.error("[notify-partner-zendesk] Zendesk status update failed for ticket", zendeskTicketId, ":", err),
+      );
     }
   }
 

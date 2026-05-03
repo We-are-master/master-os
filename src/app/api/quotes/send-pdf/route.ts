@@ -10,7 +10,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { buildNewQuoteEmail } from "@/lib/portal-email-templates";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
-import { isZendeskConfigured, uploadAttachment as zdUpload, updateTicket as zdUpdate } from "@/lib/zendesk";
+import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
 import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
 
 /** Custom status ID set on the Zendesk ticket once the quote is sent to the customer. */
@@ -211,12 +211,21 @@ export async function POST(req: NextRequest) {
     // already receives ticket replies through Zendesk, so duplicating the same
     // PDF via Resend would land twice in their inbox. Resend is only used
     // for quotes with no Zendesk linkage.
-    const zdTicketId = (quote as { external_source?: string | null; external_ref?: string | null }).external_source === "zendesk"
-      ? (quote as { external_ref?: string | null }).external_ref ?? null
-      : null;
-    const useZendesk = Boolean(zdTicketId && isZendeskConfigured());
+    const zdTicketId = getZendeskTicketId(quote as { external_source?: string | null; external_ref?: string | null });
+    const zdConfigured = isZendeskConfigured();
+    const useZendesk = Boolean(zdTicketId && zdConfigured);
+    const qSrc = (quote as { external_source?: string | null }).external_source ?? null;
+    const qRef = (quote as { external_ref?: string | null }).external_ref ?? null;
+    console.log(
+      `[send-pdf] Quote ${quote.reference} channel decision —`,
+      `external_source=${JSON.stringify(qSrc)}`,
+      `external_ref=${JSON.stringify(qRef)}`,
+      `zdTicketId=${JSON.stringify(zdTicketId)}`,
+      `zendeskConfigured=${zdConfigured}`,
+      `→ ${useZendesk ? "ZENDESK" : "RESEND"}`,
+    );
 
-    if (zdTicketId && !isZendeskConfigured()) {
+    if (zdTicketId && !zdConfigured) {
       console.warn("[send-pdf] Quote linked to Zendesk ticket", zdTicketId, "but ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN are not configured. Falling back to Resend.");
     }
 
@@ -224,11 +233,6 @@ export async function POST(req: NextRequest) {
       // ─── Zendesk delivery (awaited — sole channel) ────────────────────────
       const tZd = nowMs();
       try {
-        const uploadToken = await zdUpload(
-          pdfBuffer,
-          `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
-          "application/pdf",
-        );
         const html = buildQuoteSentHtml({
           customerName:    pdfClientName || (quote as { client_name?: string }).client_name || "",
           reference:       String(quote.reference ?? ""),
@@ -241,12 +245,15 @@ export async function POST(req: NextRequest) {
           acceptUrl,
           rejectUrl,
         });
-        await zdUpdate({
+        await zdSendCustomerComment({
           ticketId:       zdTicketId!,
           customStatusId: ZENDESK_STATUS_QUOTE_SENT,
           htmlBody:       html,
-          uploadTokens:   [uploadToken],
-          publicComment:  true,
+          attachments: [{
+            filename:    `${quote.reference.replace(/\//g, "-")}_quote.pdf`,
+            content:     pdfBuffer,
+            contentType: "application/pdf",
+          }],
         });
         console.log("[send-pdf] Zendesk ticket", zdTicketId, "updated for quote", quote.reference);
       } catch (err) {

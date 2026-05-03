@@ -24,6 +24,56 @@ export function isZendeskConfigured(): boolean {
 }
 
 /**
+ * Returns the linked Zendesk ticket id from any entity that uses the
+ * external_source / external_ref convention (quotes, jobs, requests, …).
+ * Returns null when the entity isn't Zendesk-linked.
+ */
+export function getZendeskTicketId(entity: {
+  external_source?: string | null | undefined;
+  external_ref?:    string | null | undefined;
+} | null | undefined): string | null {
+  if (!entity) return null;
+  if (entity.external_source !== "zendesk") return null;
+  const ref = entity.external_ref?.toString().trim();
+  return ref ? ref : null;
+}
+
+/**
+ * Upload one or more attachments and post a public comment. Used by
+ * customer-facing routes (quote sent, job final review, …) when the
+ * entity is Zendesk-linked — replaces a Resend email send.
+ *
+ * Awaited — throws on failure so the caller can decide whether to fall
+ * back to Resend or surface the error.
+ */
+export async function sendCustomerCommentWithAttachments(args: {
+  ticketId:        string | number;
+  htmlBody:        string;
+  attachments?:    Array<{ filename: string; content: Buffer; contentType?: string }>;
+  customStatusId?: number;
+}): Promise<void> {
+  if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
+
+  const uploadTokens: string[] = [];
+  for (const att of args.attachments ?? []) {
+    const token = await uploadAttachment(
+      att.content,
+      att.filename,
+      att.contentType ?? "application/octet-stream",
+    );
+    uploadTokens.push(token);
+  }
+
+  await updateTicket({
+    ticketId:       args.ticketId,
+    customStatusId: args.customStatusId,
+    htmlBody:       args.htmlBody,
+    uploadTokens,
+    publicComment:  true,
+  });
+}
+
+/**
  * Upload a file to Zendesk and return the upload token.
  * The token is then attached to a ticket comment via `comment.uploads = [token]`.
  */

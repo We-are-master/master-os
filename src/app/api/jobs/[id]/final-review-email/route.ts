@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
+import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
 import type { Account } from "@/types/database";
 
 function escapeHtml(s: string): string {
@@ -179,8 +180,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       : "Our team";
   const fromEmail = process.env.RESEND_FROM_EMAIL ?? `${companyName} <onboarding@resend.dev>`;
 
+  // Channel selection: prefer Zendesk if the job came from a ticket and the
+  // env is configured; only require RESEND_API_KEY for the Resend fallback.
+  const zdTicketId = getZendeskTicketId(j as { external_source?: string | null; external_ref?: string | null });
+  const useZendesk = Boolean(zdTicketId && isZendeskConfigured());
+
+  if (zdTicketId && !isZendeskConfigured()) {
+    console.warn("[final-review-email] Job linked to Zendesk ticket", zdTicketId, "but Zendesk env is not configured. Falling back to Resend.");
+  }
+
   const resendKey = process.env.RESEND_API_KEY?.trim();
-  if (!resendKey) {
+  if (!useZendesk && !resendKey) {
     return NextResponse.json({ error: "RESEND_API_KEY is not configured" }, { status: 503 });
   }
 
@@ -223,24 +233,46 @@ ${invoiceLine}
 <p style="color:#666;font-size:13px">— ${escapeHtml(companyName)}</p>
 </body></html>`;
 
-  const resend = new Resend(resendKey);
-  const { data: sent, error: sendErr } = await resend.emails.send({
-    from: fromEmail,
-    to: [emailTo],
-    subject: `Job ${String(j.reference ?? "")} — final update`,
-    html,
-    attachments: attachments.length > 0 ? attachments : undefined,
-  });
+  let channel: "zendesk" | "resend";
+  let resendId: string | undefined;
 
-  if (sendErr) {
-    console.error("final-review-email Resend:", sendErr);
-    return NextResponse.json({ error: sendErr.message ?? "Email send failed" }, { status: 502 });
+  if (useZendesk) {
+    try {
+      await zdSendCustomerComment({
+        ticketId:    zdTicketId!,
+        htmlBody:    html,
+        attachments: attachments.length > 0 ? attachments : undefined,
+      });
+      channel = "zendesk";
+    } catch (err) {
+      console.error("final-review-email Zendesk:", err);
+      return NextResponse.json(
+        { error: "Failed to deliver via Zendesk", detail: err instanceof Error ? err.message : String(err) },
+        { status: 502 },
+      );
+    }
+  } else {
+    const resend = new Resend(resendKey!);
+    const { data: sent, error: sendErr } = await resend.emails.send({
+      from: fromEmail,
+      to: [emailTo],
+      subject: `Job ${String(j.reference ?? "")} — final update`,
+      html,
+      attachments: attachments.length > 0 ? attachments : undefined,
+    });
+
+    if (sendErr) {
+      console.error("final-review-email Resend:", sendErr);
+      return NextResponse.json({ error: sendErr.message ?? "Email send failed" }, { status: 502 });
+    }
+    channel = "resend";
+    resendId = sent?.id;
   }
 
   const now = new Date().toISOString();
   const { error: upErr } = await admin
     .from("jobs")
-    .update({ review_sent_at: now, review_send_method: "email" })
+    .update({ review_sent_at: now, review_send_method: channel === "zendesk" ? "zendesk" : "email" })
     .eq("id", jobId);
   if (upErr) {
     console.error("final-review-email job update:", upErr);
@@ -248,7 +280,9 @@ ${invoiceLine}
 
   return NextResponse.json({
     ok: true,
-    resendId: sent?.id,
+    channel,
+    resendId,
+    ticketId: channel === "zendesk" ? zdTicketId : undefined,
     attachmentCount: attachments.length,
     to: emailTo,
     includeInvoice,
