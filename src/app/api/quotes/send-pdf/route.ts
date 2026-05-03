@@ -212,9 +212,20 @@ export async function POST(req: NextRequest) {
     // PDF via Resend would land twice in their inbox. Resend is only used
     // for quotes with no Zendesk linkage.
     const zdTicketId = getZendeskTicketId(quote as { external_source?: string | null; external_ref?: string | null });
-    const useZendesk = Boolean(zdTicketId && isZendeskConfigured());
+    const zdConfigured = isZendeskConfigured();
+    const useZendesk = Boolean(zdTicketId && zdConfigured);
+    const qSrc = (quote as { external_source?: string | null }).external_source ?? null;
+    const qRef = (quote as { external_ref?: string | null }).external_ref ?? null;
+    console.log(
+      `[send-pdf] Quote ${quote.reference} channel decision —`,
+      `external_source=${JSON.stringify(qSrc)}`,
+      `external_ref=${JSON.stringify(qRef)}`,
+      `zdTicketId=${JSON.stringify(zdTicketId)}`,
+      `zendeskConfigured=${zdConfigured}`,
+      `→ ${useZendesk ? "ZENDESK" : "RESEND"}`,
+    );
 
-    if (zdTicketId && !isZendeskConfigured()) {
+    if (zdTicketId && !zdConfigured) {
       console.warn("[send-pdf] Quote linked to Zendesk ticket", zdTicketId, "but ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN are not configured. Falling back to Resend.");
     }
 

@@ -564,3 +564,164 @@ Fixfy · www.getfixfy.com`;
 
   return { subject, html, text };
 }
+
+/**
+ * Dedicated on-hold email — sent via Zendesk side conversation to the
+ * assigned partner when the office puts a job on hold. Layout, copy and
+ * styling mirror job-on-hold-partner-PREVIEW.html: red urgency strip,
+ * payment-on-hold notice, "what we need from you" evidence list, and a
+ * 12-hour deadline notice.
+ *
+ * The internal `on_hold_reason` is intentionally NOT shown — partners get
+ * a fixed evidence checklist instead, matching the approved template.
+ */
+export interface PartnerJobOnHoldData {
+  partnerFirstName: string;
+  jobReference:     string;
+  jobTitle:         string;
+  propertyAddress:  string;
+  supportEmail?:    string;
+  supportPhone?:    string;
+}
+
+export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
+  subject: string;
+  html:    string;
+  text:    string;
+} {
+  const supportEmail = data.supportEmail ?? "support@getfixfy.com";
+  const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
+  const subject = `Action required — Job ${data.jobReference} placed on hold`;
+
+  const safe = {
+    name:           escapeHtml(data.partnerFirstName || "there"),
+    ref:            escapeHtml(data.jobReference),
+    title:          escapeHtml(data.jobTitle),
+    address:        escapeHtml(data.propertyAddress || "—"),
+    support:        escapeHtml(supportEmail),
+    supportTel:     escapeHtml(supportPhone),
+    supportTelHref: telHref(supportPhone),
+  };
+
+  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Job on hold — Fixfy</title>
+<style>
+  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+  body { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+  a { color: #ED4B00; text-decoration: underline; }
+  @media screen and (max-width: 600px) {
+    .container { width: 100% !important; }
+    .px-mobile { padding-left: 24px !important; padding-right: 24px !important; }
+    .h1-mobile { font-size: 24px !important; line-height: 32px !important; }
+  }
+</style>
+</head><body style="margin:0; padding:0; background-color:#F7F7FB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+<div style="display:none; max-height:0px; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#F7F7FB;">Job ${safe.ref} is on hold. We need your help to resolve within 12 hours — please reply with the evidence requested.</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB;">
+  <tr><td align="center" style="padding:32px 16px;">
+    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+
+      <tr><td style="background-color:#C8102E; padding:10px 40px; text-align:center;" class="px-mobile">
+        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⚠ Action required — respond within 12 hours</p>
+      </td></tr>
+
+      <tr><td align="center" style="background-color:#020040; padding:32px 40px;" class="px-mobile">
+        <div style="font-size:32px; font-weight:700; color:#FFFFFF; letter-spacing:-1px;">fixfy</div>
+      </td></tr>
+
+      <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
+        <h1 class="h1-mobile" style="margin:0 0 12px 0; font-size:28px; line-height:36px; font-weight:700; color:#0A0A1F; letter-spacing:-0.5px;">Hi ${safe.name}, this job is on hold — we need your help to resolve</h1>
+        <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">Something has come up with the job below and we need a hand to get it sorted. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within <strong style="color:#0A0A1F;">12 hours</strong>.</p>
+      </td></tr>
+
+      <tr><td style="padding:0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
+          <tr><td style="padding:24px;">
+            <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Job #${safe.ref}</p>
+            <p style="margin:0 0 16px 0; font-size:18px; font-weight:600; color:#0A0A1F;">${safe.title}</p>
+            <div style="display:inline-block; background-color:#FBEFD6; color:#C47A00; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;">⏸ On hold</div>
+            <div style="margin-top:18px; padding-top:18px; border-top:1px solid #E4E4EC;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Location</p>
+              <p style="margin:0; font-size:14px; line-height:21px; color:#3A3A55;">${safe.address}</p>
+            </div>
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FBE3E7; border-left:3px solid #C8102E; border-radius:8px;">
+          <tr><td style="padding:14px 16px;">
+            <p style="margin:0; font-size:13px; line-height:20px; color:#7A0A1E;"><strong style="color:#C8102E;">💰 Payment on hold until resolved.</strong> Your payment for this job is paused until we receive the evidence and close the case.</p>
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <tr><td style="padding:24px 40px 0 40px;" class="px-mobile">
+        <p style="margin:0 0 12px 0; font-size:15px; font-weight:700; color:#0A0A1F;">What we need from you</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FBEFD6; border-left:3px solid #C47A00; border-radius:6px;">
+          <tr><td style="padding:16px 20px;">
+            <p style="margin:0 0 10px 0; font-size:14px; line-height:21px; color:#0A0A1F;">Please reply to this email with the following:</p>
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>Photos</strong> of the work area / completed work</td></tr>
+              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>Receipts</strong> for any materials purchased</td></tr>
+              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>A short written summary</strong> of what was done and any issues you encountered</td></tr>
+              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>Any relevant certificates</strong> (e.g. CP12, electrical) if applicable</td></tr>
+            </table>
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#E1ECFF; border-radius:8px;">
+          <tr><td style="padding:14px 16px;">
+            <p style="margin:0; font-size:13px; line-height:20px; color:#0A3A8C;"><strong style="color:#0B5FFF;">⏱ Please reply within 12 hours</strong> so we can resolve this for the customer in time.</p>
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <tr><td align="center" style="padding:32px 40px 32px 40px;" class="px-mobile">
+        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Need to talk this through? Call us on <a href="tel:${safe.supportTelHref}" style="color:#ED4B00; font-weight:600;">${safe.supportTel}</a> or email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a>.</p>
+      </td></tr>
+
+      <tr><td style="background-color:#F7F7FB; padding:24px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
+        <p style="margin:0 0 10px 0; font-size:12px; line-height:18px; color:#6B6B85;">You're receiving this email because you're registered as a partner with Fixfy.</p>
+        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a> · <a href="mailto:${safe.support}" style="color:#6B6B85;">${safe.support}</a> · ${safe.supportTel}</p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body></html>`;
+
+  const text =
+`ACTION REQUIRED — RESPOND WITHIN 12 HOURS
+
+Hi ${data.partnerFirstName || "there"},
+
+This job has been placed on hold and we need your help to resolve it.
+We've committed to the customer that we'll resolve within 24 hours, so
+please reply within 12 hours.
+
+Job #${data.jobReference} — ${data.jobTitle}
+Location: ${data.propertyAddress || "—"}
+Status: ON HOLD
+
+Payment on hold until resolved.
+
+Please reply to this email with:
+  • Photos of the work area / completed work
+  • Receipts for any materials purchased
+  • A short written summary of what was done and any issues you encountered
+  • Any relevant certificates (e.g. CP12, electrical) if applicable
+
+Need to talk this through? Call ${supportPhone} or email ${supportEmail}.
+
+Fixfy · www.getfixfy.com`;
+
+  return { subject, html, text };
+}
