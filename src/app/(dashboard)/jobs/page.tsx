@@ -43,7 +43,7 @@ import { getSupabase, getStatusCounts, type ListParams } from "@/services/base";
 import { sumCustomerCollectionsByJobIds } from "@/services/job-payments";
 import { softDeleteInvoicesForArchivedJobs, cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
 import { useProfile } from "@/hooks/use-profile";
-import type { Job, Partner } from "@/types/database";
+import type { Partner } from "@/types/database";
 import { listPartners } from "@/services/partners";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import { LocationMiniMap } from "@/components/ui/location-picker";
@@ -72,7 +72,12 @@ import {
 } from "@/lib/schedule-calendar";
 import { formatBritishDate } from "@/lib/utils/date";
 import { TYPE_OF_WORK_OPTIONS, normalizeTypeOfWork } from "@/lib/type-of-work";
-import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
+import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState } from "@/lib/job-modal-schedule";
+import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
+import { createJobOrSeries } from "@/services/job-recurrence-series";
+import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
+import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
+import type { Job, JobKind } from "@/types/database";
 import { TimeSelect } from "@/components/ui/time-select";
 import { ARRIVAL_WINDOW_OPTIONS } from "@/lib/job-arrival-window";
 import {
@@ -111,7 +116,7 @@ import {
   type ScheduleDatePreset,
 } from "@/lib/uk-schedule-range";
 
-const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress_phase1", "in_progress_phase2", "in_progress_phase3", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
+const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 const JOBS_PAGE_SIZE_OPTIONS = [10, 30, 100] as const;
 
 const RESTORE_ALLOWED_JOB_STATUSES = new Set<string>([...JOB_STATUSES]);
@@ -311,9 +316,7 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled, dot: true },
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
-  in_progress_phase1: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1, dot: true },
-  in_progress_phase2: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2, dot: true },
-  in_progress_phase3: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3, dot: true },
+  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
   on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
   final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
@@ -650,7 +653,7 @@ function JobsPageContent() {
   }, [loadDashboardStats]);
 
   const inProgressTabCount =
-    (tabCounts.in_progress_phase1 ?? 0) + (tabCounts.in_progress_phase2 ?? 0) + (tabCounts.in_progress_phase3 ?? 0);
+    (tabCounts.in_progress ?? 0);
 
   const onHoldTabCount = tabCounts.on_hold ?? 0;
 
@@ -712,7 +715,10 @@ function JobsPageContent() {
     return () => { cancelled = true; };
   }, [data]);
 
-  const handleCreate = useCallback(async (formData: Partial<Job>) => {
+  const handleCreate = useCallback(async (
+    formData: Partial<Job>,
+    opts?: { series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload },
+  ) => {
     const cp = formData.client_price ?? 0;
     const pc = formData.partner_cost ?? 0;
     const mc = formData.materials_cost ?? 0;
@@ -754,6 +760,72 @@ function JobsPageContent() {
         scheduled_end_at: formData.scheduled_end_at ?? null,
       });
       if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJobs)))) return;
+
+      // Recurring path: insert a series + expand 90 days of occurrences in one go.
+      if (opts?.series) {
+        const anchor = {
+          title: formData.title ?? "",
+          catalog_service_id: formData.catalog_service_id ?? null,
+          client_id: formData.client_id,
+          client_address_id: formData.client_address_id,
+          client_name: formData.client_name ?? "",
+          property_address: formData.property_address ?? "",
+          partner_name: formData.partner_name,
+          partner_id: formData.partner_id,
+          partner_ids: formData.partner_ids,
+          owner_id: formData.owner_id ?? profile?.id,
+          owner_name: formData.owner_name ?? profile?.full_name,
+          status: (jobHasPartnerSet(formData as Job) ? "scheduled" : "unassigned") as Job["status"],
+          progress: 0,
+          current_phase: 0,
+          total_phases: normalizeTotalPhases(formData.total_phases),
+          client_price: cp,
+          extras_amount: accessSurcharge,
+          partner_cost: pc,
+          materials_cost: mc,
+          margin_percent: margin,
+          job_type: formData.job_type ?? "fixed",
+          hourly_client_rate: formData.hourly_client_rate ?? null,
+          hourly_partner_rate: formData.hourly_partner_rate ?? null,
+          billed_hours: formData.billed_hours ?? null,
+          in_ccz: housekeepFromPayload ? false : inCczEff,
+          has_free_parking: housekeepFromPayload ? true : (formData.has_free_parking ?? null),
+          cash_in: 0, cash_out: 0, expenses: 0, commission: 0, vat: 0,
+          partner_agreed_value: 0, finance_status: "unpaid" as const, service_value: cp + accessSurcharge,
+          report_submitted: false,
+          report_1_uploaded: false, report_1_approved: false,
+          report_2_uploaded: false, report_2_approved: false,
+          report_3_uploaded: false, report_3_approved: false,
+          partner_payment_1: 0, partner_payment_1_paid: false,
+          partner_payment_2: 0, partner_payment_2_paid: false,
+          partner_payment_3: 0, partner_payment_3_paid: false,
+          customer_deposit: 0, customer_deposit_paid: false,
+          customer_final_payment: cp + accessSurcharge, customer_final_paid: false,
+          scope: formData.scope?.trim() || undefined,
+          additional_notes: formData.additional_notes?.trim() || undefined,
+          report_link: (formData as { report_link?: string | null }).report_link?.trim() || undefined,
+          images: capJobImagesArray(coerceJobImagesArray(formData.images)),
+        } as Omit<Job, "id" | "reference" | "created_at" | "updated_at">;
+
+        const seriesResult = await createJobOrSeries({
+          anchorJobRow: anchor,
+          series: {
+            rule: opts.series.rule,
+            start_time: opts.series.start_time,
+            end_time: opts.series.end_time,
+            start_date: opts.series.start_date,
+            end_date: opts.series.end_date ?? null,
+            max_occurrences: opts.series.max_occurrences ?? null,
+          },
+        });
+        setCreateOpen(false);
+        toast.success(`Series created with ${seriesResult.jobs.length} occurrences`);
+        const firstJob = seriesResult.jobs[0];
+        if (firstJob) router.push(`/jobs/${firstJob.id}`);
+        void loadDashboardStats();
+        void Promise.resolve().then(() => refreshSilent());
+        return;
+      }
 
       const result = await createJob({
         title: formData.title ?? "",
@@ -987,7 +1059,7 @@ function JobsPageContent() {
         toast.error(`${missing.length} selected job(s) not found or in Deleted.`);
         return false;
       }
-      const ns = "in_progress_phase1" as const;
+      const ns = "in_progress" as const;
       for (const j of jobRows as Job[]) {
         const check = canAdvanceJob(j, ns);
         if (!check.ok) {
@@ -2084,7 +2156,14 @@ function workTypeIcon(label: string) {
 }
 
 /* ========== CREATE JOB MODAL ========== */
-function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (data: Partial<Job>) => void }) {
+function CreateJobModal({ open, onClose, onCreate }: {
+  open: boolean;
+  onClose: () => void;
+  onCreate: (
+    data: Partial<Job>,
+    opts?: { series?: import("@/lib/job-modal-schedule").JobScheduleV2SeriesPayload },
+  ) => void;
+}) {
   const requiredFieldClass = "border-[#d9d5cf] focus:border-[#b8b2aa] focus:ring-[#ede9e3] hover:border-[#cfcac3]";
   const [form, setForm] = useState({
     title: "",
@@ -2094,10 +2173,13 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     client_price: "",
     partner_cost: "",
     materials_cost: "0",
+    job_kind: "one_off" as "one_off" | "multi_day" | "recurring",
     scheduled_date: "",
     arrival_from: "09:00",
     arrival_window_mins: "180",
     expected_finish_date: "",
+    end_date: "",
+    end_time: "17:00",
     job_type: "fixed",
     scope: "",
     additional_notes: "",
@@ -2109,6 +2191,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     has_free_parking: true,
     assignment_mode: "manual",
   });
+  const [recurrence, setRecurrence] = useState<RecurrenceFormState>(DEFAULT_RECURRENCE_FORM);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   const [partnerSearch, setPartnerSearch] = useState("");
@@ -2121,6 +2204,51 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   /** When fixed-price partner cost still matches the last auto-filled value, keep syncing to ~40% margin as inputs change. */
   const lastAutoPartnerCost = useRef<string | null>(null);
+
+  // ─── mig 159/160: resolve per-account / per-partner pricing overrides ──
+  // Resolve account_id from the picked client (clients.source_account_id).
+  const [effectiveAccountId, setEffectiveAccountId] = useState<string | null>(null);
+  useEffect(() => {
+    const cid = clientAddress.client_id?.trim();
+    if (!cid) { setEffectiveAccountId(null); return; }
+    let cancelled = false;
+    getSupabase()
+      .from("clients")
+      .select("source_account_id")
+      .eq("id", cid)
+      .is("deleted_at", null)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const aid = (data as { source_account_id?: string | null } | null)?.source_account_id?.trim() ?? null;
+        setEffectiveAccountId(aid);
+      });
+    return () => { cancelled = true; };
+  }, [clientAddress.client_id]);
+
+  const { pricing } = useResolvedJobPricing({
+    accountId: effectiveAccountId,
+    partnerId: form.partner_id,
+    catalogServiceId: form.catalog_service_id,
+  });
+
+  // Auto-fill prices whenever the resolver returns a fresh `pricing` object.
+  // The hook memoises pricing in its own state — it only changes after a fetch
+  // completes for a new (account, partner, service) triple. So `[pricing]` as
+  // sole dep gives correct behaviour without needing a ref guard (which used
+  // to misfire when pricing lagged behind a triple change).
+  useEffect(() => {
+    if (!pricing) return;
+    setForm((prev) => ({
+      ...prev,
+      job_type: pricing.pricing_mode,
+      hourly_client_rate: pricing.client.hourly_rate?.toString() ?? prev.hourly_client_rate,
+      hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? prev.hourly_partner_rate,
+      billed_hours: pricing.client.default_hours?.toString() ?? prev.billed_hours,
+      client_price: pricing.client.fixed_price?.toString() ?? prev.client_price,
+      partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? prev.partner_cost,
+    }));
+  }, [pricing]);
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
   const isHousekeepJob = isHousekeepWorkLabel(selectedCatalogService?.name) || isHousekeepWorkLabel(form.title);
   const targetWorkType =
@@ -2206,21 +2334,29 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
     if (!clientAddress.client_id || !clientAddress.property_address?.trim()) { toast.error("Select a client from the list (click the name) and choose or add a property address."); return; }
     const isAutoAssign = form.assignment_mode === "auto";
     const hasPartner = !isAutoAssign && !!form.partner_id;
-    const sched = resolveJobModalSchedule({
+    const schedV2 = resolveJobModalScheduleV2({
+      kind: form.job_kind,
       scheduled_date: form.scheduled_date,
       arrival_from: form.arrival_from,
       arrival_window_mins: form.arrival_window_mins,
+      end_date: form.end_date,
+      end_time: form.end_time,
+      recurrence: recurrence,
       hasPartner,
     });
-    if (!sched.ok) {
-      toast.error(sched.error);
+    if (!schedV2.ok) {
+      toast.error(schedV2.error);
       return;
     }
-    const scheduled_date = sched.scheduled_date;
-    const scheduled_start_at = sched.scheduled_start_at;
-    const scheduled_end_at = sched.scheduled_end_at;
-    let scheduled_finish_date: string | null = null;
-    if (scheduled_date) {
+    const scheduled_date = schedV2.payload.scheduled_date;
+    const scheduled_start_at = schedV2.payload.scheduled_start_at;
+    const scheduled_end_at = schedV2.payload.scheduled_end_at;
+    let scheduled_finish_date: string | null = schedV2.payload.scheduled_finish_date ?? null;
+    const expected_finish_at: string | null = schedV2.payload.expected_finish_at ?? null;
+    const job_kind: JobKind = schedV2.payload.job_kind;
+
+    // For one-off, the legacy expected_finish_date input still feeds scheduled_finish_date.
+    if (job_kind === "one_off" && scheduled_date) {
       const efRaw = form.expected_finish_date?.trim() ?? "";
       const expected_finish = parseIsoDateOnly(efRaw);
       if (efRaw && !expected_finish) {
@@ -2236,7 +2372,7 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
         return;
       }
       scheduled_finish_date = expected_finish;
-    } else if (form.expected_finish_date?.trim()) {
+    } else if (job_kind === "one_off" && form.expected_finish_date?.trim()) {
       toast.error("Clear expected finish or set a start date.");
       return;
     }
@@ -2296,13 +2432,16 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       scheduled_start_at,
       scheduled_end_at,
       scheduled_finish_date,
+      expected_finish_at,
+      job_kind,
       total_phases: normalizeTotalPhases(2),
       scope: form.scope.trim() || undefined,
       additional_notes: form.additional_notes.trim() || undefined,
       report_link: form.report_link.trim() || undefined,
       images: uploadedImageUrls.length ? uploadedImageUrls : undefined,
-    });
+    }, schedV2.series ? { series: schedV2.series } : undefined);
     setSitePhotoFiles([]);
+    setRecurrence(DEFAULT_RECURRENCE_FORM);
     lastAutoPartnerCost.current = null;
     setForm({
       title: "",
@@ -2312,10 +2451,13 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
       client_price: "",
       partner_cost: "",
       materials_cost: "0",
+      job_kind: "one_off",
       scheduled_date: "",
       arrival_from: "09:00",
       arrival_window_mins: "180",
       expected_finish_date: "",
+      end_date: "",
+      end_time: "17:00",
       job_type: "fixed",
       scope: "",
       additional_notes: "",
@@ -2537,42 +2679,21 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
               <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Client & schedule</p>
             </div>
             <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-text-secondary">Start date</label>
-                <Input
-                  type="date"
-                  value={form.scheduled_date}
-                  onChange={(e) => update("scheduled_date", e.target.value)}
-                  className={`h-10 ${requiredFieldClass}`}
-                />
-              </div>
-              <TimeSelect
-                label="Arrival time"
-                value={form.arrival_from}
-                onChange={(v) => update("arrival_from", v)}
-                className={requiredFieldClass}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Select
-                label="Window length"
-                value={form.arrival_window_mins}
-                onChange={(e) => update("arrival_window_mins", e.target.value)}
-                options={[...ARRIVAL_WINDOW_OPTIONS]}
-              />
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                  Expected finish (date only){form.scheduled_date?.trim() ? " *" : ""}
-                </label>
-                <Input
-                  type="date"
-                  value={form.expected_finish_date}
-                  onChange={(e) => update("expected_finish_date", e.target.value)}
-                  className={cn("h-10", form.scheduled_date?.trim() && requiredFieldClass)}
-                />
-              </div>
-            </div>
+            <JobModalScheduleFields
+              jobKind={form.job_kind}
+              scheduledDate={form.scheduled_date}
+              arrivalFrom={form.arrival_from}
+              arrivalWindowMins={form.arrival_window_mins}
+              expectedFinishDate={form.expected_finish_date}
+              endDate={form.end_date}
+              endTime={form.end_time}
+              recurrence={recurrence}
+              onRecurrenceChange={(patch) => setRecurrence((p) => ({ ...p, ...patch }))}
+              onChange={(field, value) => update(field, value)}
+              startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
+              expectedFinishRequired={form.job_kind === "one_off" && !!form.scheduled_date?.trim()}
+              requiredFieldClassName={requiredFieldClass}
+            />
           </section>
 
           <section className="rounded-xl border border-border-light bg-surface-hover/20 p-3 space-y-2.5">
@@ -2740,11 +2861,25 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Client hourly rate (£/h)</label>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                      Client hourly rate (£/h)
+                      {pricing ? (
+                        <span className="ml-1.5">
+                          <PricingSourceChip source={pricing.client.hourly_rate_source} />
+                        </span>
+                      ) : null}
+                    </label>
                     <Input type="number" value={form.hourly_client_rate} onChange={(e) => update("hourly_client_rate", e.target.value)} min="0" step="0.01" />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner hourly rate (£/h)</label>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                      Partner hourly rate (£/h)
+                      {pricing ? (
+                        <span className="ml-1.5">
+                          <PricingSourceChip source={pricing.partner.hourly_partner_rate_source} />
+                        </span>
+                      ) : null}
+                    </label>
                     <Input type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
                   </div>
                   <div>
@@ -2758,9 +2893,26 @@ function CreateJobModal({ open, onClose, onCreate }: { open: boolean; onClose: (
               </>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <div><label className="block text-xs font-medium text-text-secondary mb-1.5">Client price £</label><Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" /></div>
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Partner cost £</label>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Client price £
+                    {pricing ? (
+                      <span className="ml-1.5">
+                        <PricingSourceChip source={pricing.client.fixed_price_source} />
+                      </span>
+                    ) : null}
+                  </label>
+                  <Input type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                    Partner cost £
+                    {pricing ? (
+                      <span className="ml-1.5">
+                        <PricingSourceChip source={pricing.partner.fixed_partner_cost_source} />
+                      </span>
+                    ) : null}
+                  </label>
                   <Input type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
                   <p className="text-[10px] text-text-tertiary mt-1.5 leading-snug">
                     Pre-filled for ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin.

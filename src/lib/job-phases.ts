@@ -11,49 +11,59 @@ import {
   Send,
 } from "lucide-react";
 
+/**
+ * @deprecated mig 162 — phase system removed. The constants stay exported as 1
+ * (was 1) and 2 (was 2/3) so existing callers don't crash, but new code should
+ * not reference them. Multi-step flows are now via job_visits (mig 161).
+ */
 export const JOB_PHASE_COUNT_MIN = 1;
+/** @deprecated mig 162 — phase system removed. */
 export const JOB_PHASE_COUNT_MAX = 2;
 
-/** DB statuses grouped under the "In progress" tab / column (phases + final check). */
+/** DB statuses grouped under the "In progress" tab / column. After mig 162 just one in-progress + final_check. */
 export const JOB_IN_PROGRESS_STATUSES: readonly Job["status"][] = [
-  "in_progress_phase1",
-  "in_progress_phase2",
-  "in_progress_phase3",
+  "in_progress",
   "final_check",
 ] as const;
 
 /** Partner on site only — final check has its own Job Management tab. */
 export const JOB_ONSITE_PROGRESS_STATUSES: readonly Job["status"][] = [
-  "in_progress_phase1",
-  "in_progress_phase2",
-  "in_progress_phase3",
+  "in_progress",
 ] as const;
 
 export function isJobInProgressStatus(status: Job["status"]): boolean {
   return (JOB_IN_PROGRESS_STATUSES as readonly string[]).includes(status);
 }
 
-/** Clamp to 1–2 (matches report_1…report_2 slots). */
-export function normalizeTotalPhases(n: number | undefined | null): 1 | 2 {
-  const x = Math.floor(Number(n));
-  if (!Number.isFinite(x)) return 2;
-  return Math.min(JOB_PHASE_COUNT_MAX, Math.max(JOB_PHASE_COUNT_MIN, x)) as 1 | 2;
+/**
+ * @deprecated mig 162 — phase column kept for legacy reads. Returns 1 by default.
+ */
+export function normalizeTotalPhases(_n: number | undefined | null): 1 | 2 {
+  // Phase system removed — always treat as single phase.
+  return 1;
 }
 
-export function lastInProgressStatusForTotal(totalPhases: number): Job["status"] {
-  // With the new model, the workflow stays "In progress" while reports are collected.
-  // So we always go back to Phase 1 (the in-progress work state).
-  return "in_progress_phase1";
+/**
+ * @deprecated mig 162 — returns the single in_progress status now.
+ */
+export function lastInProgressStatusForTotal(_totalPhases: number): Job["status"] {
+  return "in_progress";
 }
 
+/**
+ * Reports flow now uses start_report + final_report (JSONB cols) directly.
+ * The legacy report_1/2/3_uploaded/approved boolean fields are deprecated but
+ * still read for backwards compat — if any are present and approved, treat as
+ * "configured reports approved".
+ */
 export function allConfiguredReportsApproved(job: Job): boolean {
-  const tp = normalizeTotalPhases(job.total_phases);
-  for (let n = 1; n <= tp; n++) {
-    const uploaded = job[`report_${n}_uploaded` as keyof Job] as boolean;
-    const approved = job[`report_${n}_approved` as keyof Job] as boolean;
-    if (!uploaded || !approved) return false;
+  // Pre-mig-162 jobs may have report_1_approved set but no report_2/3 (total_phases=1).
+  // For those, "all configured" = report_1_approved. Fast path: if there's an
+  // approved final_report JSONB, that's authoritative regardless of legacy slots.
+  if (job.final_report && Object.keys(job.final_report as Record<string, unknown>).length > 0) {
+    return true;
   }
-  return true;
+  return Boolean(job.report_1_approved);
 }
 
 /** Header actions that need custom handling on the job detail page (e.g. send + invoice flow). */
@@ -70,10 +80,8 @@ export type JobStatusAction = {
   tone?: "success" | "hold";
 };
 
-/** Primary actions for advancing / rewinding job workflow, respecting `total_phases`. */
+/** Primary actions for advancing / rewinding job workflow. After mig 162: scheduled → in_progress → final_check → awaiting_payment → completed. */
 export function getJobStatusActions(job: Job): JobStatusAction[] {
-  const tp = normalizeTotalPhases(job.total_phases);
-  const last = lastInProgressStatusForTotal(tp);
   const onHoldAction: JobStatusAction = {
     label: "On Hold",
     status: "on_hold",
@@ -99,16 +107,14 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
       return [
         {
           label: "Start Job",
-          status: "in_progress_phase1",
+          status: "in_progress",
           icon: Play,
           primary: true,
         },
         onHoldAction,
         cancelAction,
       ];
-    case "in_progress_phase1":
-    case "in_progress_phase2":
-    case "in_progress_phase3": {
+    case "in_progress": {
       return [
         {
           label: "Complete Job",
@@ -131,7 +137,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           special: "send_report_invoice",
         },
         onHoldAction,
-        { label: "Reopen Job", status: last, icon: RotateCcw, primary: false },
+        { label: "Reopen Job", status: "in_progress", icon: RotateCcw, primary: false },
         cancelAction,
       ];
     }
@@ -145,8 +151,8 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
       return [
         { label: "Validate & complete", status: "completed", icon: ShieldCheck, primary: true },
         {
-          label: "Back to Phase 1",
-          status: last,
+          label: "Back to In progress",
+          status: "in_progress",
           icon: RotateCcw,
           primary: false,
         },
@@ -164,7 +170,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
       return [
         {
           label: "Resume job",
-          status: "in_progress_phase1",
+          status: "in_progress",
           icon: Play,
           primary: true,
           special: "resume_job",
@@ -186,8 +192,6 @@ export type JobAdvanceFinancialContext = {
  * Returns null when there is no earlier step (e.g. unassigned, cancelled).
  */
 export function getPreviousJobStatus(job: Job): Job["status"] | null {
-  const tp = normalizeTotalPhases(job.total_phases);
-  const last = lastInProgressStatusForTotal(tp);
   switch (job.status) {
     case "deleted":
     case "cancelled":
@@ -201,17 +205,10 @@ export function getPreviousJobStatus(job: Job): Job["status"] | null {
     case "awaiting_payment":
       return "final_check";
     case "need_attention":
-      return last;
+      return "in_progress";
     case "final_check":
-      return last;
-    case "in_progress_phase3":
-      if (tp >= 3) return "in_progress_phase2";
-      if (tp === 2) return "in_progress_phase1";
-      return "scheduled";
-    case "in_progress_phase2":
-      if (tp >= 2) return "in_progress_phase1";
-      return "scheduled";
-    case "in_progress_phase1":
+      return "in_progress";
+    case "in_progress":
       return "scheduled";
     case "late":
       return "scheduled";
@@ -232,8 +229,6 @@ export function canAdvanceJob(
   nextStatus: string,
   financialCtx?: JobAdvanceFinancialContext,
 ): { ok: boolean; message?: string } {
-  const tp = normalizeTotalPhases(job.total_phases);
-
   if (job.status === "deleted") {
     return { ok: false, message: "This job is in Deleted. Recover it from Jobs → Deleted first." };
   }
@@ -260,14 +255,7 @@ export function canAdvanceJob(
     return { ok: true };
   }
 
-  if (nextStatus === "in_progress_phase2" && tp < 2) {
-    return { ok: false, message: "This job is configured for only one phase." };
-  }
-  if (nextStatus === "in_progress_phase3" && tp < 3) {
-    return { ok: false, message: "This job does not include a third phase." };
-  }
-
-  if (nextStatus === "in_progress_phase1") {
+  if (nextStatus === "in_progress") {
     if (job.status === "final_check") {
       return { ok: true };
     }
@@ -281,13 +269,9 @@ export function canAdvanceJob(
     return { ok: true };
   }
   if (nextStatus === "awaiting_payment") {
-    let allApproved = true;
-    for (let n = 1; n <= tp; n++) {
-      if (!job[`report_${n}_approved` as keyof Job]) { allApproved = false; break; }
-    }
-    if (allApproved) return { ok: true };
+    if (allConfiguredReportsApproved(job)) return { ok: true };
     if (job.status === "final_check") return { ok: true };
-    return { ok: false, message: "Ops must approve all reports before Awaiting Payment." };
+    return { ok: false, message: "Ops must approve the report before Awaiting Payment." };
   }
 
   if (nextStatus === "completed") {
@@ -308,16 +292,19 @@ export function canAdvanceJob(
   return { ok: true };
 }
 
-export function reportPhaseIndices(totalPhases: number): number[] {
-  const tp = normalizeTotalPhases(totalPhases);
-  return Array.from({ length: tp }, (_, i) => i + 1);
+/**
+ * @deprecated mig 162 — phase system removed. Returns [1] for back-compat;
+ * UI should not loop over phases anymore.
+ */
+export function reportPhaseIndices(_totalPhases: number): number[] {
+  return [1];
 }
 
-export function reportPhaseLabel(phaseIndex: number, totalPhases: number): string {
-  const tp = normalizeTotalPhases(totalPhases);
-  if (tp === 1) return "Report — job complete";
-  if (phaseIndex === 1) return "Report 1 — Start & progress";
-  return "Report 2 — job complete";
+/**
+ * @deprecated mig 162 — phase system removed. Returns single label.
+ */
+export function reportPhaseLabel(_phaseIndex: number, _totalPhases: number): string {
+  return "Job report";
 }
 
 /** Monotonic workflow order for gating report actions (higher = further along). */
@@ -330,12 +317,8 @@ export function jobStatusRank(status: Job["status"]): number {
       return 0;
     case "on_hold":
       return 10;
-    case "in_progress_phase1":
-      return 10;
-    case "in_progress_phase2":
+    case "in_progress":
       return 20;
-    case "in_progress_phase3":
-      return 30;
     case "need_attention":
       return 35;
     case "final_check":
@@ -351,13 +334,14 @@ export function jobStatusRank(status: Job["status"]): number {
   }
 }
 
-/** Minimum workflow rank required to record report slot N (aligned with start/end). */
-export function minimumStatusRankForReportSlot(reportSlotIndex: number, totalPhases: number): number {
-  const tp = normalizeTotalPhases(totalPhases);
-  if (reportSlotIndex < 1 || reportSlotIndex > tp) return 999;
-  if (reportSlotIndex === 1) return 10; // in_progress_phase1+
-  if (reportSlotIndex === 2) return 10; // report_2 is also allowed while job stays in in_progress_phase1
-  return 30;
+/**
+ * @deprecated mig 162 — phase report slots removed. The function is kept for
+ * legacy callers; returns 999 (gate everything off) for slots > 1 since we
+ * no longer surface them in the UI.
+ */
+export function minimumStatusRankForReportSlot(reportSlotIndex: number, _totalPhases: number): number {
+  if (reportSlotIndex !== 1) return 999;
+  return 20; // in_progress+
 }
 
 export function canMarkReportUploaded(job: Job, reportSlotIndex: number): { ok: boolean; message?: string } {
@@ -370,22 +354,14 @@ export function canMarkReportUploaded(job: Job, reportSlotIndex: number): { ok: 
   if (job.status === "completed") {
     return { ok: false, message: "Job is completed — reports are locked." };
   }
-  const tp = normalizeTotalPhases(job.total_phases);
-  if (reportSlotIndex < 1 || reportSlotIndex > tp) {
-    return { ok: false, message: "Invalid report step." };
+  if (reportSlotIndex !== 1) {
+    return { ok: false, message: "Phase reports were removed — use the single Job report instead." };
   }
-  const minRank = minimumStatusRankForReportSlot(reportSlotIndex, tp);
-  if (jobStatusRank(job.status) < minRank) {
+  if (jobStatusRank(job.status) < 20) {
     return {
       ok: false,
-      message: "Start Job before marking this report as uploaded.",
+      message: "Start Job before marking the report as uploaded.",
     };
-  }
-  if (reportSlotIndex > 1) {
-    const prevUploaded = job[`report_${reportSlotIndex - 1}_uploaded` as keyof Job] as boolean;
-    if (!prevUploaded) {
-      return { ok: false, message: `Mark report ${reportSlotIndex - 1} as uploaded first.` };
-    }
   }
   return { ok: true };
 }
@@ -400,17 +376,11 @@ export function canApproveReport(job: Job, reportSlotIndex: number): { ok: boole
   if (job[`report_${reportSlotIndex}_approved` as keyof Job] as boolean) {
     return { ok: false, message: "This report is already approved." };
   }
-  if (reportSlotIndex > 1) {
-    const prevApproved = job[`report_${reportSlotIndex - 1}_approved` as keyof Job] as boolean;
-    if (!prevApproved) {
-      return { ok: false, message: `Approve report ${reportSlotIndex - 1} first.` };
-    }
-  }
   return { ok: true };
 }
 
 /**
- * After all reports are approved, customer / final payment step only from Final Check
+ * After report is approved, customer / final payment step only from Final Check
  * (avoids skipping on-site work while still on Scheduled).
  */
 export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; message?: string } {
@@ -427,25 +397,25 @@ export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; me
     return { ok: true };
   }
   if (isJobOnSiteWorkStatus(job.status)) {
-    return { ok: false, message: "All reports must be uploaded and approved first." };
+    return { ok: false, message: "Report must be uploaded and approved first." };
   }
-  return { ok: false, message: "All reports must be uploaded and approved first." };
+  return { ok: false, message: "Report must be uploaded and approved first." };
 }
 
 /** True while partner is doing on-site work (not final check / payment). */
 export function isJobOnSiteWorkStatus(status: Job["status"]): boolean {
-  return status === "in_progress_phase1" || status === "in_progress_phase2" || status === "in_progress_phase3";
+  return status === "in_progress";
 }
 
 /** After on hold, restore the step the job was on (scheduled/late vs on-site phases). */
 export function jobStatusAfterResumeFromOnHold(
   previous: Job["status"] | string | null | undefined,
 ): Job["status"] {
-  const p = String(previous ?? "in_progress_phase1").trim() as Job["status"];
+  const p = String(previous ?? "in_progress").trim() as Job["status"];
   if (isJobOnSiteWorkStatus(p)) return p;
   if (p === "scheduled" || p === "late") return p;
   if (p === "final_check" || p === "need_attention") return p;
-  return "in_progress_phase1";
+  return "in_progress";
 }
 
 /** When ops validates the last report, move to final_check and stop the on-site timer in the same update. */
@@ -455,12 +425,10 @@ export function shouldAutoAdvanceToFinalCheckAfterMerge(
   statusBefore: Job["status"],
 ): boolean {
   if (updates.status !== undefined) return false;
-  const tp = normalizeTotalPhases(merged.total_phases);
-  const touchedApprove = Array.from({ length: tp }, (_, i) => i + 1).some(
-    (n) =>
-      updates[`report_${n}_approved` as keyof Job] !== undefined ||
-      updates[`report_${n}_approved_at` as keyof Job] !== undefined,
-  );
+  // Trigger when report_1 is being approved on a job currently on-site.
+  const touchedApprove =
+    updates.report_1_approved !== undefined ||
+    updates.report_1_approved_at !== undefined;
   if (!touchedApprove) return false;
   if (!allConfiguredReportsApproved(merged)) return false;
   if (!isJobOnSiteWorkStatus(merged.status)) return false;

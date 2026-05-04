@@ -29,9 +29,8 @@ export type JobStatus =
   | "auto_assigning"
   | "scheduled"
   | "late"
-  | "in_progress_phase1"
-  | "in_progress_phase2"
-  | "in_progress_phase3"
+  /** Single in-progress state (mig 162 collapsed phases 1/2/3 into one). */
+  | "in_progress"
   | "final_check"
   | "awaiting_payment"
   | "need_attention"
@@ -42,6 +41,43 @@ export type JobStatus =
   /** Soft-deleted trash (Deleted tab); excluded from KPIs and active lists. */
   | "deleted";
 export type JobFinanceStatus = "unpaid" | "partial" | "paid";
+
+/** Job duration mode — drives how the schedule section in create modals behaves. (mig 158) */
+export type JobKind = "one_off" | "multi_day" | "recurring";
+
+/** Recurrence rule pattern. */
+export type JobRecurrencePattern = "daily" | "weekly" | "monthly";
+
+/** Two-letter weekday tokens for weekly byday. */
+export type JobRecurrenceByday = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";
+
+/** Persisted recurrence rule (jobs.recurrence_rule jsonb in mig 158). */
+export interface JobRecurrenceRule {
+  pattern: JobRecurrencePattern;
+  /** Every N units of the pattern (1 = every period, 2 = every other, …). */
+  interval: number;
+  /** Only meaningful when pattern = 'weekly'. Subset of weekdays. */
+  byday?: JobRecurrenceByday[];
+}
+
+/** Recurring series (mig 158). Each occurrence is a row in jobs linked via recurrence_series_id. */
+export interface JobRecurrenceSeries {
+  id: string;
+  anchor_job_id?: string | null;
+  rule: JobRecurrenceRule;
+  start_time: string;        // 'HH:MM:SS'
+  end_time: string;          // 'HH:MM:SS'
+  start_date: string;        // 'YYYY-MM-DD'
+  end_date?: string | null;
+  max_occurrences?: number | null;
+  /** Last date through which occurrences have been materialised in jobs. */
+  generated_through?: string | null;
+  status: "active" | "paused" | "cancelled";
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
 /** Directory lifecycle: only `active` partners are eligible for invites / job assignment. */
 export type PartnerStatus =
   | "active"
@@ -150,6 +186,43 @@ export interface AccountProperty {
   updated_at: string;
   deleted_at?: string | null;
   deleted_by?: string | null;
+}
+
+/** Per-account override of what THIS account pays for a catalog service (mig 159). */
+export interface AccountServicePrice {
+  id: string;
+  account_id: string;
+  catalog_service_id: string;
+  /** When true, the job creation flow uses the catalog defaults. */
+  use_standard: boolean;
+  /** Override values — only consulted when use_standard = false. NULL → fall back to catalog for that field. */
+  fixed_price?: number | null;
+  hourly_rate?: number | null;
+  default_hours?: number | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  /** Join enrichment when listing. */
+  catalog_service_name?: string | null;
+  catalog_pricing_mode?: CatalogPricingMode | null;
+}
+
+/** Per-partner override of what we pay this partner for a catalog service (mig 160). */
+export interface PartnerServicePrice {
+  id: string;
+  partner_id: string;
+  catalog_service_id: string;
+  use_standard: boolean;
+  fixed_partner_cost?: number | null;
+  hourly_partner_rate?: number | null;
+  default_hours?: number | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  catalog_service_name?: string | null;
+  catalog_pricing_mode?: CatalogPricingMode | null;
 }
 
 export interface AccountPropertyDocument {
@@ -296,7 +369,9 @@ export interface Job {
   owner_name?: string;
   status: JobStatus;
   progress: number;
+  /** @deprecated mig 162 — phase system removed. Multi-step flows now via job_visits. Field kept for legacy reads only. */
   current_phase: number;
+  /** @deprecated mig 162 — phase system removed. Field kept for legacy reads only. */
   total_phases: number;
   client_price: number;
   /** Add-ons / upsells on top of client_price (included in revenue & margin). */
@@ -311,6 +386,16 @@ export interface Job {
   scheduled_end_at?: string;
   /** Expected job completion day for calendar (date only; independent of arrival window). */
   scheduled_finish_date?: string | null;
+  /** Job duration mode (mig 158). Default 'one_off'. */
+  job_kind?: JobKind;
+  /** Wall-clock finish time of the work itself (mig 158). Different from scheduled_end_at (arrival window). */
+  expected_finish_at?: string | null;
+  /** FK to job_recurrence_series. NULL for one-off and multi-day. (mig 158) */
+  recurrence_series_id?: string | null;
+  /** 1-based index of this occurrence within its series. (mig 158) */
+  recurrence_sequence_index?: number | null;
+  /** Set when an operator does "Edit this only" on an occurrence (mig 158). */
+  recurrence_detached_at?: string | null;
   job_type?: "fixed" | "hourly";
   /** Snapshot rates for hourly jobs (GBP/hour). */
   hourly_client_rate?: number | null;
@@ -329,27 +414,29 @@ export interface Job {
   report_submitted: boolean;
   report_submitted_at?: string;
   report_notes?: string;
+  /** @deprecated mig 162 — phase report system removed. Use start_report / final_report (JSONB cols). Kept for legacy reads only. */
   report_1_uploaded: boolean;
-  report_1_uploaded_at?: string;
-  report_1_approved: boolean;
-  report_1_approved_at?: string;
-  report_2_uploaded: boolean;
-  report_2_uploaded_at?: string;
-  report_2_approved: boolean;
-  report_2_approved_at?: string;
-  report_3_uploaded: boolean;
-  report_3_uploaded_at?: string;
-  report_3_approved: boolean;
-  report_3_approved_at?: string;
+  /** @deprecated mig 162 */ report_1_uploaded_at?: string;
+  /** @deprecated mig 162 */ report_1_approved: boolean;
+  /** @deprecated mig 162 */ report_1_approved_at?: string;
+  /** @deprecated mig 162 */ report_2_uploaded: boolean;
+  /** @deprecated mig 162 */ report_2_uploaded_at?: string;
+  /** @deprecated mig 162 */ report_2_approved: boolean;
+  /** @deprecated mig 162 */ report_2_approved_at?: string;
+  /** @deprecated mig 162 */ report_3_uploaded: boolean;
+  /** @deprecated mig 162 */ report_3_uploaded_at?: string;
+  /** @deprecated mig 162 */ report_3_approved: boolean;
+  /** @deprecated mig 162 */ report_3_approved_at?: string;
+  /** @deprecated mig 162 — payouts now use single partner_cost (multi-visit handled via job_visits). */
   partner_payment_1: number;
-  partner_payment_1_date?: string;
-  partner_payment_1_paid: boolean;
-  partner_payment_2: number;
-  partner_payment_2_date?: string;
-  partner_payment_2_paid: boolean;
-  partner_payment_3: number;
-  partner_payment_3_date?: string;
-  partner_payment_3_paid: boolean;
+  /** @deprecated mig 162 */ partner_payment_1_date?: string;
+  /** @deprecated mig 162 */ partner_payment_1_paid: boolean;
+  /** @deprecated mig 162 */ partner_payment_2: number;
+  /** @deprecated mig 162 */ partner_payment_2_date?: string;
+  /** @deprecated mig 162 */ partner_payment_2_paid: boolean;
+  /** @deprecated mig 162 */ partner_payment_3: number;
+  /** @deprecated mig 162 */ partner_payment_3_date?: string;
+  /** @deprecated mig 162 */ partner_payment_3_paid: boolean;
   customer_deposit: number;
   customer_deposit_paid: boolean;
   customer_final_payment: number;
@@ -423,6 +510,46 @@ export interface Job {
   zendesk_side_conversation_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Per-visit lifecycle (mig 161). */
+export type JobVisitStatus = "scheduled" | "in_progress" | "completed" | "cancelled";
+
+/**
+ * Extra visits booked under a single job (mig 161).
+ *
+ * Visit 1 (primary) = parent job's own fields (partner_id, scheduled_date, etc.).
+ * Visit 2+ = one row per visit in this table with `visit_index >= 2`.
+ *
+ * Use case: handyman discovers on-site that electric/gas work also needed →
+ * office adds visits with different partner/service/schedule under the same
+ * job. Self-bill rollup is deferred to a future sprint.
+ */
+export interface JobVisit {
+  id: string;
+  job_id: string;
+  /** 2+ — visit 1 is the parent job itself. */
+  visit_index: number;
+  catalog_service_id?: string | null;
+  partner_id?: string | null;
+  partner_name?: string | null;
+  scheduled_date?: string | null;
+  scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
+  expected_finish_at?: string | null;
+  client_price: number;
+  partner_cost: number;
+  materials_cost: number;
+  status: JobVisitStatus;
+  scope?: string | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+  /** Join enrichment when listing. */
+  catalog_service_name?: string | null;
 }
 
 export type JobPaymentType = "partner" | "customer_deposit" | "customer_final";

@@ -25,9 +25,7 @@ const STATUS_COLOR: Record<string, string> = {
 const JOB_STATUS_LABEL: Record<string, string> = {
   unassigned:         "Pending schedule",
   scheduled:          "Scheduled",
-  in_progress_phase1: "In progress",
-  in_progress_phase2: "In progress",
-  in_progress_phase3: "In progress",
+  in_progress:        "In progress",
   final_check:        "Final check",
   awaiting_payment:   "Awaiting payment",
   completed:          "Completed",

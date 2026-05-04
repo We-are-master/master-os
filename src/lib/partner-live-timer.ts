@@ -97,7 +97,7 @@ export function statusChangePartnerTimerPatch(
   }
 
   /** Reopen from final check — resume without resetting partner start / accum. */
-  if (newStatus === "in_progress_phase1" && job.status === "final_check") {
+  if (newStatus === "in_progress" && job.status === "final_check") {
     return {
       partner_timer_ended_at: null,
       partner_timer_is_paused: false,
@@ -107,7 +107,7 @@ export function statusChangePartnerTimerPatch(
 
   /** Resume after office pause (scheduled) — do not apply fresh start patch if work already ended once. */
   if (
-    newStatus === "in_progress_phase1" &&
+    newStatus === "in_progress" &&
     (job.status === "scheduled" || job.status === "late" || job.status === "on_hold") &&
     job.partner_timer_ended_at
   ) {
@@ -118,7 +118,7 @@ export function statusChangePartnerTimerPatch(
     };
   }
 
-  if (newStatus === "in_progress_phase1" && (!wasOnSite || job.partner_timer_ended_at)) {
+  if (newStatus === "in_progress" && (!wasOnSite || job.partner_timer_ended_at)) {
     Object.assign(patch, officePartnerTimerStartPatch());
   }
   if (

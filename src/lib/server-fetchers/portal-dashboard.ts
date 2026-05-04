@@ -93,9 +93,7 @@ export async function fetchPortalDashboardKpis(accountId: string): Promise<Porta
       .is("deleted_at", null)
       .in("status", [
         "scheduled",
-        "in_progress_phase1",
-        "in_progress_phase2",
-        "in_progress_phase3",
+        "in_progress",
         "final_check",
         "awaiting_payment",
       ]),

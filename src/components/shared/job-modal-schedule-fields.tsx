@@ -7,18 +7,36 @@ import { TimeSelect } from "@/components/ui/time-select";
 import { cn } from "@/lib/utils";
 import { ARRIVAL_WINDOW_OPTIONS } from "@/lib/job-arrival-window";
 import { jobModalClientArrivalPreview } from "@/lib/job-modal-schedule";
+import type { RecurrenceFormState } from "@/lib/job-modal-schedule";
+import { BYDAY_LABELS, BYDAY_ORDER, seriesPreview } from "@/lib/job-recurrence";
+import type {
+  JobKind,
+  JobRecurrenceByday,
+  JobRecurrencePattern,
+} from "@/types/database";
 
 export type JobModalScheduleFieldKey =
   | "scheduled_date"
   | "arrival_from"
   | "arrival_window_mins"
-  | "expected_finish_date";
+  | "expected_finish_date"
+  | "end_date"
+  | "end_time"
+  | "job_kind";
 
 type Props = {
+  /** mig 158: 'one_off' | 'multi_day' | 'recurring'. Default 'one_off'. */
+  jobKind?: JobKind;
   scheduledDate: string;
   arrivalFrom: string;
   arrivalWindowMins: string;
   expectedFinishDate: string;
+  /** Multi-day extras (mig 158). */
+  endDate?: string;
+  endTime?: string;
+  /** Recurring sub-form state — required when jobKind === 'recurring' is reachable in this modal. */
+  recurrence?: RecurrenceFormState;
+  onRecurrenceChange?: (patch: Partial<RecurrenceFormState>) => void;
   onChange: (field: JobModalScheduleFieldKey, value: string) => void;
   /** e.g. quote pre-fill hint under start date */
   startDateFooter?: ReactNode;
@@ -28,11 +46,31 @@ type Props = {
   requiredFieldClassName?: string;
 };
 
+/**
+ * Job-creation schedule fields — shared by:
+ *   - jobs/page.tsx CreateJobModal
+ *   - requests-client.tsx ConvertToJobModal
+ *   - quotes-client.tsx ConvertToJobModal
+ *
+ * 2-level kind toggle (mig 158):
+ *   [ Single day ]  [ Multiple visits ]
+ *                          ↓ (when active)
+ *                   [ Spans days ]  [ Repeats ]
+ *
+ * Internal state (`jobKind`) maps as: single→one_off, spans_days→multi_day,
+ * repeats→recurring. Multi-day and Recurring share visual nesting but are
+ * distinct in the schema (1 row vs N rows).
+ */
 export function JobModalScheduleFields({
+  jobKind = "one_off",
   scheduledDate,
   arrivalFrom,
   arrivalWindowMins,
   expectedFinishDate,
+  endDate = "",
+  endTime = "17:00",
+  recurrence,
+  onRecurrenceChange,
   onChange,
   startDateFooter,
   startDateRequired,
@@ -40,12 +78,199 @@ export function JobModalScheduleFields({
   requiredFieldClassName,
 }: Props) {
   const preview = jobModalClientArrivalPreview(scheduledDate, arrivalFrom, arrivalWindowMins);
+  const isOneOff = jobKind === "one_off";
+  const isMultiDay = jobKind === "multi_day";
+  const isRecurring = jobKind === "recurring";
+  const isMultiple = isMultiDay || isRecurring;
+
+  const setKind = (k: JobKind) => onChange("job_kind", k);
+
+  return (
+    <>
+      {/* Primary toggle: Single day / Multiple visits */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <KindTab
+          label="Single day"
+          description="One day only"
+          active={isOneOff}
+          onClick={() => setKind("one_off")}
+        />
+        <KindTab
+          label="Multiple visits"
+          description="Spans days or repeats"
+          active={isMultiple}
+          onClick={() => {
+            // First click on Multiple → default to Spans days.
+            if (!isMultiple) setKind("multi_day");
+          }}
+        />
+      </div>
+
+      {/* Secondary toggle (only when Multiple is active) */}
+      {isMultiple ? (
+        <div className="flex flex-wrap items-center gap-1.5 -mt-1 pl-3 border-l-2 border-primary/30">
+          <SubKindTab
+            label="Spans days"
+            description="Mon → Fri (continuous)"
+            active={isMultiDay}
+            onClick={() => setKind("multi_day")}
+          />
+          <SubKindTab
+            label="Repeats"
+            description="Every Tuesday, monthly, …"
+            active={isRecurring}
+            onClick={() => setKind("recurring")}
+          />
+        </div>
+      ) : null}
+
+      {/* Form per mode */}
+      {isOneOff ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Start date{startDateRequired ? " *" : ""}
+              </label>
+              <Input
+                type="date"
+                value={scheduledDate}
+                onChange={(e) => onChange("scheduled_date", e.target.value)}
+                className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
+              />
+              {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
+            </div>
+            <TimeSelect
+              label="Arrival time (from)"
+              value={arrivalFrom}
+              onChange={(v) => onChange("arrival_from", v)}
+              className={requiredFieldClassName}
+            />
+            <Select
+              label="Arrival window length"
+              value={arrivalWindowMins}
+              onChange={(e) => onChange("arrival_window_mins", e.target.value)}
+              options={[...ARRIVAL_WINDOW_OPTIONS]}
+            />
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Expected finish (date only){expectedFinishRequired ? " *" : ""}
+              </label>
+              <Input
+                type="date"
+                value={expectedFinishDate}
+                onChange={(e) => onChange("expected_finish_date", e.target.value)}
+                className={cn("h-10 max-w-[200px]", expectedFinishRequired && requiredFieldClassName)}
+              />
+            </div>
+          </div>
+          {preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null}
+          <p className="text-[10px] text-text-tertiary -mt-1">
+            Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time. Expected finish is calendar-only (no time); late is still based on window end.
+          </p>
+        </>
+      ) : isMultiDay ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                Start date *
+              </label>
+              <Input
+                type="date"
+                value={scheduledDate}
+                onChange={(e) => onChange("scheduled_date", e.target.value)}
+                className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
+              />
+              {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
+            </div>
+            <TimeSelect
+              label="Start time *"
+              value={arrivalFrom}
+              onChange={(v) => onChange("arrival_from", v)}
+              className={requiredFieldClassName}
+            />
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                End date *
+              </label>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => onChange("end_date", e.target.value)}
+                className={`h-10 max-w-[200px] ${requiredFieldClassName ?? ""}`.trim()}
+              />
+            </div>
+            <TimeSelect
+              label="End time *"
+              value={endTime}
+              onChange={(v) => onChange("end_time", v)}
+              className={requiredFieldClassName}
+            />
+          </div>
+          <p className="text-[10px] text-text-tertiary -mt-1">
+            Multi-day jobs render as a continuous bar in the calendar. Start time = arrival on day one;
+            end time = wrap-up on the last day. No arrival window — the partner app shows the multi-day range directly.
+          </p>
+        </>
+      ) : (
+        // Recurring sub-form
+        <RecurringFormFields
+          scheduledDate={scheduledDate}
+          recurrence={recurrence}
+          onChange={onChange}
+          onRecurrenceChange={onRecurrenceChange}
+          startDateFooter={startDateFooter}
+          requiredFieldClassName={requiredFieldClassName}
+        />
+      )}
+    </>
+  );
+}
+
+function RecurringFormFields({
+  scheduledDate,
+  recurrence,
+  onChange,
+  onRecurrenceChange,
+  startDateFooter,
+  requiredFieldClassName,
+}: {
+  scheduledDate: string;
+  recurrence?: RecurrenceFormState;
+  onChange: (field: JobModalScheduleFieldKey, value: string) => void;
+  onRecurrenceChange?: (patch: Partial<RecurrenceFormState>) => void;
+  startDateFooter?: ReactNode;
+  requiredFieldClassName?: string;
+}) {
+  if (!recurrence || !onRecurrenceChange) {
+    return (
+      <p className="text-[11px] text-amber-600">
+        Recurring is not configured in this modal. (Parent must pass <code>recurrence</code> + <code>onRecurrenceChange</code>.)
+      </p>
+    );
+  }
+
+  const previewLine = scheduledDate
+    ? seriesPreview({
+        pattern: recurrence.pattern,
+        interval: recurrence.interval,
+        byday: recurrence.pattern === "weekly" && recurrence.byday.length > 0 ? recurrence.byday : undefined,
+        start_date: scheduledDate,
+        end_date: recurrence.end_mode === "until" && recurrence.end_date ? recurrence.end_date : null,
+        max_occurrences:
+          recurrence.end_mode === "count" && recurrence.max_occurrences
+            ? Number(recurrence.max_occurrences)
+            : null,
+      })
+    : "Pick a start date to preview the series.";
+
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Start date{startDateRequired ? " *" : ""}
+            Start date *
           </label>
           <Input
             type="date"
@@ -55,34 +280,204 @@ export function JobModalScheduleFields({
           />
           {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
         </div>
-        <TimeSelect
-          label="Arrival time (from)"
-          value={arrivalFrom}
-          onChange={(v) => onChange("arrival_from", v)}
-          className={requiredFieldClassName}
-        />
         <Select
-          label="Arrival window length"
-          value={arrivalWindowMins}
-          onChange={(e) => onChange("arrival_window_mins", e.target.value)}
-          options={[...ARRIVAL_WINDOW_OPTIONS]}
+          label="Repeats"
+          value={recurrence.pattern}
+          onChange={(e) => onRecurrenceChange({ pattern: e.target.value as JobRecurrencePattern })}
+          options={[
+            { value: "daily", label: "Daily" },
+            { value: "weekly", label: "Weekly" },
+            { value: "monthly", label: "Monthly" },
+          ]}
         />
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Expected finish (date only){expectedFinishRequired ? " *" : ""}
+            Every
           </label>
-          <Input
-            type="date"
-            value={expectedFinishDate}
-            onChange={(e) => onChange("expected_finish_date", e.target.value)}
-            className={cn("h-10 max-w-[200px]", expectedFinishRequired && requiredFieldClassName)}
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={1}
+              max={365}
+              value={String(recurrence.interval)}
+              onChange={(e) => {
+                const n = Math.max(1, Number(e.target.value) || 1);
+                onRecurrenceChange({ interval: n });
+              }}
+              className={`h-10 w-20 ${requiredFieldClassName ?? ""}`.trim()}
+            />
+            <span className="text-xs text-text-secondary">
+              {recurrence.pattern === "daily" && (recurrence.interval === 1 ? "day" : "days")}
+              {recurrence.pattern === "weekly" && (recurrence.interval === 1 ? "week" : "weeks")}
+              {recurrence.pattern === "monthly" && (recurrence.interval === 1 ? "month" : "months")}
+            </span>
+          </div>
+        </div>
+        {recurrence.pattern === "weekly" ? (
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">
+              On these weekdays
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {BYDAY_ORDER.map((day) => {
+                const active = recurrence.byday.includes(day);
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => {
+                      const next = active
+                        ? recurrence.byday.filter((d) => d !== day)
+                        : [...recurrence.byday, day].sort(
+                            (a, b) => BYDAY_ORDER.indexOf(a) - BYDAY_ORDER.indexOf(b),
+                          );
+                      onRecurrenceChange({ byday: next });
+                    }}
+                    className={cn(
+                      "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                      active
+                        ? "border-primary bg-primary text-white"
+                        : "border-border-light bg-card text-text-secondary hover:border-primary/40",
+                    )}
+                  >
+                    {BYDAY_LABELS[day]}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[10px] text-text-tertiary">
+              Leave empty to repeat on the same weekday as the start date.
+            </p>
+          </div>
+        ) : (
+          <div />
+        )}
+        <TimeSelect
+          label="Start time *"
+          value={recurrence.start_time}
+          onChange={(v) => onRecurrenceChange({ start_time: v })}
+          className={requiredFieldClassName}
+        />
+        <TimeSelect
+          label="End time *"
+          value={recurrence.end_time}
+          onChange={(v) => onRecurrenceChange({ end_time: v })}
+          className={requiredFieldClassName}
+        />
+      </div>
+
+      {/* End condition */}
+      <div className="rounded-lg border border-border-light bg-surface-hover/30 p-3">
+        <p className="mb-2 text-xs font-medium text-text-secondary">Ends</p>
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="recurrence_end_mode"
+              checked={recurrence.end_mode === "count"}
+              onChange={() => onRecurrenceChange({ end_mode: "count" })}
+            />
+            <span className="text-xs">After</span>
+            <Input
+              type="number"
+              min={1}
+              max={365}
+              value={recurrence.max_occurrences}
+              onChange={(e) => onRecurrenceChange({ max_occurrences: e.target.value })}
+              disabled={recurrence.end_mode !== "count"}
+              className="h-8 w-20"
+            />
+            <span className="text-xs">visits</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="recurrence_end_mode"
+              checked={recurrence.end_mode === "until"}
+              onChange={() => onRecurrenceChange({ end_mode: "until" })}
+            />
+            <span className="text-xs">Until</span>
+            <Input
+              type="date"
+              value={recurrence.end_date}
+              onChange={(e) => onRecurrenceChange({ end_date: e.target.value })}
+              disabled={recurrence.end_mode !== "until"}
+              className="h-8"
+            />
+          </label>
         </div>
       </div>
-      {preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null}
+
+      {/* Live preview */}
+      <div className="rounded-lg border border-blue-300/40 bg-blue-50/60 px-3 py-2 dark:border-blue-700/40 dark:bg-blue-950/20">
+        <p className="text-[11px] font-medium text-blue-900 dark:text-blue-200">
+          {previewLine}
+        </p>
+      </div>
+
       <p className="text-[10px] text-text-tertiary -mt-1">
-        Window end = start time + length (often 2–3 hours). That range is what clients and partners see as arrival time. Expected finish is calendar-only (no time); late is still based on window end.
+        Each occurrence becomes its own job in the schedule. The first 90 days
+        are generated immediately; the rest are filled in by the daily cron.
       </p>
     </>
   );
 }
+
+function KindTab({
+  label, description, active, disabled, onClick,
+}: {
+  label: string;
+  description: string;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={cn(
+        "rounded-lg border px-3 py-1.5 text-left transition-colors min-w-[140px]",
+        active
+          ? "border-primary bg-primary/10 text-primary"
+          : disabled
+            ? "border-border-light bg-surface-hover/40 text-text-tertiary opacity-60 cursor-not-allowed"
+            : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
+      )}
+    >
+      <span className="block text-xs font-semibold leading-tight">{label}</span>
+      <span className="block text-[10px] leading-tight opacity-80">{description}</span>
+    </button>
+  );
+}
+
+function SubKindTab({
+  label, description, active, onClick,
+}: {
+  label: string;
+  description: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "rounded-md border px-2.5 py-1 text-left transition-colors",
+        active
+          ? "border-primary bg-primary/10 text-primary"
+          : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
+      )}
+    >
+      <span className="block text-[11px] font-semibold leading-tight">{label}</span>
+      <span className="block text-[10px] leading-tight opacity-80">{description}</span>
+    </button>
+  );
+}
+
+/** Re-export for parents that maintain their own form state. */
+export type { JobRecurrenceByday } from "@/types/database";

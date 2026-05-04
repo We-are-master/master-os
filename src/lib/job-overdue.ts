@@ -34,7 +34,7 @@ const OVERDUE_BY_SCHEDULE_DAY_STATUSES = new Set<string>([
  * Overdue badge only for Jobs Management buckets **Unassigned**, **Scheduled** (incl. `late`), and
  * **In progress** on-site phases. No badge on final check, awaiting payment, on hold, completed, etc.
  *
- * **In progress (`in_progress_phase*`):** {@link jobFinishYmd} must exist and be strictly before today.
+ * **In progress (`in_progress`):** {@link jobFinishYmd} must exist and be strictly before today.
  * **Unassigned / scheduled / late:** strictly before today on {@link jobScheduleYmd} (needs a schedule).
  */
 export function isJobOverdue(job: JobOverdueInput, today: Date = new Date()): boolean {

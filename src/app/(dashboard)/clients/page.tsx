@@ -438,7 +438,7 @@ function JobHistoryCard({ job }: {
   const statusVariant =
     job.status === "completed" ? "success" :
     job.status === "cancelled" ? "danger" :
-    job.status === "in_progress" || job.status === "in_progress_phase1" || job.status === "in_progress_phase2" ? "info" :
+    job.status === "in_progress" ? "info" :
     job.status === "late" ? "danger" :
     job.status === "unassigned" ? "warning" :
     job.status === "scheduled" ? "warning" : "default";

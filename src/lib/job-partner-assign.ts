@@ -6,9 +6,7 @@ export const JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED: readonly JobStatus[] = 
   "scheduled",
   "late",
   "auto_assigning",
-  "in_progress_phase1",
-  "in_progress_phase2",
-  "in_progress_phase3",
+  "in_progress",
 ];
 
 /** Fields required before a partner can be assigned (or swapped) on a job. */
