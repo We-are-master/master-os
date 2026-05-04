@@ -10,7 +10,7 @@ import { getSupabase } from "@/services/base";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { BarChart, Bar, CartesianGrid, Cell, LineChart, Line, PieChart, Pie, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { Job } from "@/types/database";
-import { ExternalLink, CheckCircle2 } from "lucide-react";
+import { ExternalLink, CheckCircle2, ArrowRight } from "lucide-react";
 
 type DatePreset = "this_week" | "this_month" | "last_30_days" | "custom";
 type ChartWindow = "this_month" | "last_30_days" | "all_time";
@@ -19,13 +19,13 @@ type TrendWindow = "daily_30" | "monthly_12";
 type OpsJob = Pick<
   Job,
   "id" | "reference" | "title" | "client_name" | "status" | "partner_id" | "partner_name" | "scheduled_date" |
-  "scheduled_start_at" | "updated_at" | "created_at" | "timer_last_started_at" | "start_report_submitted" | "customer_review_rating"
+  "scheduled_start_at" | "scheduled_end_at" | "updated_at" | "created_at" | "timer_last_started_at" | "start_report_submitted" | "customer_review_rating"
 > & {
   service_type?: string | null;
   bu_name?: string | null;
 };
 
-const IN_PROGRESS_STATUSES = new Set<Job["status"]>(["in_progress_phase1", "in_progress_phase2", "in_progress_phase3"]);
+const IN_PROGRESS_STATUSES = new Set<Job["status"]>(["in_progress"]);
 const PIPELINE_DEFS = [
   { id: "ready", label: "Ready to Book", color: "bg-amber-500", match: (j: OpsJob) => j.status === "unassigned" },
   { id: "scheduled", label: "Scheduled", color: "bg-sky-500", match: (j: OpsJob) => j.status === "scheduled" || j.status === "late" },
@@ -72,10 +72,92 @@ function lineKeyMonth(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+const TERMINAL_PARTNER_JOB_STATUSES = new Set<Job["status"]>(["completed", "cancelled", "deleted"]);
+const EXCLUDE_FROM_TODAY_LIST_STATUSES = new Set<Job["status"]>(["completed", "cancelled", "deleted"]);
+
+/** Matches pipeline “effective schedule” heuristic used in alerts (arrival ordering). */
+function arrivalSortMs(j: OpsJob): number {
+  const sched =
+    safeDate(j.scheduled_start_at) ??
+    safeDate(j.scheduled_date ? `${String(j.scheduled_date).slice(0, 10)}T09:00:00` : null);
+  return sched?.getTime() ?? Number.POSITIVE_INFINITY;
+}
+
+/** Format HH:mm when a timed start exists; otherwise em dash for date-only / no time. */
+function formatArrivalTime(j: OpsJob): string {
+  const ss = safeDate(j.scheduled_start_at);
+  if (ss)
+    return ss.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return "—";
+}
+
+function jobBriefStatusLabel(status: Job["status"]): string {
+  switch (status) {
+    case "unassigned":
+    case "auto_assigning":
+      return "Ready";
+    case "scheduled":
+    case "late":
+      return "Scheduled";
+    case "in_progress":
+      return "On site";
+    case "final_check":
+      return "Final";
+    case "awaiting_payment":
+      return "Awaiting pay";
+    case "need_attention":
+      return "Attention";
+    case "on_hold":
+      return "On hold";
+    default:
+      return status.replace(/_/g, " ");
+  }
+}
+
+function jobStatusBadgeVariant(status: Job["status"]): "default" | "primary" | "warning" | "orange" | "violet" | "success" | "info" | "danger" {
+  switch (status) {
+    case "scheduled":
+    case "late":
+      return "primary";
+    case "unassigned":
+    case "auto_assigning":
+      return "warning";
+    case "in_progress":
+      return "orange";
+    case "final_check":
+      return "violet";
+    case "awaiting_payment":
+      return "danger";
+    case "need_attention":
+      return "warning";
+    case "on_hold":
+      return "default";
+    default:
+      return "default";
+  }
+}
+
+function isJobScheduledForToday(j: OpsJob, nowRef: Date): boolean {
+  if (EXCLUDE_FROM_TODAY_LIST_STATUSES.has(j.status)) return false;
+  const ymd = lineKeyDate(nowRef);
+  const sd = String(j.scheduled_date ?? "").slice(0, 10);
+  if (sd && sd === ymd) return true;
+  const sta = safeDate(j.scheduled_start_at);
+  if (sta && isSameLocalDay(sta, nowRef)) return true;
+  const end = safeDate(j.scheduled_end_at);
+  if (end && isSameLocalDay(end, nowRef)) return true;
+  if (IN_PROGRESS_STATUSES.has(j.status)) {
+    const timer = safeDate(j.timer_last_started_at);
+    if (timer && isSameLocalDay(timer, nowRef)) return true;
+  }
+  return false;
+}
+
 export function OperationsStatus() {
   const router = useRouter();
   const [jobs, setJobs] = useState<OpsJob[]>([]);
   const [activePartnersCount, setActivePartnersCount] = useState(0);
+  const [biddingQuotesCount, setBiddingQuotesCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [buFilter, setBuFilter] = useState("all");
   const [datePreset, setDatePreset] = useState<DatePreset>("this_month");
@@ -95,10 +177,10 @@ export function OperationsStatus() {
       // business while preventing the unbounded full-table scan that was
       // dominating dashboard load time.
       const cutoffIso = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
-      const [jobsRes, partnersRes] = await Promise.all([
+      const [jobsRes, partnersRes, biddingRes] = await Promise.all([
         supabase
           .from("jobs")
-          .select("id, reference, title, client_name, status, partner_id, partner_name, scheduled_date, scheduled_start_at, updated_at, created_at, timer_last_started_at, start_report_submitted, customer_review_rating, service_type, bu_name")
+          .select("id, reference, title, client_name, status, partner_id, partner_name, scheduled_date, scheduled_start_at, scheduled_end_at, updated_at, created_at, timer_last_started_at, start_report_submitted, customer_review_rating, service_type, bu_name")
           .is("deleted_at", null)
           .gte("created_at", cutoffIso)
           .order("created_at", { ascending: false })
@@ -107,13 +189,16 @@ export function OperationsStatus() {
           .from("partners")
           .select("*", { count: "exact", head: true })
           .eq("status", "active"),
+        supabase.from("quotes").select("id", { count: "exact", head: true }).eq("status", "bidding").is("deleted_at", null),
       ]);
       setJobs((jobsRes.data ?? []) as OpsJob[]);
       setActivePartnersCount(partnersRes.count ?? 0);
+      setBiddingQuotesCount(biddingRes.count ?? 0);
     } catch {
       if (!silent) {
         setJobs([]);
         setActivePartnersCount(0);
+        setBiddingQuotesCount(0);
       }
     } finally {
       if (!silent) setLoading(false);
@@ -133,11 +218,18 @@ export function OperationsStatus() {
       if (partnersDebounce) clearTimeout(partnersDebounce);
       partnersDebounce = setTimeout(() => void load(true), 350);
     }).subscribe();
+    let quotesDebounce: ReturnType<typeof setTimeout> | undefined;
+    const quotesCh = supabase.channel("ops:quotes").on("postgres_changes", { event: "*", schema: "public", table: "quotes" }, () => {
+      if (quotesDebounce) clearTimeout(quotesDebounce);
+      quotesDebounce = setTimeout(() => void load(true), 350);
+    }).subscribe();
     return () => {
       if (jobsDebounce) clearTimeout(jobsDebounce);
       if (partnersDebounce) clearTimeout(partnersDebounce);
+      if (quotesDebounce) clearTimeout(quotesDebounce);
       supabase.removeChannel(jobsCh);
       supabase.removeChannel(partnersCh);
+      supabase.removeChannel(quotesCh);
     };
   }, [load]);
 
@@ -177,6 +269,26 @@ export function OperationsStatus() {
       }).length,
     [jobs, monthStart]
   );
+
+  const partnersOnOpenJobsCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const j of jobs) {
+      if (!j.partner_id || TERMINAL_PARTNER_JOB_STATUSES.has(j.status)) continue;
+      ids.add(j.partner_id);
+    }
+    return ids.size;
+  }, [jobs]);
+
+  const partnersAvailableApprox = useMemo(
+    () => Math.max(0, activePartnersCount - partnersOnOpenJobsCount),
+    [activePartnersCount, partnersOnOpenJobsCount],
+  );
+
+  const todaysJobsSorted = useMemo(() => {
+    const list = jobs.filter((j) => isJobScheduledForToday(j, now));
+    list.sort((a, b) => arrivalSortMs(a) - arrivalSortMs(b));
+    return list;
+  }, [jobs, now]);
 
   const filterBounds = useMemo(() => {
     if (datePreset === "this_week") return { from: weekStart, to: now };
@@ -385,6 +497,9 @@ export function OperationsStatus() {
             <div className="pt-5 px-5 pb-5">
               <p className="text-xs text-text-tertiary uppercase tracking-wide">Active Partners</p>
               <p className="text-3xl font-bold mt-2">{activePartnersCount}</p>
+              <p className="text-[11px] text-text-tertiary mt-2 leading-snug">
+                {partnersOnOpenJobsCount} on active jobs · {partnersAvailableApprox} available (approx.)
+              </p>
             </div>
           </Card>
         </button>
@@ -412,6 +527,72 @@ export function OperationsStatus() {
             </div>
           </Card>
         </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="lg:col-span-2 overflow-hidden">
+          <CardHeader className="pb-2">
+            <CardTitle>Today&apos;s jobs</CardTitle>
+            <p className="text-xs text-text-tertiary font-normal mt-0.5">Sorted by arrival time</p>
+          </CardHeader>
+          <div className="px-5 pb-5">
+            {loading ? (
+              <div className="h-36 rounded-xl animate-pulse bg-surface-hover" />
+            ) : todaysJobsSorted.length === 0 ? (
+              <div className="py-10 text-center text-sm text-text-tertiary rounded-xl border border-dashed border-border">
+                No jobs on the calendar for today
+              </div>
+            ) : (
+              <div className="max-h-[280px] overflow-y-auto rounded-xl border border-border-light bg-card">
+                <ul className="divide-y divide-border-light/70">
+                  {todaysJobsSorted.map((j) => (
+                    <li key={j.id}>
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/jobs/${j.id}`)}
+                        className="w-full flex items-center gap-2 sm:gap-3 text-left px-3 py-2.5 hover:bg-surface-hover transition-colors min-h-[3rem]"
+                      >
+                        <span className="text-xs font-semibold tabular-nums text-text-secondary w-[3rem] shrink-0">
+                          {formatArrivalTime(j)}
+                        </span>
+                        <span className="text-xs font-semibold text-text-primary w-28 sm:w-32 shrink-0 truncate" title={j.reference}>
+                          {j.reference}
+                        </span>
+                        <span className="text-xs text-text-secondary flex-1 min-w-0 truncate" title={j.client_name}>
+                          {j.client_name}
+                        </span>
+                        <span className="hidden sm:block text-[11px] text-text-tertiary max-w-[7rem] truncate shrink-0" title={j.partner_name ?? ""}>
+                          {j.partner_name?.trim() ? j.partner_name : "—"}
+                        </span>
+                        <Badge variant={jobStatusBadgeVariant(j.status)} size="sm" className="shrink-0 capitalize">
+                          {jobBriefStatusLabel(j.status)}
+                        </Badge>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </Card>
+
+        <Card className="flex flex-col">
+          <CardHeader className="pb-2">
+            <CardTitle>Quotes in bidding</CardTitle>
+            <p className="text-xs text-text-tertiary font-normal mt-0.5">Partner quotes awaiting bids</p>
+          </CardHeader>
+          <div className="px-5 pb-5 flex flex-col flex-1 justify-between gap-4">
+            {loading ? (
+              <div className="h-16 rounded-xl animate-pulse bg-surface-hover" />
+            ) : (
+              <p className="text-4xl font-bold tabular-nums text-text-primary">{biddingQuotesCount}</p>
+            )}
+            <Button type="button" variant="outline" className="w-full justify-between" onClick={() => router.push("/quotes")}>
+              Open quotes
+              <ArrowRight className="h-4 w-4 shrink-0" />
+            </Button>
+          </div>
+        </Card>
       </div>
 
       <Card>

@@ -125,7 +125,7 @@ export function useDailyOperations(): DailyOpsData {
         const { fromDay, toDay } = localCalendarMonthYmdBounds(new Date());
         const MONTHLY_STATUSES = [
           "unassigned", "auto_assigning", "scheduled", "late",
-          "in_progress_phase1", "in_progress_phase2", "in_progress_phase3",
+          "in_progress",
           "final_check", "awaiting_payment", "need_attention", "completed",
         ];
         const [jobsRes, billsRes, payrollRes, internalSbRes, prevJobsRes] = await Promise.all([

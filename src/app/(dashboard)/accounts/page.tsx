@@ -46,6 +46,7 @@ import { JobOwnerSelect } from "@/components/ui/job-owner-select";
 import { BusinessUnitSelect } from "@/components/ui/business-unit-select";
 import { listActiveAssignableUsers, type AssignableUser } from "@/services/profiles";
 import { jobStatusBadgeVariant, type JobsManagementTabAccent } from "@/lib/job-status-ui";
+import { AccountServiceRatesTabSection } from "./service-rates-tab";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
@@ -986,6 +987,7 @@ function AccountDetailDrawer({
             { id: "clients",  label: "Clients",  count: clientsTotal || undefined },
             { id: "jobs",     label: "Jobs",      count: jobs.length || undefined },
             { id: "finance",  label: "Finance",   count: invoices.length || undefined },
+            { id: "rates",    label: "Service rates" },
             { id: "portal",   label: "Portal users" },
           ]}
         />
@@ -1560,6 +1562,11 @@ function AccountDetailDrawer({
               </div>
             )}
           </div>
+        )}
+
+        {/* ── Service rates tab ────────────────────────────────────── */}
+        {tab === "rates" && account && (
+          <AccountServiceRatesTabSection accountId={account.id} />
         )}
 
         {/* ── Portal users tab ─────────────────────────────────────── */}

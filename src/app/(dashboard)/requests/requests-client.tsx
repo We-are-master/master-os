@@ -24,7 +24,7 @@ import {
   Check, Wrench, MessageSquarePlus, UserPlus, Edit3, Search, LayoutGrid,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { ServiceRequest, Quote, Partner, QuoteDurationUnit } from "@/types/database";
+import type { ServiceRequest, Quote, Partner, QuoteDurationUnit, Job } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listRequests, createRequest, updateRequestStatus, updateRequest, getRequest } from "@/services/requests";
 import {
@@ -63,7 +63,10 @@ import { cn, formatCurrency, isUuid, parseIsoDateOnly } from "@/lib/utils";
 import { TYPE_OF_WORK_OPTIONS, mergeTypeOfWorkOptions, normalizeTypeOfWork } from "@/lib/type-of-work";
 import { computeHourlyTotals, partnerHourlyRateFromCatalogBundle } from "@/lib/job-hourly-billing";
 import { computeAccessSurcharge, effectiveInCczForAddress, isLikelyCczAddress } from "@/lib/ccz";
-import { resolveJobModalSchedule } from "@/lib/job-modal-schedule";
+import { resolveJobModalSchedule, resolveJobModalScheduleV2, DEFAULT_RECURRENCE_FORM, type RecurrenceFormState, type JobScheduleV2SeriesPayload } from "@/lib/job-modal-schedule";
+import { createJobOrSeries } from "@/services/job-recurrence-series";
+import { useResolvedJobPricing } from "@/hooks/use-resolved-job-pricing";
+import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
 import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-fields";
 import { safePartnerMatchesTypeOfWork, partnerMatchTypeLabel } from "@/lib/partner-type-of-work-match";
 import { localYmdEndIso, localYmdStartIso } from "@/lib/date-range";
@@ -1774,7 +1777,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             });
             if (!(await confirmDespiteDuplicates(formatJobDuplicateLines(dupJ)))) return;
 
-            const job = await createJob({
+            const baseJobRow = {
               title: `${convertToJobOpen.service_type} — ${data.client_name}`,
               catalog_service_id: data.catalog_service_id ?? null,
               in_ccz: inCczEff,
@@ -1790,6 +1793,8 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               scheduled_start_at: data.scheduled_start_at,
               scheduled_end_at: data.scheduled_end_at,
               scheduled_finish_date: data.scheduled_finish_date ?? null,
+              expected_finish_at: data.expected_finish_at ?? null,
+              job_kind: data.job_kind ?? "one_off",
               status: isAutoAssign ? "auto_assigning" : hasPartner ? "scheduled" : "unassigned",
               progress: 0,
               current_phase: 0,
@@ -1821,7 +1826,21 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
               hourly_client_rate: data.hourly_client_rate ?? null,
               hourly_partner_rate: data.hourly_partner_rate ?? null,
               billed_hours: data.billed_hours ?? null,
-            });
+            } as Parameters<typeof createJob>[0];
+
+            const job = data.series
+              ? (await createJobOrSeries({
+                  anchorJobRow: baseJobRow as Omit<Job, "id" | "reference" | "created_at" | "updated_at">,
+                  series: {
+                    rule: data.series.rule,
+                    start_time: data.series.start_time,
+                    end_time: data.series.end_time,
+                    start_date: data.series.start_date,
+                    end_date: data.series.end_date ?? null,
+                    max_occurrences: data.series.max_occurrences ?? null,
+                  },
+                })).jobs[0]!
+              : await createJob(baseJobRow);
             await Promise.all([
               updateRequestStatus(convertToJobOpen.id, "converted_to_job", { enrich: false }),
               logAudit({
@@ -2661,7 +2680,10 @@ function ConvertToJobModal({
     has_free_parking?: boolean | null;
     client_price?: number; partner_cost?: number; total_phases?: number; job_type?: "fixed" | "hourly";
     hourly_client_rate?: number | null; hourly_partner_rate?: number | null; billed_hours?: number | null;
-    scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null
+    scheduled_date?: string; scheduled_start_at?: string; scheduled_end_at?: string; scheduled_finish_date?: string | null;
+    expected_finish_at?: string | null;
+    job_kind?: "one_off" | "multi_day" | "recurring";
+    series?: JobScheduleV2SeriesPayload;
   }) => void;
 }) {
   const [form, setForm] = useState({
@@ -2670,7 +2692,10 @@ function ConvertToJobModal({
     assignment_mode: "manual",
     in_ccz: false, has_free_parking: true,
     scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
+    job_kind: "one_off" as "one_off" | "multi_day" | "recurring",
+    end_date: "", end_time: "17:00",
   });
+  const [recurrence, setRecurrence] = useState<RecurrenceFormState>(DEFAULT_RECURRENCE_FORM);
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerSearch, setPartnerSearch] = useState("");
@@ -2694,6 +2719,8 @@ function ConvertToJobModal({
         in_ccz: Boolean(request.in_ccz) && cczOk,
         has_free_parking: request.has_free_parking ?? true,
         scheduled_date: "", arrival_from: "09:00", arrival_window_mins: "180", expected_finish_date: "",
+    job_kind: "one_off" as "one_off" | "multi_day" | "recurring",
+    end_date: "", end_time: "17:00",
       });
       setClientAddress(addrVal);
     });
@@ -2738,8 +2765,26 @@ function ConvertToJobModal({
     });
   }, [clientAddress.property_address]);
 
+  // ─── mig 159/160: per-account / per-partner pricing override resolution ──
+  // Declared BEFORE the catalog-defaults effect so we can short-circuit it when
+  // a custom override exists (otherwise catalog defaults stomp on override values).
+  const { pricing } = useResolvedJobPricing({
+    accountId: request?.account_id ?? null,
+    partnerId: form.partner_id,
+    catalogServiceId: form.catalog_service_id,
+  });
+
+  const hasPricingOverride =
+    pricing != null &&
+    (pricing.client.hourly_rate_source === "custom"
+      || pricing.partner.hourly_partner_rate_source === "custom"
+      || pricing.client.fixed_price_source === "custom"
+      || pricing.partner.fixed_partner_cost_source === "custom");
+
   useEffect(() => {
     if (!request || form.job_type !== "hourly" || !selectedCatalogService) return;
+    // When a custom override exists, the override effect below is the source of truth.
+    if (hasPricingOverride) return;
     const hrs = Math.max(1, Number(form.billed_hours) || Number(selectedCatalogService.default_hours) || 1);
     const clientRate = Number(form.hourly_client_rate) || Number(selectedCatalogService.hourly_rate) || 0;
     const partnerRate = Number(form.hourly_partner_rate) || partnerHourlyRateFromCatalogBundle(selectedCatalogService.partner_cost, selectedCatalogService.default_hours);
@@ -2758,7 +2803,23 @@ function ConvertToJobModal({
         billed_hours: String(hrs),
       })),
     );
-  }, [request?.id, form.job_type, form.catalog_service_id]);
+  }, [request?.id, form.job_type, form.catalog_service_id, hasPricingOverride]);
+
+  useEffect(() => {
+    if (!pricing) return;
+    // Apply override values whenever the resolver returns a fresh `pricing`
+    // object (which only happens on triple change — useResolvedJobPricing
+    // memoises). No ref guard needed; the dep array already short-circuits.
+    setForm((p) => ({
+      ...p,
+      job_type: pricing.pricing_mode,
+      hourly_client_rate: pricing.client.hourly_rate?.toString() ?? p.hourly_client_rate,
+      hourly_partner_rate: pricing.partner.hourly_partner_rate?.toString() ?? p.hourly_partner_rate,
+      billed_hours: pricing.client.default_hours?.toString() ?? p.billed_hours,
+      client_price: pricing.client.fixed_price?.toString() ?? p.client_price,
+      partner_cost: pricing.partner.fixed_partner_cost?.toString() ?? p.partner_cost,
+    }));
+  }, [pricing]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2768,21 +2829,29 @@ function ConvertToJobModal({
       return;
     }
     const isAutoAssign = form.assignment_mode === "auto";
-    const sched = resolveJobModalSchedule({
+    const schedV2 = resolveJobModalScheduleV2({
+      kind: form.job_kind,
       scheduled_date: form.scheduled_date,
       arrival_from: form.arrival_from,
       arrival_window_mins: form.arrival_window_mins,
+      end_date: form.end_date,
+      end_time: form.end_time,
+      recurrence,
       hasPartner: !isAutoAssign && !!form.partner_id,
     });
-    if (!sched.ok) {
-      toast.error(sched.error);
+    if (!schedV2.ok) {
+      toast.error(schedV2.error);
       return;
     }
-    const scheduled_date = sched.scheduled_date;
-    const scheduled_start_at = sched.scheduled_start_at;
-    const scheduled_end_at = sched.scheduled_end_at;
-    let scheduled_finish_date: string | null = null;
-    if (scheduled_date) {
+    const scheduled_date = schedV2.payload.scheduled_date;
+    const scheduled_start_at = schedV2.payload.scheduled_start_at;
+    const scheduled_end_at = schedV2.payload.scheduled_end_at;
+    const expected_finish_at = schedV2.payload.expected_finish_at ?? null;
+    const job_kind = schedV2.payload.job_kind;
+    let scheduled_finish_date: string | null = schedV2.payload.scheduled_finish_date ?? null;
+
+    // For one-off, the legacy expected_finish_date input still feeds scheduled_finish_date.
+    if (job_kind === "one_off" && scheduled_date) {
       const efRaw = form.expected_finish_date?.trim() ?? "";
       const expected_finish = parseIsoDateOnly(efRaw);
       if (efRaw && !expected_finish) {
@@ -2798,7 +2867,7 @@ function ConvertToJobModal({
         return;
       }
       scheduled_finish_date = expected_finish;
-    } else if (form.expected_finish_date?.trim()) {
+    } else if (job_kind === "one_off" && form.expected_finish_date?.trim()) {
       toast.error("Clear expected finish or set a scheduled date.");
       return;
     }
@@ -2845,6 +2914,9 @@ function ConvertToJobModal({
       scheduled_start_at,
       scheduled_end_at,
       scheduled_finish_date,
+      expected_finish_at,
+      job_kind,
+      series: schedV2.series,
     });
   };
 
@@ -2931,13 +3003,18 @@ function ConvertToJobModal({
 
           {/* Schedule */}
           <JobModalScheduleFields
+            jobKind={form.job_kind}
             scheduledDate={form.scheduled_date}
             arrivalFrom={form.arrival_from}
             arrivalWindowMins={form.arrival_window_mins}
             expectedFinishDate={form.expected_finish_date}
+            endDate={form.end_date}
+            endTime={form.end_time}
+            recurrence={recurrence}
+            onRecurrenceChange={(patch) => setRecurrence((p) => ({ ...p, ...patch }))}
             onChange={(field, v) => update(field, v)}
-            startDateRequired={form.assignment_mode === "manual" && !!form.partner_id}
-            expectedFinishRequired={!!form.scheduled_date?.trim()}
+            startDateRequired={form.job_kind !== "one_off" || (form.assignment_mode === "manual" && !!form.partner_id)}
+            expectedFinishRequired={form.job_kind === "one_off" && !!form.scheduled_date?.trim()}
             requiredFieldClassName={requiredFieldClass}
           />
 
@@ -3158,6 +3235,7 @@ function ConvertToJobModal({
                 <div>
                   <label className={labelNavy} style={labelStyle}>
                     Client hourly rate
+                    {pricing ? <span className="ml-1.5"><PricingSourceChip source={pricing.client.hourly_rate_source} /></span> : null}
                     <FixfyHintIcon
                       text="Prefilled from the call-out; you can override. Totals above update as you type."
                     />
@@ -3174,6 +3252,7 @@ function ConvertToJobModal({
                 <div>
                   <label className={labelNavy} style={labelStyle}>
                     Partner hourly rate
+                    {pricing ? <span className="ml-1.5"><PricingSourceChip source={pricing.partner.hourly_partner_rate_source} /></span> : null}
                     <FixfyHintIcon text="Prefilled from the call-out; you can override. Billing: 1h minimum, then 30-min increments from timer logs." />
                   </label>
                   <Input className="mt-[6px]" type="number" value={form.hourly_partner_rate} onChange={(e) => update("hourly_partner_rate", e.target.value)} min="0" step="0.01" />
@@ -3187,11 +3266,17 @@ function ConvertToJobModal({
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className={labelNavy} style={labelStyle}>Client price</label>
+                <label className={labelNavy} style={labelStyle}>
+                  Client price
+                  {pricing ? <span className="ml-1.5"><PricingSourceChip source={pricing.client.fixed_price_source} /></span> : null}
+                </label>
                 <Input className="mt-[6px]" type="number" value={form.client_price} onChange={(e) => update("client_price", e.target.value)} min="0" step="0.01" />
               </div>
               <div>
-                <label className={labelNavy} style={labelStyle}>Partner cost</label>
+                <label className={labelNavy} style={labelStyle}>
+                  Partner cost
+                  {pricing ? <span className="ml-1.5"><PricingSourceChip source={pricing.partner.fixed_partner_cost_source} /></span> : null}
+                </label>
                 <Input className="mt-[6px]" type="number" value={form.partner_cost} onChange={(e) => update("partner_cost", e.target.value)} min="0" step="0.01" />
               </div>
               <div>

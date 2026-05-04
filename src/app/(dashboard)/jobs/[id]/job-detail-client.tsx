@@ -197,15 +197,16 @@ import {
   resumeRequiresStrictFutureArrivalDate,
   validateResumeArrivalDate,
 } from "@/lib/job-on-hold";
+import { RecurringEditScopeDialog, type RecurrenceEditScope } from "@/components/jobs/recurring-edit-scope-dialog";
+import { VisitsTab } from "./visits-tab";
+import { applyEditScope } from "@/services/job-recurrence-series";
 
 const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?: boolean }> = {
   unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned, dot: true },
   auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled, dot: true },
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
-  in_progress_phase1: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1, dot: true },
-  in_progress_phase2: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2, dot: true },
-  in_progress_phase3: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3, dot: true },
+  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
   on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
   final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
   awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
@@ -462,7 +463,7 @@ function JobDetailSelfBillPanel({ sb, job }: { sb: SelfBill; job: Job }) {
 /** Six-stage pipeline shown on job detail (matches ops mental model). */
 const JOB_FLOW_STEPS: readonly { label: string; statuses: readonly Job["status"][]; icon: LucideIcon }[] = [
   { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"], icon: Calendar },
-  { label: "On site", statuses: ["in_progress_phase1", "in_progress_phase2", "in_progress_phase3"], icon: HardHat },
+  { label: "On site", statuses: ["in_progress"], icon: HardHat },
   { label: "On hold", statuses: ["on_hold"], icon: PauseCircle },
   { label: "Final checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
   { label: "Awaiting payment", statuses: ["awaiting_payment"], icon: CreditCard },
@@ -626,6 +627,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const skipFirstFetchRef = useRef(initialBundle?.job != null);
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
+  /** mig 158: pending recurring-scope decision when editing a job that's part of a series. */
+  const [recurringScopePending, setRecurringScopePending] = useState<{
+    jobId: string;
+    patch: Partial<Job>;
+    sequenceIndex: number | null;
+    actionLabel: string;
+  } | null>(null);
   /** Preset minutes after arrival-from for window end (replaces manual “arrival to” time). */
   const [scheduleWindowMins, setScheduleWindowMins] = useState("");
   /** Civil end day for calendar (`scheduled_finish_date`). */
@@ -650,7 +658,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [extraManagerSide, setExtraManagerSide] = useState<"client" | "partner" | null>(null);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
   /** Layout-only: job detail tabs and accordions (money actions use drawer modal). */
-  const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4 | 5>(0);
+  const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(0);
   /** One-shot: when a job lands in `final_check`, open the Reports tab by default (only on first paint for this job). */
   const detailTabInitialisedForJobRef = useRef<string | null>(null);
   const [clientEditAccordionOpen, setClientEditAccordionOpen] = useState(false);
@@ -2637,7 +2645,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       toast.error("Arrival date cannot be after the expected finish date.");
       return;
     }
-    const prevRaw = (job.on_hold_previous_status ?? "in_progress_phase1").trim();
+    const prevRaw = (job.on_hold_previous_status ?? "in_progress").trim();
     const prev = jobStatusAfterResumeFromOnHold(prevRaw as Job["status"]);
     const timerBasis = { ...job, status: "on_hold" as Job["status"] };
     const patch: Partial<Job> = {
@@ -2721,6 +2729,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     await confirmResumeJob();
   }, [resumeAction, handleConfirmOfficeCancel, openCompleteFromResumeModal, confirmResumeJob]);
 
+  /** When the job is part of an active recurring series, intercept the
+   *  update by routing through the RecurringEditScopeDialog. The user picks
+   *  whether to apply this only / this and following / entire series. */
+  const dispatchRecurrenceAware = useCallback(
+    (j: Job, patch: Partial<Job>, actionLabel: string) => {
+      if (j.recurrence_series_id && !j.recurrence_detached_at) {
+        setRecurringScopePending({
+          jobId: j.id,
+          patch,
+          sequenceIndex: j.recurrence_sequence_index ?? null,
+          actionLabel,
+        });
+      } else {
+        void handleJobUpdate(j.id, patch);
+      }
+    },
+    [handleJobUpdate],
+  );
+
   const handleScheduleChange = useCallback(
     (j: Job, startDate: string, startTime: string, windowMinsStr: string, expectedFinishDate: string) => {
       const d = startDate.trim();
@@ -2737,14 +2764,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       }
 
       if (!d) {
-        handleJobUpdate(
-          j.id,
+        dispatchRecurrenceAware(
+          j,
           {
             scheduled_date: null,
             scheduled_start_at: null,
             scheduled_end_at: null,
             scheduled_finish_date: null,
           } as unknown as Partial<Job>,
+          "schedule clear",
         );
         return;
       }
@@ -2755,14 +2783,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       }
 
       if (!tFrom) {
-        handleJobUpdate(
-          j.id,
+        dispatchRecurrenceAware(
+          j,
           {
             scheduled_date: d,
             scheduled_start_at: null,
             scheduled_end_at: null,
             scheduled_finish_date: expectedTrim,
           } as unknown as Partial<Job>,
+          "schedule change",
         );
         return;
       }
@@ -2791,17 +2820,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         scheduled_end_at = endIso;
       }
 
-      handleJobUpdate(
-        j.id,
+      dispatchRecurrenceAware(
+        j,
         {
           scheduled_date: d,
           scheduled_start_at,
           scheduled_end_at,
           scheduled_finish_date: expectedTrim,
         } as unknown as Partial<Job>,
+        "schedule change",
       );
     },
-    [handleJobUpdate],
+    [dispatchRecurrenceAware],
   );
 
   const jobMoneyClientCashContext = useMemo((): JobMoneyDrawerClientCashContext | undefined => {
@@ -5358,6 +5388,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {(
                   [
                     { label: "Details", index: 0 as const },
+                    { label: "Visits", index: 6 as const },
                     { label: "Site Photos", index: 1 as const },
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
@@ -5381,6 +5412,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 ))}
               </div>
               <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
+              {detailTab === 6 ? (
+                <VisitsTab
+                  job={job}
+                  onJobStatusBumpRequested={(suggestedStatus) => {
+                    if (job.status !== suggestedStatus) {
+                      void updateJob(job.id, { status: suggestedStatus });
+                    }
+                  }}
+                />
+              ) : null}
               {detailTab === 1 ? (
               <div className="space-y-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -8131,6 +8172,35 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           </div>
         </div>
       </Modal>
+
+      {/* mig 158: scope picker for recurring-job edits. */}
+      <RecurringEditScopeDialog
+        open={!!recurringScopePending}
+        onClose={() => setRecurringScopePending(null)}
+        actionLabel={recurringScopePending?.actionLabel ?? "change"}
+        sequenceIndex={recurringScopePending?.sequenceIndex ?? null}
+        onConfirm={async (scope: RecurrenceEditScope) => {
+          if (!recurringScopePending) return;
+          try {
+            const { updated, detached } = await applyEditScope(
+              recurringScopePending.jobId,
+              recurringScopePending.patch,
+              scope,
+            );
+            const note = scope === "this_only"
+              ? "Visit detached and updated"
+              : scope === "this_and_following"
+                ? `Updated ${updated} visits (this + following)`
+                : `Updated ${updated} visits across the series`;
+            toast.success(detached ? `${note} (detached)` : note);
+            setRecurringScopePending(null);
+            // Refresh from the canonical handler so derived state stays in sync.
+            await handleJobUpdate(recurringScopePending.jobId, {}, { silent: true });
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Failed to apply change");
+          }
+        }}
+      />
     </PageTransition>
   );
 }

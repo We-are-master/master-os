@@ -104,6 +104,7 @@ import {
 } from "@/lib/partner-portal-allowlist";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
+import { PartnerServiceRatesTabSection } from "./service-rates-tab";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
@@ -258,7 +259,7 @@ const jobStatusConfig: Record<string, { label: string; variant: BadgeVariant }> 
   draft: { label: "Draft", variant: "default" },
   unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled },
-  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1 },
+  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress },
   on_hold: { label: "On Hold", variant: "warning" },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled },
@@ -3164,6 +3165,7 @@ function PartnerDetailDrawer({
       label: "Compliance",
       count: complianceAttentionCount > 0 ? complianceAttentionCount : undefined,
     },
+    { id: "rates" as const, label: "Service rates" },
     { id: "contracts" as const, label: "Contracts" },
     { id: "actions" as const, label: "Privacy & Permissions" },
     { id: "notes", label: "Notes", count: notes.length },
@@ -4383,6 +4385,13 @@ function PartnerDetailDrawer({
                 label={`Last update: ${new Date(partnerLocation.created_at).toLocaleString()}`}
               />
             ) : <p className="text-sm text-text-tertiary">No recent location</p>}
+          </div>
+        )}
+
+        {/* ========== SERVICE RATES (mig 160) ========== */}
+        {tab === "rates" && (
+          <div className="p-6">
+            <PartnerServiceRatesTabSection partnerId={partner.id} />
           </div>
         )}
 

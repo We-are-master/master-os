@@ -17,9 +17,7 @@ interface FunnelStep {
 const JOB_STATUS_LABELS: Record<string, string> = {
   scheduled: "Scheduled",
   late: "Late",
-  in_progress_phase1: "In progress (P1)",
-  in_progress_phase2: "In progress (P2)",
-  in_progress_phase3: "In progress (P3)",
+  in_progress: "In progress",
   final_check: "Final check",
   awaiting_payment: "Awaiting payment",
   need_attention: "Need attention",

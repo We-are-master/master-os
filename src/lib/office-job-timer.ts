@@ -51,7 +51,7 @@ export function statusChangeOfficeTimerPatch(
     return stopRunningPreserve();
   }
 
-  if ((job.status === "scheduled" || job.status === "late" || job.status === "on_hold") && newStatus === "in_progress_phase1") {
+  if ((job.status === "scheduled" || job.status === "late" || job.status === "on_hold") && newStatus === "in_progress") {
     const elapsed = Number(job.timer_elapsed_seconds ?? 0) || 0;
     const hasPriorWork = elapsed > 0;
     if (hasPriorWork) {
@@ -60,7 +60,7 @@ export function statusChangeOfficeTimerPatch(
     return { timer_elapsed_seconds: 0, timer_last_started_at: now, timer_is_running: true };
   }
 
-  if (job.status === "final_check" && newStatus === "in_progress_phase1") {
+  if (job.status === "final_check" && newStatus === "in_progress") {
     return { timer_last_started_at: now, timer_is_running: true };
   }
 

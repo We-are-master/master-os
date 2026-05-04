@@ -34,11 +34,13 @@ import { staggerContainer, staggerItem, fadeInUp } from "@/lib/motion";
 import {
   Plus, ChevronLeft, ChevronRight, Calendar as CalIcon,
   Briefcase, AlertTriangle, MapPin, DollarSign, User, Users, RefreshCw, Search, Download, ChevronDown,
+  Repeat as RepeatIcon,
 } from "lucide-react";
+import { WeekView, DayView } from "./calendar-time-grid";
 import { formatCurrency, cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import { getLatestLocation, getTeamMembers } from "@/services/partner-detail";
-import type { Job } from "@/types/database";
+import type { Job, JobVisit } from "@/types/database";
 import {
   formatJobScheduleLine,
   formatLocalYmd,
@@ -71,6 +73,33 @@ import { buildCsvFromRows, downloadCsvFile } from "@/lib/csv-export";
 
 const DAYS_OF_WEEK = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/** "5 - 11 May 2026" / "29 Apr - 5 May 2026" — week containing `anchor`. */
+function formatWeekRangeLabel(anchor: Date): string {
+  const dow = (anchor.getDay() + 6) % 7;
+  const monday = new Date(anchor);
+  monday.setDate(monday.getDate() - dow);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const monthFmt = new Intl.DateTimeFormat("en-GB", { month: "short" });
+  const sameMonth = monday.getMonth() === sunday.getMonth();
+  const sameYear = monday.getFullYear() === sunday.getFullYear();
+  const left = sameMonth
+    ? `${monday.getDate()}`
+    : `${monday.getDate()} ${monthFmt.format(monday)}${sameYear ? "" : ` ${monday.getFullYear()}`}`;
+  const right = `${sunday.getDate()} ${monthFmt.format(sunday)} ${sunday.getFullYear()}`;
+  return `${left} – ${right}`;
+}
+
+/** "Tue, 5 May 2026" */
+function formatDayLabel(d: Date): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(d);
+}
+
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
@@ -94,9 +123,7 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled },
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late },
-  in_progress_phase1: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase1 },
-  in_progress_phase2: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase2 },
-  in_progress_phase3: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress_phase3 },
+  in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress },
   on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold },
   final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check },
   awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment },
@@ -186,7 +213,13 @@ export default function SchedulePage() {
   const [selectedJobAccountName, setSelectedJobAccountName] = useState<string | null>(null);
   const [accountLogoByClientId, setAccountLogoByClientId] = useState<Map<string, string | null>>(() => new Map());
   const [legendBarChipsOpen, setLegendBarChipsOpen] = useState(false);
-  const [view, setView] = useState<"calendar" | "live_map">("calendar");
+  const [view, setView] = useState<"month" | "week" | "day" | "live_map">("month");
+  // Cursor for week/day views — defaults to today, navigated via prev/next buttons.
+  const [dayCursor, setDayCursor] = useState<Date>(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
   const [liveMapPoints, setLiveMapPoints] = useState<ScheduleLiveMapPoint[]>([]);
   const [loadingLiveMap, setLoadingLiveMap] = useState(false);
   const [liveMapUpdatedAt, setLiveMapUpdatedAt] = useState<string | null>(null);
@@ -228,7 +261,7 @@ export default function SchedulePage() {
       const padEnd = formatLocalYmd(new Date(year, month + 1, 62));
       const { startIso: padStartUtc, endIso: padEndUtc } = localYmdBoundsToUtcIso(padStart, padEnd);
 
-      const [byScheduledDate, byFinishDate, byStartAt, byEndAt] = await Promise.all([
+      const [byScheduledDate, byFinishDate, byStartAt, byEndAt, byVisits] = await Promise.all([
         supabase
           .from("jobs")
           .select("*")
@@ -260,6 +293,15 @@ export default function SchedulePage() {
           .gte("scheduled_end_at", padStartUtc)
           .lte("scheduled_end_at", padEndUtc)
           .order("scheduled_end_at", { ascending: true }),
+        // mig 161: extra visits within the date range, joined with their parent job for context.
+        supabase
+          .from("job_visits")
+          .select("*, parent:job_id ( * )")
+          .is("deleted_at", null)
+          .neq("status", "cancelled")
+          .gte("scheduled_date", padStart)
+          .lte("scheduled_date", padEnd)
+          .order("scheduled_date", { ascending: true }),
       ]);
 
       const merged = new Map<string, Job>();
@@ -270,6 +312,35 @@ export default function SchedulePage() {
         ...(byEndAt.data ?? []),
       ]) {
         merged.set(row.id, row as Job);
+      }
+      // Fold each extra visit into the schedule as a synthetic Job-shaped row,
+      // so existing render code (one block per row) Just Works. Click handler
+      // resolves the parent for the drawer via __visit_parent_id.
+      for (const v of (byVisits.data ?? []) as Array<JobVisit & { parent: Job | null }>) {
+        if (!v.parent) continue;
+        const parent = v.parent;
+        const synthetic: Job = {
+          ...parent,
+          id: v.id,                      // unique id so React keys + dedupe work
+          reference: `${parent.reference} · V${v.visit_index}`,
+          scheduled_date: v.scheduled_date ?? parent.scheduled_date,
+          scheduled_start_at: v.scheduled_start_at ?? parent.scheduled_start_at,
+          scheduled_end_at: v.scheduled_end_at ?? parent.scheduled_end_at,
+          scheduled_finish_date: v.scheduled_date ?? parent.scheduled_finish_date,
+          partner_id: v.partner_id ?? parent.partner_id,
+          partner_name: v.partner_name ?? parent.partner_name,
+          client_price: Number(v.client_price ?? 0),
+          partner_cost: Number(v.partner_cost ?? 0),
+          // Map visit status onto JobStatus space for color coding.
+          status: v.status === "in_progress" ? "in_progress"
+            : v.status === "completed" ? "completed"
+            : v.status === "cancelled" ? "cancelled"
+            : "scheduled",
+        };
+        // Marker fields for click handler / extra rendering.
+        (synthetic as Job & { __visit_parent_id?: string; __visit_index?: number }).__visit_parent_id = parent.id;
+        (synthetic as Job & { __visit_parent_id?: string; __visit_index?: number }).__visit_index = v.visit_index;
+        merged.set(synthetic.id, synthetic);
       }
       // Keep every job in the fetch window so Live map custom ranges can extend
       // beyond the calendar month (bars still use jobIntersectsLocalMonth per cell).
@@ -427,19 +498,52 @@ export default function SchedulePage() {
   const goToday = () => {
     setYear(now.getFullYear());
     setMonth(now.getMonth());
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    setDayCursor(today);
   };
 
   const goPrev = () => {
-    if (month === 0) { setMonth(11); setYear(year - 1); }
-    else setMonth(month - 1);
+    if (view === "month") {
+      if (month === 0) { setMonth(11); setYear(year - 1); }
+      else setMonth(month - 1);
+      return;
+    }
+    const next = new Date(dayCursor);
+    next.setDate(next.getDate() - (view === "week" ? 7 : 1));
+    setDayCursor(next);
   };
 
   const goNext = () => {
-    if (month === 11) { setMonth(0); setYear(year + 1); }
-    else setMonth(month + 1);
+    if (view === "month") {
+      if (month === 11) { setMonth(0); setYear(year + 1); }
+      else setMonth(month + 1);
+      return;
+    }
+    const next = new Date(dayCursor);
+    next.setDate(next.getDate() + (view === "week" ? 7 : 1));
+    setDayCursor(next);
   };
 
-  const isToday = year === now.getFullYear() && month === now.getMonth();
+  const isToday = (() => {
+    const t = new Date();
+    if (view === "month") return year === t.getFullYear() && month === t.getMonth();
+    if (view === "day") {
+      return dayCursor.getFullYear() === t.getFullYear()
+        && dayCursor.getMonth() === t.getMonth()
+        && dayCursor.getDate() === t.getDate();
+    }
+    if (view === "week") {
+      const cursorDow = (dayCursor.getDay() + 6) % 7;
+      const monday = new Date(dayCursor);
+      monday.setDate(monday.getDate() - cursorDow);
+      const tDow = (t.getDay() + 6) % 7;
+      const tMonday = new Date(t);
+      tMonday.setDate(t.getDate() - tDow);
+      return monday.toDateString() === tMonday.toDateString();
+    }
+    return false;
+  })();
   const todayDate = now.getDate();
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -729,11 +833,13 @@ export default function SchedulePage() {
         >
           <Tabs
             tabs={[
-              { id: "calendar", label: "Calendar" },
+              { id: "month",    label: "Month" },
+              { id: "week",     label: "Week" },
+              { id: "day",      label: "Day" },
               { id: "live_map", label: "Live map", count: liveMapPoints.length },
             ]}
             activeTab={view}
-            onChange={(id) => setView(id as "calendar" | "live_map")}
+            onChange={(id) => setView(id as "month" | "week" | "day" | "live_map")}
             variant="pills"
           />
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => setExportOpen(true)}>
@@ -742,7 +848,7 @@ export default function SchedulePage() {
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />}>New Booking</Button>
         </PageHeader>
 
-        {view === "calendar" && (
+        {view !== "live_map" && (
           <div className="shrink-0 rounded-xl border border-border-light bg-card/60 px-3 py-1.5 sm:px-4 sm:py-2">
             <button
               type="button"
@@ -787,15 +893,15 @@ export default function SchedulePage() {
           <KpiCard compact title="In progress" value={inProgressCount} format="number" icon={RefreshCw} accent="emerald" />
           <KpiCard
             compact
-            title={view === "calendar" ? "Total revenue this month" : "Total on map"}
-            value={view === "calendar" ? monthRevenue : liveMapPoints.length}
-            format={view === "calendar" ? "currency" : "number"}
-            icon={view === "calendar" ? DollarSign : MapPin}
+            title={view !== "live_map" ? "Total revenue this month" : "Total on map"}
+            value={view !== "live_map" ? monthRevenue : liveMapPoints.length}
+            format={view !== "live_map" ? "currency" : "number"}
+            icon={view !== "live_map" ? DollarSign : MapPin}
             accent="purple"
             description={
-              view === "calendar"
+              view !== "live_map"
                 ? "Billable total for jobs in this month (excl. cancelled / deleted / lost)"
-                : view === "live_map" && liveMapPoints.length > 0
+                : liveMapPoints.length > 0
                   ? liveMapFiltersActive
                     ? `Visible ${filteredLiveMapPoints.length} / ${liveMapPoints.length}`
                     : `${liveMapPoints.length} with location`
@@ -819,7 +925,7 @@ export default function SchedulePage() {
           />
         </StaggerContainer>
 
-        {view === "calendar" ? (
+        {view !== "live_map" ? (
           <motion.div
             variants={fadeInUp}
             initial="hidden"
@@ -836,8 +942,10 @@ export default function SchedulePage() {
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
-                <h3 className="min-w-0 text-center text-sm font-semibold text-text-primary sm:min-w-[140px] sm:text-base">
-                  {MONTHS[month]} {year}
+                <h3 className="min-w-0 text-center text-sm font-semibold text-text-primary sm:min-w-[180px] sm:text-base">
+                  {view === "month" ? `${MONTHS[month]} ${year}` : null}
+                  {view === "week" ? formatWeekRangeLabel(dayCursor) : null}
+                  {view === "day" ? formatDayLabel(dayCursor) : null}
                 </h3>
                 <button
                   onClick={goNext}
@@ -862,16 +970,19 @@ export default function SchedulePage() {
               </div>
             </div>
 
-            {/* Day Headers */}
-            <div className="grid shrink-0 grid-cols-7 border-b border-border-light">
-              {DAYS_OF_WEEK.map((day) => (
-                <div key={day} className="px-1 py-1.5 text-center text-[10px] font-semibold text-text-tertiary uppercase tracking-wider sm:px-2 sm:text-[11px]">
-                  {day}
-                </div>
-              ))}
-            </div>
+            {/* Day Headers — month view only */}
+            {view === "month" ? (
+              <div className="grid shrink-0 grid-cols-7 border-b border-border-light">
+                {DAYS_OF_WEEK.map((day) => (
+                  <div key={day} className="px-1 py-1.5 text-center text-[10px] font-semibold text-text-tertiary uppercase tracking-wider sm:px-2 sm:text-[11px]">
+                    {day}
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
-            {/* Calendar Grid — rows share remaining height */}
+            {/* Calendar body — Month grid OR Week/Day time grid */}
+            {view === "month" ? (
             <div
               className="grid min-h-0 flex-1 grid-cols-7 overflow-hidden"
               style={{ gridTemplateRows: `repeat(${calendarWeekRowCount}, minmax(0, 1fr))` }}
@@ -901,15 +1012,26 @@ export default function SchedulePage() {
                           )}
                         </div>
                         <div className="min-h-0 flex-1 space-y-0.5 overflow-hidden min-w-0">
-                          {dayJobs.slice(0, 3).map(({ job, segment }, idx) => {
+                          {dayJobs.slice(0, 6).map(({ job, segment }, idx) => {
                             const cid = job.client_id?.trim();
                             const accountLogoUrl = cid ? accountLogoByClientId.get(cid) : null;
+                            const isRecurring = !!job.recurrence_series_id;
+                            const visitParentId = (job as Job & { __visit_parent_id?: string }).__visit_parent_id;
+                            const isVisit = !!visitParentId;
                             return (
                               <motion.div
                                 key={`${job.id}-${day}-${segment}-${idx}`}
                                 whileHover={{ scale: 1.01 }}
                                 whileTap={{ scale: 0.99 }}
-                                onClick={() => setSelectedJob(job)}
+                                onClick={() => {
+                                  if (isVisit) {
+                                    const parent = jobs.find((j) => j.id === visitParentId);
+                                    if (parent) setSelectedJob(parent);
+                                    else router.push(`/jobs/${visitParentId}`);
+                                  } else {
+                                    setSelectedJob(job);
+                                  }
+                                }}
                                 title={formatScheduleCalendarBarTooltip(job)}
                                 className={cn(
                                   scheduleBarSegmentClass(segment, scheduleJobStatusColorClasses(job.status)),
@@ -929,12 +1051,20 @@ export default function SchedulePage() {
                                     />
                                   ) : null}
                                   <span className="min-w-0 flex-1 truncate">{formatScheduleCalendarBarCompact(job)}</span>
+                                  {isVisit ? (
+                                    <span className="text-[8px] font-bold uppercase tracking-wider opacity-80 px-1 rounded-sm bg-current/10" aria-label="Job visit">
+                                      V{(job as Job & { __visit_index?: number }).__visit_index ?? ""}
+                                    </span>
+                                  ) : null}
+                                  {isRecurring ? (
+                                    <RepeatIcon className="h-[10px] w-[10px] shrink-0 opacity-80" aria-label="Recurring series" />
+                                  ) : null}
                                 </span>
                               </motion.div>
                             );
                           })}
-                          {dayJobs.length > 3 && (
-                            <p className="text-[10px] text-text-tertiary px-1">+{dayJobs.length - 3} more</p>
+                          {dayJobs.length > 6 && (
+                            <p className="text-[10px] text-text-tertiary px-1">+{dayJobs.length - 6} more</p>
                           )}
                         </div>
                       </>
@@ -943,6 +1073,21 @@ export default function SchedulePage() {
                 );
               })}
             </div>
+            ) : view === "week" ? (
+              <WeekView
+                jobs={jobs}
+                onSelectJob={setSelectedJob}
+                accountLogoByClientId={accountLogoByClientId}
+                weekAnchor={dayCursor}
+              />
+            ) : (
+              <DayView
+                jobs={jobs}
+                onSelectJob={setSelectedJob}
+                accountLogoByClientId={accountLogoByClientId}
+                dayAnchor={dayCursor}
+              />
+            )}
             </Card>
           </motion.div>
         ) : (
