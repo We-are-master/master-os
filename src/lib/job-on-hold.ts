@@ -1,5 +1,6 @@
 import { formatLocalYmd } from "@/lib/schedule-calendar";
 import { scheduledEndFromWindow } from "@/lib/job-arrival-window";
+import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import type { Job } from "@/types/database";
 
 /** Civil YYYY-MM-DD for the snapshot arrival day (prefer date column, else local day from start timestamp). */
@@ -14,14 +15,10 @@ export function onHoldSnapshotArrivalYmd(job: Pick<Job, "on_hold_snapshot_schedu
   return null;
 }
 
-/** HH:mm in local time from an ISO-ish timestamp. */
+/** HH:mm in UK wall-clock time from an ISO timestamp (matches the schedule UI). */
 export function localHmFromIsoTimestamp(iso: string | null | undefined): string {
   if (!iso) return "";
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) return "";
-  const h = String(dt.getHours()).padStart(2, "0");
-  const m = String(dt.getMinutes()).padStart(2, "0");
-  return `${h}:${m}`;
+  return utcIsoToUkWallClock(iso).hm;
 }
 
 export function windowMinutesFromSnapshotStartEnd(
@@ -71,10 +68,10 @@ export function buildSchedulePatchForResume(args: {
   const d = args.arrivalDateYmd.trim().slice(0, 10);
   const t = args.arrivalTimeHm.trim();
   const wm = windowMinutesFromSnapshotStartEnd(args.snapshotStartAt, args.snapshotEndAt);
-  const scheduled_start_at = t ? `${d}T${t}:00` : null;
+  const scheduled_start_at = t ? ukWallClockToUtcIso(d, t) || null : null;
   let scheduled_end_at: string | null = null;
   if (scheduled_start_at && wm != null && wm > 0) {
-    scheduled_end_at = scheduledEndFromWindow(d, t, wm);
+    scheduled_end_at = new Date(new Date(scheduled_start_at).getTime() + wm * 60_000).toISOString();
   }
   const snapFinish =
     typeof args.snapshotFinishDate === "string" && args.snapshotFinishDate.trim()
