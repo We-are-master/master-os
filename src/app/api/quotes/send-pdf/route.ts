@@ -11,10 +11,8 @@ import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { buildNewQuoteEmail } from "@/lib/portal-email-templates";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
+import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
 import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
-
-/** Custom status ID set on the Zendesk ticket once the quote is sent to the customer. */
-const ZENDESK_STATUS_QUOTE_SENT = 5688280626847;
 
 function nowMs() {
   return performance.now();
@@ -247,7 +245,7 @@ export async function POST(req: NextRequest) {
         });
         await zdSendCustomerComment({
           ticketId:       zdTicketId!,
-          customStatusId: ZENDESK_STATUS_QUOTE_SENT,
+          customStatusId: ZD_STATUS_AWAITING_APPROVAL,
           htmlBody:       html,
           attachments: [{
             filename:    `${quote.reference.replace(/\//g, "-")}_quote.pdf`,

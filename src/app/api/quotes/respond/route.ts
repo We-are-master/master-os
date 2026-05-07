@@ -10,6 +10,8 @@ import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { ensureWeeklySelfBillForJob } from "@/services/self-bills";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import { dispatchJobCreatedZendesk, dispatchQuoteRejectedZendesk } from "@/lib/zendesk-lifecycle";
+import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 
 function getServiceSupabase() {
   return createClient(
@@ -116,6 +118,12 @@ export async function POST(req: NextRequest) {
         new_value: "rejected",
         metadata: updates.rejection_reason ? { rejection_reason: updates.rejection_reason } : {},
       }).then(({ error }) => { if (error) console.error("audit_logs insert (reject)", error); });
+
+      /** Zendesk: trigger handles status; we also dispatch the rejection notice
+       *  inline so it ships even when pg_net config isn't set yet. Idempotent. */
+      void dispatchQuoteRejectedZendesk(quoteId, supabase).catch((err) => {
+        console.error("Quote reject: Zendesk dispatch failed", err);
+      });
 
       marks.push(["total", performance.now() - startedAt]);
       return withServerTiming({
@@ -375,6 +383,13 @@ export async function POST(req: NextRequest) {
           console.error("Quote accept: downstream sync failed", e);
         }
       })();
+      /** Zendesk: status sync + customer reply + partner side conv. Idempotent. */
+      void Promise.all([
+        syncJobZendeskStatus(job.id, supabase),
+        dispatchJobCreatedZendesk({ jobId: job.id, client: supabase }),
+      ]).catch((err) => {
+        console.error("Quote accept (deposit): Zendesk dispatch failed", err);
+      });
       if (hasPartner) {
         void ensureWeeklySelfBillForJob({ ...baseJobRow, id: job.id, reference: job.reference } as Parameters<typeof ensureWeeklySelfBillForJob>[0])
           .then((sbId) => {
@@ -550,6 +565,13 @@ export async function POST(req: NextRequest) {
         console.error("Quote accept (no deposit): downstream sync failed", e);
       }
     })();
+    /** Zendesk: status sync + customer reply + partner side conv. Idempotent. */
+    void Promise.all([
+      syncJobZendeskStatus(jobNoDep.id, supabase),
+      dispatchJobCreatedZendesk({ jobId: jobNoDep.id, client: supabase }),
+    ]).catch((err) => {
+      console.error("Quote accept (no deposit): Zendesk dispatch failed", err);
+    });
     if (hasPartnerNoDep) {
       void ensureWeeklySelfBillForJob({ ...baseJobRowNoDep, id: jobNoDep.id, reference: jobNoDep.reference } as Parameters<typeof ensureWeeklySelfBillForJob>[0])
         .then((sbId) => {
